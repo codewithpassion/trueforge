@@ -1,5 +1,5 @@
 import { CancellationReason, EventType } from '@truefoundry/trueforge-core/agent-session';
-import { abortAllDurableObjects, runDurableObjectAlarm } from 'cloudflare:test';
+import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { D1_MAX_VALUE_BYTES } from '../../src/db/d1/client';
 import {
   collectEvents,
@@ -62,6 +62,20 @@ describe('SessionDO', () => {
     expect(events.some(event => event.type === 'model.message.delta')).toBe(true);
     const stored = await stores.sessionStore.getTurn({ session_id: 'stream-full', turn_id: turnId });
     expect(stored?.state.status).toBe('done');
+  });
+
+  it('starts a turn and returns its stream from the first event in one call', async () => {
+    await createMockSession({ sessionId: 'start-streaming', scenario: 'text' });
+
+    const started = await sessionStub('start-streaming').startTurnStreaming(startRequest('start-streaming'));
+    if (!started.ok) {
+      throw new Error(`startTurnStreaming failed: ${started.code} ${started.message}`);
+    }
+    const events = await collectEvents(started.stream);
+
+    expect(events.map(event => event.sequence_number)).toEqual(events.map((_, index) => index + 1));
+    expect(events[0]?.type).toBe(EventType.TURN_CREATED);
+    expect(events.at(-1)?.type).toBe(EventType.TURN_DONE);
   });
 
   it('resumes a subscription strictly after the given sequence number', async () => {
@@ -163,5 +177,38 @@ describe('SessionDO', () => {
 
     const frozen = await d1Persistence().sessionStore.getTurn({ session_id: 'watchdog-orphan', turn_id: turnId });
     expect(frozen?.state).toMatchObject({ status: 'cancelled', reason: CancellationReason.Abandoned });
+  });
+
+  it('watchdog alarm settles the other orphans and re-arms when one orphan fails', async () => {
+    await createMockSession({ sessionId: 'watchdog-partial', scenario: 'slow' });
+    await createMockSession({ sessionId: 'watchdog-unsettled', scenario: 'slow' });
+    const orphanTurnId = await startedTurnId('watchdog-partial');
+    const unsettledTurnId = await startedTurnId('watchdog-unsettled');
+    await abortAllDurableObjects();
+    const stub = sessionStub('watchdog-partial');
+    // A running turn whose tenant id D1 refuses to bind, so settling that orphan throws.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        'INSERT INTO started_turns (turn_id, tenant_id, session_id) VALUES (?, ?, ?)',
+        unsettledTurnId,
+        't'.repeat(D1_MAX_VALUE_BYTES + 1),
+        'watchdog-unsettled',
+      );
+    });
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    const stores = d1Persistence();
+    expect(
+      (await stores.sessionStore.getTurn({ session_id: 'watchdog-partial', turn_id: orphanTurnId }))?.state,
+    ).toMatchObject({ status: 'cancelled', reason: CancellationReason.Abandoned });
+    expect(
+      (await stores.sessionStore.getTurn({ session_id: 'watchdog-unsettled', turn_id: unsettledTurnId }))?.state.status,
+    ).toBe('running');
+    await runInDurableObject(stub, async (_instance, state) => {
+      const remaining = state.storage.sql.exec<{ turn_id: string }>('SELECT turn_id FROM started_turns').toArray();
+      expect(remaining.map(row => row.turn_id)).toEqual([unsettledTurnId]);
+      expect(await state.storage.getAlarm()).not.toBeNull();
+    });
   });
 });

@@ -58,14 +58,21 @@ export function sessionStub(sessionId: string) {
   return env.SESSION_DO.get(env.SESSION_DO.idFromName(`${TENANT_ID}:${sessionId}`));
 }
 
-/** Reads a subscribe stream until `turn.done`. */
-export async function collectEvents(stream: ReadableStream<Uint8Array>): Promise<SequencedEvent<TurnStreamingEvent>[]> {
-  const events: SequencedEvent<TurnStreamingEvent>[] = [];
-  for await (const event of decodeTurnEvents({ stream, signal: new AbortController().signal })) {
-    events.push(event);
+/** Reads turn events until `turn.done`. */
+export async function collectTurnEvents(
+  events: AsyncGenerator<SequencedEvent<TurnStreamingEvent>, void, unknown>,
+): Promise<SequencedEvent<TurnStreamingEvent>[]> {
+  const collected: SequencedEvent<TurnStreamingEvent>[] = [];
+  for await (const event of events) {
+    collected.push(event);
     if (event.type === 'turn.done') {
       break;
     }
   }
-  return events;
+  return collected;
+}
+
+/** Reads a Durable Object event stream until `turn.done`. */
+export function collectEvents(stream: ReadableStream<Uint8Array>): Promise<SequencedEvent<TurnStreamingEvent>[]> {
+  return collectTurnEvents(decodeTurnEvents({ stream, signal: new AbortController().signal }));
 }

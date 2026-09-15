@@ -4,9 +4,10 @@ import {
   type TurnInputItem,
   type TurnStreamingEvent,
 } from '@truefoundry/trueforge-core/agent-session';
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import { DurableObject } from 'cloudflare:workers';
 import configuration from '../config';
-import { D1_MAX_VALUE_BYTES, D1ValueTooLargeError, D1WriteOutcomeUnknownError } from '../db/d1/client';
+import { D1ValueTooLargeError, D1WriteOutcomeUnknownError } from '../db/d1/client';
 import { createD1Persistence } from '../db/d1/persistence';
 import { ActiveTurnRegistry } from '../runtime/activeTurns';
 import { StreamGoneError } from '../runtime/event-subscription';
@@ -22,6 +23,7 @@ import { DurableObjectEventSubscriptions } from './durableObjectEventSubscriptio
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
 import { encodeTurnEvents, isSequencedTurnStreamingEvent } from './turnEventWire';
+import { turnInputTooLarge } from './turnInputLimit';
 
 /** A pending timer blocks hibernation while a turn runs. */
 const KEEPALIVE_INTERVAL_MS = 20_000;
@@ -38,7 +40,7 @@ export interface StartTurnRequest {
   user_ref: string;
 }
 
-export type SubscribeTurnResult = { ok: true; stream: ReadableStream<Uint8Array> } | TurnExecutorFailure;
+export type TurnEventStreamResult = { ok: true; stream: ReadableStream<Uint8Array> } | TurnExecutorFailure;
 
 function startFailure(error: unknown): TurnExecutorFailure | undefined {
   if (error instanceof D1WriteOutcomeUnknownError) {
@@ -84,14 +86,9 @@ export class SessionDO extends DurableObject {
 
   /** Resolves once the first event is on this object's stream, so an immediate subscribe cannot 412. */
   async startTurn(request: StartTurnRequest): Promise<TurnStartResult> {
-    const inputBytes = new TextEncoder().encode(JSON.stringify(request.input ?? [])).byteLength;
-    if (inputBytes > D1_MAX_VALUE_BYTES) {
-      return {
-        ok: false,
-        status: 413,
-        code: 'turn_input_too_large',
-        message: `Turn input is ${String(inputBytes)} bytes; the limit is ${String(D1_MAX_VALUE_BYTES)} bytes`,
-      };
+    const tooLarge = turnInputTooLarge(request.input);
+    if (tooLarge !== undefined) {
+      return tooLarge;
     }
 
     const turnId = newId();
@@ -150,12 +147,26 @@ export class SessionDO extends DurableObject {
     return { ok: true, turn: toWireTurn(started.turn.record) };
   }
 
+  /**
+   * Starts a turn and returns its event stream from the first event in the same call. The creating
+   * caller skips subscribe's admission check, which reports a stream expiring within a minute as gone
+   * and would drop a turn that finished before the caller subscribed.
+   */
+  async startTurnStreaming(request: StartTurnRequest): Promise<TurnEventStreamResult> {
+    const started = await this.startTurn(request);
+    if (!started.ok) {
+      return started;
+    }
+    const subscription = this.#events.get(turnStreamId(request.tenant_id, request.session_id, started.turn.id));
+    return { ok: true, stream: encodeTurnEvents(signal => subscription.poll(undefined, { signal })) };
+  }
+
   async subscribe(request: {
     tenant_id: string;
     session_id: string;
     turn_id: string;
     after_sequence_number: number | undefined;
-  }): Promise<SubscribeTurnResult> {
+  }): Promise<TurnEventStreamResult> {
     const subscription = this.#events.get(turnStreamId(request.tenant_id, request.session_id, request.turn_id));
     try {
       await subscription.assertSubscribable();
@@ -188,19 +199,40 @@ export class SessionDO extends DurableObject {
 
   /** Watchdog: freezes turns D1 still reports running that no longer run here, then prunes expired streams. */
   override async alarm(): Promise<void> {
-    const now = Date.now();
-    this.#events.deleteExpired(now);
+    // Stays true if settling orphans throws outright, so the next alarm retries them.
+    let orphansRemain = true;
+    try {
+      orphansRemain = await this.#freezeOrphans();
+    } finally {
+      const now = Date.now();
+      this.#events.deleteExpired(now);
+      if (this.#running.size > 0 || orphansRemain) {
+        await this.ctx.storage.setAlarm(now + WATCHDOG_DELAY_MS);
+      } else {
+        const nextExpiry = this.#events.nextExpiry(now);
+        if (nextExpiry !== undefined) {
+          await this.ctx.storage.setAlarm(nextExpiry);
+        }
+      }
+    }
+  }
 
+  /** Returns whether an orphan is left for a later alarm because settling it failed. */
+  async #freezeOrphans(): Promise<boolean> {
     const orphans = this.ctx.storage.sql
       .exec<{ turn_id: string; tenant_id: string; session_id: string }>(
         'SELECT turn_id, tenant_id, session_id FROM started_turns',
       )
       .toArray()
       .filter(row => !this.#running.has(row.turn_id));
-    if (orphans.length > 0) {
-      const persistence = this.#persistence({ watchdog: true });
-      const sessions = new Sessions({ sessionStore: persistence.sessionStore });
-      for (const orphan of orphans) {
+    if (orphans.length === 0) {
+      return false;
+    }
+    const persistence = this.#persistence({ watchdog: true });
+    const sessions = new Sessions({ sessionStore: persistence.sessionStore });
+    let failed = false;
+    for (const orphan of orphans) {
+      try {
         const turn = await persistence.sessionStore.getTurn({
           session_id: orphan.session_id,
           turn_id: orphan.turn_id,
@@ -216,17 +248,17 @@ export class SessionDO extends DurableObject {
           }
         }
         this.ctx.storage.sql.exec('DELETE FROM started_turns WHERE turn_id = ?', orphan.turn_id);
+      } catch (error) {
+        // One orphan that cannot be settled must not block the others or the re-arm.
+        failed = true;
+        this.#logger.warn('Watchdog could not settle an orphaned turn; retrying on the next alarm', {
+          sessionId: orphan.session_id,
+          turnId: orphan.turn_id,
+          ...extractErrorLogFields(error),
+        });
       }
     }
-
-    if (this.#running.size > 0) {
-      await this.ctx.storage.setAlarm(now + WATCHDOG_DELAY_MS);
-      return;
-    }
-    const nextExpiry = this.#events.nextExpiry(now);
-    if (nextExpiry !== undefined) {
-      await this.ctx.storage.setAlarm(nextExpiry);
-    }
+    return failed;
   }
 
   #keepAliveUntil(turnId: string, drained: Promise<void>): void {

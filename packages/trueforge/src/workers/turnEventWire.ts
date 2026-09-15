@@ -31,6 +31,10 @@ export function encodeTurnEvents(
     type: 'bytes',
     async pull(controller) {
       const next = await events.next();
+      // Cancelled while waiting for the event: the controller is already closed.
+      if (abort.signal.aborted) {
+        return;
+      }
       if (next.done) {
         controller.close();
         return;
