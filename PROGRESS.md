@@ -4,6 +4,31 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 10 — Phase 5 landed and first real Cloudflare deploy (2026-09-15)
+
+**Goal:** Land Phase 5 on the branch, then deploy the Worker to a custom domain and test it end to end on real Cloudflare.
+
+**What we did:**
+
+- Phase 5 landed as `044b6e82..17b95687` with no conflicts. `62caeabe` added the review nits: workers now reject an empty `PUBLIC_BASE_URL`, the `run_worker_first` sync test in `tests/unit/frontendShell.test.ts` checks both directions, and there is a HEAD Cache-Control assertion. Verified: typecheck, `test:trueforge` 595, core 440, frontend 18, SQLite 196, D1 220, Workers 46, Postgres 196, eslint 0 errors, `workers:check` with no drift (4973 KiB), 0 banned modules, openapi unchanged. An adversarial review of the landed range is still running.
+- Deploy setup: the Cloudflare account that owns `rockyshoreslabs.io`; `wrangler.jsonc` gained `account_id` and a `custom_domain` route for `trueforge.rockyshoreslabs.io`; a new D1 database `trueforge-rockyshoreslabs` with location hint `oc`. Auth is a new Clerk dev instance ("TrueForge", issuer `https://inviting-ray-7546.clerk.accounts.dev`) with an OAuth application for `/api/v1/auth/callback`. Clerk ID tokens carry no groups claim, so `OIDC_USER_ROLE_CLAIM=email`, and `OIDC_ADMIN_ROLE_VALUE` and `OIDC_ALLOWED_EMAILS` are both the user's Clerk email. The client secret went up via `wrangler deploy --secrets-file`; local copies were deleted and it never entered chat. The `wrangler.jsonc` and `worker-configuration.d.ts` changes are uncommitted until the user decides whether deployment values belong on the upstream branch.
+- The first deploy was rejected by Cloudflare's upload validation with "OIDC_ISSUER_URL, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET must all be set together". Config is parsed at module load, so the bad config blocked the deploy instead of shipping a Worker that looked healthy. The second deploy succeeded: version `cbcb3e65`, startup 234 ms, 4973 KiB / gzip 895 KiB, cron `*/5`.
+- Unauthenticated checks on the live domain passed: `/healthz` 200 (0.2.0-rc.10); `/` and HTML deep links get the shell with `no-cache`; a hashed asset is 200 immutable; a missing asset is 404 with no cache header; a deep link without an HTML accept header is 404; `/api` is a JSON 404; protected APIs are 401; `/api/v1/auth/login` redirects 302 to Clerk with PKCE and the right callback.
+- Signed-in checks after the user logged in through Clerk and configured OpenRouter (`z-ai/glm-5.3-flash`): `auth/me` shows oidc-connected with the admin role from the email claim; capabilities show sandbox and skills disabled. A streaming turn produced 52 events (first at 1.8 s, done at 10.3 s). Cancel at the 10th delta ended the stream 0.35 s later with `turn.done` cancelled/client-cancelled, stored as cancelled. A non-streaming turn returned running and subscribe reached `turn.done` in 5.2 s. Turn events returned 200. A 2.5 MB input got 413 "limit is 2000000 bytes". Agent and schedule creation worked; run-now created a triggered run whose turn finished with "SCHEDULED-OK". SchedulerDO alarms fire about every 60 s, the cron re-arms every 5 min, and there were no exceptions.
+- Findings: the user's first UI chat failed with an OpenRouter 400 "glm-5.3-flash[1m] is not a valid model ID", which came from the provider model config, not the Worker. A client cancel logs at error level as "Agent thread execution failed … client-cancelled" (noise). `GET /api/v1/sessions` caps `limit` at 25.
+- Still unverified: large tool results and the D1 1000-query budget under sub-agents or compaction on remote D1, the first hourly alarm-dispatched run (due 12:00 UTC), `limits.cpu_ms` for SessionDO, a Clerk production instance, and the CI backlog.
+
+**Lessons learned:**
+
+- Cloudflare upload validation executes module-load code, so config errors surface at deploy time.
+- The browser tool's JavaScript evaluation has a 45 s limit; a test script with a 2-minute polling loop timed out.
+- Read enum semantics before judging a status: "triggered" is the success state for schedule runs.
+
+**Avoid next time:**
+
+- Don't assume a run is stuck because its status isn't named "succeeded".
+- Don't write browser test scripts that run longer than 45 s; poll with separate calls.
+
 ## Cycle 9 — Phase 3 review nits closed; Phase 5 fixes reviewed and ready to land (2026-09-15)
 
 **Goal:** Close the last Phase 3 review nits on the branch, then finish and review the Phase 5 should-fix round so Phase 5 can land.
