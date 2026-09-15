@@ -4,6 +4,30 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 9 — Phase 3 review nits closed; Phase 5 fixes reviewed and ready to land (2026-09-15)
+
+**Goal:** Close the last Phase 3 review nits on the branch, then finish and review the Phase 5 should-fix round so Phase 5 can land.
+
+**What we did:**
+
+- Phase 3 nits landed as `8424c12c`. A `livePolls` test hook sits next to `waitingPollers`. A Workers test asserts that after a Worker-side cancel, the DO poll generator finishes at the next non-terminal event while the turn is still running, and stays live in a control run with no further event. The SessionDO watchdog now opens D1 stores once per alarm pass (`persistence ??=` inside each orphan's try), so the 800-statement warning counts the whole invocation. A mutation check confirmed the test: reverting to `=` fails with "expected 2 to be 1". One docblock line over 120 characters was rewrapped. Verified: typecheck, `test:trueforge` 589, `test:workers` 42, eslint 0 errors, `workers:check`. Phase 3 has no open review items.
+- Phase 5 fix round in the worktree (`16af43c7`, `73cd755d`, `ac7ddae5`, `3d5a3086` on top of `39765e5c..10d6c6fe`). `SERVER_PATH_PREFIXES` and `isServerPath` moved to `src/frontendShell.ts`, and both `frontend.ts` and the Workers entry use them. `run_worker_first` is `["/api", "/api/*", "/healthz", "/healthz/*"]`. A sync test parses `wrangler.jsonc` with the new devDependency `jsonc-parser`, which was already a transitive dependency; TypeScript 7 has no JS API for JSONC. With `not_found_handling: "none"`, the Worker handles misses: 404 under `/assets/` with no cache header, the shell with `no-cache` only for HTML GET/HEAD, otherwise 404. The `PUBLIC_BASE_URL` placeholder is gone, and a path-prefixed value is rejected on workers. Guide fixes: D1 budget qualifiers, the localhost callback URL, and the cancel limitation wording.
+- Verified on the worktree: typecheck, `test:trueforge` 593, `test:workers` 43, eslint 0 errors (src only, see below), `workers:check` at 4971 KiB. Saved `workers:dev` evidence: a hashed asset hit returns 200 immutable without invoking the Worker (checked with a temporary probe log); a miss returns 404 text/plain with no Cache-Control; the shell and deep links are `no-cache`; a deep link without an HTML accept header is 404; `/api` and unknown API paths return a JSON 404; `stream:true` reaches `turn.done`; cancel is recorded as cancelled/client-cancelled.
+- Node Docker `pnpm smoke` in the worktree first failed on a Docker build cache error ("parent snapshot ... does not exist"). The retry passed with "healthz and UI OK". `.env` and the root-owned `data/` were removed afterwards.
+- The Opus review of the fixes found no blockers, nothing to fix, and five nits (the second part of the review is pending). The reviewer ran its own `workers:dev` with no `.env` and vars passed via `--var`. It confirmed: deep links answered 304 for `If-None-Match` keep `no-cache`; `/index.html` redirects 307 to `/` with no loop; POST with an HTML accept header gets 404; `/apifoo` gets the shell, as on Node; every server path, OAuth callbacks included, reaches the Worker; `_headers` still applies to platform-served files. It also checked that `SERVER_PATH_PREFIXES` is byte-identical to the base, ran a mutation check on the JSONC sync test, found `worker-configuration.d.ts` byte-identical to the merge base once the placeholder was removed, and matched guide claims to code (callback path, default port 8787, the 800 warning, the 100-iteration default).
+- Next: land Phase 5 onto `feat/cloudflare-workers-port`, regenerating the lockfile with `pnpm install` and the worker types, then write a final progress entry.
+
+**Lessons learned:**
+
+- To prove a stream cleans up, pair the waiter count with a live-generator count.
+- A sync test between a JSONC config and a TypeScript prefix list catches routing drift. It found the missing `/healthz/*`.
+- Docker build cache errors can fail a smoke run on their own. Read the failing log before blaming the change.
+- The repo's eslint config ignores test files (this predates the port), so "eslint 0 errors" only covers `src`.
+
+**Avoid next time:**
+
+- Don't claim lint coverage for test files that the repo config ignores.
+
 ## Cycle 8 — Phase 4 landing verified; fourth Phase 3 fix round reviewed; Phase 5 built and in review fixes (2026-09-15)
 
 **Goal:** Confirm the Phase 4 landing, close the fourth Phase 3 fix round through review, and build and review Phase 5 (static assets, final wrangler config, deploy guide).
