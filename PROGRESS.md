@@ -4,6 +4,31 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 11 — Heavy-turn tests on the live deploy find a non-streaming turn defect (2026-09-15)
+
+**Goal:** Test heavy, tool-using turns on the live Cloudflare deploy, using the Context7 MCP server as the load.
+
+**What we did:**
+
+- Added Context7 through `POST /api/v1/settings/mcp-servers` as a remote server (`https://mcp.context7.com/mcp`, no auth). The Worker listed both tools in 1.3 s.
+- Streaming large-tool turn (next.js and react docs): 4 tool responses, done at 40 s. The SessionDO `startTurnStreaming` invocation used 633 ms CPU and 39.2 s wall. Context7 caps responses at about 4.7 KB, so the large-tool-response offload path never ran and the D1 1000-query budget was not approached. Both remain unverified.
+- A streamed turn whose client aborted at 10 s still completed at 54 s, because the Worker-to-DO RPC stream stayed open.
+- Two concurrent non-streaming heavy turns (large docs; 4 sub-agents) emitted nothing after the first empty `model.message`. At 60 s the watchdog alarm logged "Froze a running turn this Durable Object no longer executes" and marked both abandoned. The log tail started 13 s late, so their `startTurn` invocation records were missed, and querying Workers Logs through the API failed with "Authentication error" because the wrangler OAuth token lacks that scope.
+- Discriminating non-streaming tests: a trivial reply with Context7 preloaded finished; an MCP tool-call turn finished in about 37 s (`startTurn` wall 37.4 s); a 3000-word turn without MCP emitted its last delta at 12:00:43.9, its `startTurn` invocation ended at 13.7 s wall, and it then sat in running with no events for more than 3.5 minutes. The watchdog missed it because the same instance still tracks the turn. Cancel attempted.
+- The 12:00 UTC alarm-dispatched scheduled run triggered and finished with "SCHEDULED-OK", but the task was trivial.
+- Conclusion: on Cloudflare, turn work that continues after the `startTurn` RPC invocation ends is unreliable. Non-streaming turns and scheduled runs (`turnExecutor.start`, then `startTurn`) can stall forever or be abandoned. Streaming turns are reliable.
+- Plan corrections in `docs/cloudflare-workers-port-plan.md`: the line-60 claim that an outbound fetch keeps a DO alive for 15 minutes is wrong per Cloudflare's lifecycle docs, which also say `ctx.waitUntil` has no effect in DOs. Section 7 now records the defect, the evidence, and a proposed fix that is not implemented: an alarm-driven turn loop with a 15-minute ceiling. A Worker `waitUntil` drain was rejected because of its 30 s cap. The user will choose the fix.
+
+**Lessons learned:**
+
+- Start the log tail before launching the turns you want to observe.
+- Short turns finish inside the invocation window and hide the defect. Test non-streaming and scheduled paths with long, I/O-heavy work.
+- Verify platform lifetime claims against current docs before designing around them.
+
+**Avoid next time:**
+
+- Don't treat a quick "SCHEDULED-OK" success as proof that scheduled runs work.
+
 ## Cycle 10 — Phase 5 landed and first real Cloudflare deploy (2026-09-15)
 
 **Goal:** Land Phase 5 on the branch, then deploy the Worker to a custom domain and test it end to end on real Cloudflare.

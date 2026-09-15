@@ -155,6 +155,11 @@ There is no code execution on Workers. The server reports sandbox and skills as 
 ## Known limits
 
 - **Turns do not survive restarts.** A turn runs inside its `SessionDO`. If Cloudflare evicts the Durable Object or you deploy while a turn runs, the turn stops. A watchdog alarm later marks it as abandoned. Start a new turn to continue the session.
+- **Use streaming turns for long work.**
+  - Turns started with `stream: false`, and scheduled runs, can stop partway on Cloudflare, because work that continues after the start request has returned is not guaranteed.
+  - Such a turn either shows `running` with no new events until you cancel it (`POST /api/v1/sessions/{session_id}/cancel`), or is later marked as abandoned.
+  - Short turns finish normally.
+  - Streaming turns (`stream: true`, the UI default) completed in every test, including after the client disconnected.
 - **D1 query budget per turn.** D1 allows 1000 queries per Worker invocation on the Paid plan, and a turn runs within one invocation. On local D1, a single-thread turn with small tool results used about 8.2 D1 statements per tool iteration: 99 tool iterations used 814 statements. The server logs a warning at 800. The default limit of 100 tool iterations ends such a turn at about 818 statements, so the risk comes from sub-agents, compaction, larger tool results, or a raised iteration limit.
 - **Closing a stream does not cancel the server-side poll.** In local workerd, closing the HTTP stream of a `subscribe` request or a `stream: true` turn does not cancel the Durable Object's event poll over RPC. The poll ends at the turn's next event or when the turn finishes. Behavior on Cloudflare has not been verified.
 - **The UI is served from `/`.** A Workers deployment cannot serve TrueForge under a path prefix, so `PUBLIC_BASE_URL` must be an origin without a path.
