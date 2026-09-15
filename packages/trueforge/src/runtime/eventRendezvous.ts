@@ -2,8 +2,8 @@
  * Hands a producer's items to one consumer, one at a time: `offer` resolves only once the consumer pulls
  * past the item, so a slow consumer slows the producer. The producer starts at once and runs to its end
  * whatever the consumer does: when the consumer stops (`return()` or `throw()`, even before its first
- * pull, or `signal` aborts, even while it holds an item), the pending `offer` and every later one
- * resolve at once. A producer rejection is thrown from the consumer's next pull; once the consumer has
+ * pull, or `signal` aborts, even before this call or while the consumer holds an item), the pending
+ * `offer` and every later one resolve at once. A producer rejection is thrown from the consumer's next pull; once the consumer has
  * stopped it is dropped, so the producer must report its own failures.
  */
 export function eventRendezvous<T>({
@@ -45,7 +45,12 @@ export function eventRendezvous<T>({
     state.held = undefined;
     notify();
   };
-  signal.addEventListener('abort', stopConsuming, { once: true });
+  // An already aborted signal never fires `abort`.
+  if (signal.aborted) {
+    stopConsuming();
+  } else {
+    signal.addEventListener('abort', stopConsuming, { once: true });
+  }
 
   void produce(item => {
     if (state.consumerGone) {

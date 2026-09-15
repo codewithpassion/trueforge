@@ -93,6 +93,17 @@ describe('eventRendezvous', () => {
     expect(await events.next()).toEqual({ done: true, value: undefined });
   });
 
+  it('lets the producer finish when the signal is already aborted and the consumer never pulls', async () => {
+    const abort = new AbortController();
+    abort.abort();
+    const { produce, offered, finished } = countingProducer(3);
+    eventRendezvous({ produce, signal: abort.signal });
+
+    await finished;
+
+    expect(offered).toEqual([1, 2, 3]);
+  });
+
   it('throws a producer rejection from the next pull after the items offered before it', async () => {
     const events = eventRendezvous<number>({
       produce: async offer => {
