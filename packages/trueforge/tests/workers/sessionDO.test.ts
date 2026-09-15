@@ -1,5 +1,6 @@
 import { CancellationReason, EventType } from '@truefoundry/trueforge-core/agent-session';
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
 import { D1_MAX_VALUE_BYTES } from '../../src/db/d1/client';
 import {
   collectEvents,
@@ -41,6 +42,23 @@ async function subscribeEvents(input: { sessionId: string; turnId: string; after
     throw new Error(`subscribe failed: ${subscribed.code} ${subscribed.message}`);
   }
   return collectEvents(subscribed.stream);
+}
+
+function startedTurnRows(stub: ReturnType<typeof sessionStub>) {
+  return runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql
+      .exec<{
+        turn_id: string;
+        attempts: number;
+        first_failed_at: number | null;
+      }>('SELECT turn_id, attempts, first_failed_at FROM started_turns')
+      .toArray(),
+  );
+}
+
+/** Console lines a spied logger method wrote about one turn. */
+function logLinesAbout(spy: { mock: { calls: unknown[][] } }, turnId: string): unknown[] {
+  return spy.mock.calls.map(([line]) => line).filter(line => typeof line === 'string' && line.includes(turnId));
 }
 
 beforeAll(async () => {
@@ -179,7 +197,7 @@ describe('SessionDO', () => {
     expect(frozen?.state).toMatchObject({ status: 'cancelled', reason: CancellationReason.Abandoned });
   });
 
-  it('watchdog alarm settles the other orphans and re-arms when one orphan fails', async () => {
+  it('watchdog alarm settles the other orphans and drops one whose freeze D1 can never accept', async () => {
     await createMockSession({ sessionId: 'watchdog-partial', scenario: 'slow' });
     await createMockSession({ sessionId: 'watchdog-unsettled', scenario: 'slow' });
     const orphanTurnId = await startedTurnId('watchdog-partial');
@@ -196,8 +214,16 @@ describe('SessionDO', () => {
       );
     });
 
-    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      expect(await runDurableObjectAlarm(stub)).toBe(true);
 
+      expect(logLinesAbout(errors, unsettledTurnId)).toEqual([
+        expect.stringContaining('Watchdog dropped an orphaned turn it can never settle'),
+      ]);
+    } finally {
+      errors.mockRestore();
+    }
     const stores = d1Persistence();
     expect(
       (await stores.sessionStore.getTurn({ session_id: 'watchdog-partial', turn_id: orphanTurnId }))?.state,
@@ -205,10 +231,95 @@ describe('SessionDO', () => {
     expect(
       (await stores.sessionStore.getTurn({ session_id: 'watchdog-unsettled', turn_id: unsettledTurnId }))?.state.status,
     ).toBe('running');
-    await runInDurableObject(stub, async (_instance, state) => {
-      const remaining = state.storage.sql.exec<{ turn_id: string }>('SELECT turn_id FROM started_turns').toArray();
-      expect(remaining.map(row => row.turn_id)).toEqual([unsettledTurnId]);
-      expect(await state.storage.getAlarm()).not.toBeNull();
+    expect(await startedTurnRows(stub)).toEqual([]);
+  });
+
+  it('watchdog alarm retries a failing orphan, then drops it after 10 attempts or an hour', async () => {
+    await createMockSession({ sessionId: 'watchdog-bounded', scenario: 'slow' });
+    const turnId = await startedTurnId('watchdog-bounded');
+    await abortAllDurableObjects();
+    // Not valid JSONB, so reading the turn back fails the same way on every alarm.
+    await env.DB.prepare('UPDATE turn SET state = ? WHERE turn_id = ?')
+      .bind(new Uint8Array([0xff]), turnId)
+      .run();
+    const stub = sessionStub('watchdog-bounded');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+      expect(await startedTurnRows(stub)).toEqual([
+        { turn_id: turnId, attempts: 1, first_failed_at: expect.any(Number) },
+      ]);
+      expect(logLinesAbout(warnings, turnId)).toHaveLength(1);
+      expect(logLinesAbout(errors, turnId)).toEqual([]);
+      await runInDurableObject(stub, async (_instance, state) => {
+        expect(await state.storage.getAlarm()).not.toBeNull();
+        state.storage.sql.exec('UPDATE started_turns SET attempts = 9 WHERE turn_id = ?', turnId);
+      });
+
+      expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+      expect(await startedTurnRows(stub)).toEqual([]);
+      expect(logLinesAbout(errors, turnId)).toEqual([
+        expect.stringContaining('Watchdog gave up on an orphaned turn after repeated failures'),
+      ]);
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        state.storage.sql.exec(
+          'INSERT INTO started_turns (turn_id, tenant_id, session_id, attempts, first_failed_at) VALUES (?, ?, ?, 1, ?)',
+          turnId,
+          TENANT_ID,
+          'watchdog-bounded',
+          Date.now() - 60 * 60 * 1000 - 1,
+        );
+        await state.storage.setAlarm(Date.now() + 60_000);
+      });
+
+      expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+      expect(await startedTurnRows(stub)).toEqual([]);
+      expect(logLinesAbout(errors, turnId)).toHaveLength(2);
+    } finally {
+      errors.mockRestore();
+      warnings.mockRestore();
+    }
+  });
+
+  it('adds the retry columns to a started_turns table created before them and keeps its rows', async () => {
+    await runInDurableObject(sessionStub('watchdog-migration'), (_instance, state) => {
+      state.storage.sql.exec('DROP TABLE started_turns');
+      state.storage.sql.exec(
+        'CREATE TABLE started_turns (turn_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL)',
+      );
+      state.storage.sql.exec(
+        'INSERT INTO started_turns (turn_id, tenant_id, session_id) VALUES (?, ?, ?)',
+        'turn-before-migration',
+        TENANT_ID,
+        'watchdog-migration',
+      );
+    });
+    // The next instance runs the constructor's schema step against the old table.
+    await abortAllDurableObjects();
+
+    await runInDurableObject(sessionStub('watchdog-migration'), (_instance, state) => {
+      const columns = state.storage.sql.exec<{ name: string }>('PRAGMA table_info(started_turns)').toArray();
+      expect(columns.map(column => column.name)).toEqual([
+        'turn_id',
+        'tenant_id',
+        'session_id',
+        'attempts',
+        'first_failed_at',
+      ]);
+      expect(state.storage.sql.exec('SELECT * FROM started_turns').toArray()).toEqual([
+        {
+          turn_id: 'turn-before-migration',
+          tenant_id: TENANT_ID,
+          session_id: 'watchdog-migration',
+          attempts: 0,
+          first_failed_at: null,
+        },
+      ]);
     });
   });
 });

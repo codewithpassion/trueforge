@@ -31,6 +31,43 @@ const KEEPALIVE_INTERVAL_MS = 20_000;
 const WATCHDOG_DELAY_MS = 60_000;
 /** D1 allows 1000 queries per invocation; a turn past this many statements is close to failing. */
 export const D1_TURN_STATEMENT_WARNING = 800;
+/** The watchdog stops retrying an orphan after this many failed attempts... */
+const WATCHDOG_MAX_ATTEMPTS = 10;
+/** ...or once this long has passed since its first failure. */
+const WATCHDOG_RETRY_WINDOW_MS = 60 * 60 * 1000;
+
+interface StartedTurnRow extends Record<string, SqlStorageValue> {
+  turn_id: string;
+  tenant_id: string;
+  session_id: string;
+  attempts: number;
+  first_failed_at: number | null;
+}
+
+/** `CREATE TABLE IF NOT EXISTS` keeps an existing object's older table, so later columns are added here. */
+function createStartedTurnsSchema(sql: SqlStorage): void {
+  sql.exec(
+    `CREATE TABLE IF NOT EXISTS started_turns (
+      turn_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      first_failed_at INTEGER
+    )`,
+  );
+  const columns = new Set(
+    sql
+      .exec<{ name: string }>('PRAGMA table_info(started_turns)')
+      .toArray()
+      .map(column => column.name),
+  );
+  if (!columns.has('attempts')) {
+    sql.exec('ALTER TABLE started_turns ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!columns.has('first_failed_at')) {
+    sql.exec('ALTER TABLE started_turns ADD COLUMN first_failed_at INTEGER');
+  }
+}
 
 export interface StartTurnRequest {
   tenant_id: string;
@@ -73,13 +110,7 @@ export class SessionDO extends DurableObject {
     });
     void ctx.blockConcurrencyWhile(() => {
       DurableObjectEventSubscriptions.createSchema(ctx.storage.sql);
-      ctx.storage.sql.exec(
-        `CREATE TABLE IF NOT EXISTS started_turns (
-          turn_id TEXT PRIMARY KEY,
-          tenant_id TEXT NOT NULL,
-          session_id TEXT NOT NULL
-        )`,
-      );
+      createStartedTurnsSchema(ctx.storage.sql);
       return Promise.resolve();
     });
   }
@@ -220,9 +251,7 @@ export class SessionDO extends DurableObject {
   /** Returns whether an orphan is left for a later alarm because settling it failed. */
   async #freezeOrphans(): Promise<boolean> {
     const orphans = this.ctx.storage.sql
-      .exec<{ turn_id: string; tenant_id: string; session_id: string }>(
-        'SELECT turn_id, tenant_id, session_id FROM started_turns',
-      )
+      .exec<StartedTurnRow>('SELECT turn_id, tenant_id, session_id, attempts, first_failed_at FROM started_turns')
       .toArray()
       .filter(row => !this.#running.has(row.turn_id));
     if (orphans.length === 0) {
@@ -250,15 +279,44 @@ export class SessionDO extends DurableObject {
         this.ctx.storage.sql.exec('DELETE FROM started_turns WHERE turn_id = ?', orphan.turn_id);
       } catch (error) {
         // One orphan that cannot be settled must not block the others or the re-arm.
-        failed = true;
-        this.#logger.warn('Watchdog could not settle an orphaned turn; retrying on the next alarm', {
-          sessionId: orphan.session_id,
-          turnId: orphan.turn_id,
-          ...extractErrorLogFields(error),
-        });
+        failed = this.#recordOrphanFailure({ orphan, error }) || failed;
       }
     }
     return failed;
+  }
+
+  /** Returns whether the orphan stays for a retry; an orphan that will never settle is dropped with an error. */
+  #recordOrphanFailure({ orphan, error }: { orphan: StartedTurnRow; error: unknown }): boolean {
+    const now = Date.now();
+    const attempts = orphan.attempts + 1;
+    const firstFailedAt = orphan.first_failed_at ?? now;
+    const logFields = {
+      sessionId: orphan.session_id,
+      turnId: orphan.turn_id,
+      attempts,
+      firstFailedAt: new Date(firstFailedAt).toISOString(),
+      ...extractErrorLogFields(error),
+    };
+    // A value D1 refuses fails the same way on every retry.
+    const permanent = error instanceof D1ValueTooLargeError;
+    if (permanent || attempts >= WATCHDOG_MAX_ATTEMPTS || now - firstFailedAt >= WATCHDOG_RETRY_WINDOW_MS) {
+      this.ctx.storage.sql.exec('DELETE FROM started_turns WHERE turn_id = ?', orphan.turn_id);
+      this.#logger.error(
+        permanent
+          ? 'Watchdog dropped an orphaned turn it can never settle; the turn may stay running in D1'
+          : 'Watchdog gave up on an orphaned turn after repeated failures; the turn may stay running in D1',
+        logFields,
+      );
+      return false;
+    }
+    this.ctx.storage.sql.exec(
+      'UPDATE started_turns SET attempts = ?, first_failed_at = ? WHERE turn_id = ?',
+      attempts,
+      firstFailedAt,
+      orphan.turn_id,
+    );
+    this.#logger.warn('Watchdog could not settle an orphaned turn; retrying on the next alarm', logFields);
+    return true;
   }
 
   #keepAliveUntil(turnId: string, drained: Promise<void>): void {
