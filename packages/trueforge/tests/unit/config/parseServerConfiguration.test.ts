@@ -22,6 +22,13 @@ const OIDC_ENV: ManagedEnv = {
   OIDC_CLIENT_SECRET: 'workers-secret',
 };
 
+/** The minimum a workers configuration accepts. */
+const WORKERS_ENV: ManagedEnv = {
+  TRUEFORGE_RUNTIME: 'workers',
+  ...OIDC_ENV,
+  PUBLIC_BASE_URL: 'https://trueforge.example.com',
+};
+
 function parseWithEnv(env: ManagedEnv) {
   const saved = new Map(MANAGED_KEYS.map(key => [key, process.env[key]]));
   for (const key of MANAGED_KEYS) {
@@ -74,7 +81,7 @@ describe('parseServerConfiguration', () => {
 
   describe('TRUEFORGE_RUNTIME=workers', () => {
     it('parses with OIDC configured', () => {
-      const config = parseWithEnv({ TRUEFORGE_RUNTIME: 'workers', ...OIDC_ENV });
+      const config = parseWithEnv(WORKERS_ENV);
       if (config.RUNTIME !== 'workers') {
         throw new Error(`expected workers, got ${config.RUNTIME}`);
       }
@@ -83,13 +90,12 @@ describe('parseServerConfiguration', () => {
     });
 
     it('accepts an agreeing STANDALONE=false', () => {
-      expect(parseWithEnv({ TRUEFORGE_RUNTIME: 'workers', STANDALONE: 'false', ...OIDC_ENV }).RUNTIME).toBe('workers');
+      expect(parseWithEnv({ ...WORKERS_ENV, STANDALONE: 'false' }).RUNTIME).toBe('workers');
     });
 
     it('ignores Node-only settings', () => {
       const config = parseWithEnv({
-        TRUEFORGE_RUNTIME: 'workers',
-        ...OIDC_ENV,
+        ...WORKERS_ENV,
         REDIS_URL: 'redis://redis:6379',
         DATABASE_URL: 'postgres://user:pass@db:5432/trueforge',
         TRUEFORGE_API_KEY: 'service-key',
@@ -137,6 +143,12 @@ describe('parseServerConfiguration', () => {
       expect(() =>
         parseWithEnv({ TRUEFORGE_RUNTIME: 'workers', ...OIDC_ENV, PUBLIC_BASE_URL: 'https://example.com/trueforge' }),
       ).toThrow(/PUBLIC_BASE_URL must not include a path when TRUEFORGE_RUNTIME=workers/);
+    });
+
+    it('rejects an empty PUBLIC_BASE_URL', () => {
+      expect(() => parseWithEnv({ TRUEFORGE_RUNTIME: 'workers', ...OIDC_ENV })).toThrow(
+        /PUBLIC_BASE_URL is required when TRUEFORGE_RUNTIME=workers/,
+      );
     });
 
     it('rejects TrueFoundry mode', () => {

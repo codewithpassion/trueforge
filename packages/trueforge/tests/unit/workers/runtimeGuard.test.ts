@@ -1,7 +1,14 @@
 import { parseServerConfiguration } from '../../../src/config';
 import { assertWorkersRuntime } from '../../../src/workers/runtimeGuard';
 
-const MANAGED_KEYS = ['TRUEFORGE_RUNTIME', 'STANDALONE', 'OIDC_ISSUER_URL', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET'];
+const MANAGED_KEYS = [
+  'TRUEFORGE_RUNTIME',
+  'STANDALONE',
+  'OIDC_ISSUER_URL',
+  'OIDC_CLIENT_ID',
+  'OIDC_CLIENT_SECRET',
+  'PUBLIC_BASE_URL',
+];
 
 function parseWithEnv(env: Record<string, string>) {
   const saved = new Map(MANAGED_KEYS.map(key => [key, process.env[key]]));
@@ -38,6 +45,7 @@ describe('assertWorkersRuntime', () => {
       OIDC_ISSUER_URL: 'https://issuer.example.com/',
       OIDC_CLIENT_ID: 'workers-client',
       OIDC_CLIENT_SECRET: 'workers-secret',
+      PUBLIC_BASE_URL: 'https://trueforge.example.com',
     });
 
     expect(() => {

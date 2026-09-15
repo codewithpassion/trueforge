@@ -28,6 +28,7 @@
     "OIDC_ISSUER_URL": "https://issuer.test/",
     "OIDC_CLIENT_ID": "trueforge-workers-tests",
     "OIDC_CLIENT_SECRET": "workers-tests-secret",
+    "PUBLIC_BASE_URL": "https://trueforge.test",
     "LOG_LEVEL": "warn",
   },
 }

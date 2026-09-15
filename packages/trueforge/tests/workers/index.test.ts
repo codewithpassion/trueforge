@@ -61,6 +61,7 @@ describe('Worker entry for static asset misses', () => {
       init: { method: 'HEAD', headers: { accept: HTML_ACCEPT } },
     });
     expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-cache');
     expect(requests.map(request => request.method)).toEqual(['HEAD']);
   });
 

@@ -37,7 +37,7 @@
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },
   // OIDC values are placeholders. Add PUBLIC_BASE_URL (an origin, no path) per deployment; with no
-  // placeholder, a missing value fails loudly instead of sending OIDC callbacks to a foreign domain.
+  // placeholder, a missing value fails startup instead of sending OIDC callbacks to a foreign domain.
   // Secrets such as OIDC_CLIENT_SECRET go through `wrangler secret put`, or packages/trueforge/.env
   // locally. Keep *_CATALOG_PATH unset.
   "vars": {

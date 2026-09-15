@@ -30,6 +30,7 @@ jest.mock('../../src/config', () => {
     OIDC_ISSUER_URL: 'https://issuer.example.com/',
     OIDC_CLIENT_ID: 'workers-client',
     OIDC_CLIENT_SECRET: 'workers-secret',
+    PUBLIC_BASE_URL: 'https://trueforge.example.com',
   };
   const saved = new Map(Object.keys(workersEnv).map(key => [key, process.env[key]]));
   Object.assign(process.env, workersEnv);
