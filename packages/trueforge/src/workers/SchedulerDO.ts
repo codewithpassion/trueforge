@@ -68,6 +68,7 @@ export class SchedulerDO extends DurableObject {
         sessions: new Sessions({ sessionStore: persistence.sessionStore }),
         agentStore: persistence.agentStore,
         turnExecutor,
+        // Required by the executor contract; the session Durable Object resolves its own D1 stores and ignores these.
         resolveTurnStores: agent => ({
           agentStore: persistence.agentStore,
           modelProviderStore: persistence.resolveModelProviderStore(requestContext, agent),

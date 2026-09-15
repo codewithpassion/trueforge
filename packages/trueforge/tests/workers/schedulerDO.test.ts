@@ -82,7 +82,16 @@ afterEach(async () => {
       runInDurableObject(schedulerStub(name), (_instance, state) => state.storage.deleteAlarm()),
     ),
   );
+  const actual = await vi.importActual<typeof import('../../src/controller/scheduleDispatch')>(
+    '../../src/controller/scheduleDispatch',
+  );
+  vi.mocked(dispatchScheduledRuns).mockImplementation(actual.dispatchScheduledRuns);
 });
+
+/** Alarm-state tests arm real alarms; a stubbed pass keeps them from dispatching against the shared database. */
+function stubDispatchPasses(): void {
+  vi.mocked(dispatchScheduledRuns).mockResolvedValue({ dispatched: 0, failed: 0 });
+}
 
 describe('SchedulerDO', () => {
   it('starts a due run in the session keyed by the run id and adds the next pending run', async () => {
@@ -155,6 +164,7 @@ describe('SchedulerDO', () => {
   });
 
   it('ensureAlarm leaves an armed alarm at its time', async () => {
+    stubDispatchPasses();
     const armedAt = Date.now() + HOUR_MS;
     await runInDurableObject(schedulerStub(ENSURE_ARMED), (_instance, state) => state.storage.setAlarm(armedAt));
 
@@ -165,6 +175,7 @@ describe('SchedulerDO', () => {
 
   // The armed alarm is due at once and reads as null while its pass runs, so wait for the re-arm.
   it('ensureAlarm arms an idle scheduler', async () => {
+    stubDispatchPasses();
     expect(await alarmOf(ENSURE_IDLE)).toBeNull();
 
     await schedulerStub(ENSURE_IDLE).ensureAlarm();
@@ -175,6 +186,7 @@ describe('SchedulerDO', () => {
   });
 
   it('the cron handler arms the singleton scheduler', async () => {
+    stubDispatchPasses();
     expect(await alarmOf(SCHEDULER_INSTANCE_NAME)).toBeNull();
 
     await worker.scheduled(createScheduledController({ cron: '*/5 * * * *', scheduledTime: Date.now() }), env);
