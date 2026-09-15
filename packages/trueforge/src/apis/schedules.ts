@@ -18,8 +18,8 @@ import {
   ScheduleNotFoundError,
   scheduleRunFailureReason,
   ScheduleRunNotFoundError,
-  startScheduleRun,
 } from '../controller/scheduleDispatch';
+import { executeScheduleRun } from '../controller/scheduleRunExecution';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
@@ -78,38 +78,30 @@ export interface SchedulesRouterDeps<TTransaction> extends ScheduleTurnExecution
 }
 
 /**
- * Prepare and start a schedule run using Context-based store resolvers. Caller must set
- * `request_context` (typically via {@link requestContextFromCreatedBySubject})
- * before calling. Returns the executor's failure when the turn could not start.
+ * Starts a schedule run with stores resolved from `c`. Caller must set `request_context` (typically via
+ * `requestContextFromCreatedBySubject`) before calling.
  */
-export async function startScheduleRunOnRequest<TTransaction>(params: {
+function startScheduleRunOnRequest<TTransaction>(params: {
   c: Context;
   item: ScheduleDispatchItem;
   deps: ScheduleTurnExecutionDeps<TTransaction>;
 }): Promise<TurnExecutorFailure | undefined> {
   const { c, item, deps } = params;
-  const prepared = await startScheduleRun({
+  return executeScheduleRun({
     item,
-    sessions: deps.sessions,
-    agentStore: deps.agentStore,
-  });
-  if (prepared === undefined) {
-    return undefined;
-  }
-  const started = await deps.turnExecutor.start({
-    session: prepared.session,
-    input: prepared.input,
-    previous_turn_id: prepared.previous_turn_id,
-    userRef: prepared.userRef,
-    stores: {
+    deps: {
+      sessions: deps.sessions,
       agentStore: deps.agentStore,
-      modelProviderStore: deps.resolveModelProviderStore(c, prepared.agent),
-      mcpServerStore: deps.resolveMcpServerStore(c, prepared.agent),
-      sandboxProviderStore: deps.resolveSandboxProviderStore(c),
-      skillStore: deps.turnSkillsResolverStore,
+      turnExecutor: deps.turnExecutor,
+      resolveTurnStores: agent => ({
+        agentStore: deps.agentStore,
+        modelProviderStore: deps.resolveModelProviderStore(c, agent),
+        mcpServerStore: deps.resolveMcpServerStore(c, agent),
+        sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+        skillStore: deps.turnSkillsResolverStore,
+      }),
     },
   });
-  return started.ok ? undefined : started;
 }
 
 function toWireSchedule(record: ScheduleRecord): Schedule {
