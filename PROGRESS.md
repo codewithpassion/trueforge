@@ -4,6 +4,28 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 15 — Integrations layer and Slack plan written (2026-09-16)
+
+**Goal:** Answer whether an agent can connect to Slack and whether TrueForge has a plugin system, then plan an integrations layer with Slack as the first adapter.
+
+**What we did:**
+
+- Slack: there is no Slack code. Agents can already send messages through a remote Slack MCP server under Settings → Connectors. Inbound messages need a bridge. Existing building blocks: sessions fetched or created by external id, non-streaming turns, and the `created_by_subject` run-as identity from schedules. Gap: the API accepts only OIDC bearer tokens or cookies, and `TRUEFORGE_API_KEY` is Node-only and used only to run schedules, so an external bot has no service auth on Workers.
+- Plugins: there is no plugin system. The extension points are MCP servers, skills, the fixed built-in capability toggles (`builtinsFromSpec.ts`), catalogs (Node only), trueforge-core library interfaces (pre-send, pre-LLM and post-tool-call processors, `ClientSideTool`; no compatibility promise), the UI SDK `AgentUIServer` adapters, and the HTTP API with its generated SDK.
+- The user asked to add the layer to "the slack docs", which did not exist. Created `docs/integrations-slack-plan.md` and linked it from the status list in `docs/cloudflare-workers-port-plan.md`.
+- Layer design: `packages/trueforge/src/integrations` with a `ChannelAdapter` port (receive, deliver), an `IntegrationRouter`, a `TurnCompletionNotifier` hooked after drain on the Node `turnRunner` and the Workers SessionDO, and a static adapter registry. Tables `integration`, `integration_event` (dedupe) and `integration_delivery` (outbox) on SQLite, Postgres and D1, using the D1 conditional chain. A new `integration` session source variant. Admin routes `/api/v1/settings/integrations` and signature-verified ingress `/api/v1/integrations/{integration_id}/events`. Turns run as the admin who connected the integration.
+- Slack adapter: v0 signature check with Web Crypto and a 5-minute window, `url_verification`, bot and self-message filtering, `event_id` dedupe, one session per thread, acknowledgement within 3 s by starting a non-streaming turn (0.4 to 0.6 s measured live), a reply when the thread is busy, `chat.postMessage` in the thread with mrkdwn conversion and chunking, outbox retries that honor 429.
+- Phases: I1 layer; I2 Slack messaging with a live test and a user guide; I3 approvals and `ask_user_question` through Block Kit; I4 notification rules for schedules. The plan also lists rules and risks.
+- Nothing implemented yet.
+
+**Lessons learned:**
+
+- The user may refer to docs that don't exist yet. Here "the slack docs" had to be created from scratch.
+
+**Avoid next time:**
+
+- When a referenced doc doesn't exist, create it and say so plainly in the reply. Don't imply you updated an existing file.
+
 ## Cycle 14 — Phase 7 sandbox plan written (2026-09-16)
 
 **Goal:** List what the Workers deploy lacks compared with Docker, and plan code execution on Workers, starting with Cloudflare Computer.
