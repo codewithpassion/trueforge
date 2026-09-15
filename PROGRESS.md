@@ -4,6 +4,28 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 12 — Alarm-held turns fix built (2026-09-15)
+
+**Goal:** Build the alarm-driven fix the user chose for the Cycle 11 non-streaming turn defect.
+
+**What we did:**
+
+- A forge agent built it in worktree branch `worktree-agent-a16809aa38aa2dfed` (based on `5e750229`): `5519ae93` has the source, tests and `.changeset/workers-alarm-held-turns.md`; `defea576` has the plan doc.
+- SessionDO changes: `#running` is now a map from turn id to a promise that never rejects and resolves when the turn ends. `startTurn` sets the alarm to fire immediately. `alarm()` arms a 60 s fallback alarm, freezes orphans, then waits until no turn is running on this instance, for at most 14 minutes. The 14-minute constant moved to `src/workers/alarmBudget.ts`, which SchedulerDO also uses. After the wait, `alarm()` freezes orphans again and re-arms: immediately if turns remain, at 60 s if orphans remain, otherwise at the next stream expiry. The `setInterval` keepalive and `ctx.waitUntil` were removed.
+- Deviations from the brief: the 60 s fallback alarm was added, because a running alarm is no longer stored and an abort during the wait would leave no watchdog. Streaming turns also get the immediate alarm, since `startTurnStreaming` calls `startTurn`. SchedulerDO only changed to use the shared constant, because scheduled runs already go through `startTurn`.
+- Known unfixed edge: if the orphan select throws while a turn runs, the alarm re-arms immediately, over and over.
+- Four new tests in `tests/workers/sessionDO.test.ts`: an alarm holds a non-streaming turn until `turn.done`; an alarm that runs out of budget re-arms and a later alarm finishes the turn; an alarm already waiting also waits for a turn started after it; an alarm freezes an orphan but never a turn its own instance runs. Five watchdog tests now use a `heldTurnId` helper. The `evictDurableObject` test was dropped: a graceful local eviction waited for the alarm, and the turn ended as error.
+- Verified: typecheck, `test:trueforge` 595, D1 220, Workers 50 (three runs in a row), eslint 0 errors, prettier clean, `workers:check` 4974 KiB, no `.env`.
+- Status: the Opus adversarial review (`review-p6`) is running. Next: land, redeploy, then retest live with the long non-streaming turn, the heavy Context7 turns and a longer scheduled run.
+
+**Lessons learned:**
+
+- Local workerd kept turns alive even before the fix, so the local tests don't prove the fix works. Only the live deploy can. These checks are live-only: the alarm keeps turns alive; the D1 1000-query limit holds when one turn spans the RPC and several alarm runs; turns longer than 14 minutes; the fallback alarm; Cloudflare's alarm retries.
+
+**Avoid next time:**
+
+- When local workerd can't reproduce a lifecycle defect, don't land without a plan. Make the live retest the acceptance test before landing, and write down up front what counts as proof.
+
 ## Cycle 11 — Heavy-turn tests on the live deploy find a non-streaming turn defect (2026-09-15)
 
 **Goal:** Test heavy, tool-using turns on the live Cloudflare deploy, using the Context7 MCP server as the load.
