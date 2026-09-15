@@ -49,15 +49,20 @@ export interface TurnStartInput {
   stores: TurnStores;
 }
 
+export interface TurnStreamingStartInput extends TurnStartInput {
+  /** Aborts when the client goes away; the turn keeps running and stays resumable. */
+  signal: AbortSignal;
+}
+
 /**
- * Where turns run. Domain failures come back as {@link TurnExecutorFailure}; unexpected errors still
+ * Where turns run. Domain failures come back as a `TurnExecutorFailure`; unexpected errors still
  * throw so the app error handler logs them and answers 500.
  */
 export interface TurnExecutor {
   /** Resolves once the first event is on the resumable stream, so an immediate subscribe cannot 412. */
   start(input: TurnStartInput): Promise<TurnStartResult>;
-  /** Starts a turn and yields its sequenced events until the turn ends. */
-  startStreaming(input: TurnStartInput): Promise<TurnEventsResult>;
+  /** Starts a turn and yields its sequenced events until the turn ends or `signal` aborts. */
+  startStreaming(input: TurnStreamingStartInput): Promise<TurnEventsResult>;
   /** Replays events after `after_sequence_number`, then follows the live stream until `signal` aborts. */
   subscribe(input: {
     tenant_id: string;

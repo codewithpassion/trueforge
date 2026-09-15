@@ -18,6 +18,7 @@ import { z } from 'zod';
 import type { SandboxIntegration } from '../sandbox/integration';
 import type { ActiveTurnRegistry } from './activeTurns';
 import { StreamGoneError, type EventSubscriptionRegistry, type SequencedEvent } from './event-subscription';
+import { eventRendezvous } from './eventRendezvous';
 import { executorFromTurnId, mintPeeredTurnId } from './peeringIds';
 import {
   freezeTurnIgnoringMissing,
@@ -27,15 +28,9 @@ import {
   type TurnExecutor,
   type TurnStartInput,
   type TurnStartResult,
+  type TurnStreamingStartInput,
 } from './turnExecutor';
-import {
-  beginTurnExecution,
-  drainTurnEvents,
-  startTurnInProcess,
-  toWireTurn,
-  turnStreamId,
-  type TurnEventDrainInput,
-} from './turnRunner';
+import { beginTurnExecution, drainTurnEvents, startTurnInProcess, toWireTurn, turnStreamId } from './turnRunner';
 
 /** Request-reply path a replica serves to cancel a turn it owns. */
 export const SESSIONS_CANCEL_PATH = 'sessions/cancel';
@@ -170,47 +165,6 @@ export async function cancelSessionTurn(
   }
 }
 
-/** Runs the drain detached and hands its sequenced events to one consumer, which may fall behind. */
-function sequencedDrain(
-  drainInput: TurnEventDrainInput,
-): AsyncGenerator<SequencedEvent<TurnStreamingEvent>, void, unknown> {
-  const pending: SequencedEvent<TurnStreamingEvent>[] = [];
-  // An object, so the flag flipped by the detached drain is re-read after each wait.
-  const drain = { finished: false };
-  let wake: (() => void) | undefined;
-  const notify = (): void => {
-    const resolve = wake;
-    wake = undefined;
-    resolve?.();
-  };
-  void drainTurnEvents({
-    ...drainInput,
-    onEvent: (event, sequenceNumber) => {
-      pending.push({ ...event, sequence_number: sequenceNumber });
-      notify();
-      return Promise.resolve();
-    },
-  }).finally(() => {
-    drain.finished = true;
-    notify();
-  });
-  return (async function* () {
-    for (;;) {
-      const next = pending.shift();
-      if (next !== undefined) {
-        yield next;
-        continue;
-      }
-      if (drain.finished) {
-        return;
-      }
-      await new Promise<void>(resolve => {
-        wake = resolve;
-      });
-    }
-  })();
-}
-
 export interface NodeTurnExecutorDeps {
   activeTurns: ActiveTurnRegistry;
   eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
@@ -248,10 +202,19 @@ export class NodeTurnExecutor implements TurnExecutor {
     }
   }
 
-  async startStreaming(input: TurnStartInput): Promise<TurnEventsResult> {
+  async startStreaming(input: TurnStreamingStartInput): Promise<TurnEventsResult> {
     try {
       const { drainInput } = await beginTurnExecution(this.#executionParams(input));
-      return { ok: true, events: sequencedDrain(drainInput) };
+      // The drain waits on the client like an inline SSE write did, until the client goes away.
+      const events = eventRendezvous<SequencedEvent<TurnStreamingEvent>>({
+        signal: input.signal,
+        produce: offer =>
+          drainTurnEvents({
+            ...drainInput,
+            onEvent: (event, sequenceNumber) => offer({ ...event, sequence_number: sequenceNumber }),
+          }),
+      });
+      return { ok: true, events };
     } catch (error) {
       const failure = turnStartFailure(error);
       if (failure) {

@@ -358,9 +358,11 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       },
     };
 
-    // Non-stream: wait for first dual-write, return JSON (also used by schedule run-now).
+    // Non-stream resolves after the first dual-write and answers JSON (schedule run-now uses it too);
+    // stream hands back the event generator for SSE. Aborted when the client goes away.
+    const clientGone = new AbortController();
     const started = body.stream
-      ? await deps.turnExecutor.startStreaming(startInput)
+      ? await deps.turnExecutor.startStreaming({ ...startInput, signal: clientGone.signal })
       : await deps.turnExecutor.start(startInput);
     if (!started.ok) {
       if (
@@ -378,23 +380,29 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       return c.json({ data: started.turn }, 200);
     }
 
-    // Stream: the executor owns execution; this handler only writes each event to SSE.
-    let shouldWriteToSSEStream = true;
+    // Stream: the executor owns execution; this handler only writes each event to SSE. Leaving the
+    // loop early detaches the client and the turn runs on, still resumable through subscribe.
+    const events = started.events;
     return streamSSE(c, async stream => {
       stream.onAbort(() => {
-        shouldWriteToSSEStream = false;
+        clientGone.abort();
       });
-      for await (const { sequence_number: sequenceNumber, ...event } of started.events) {
-        if (!stream.closed && !stream.aborted && shouldWriteToSSEStream) {
+      try {
+        for await (const { sequence_number: sequenceNumber, ...event } of events) {
+          if (stream.closed || stream.aborted) {
+            break;
+          }
           try {
             await stream.writeSSE(turnEventSsePayload(event, sequenceNumber));
           } catch (error) {
             deps.logger.error('SSE stream write error', extractErrorLogFields(error));
-            shouldWriteToSSEStream = false;
+            break;
           }
         }
+      } finally {
+        clientGone.abort();
+        await stream.close();
       }
-      await stream.close();
     });
   };
 

@@ -317,6 +317,99 @@ describe('turns', () => {
     });
   });
 
+  describe('create turn streaming', () => {
+    it('keeps the turn running and persists turn.done after the client disconnects', async () => {
+      const db = createSqliteDb(':memory:');
+      await migrateSqliteToLatest(db);
+      let releaseDone: () => void = () => undefined;
+      const doneGate = new Promise<void>(resolve => {
+        releaseDone = resolve;
+      });
+      const agentSpec = AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } });
+      const sessions = {
+        get: () =>
+          Promise.resolve({
+            session_id: 's1',
+            tenant_id: STANDALONE_REQUEST_CONTEXT.tenant_id,
+            spec: agentSpec,
+            record: {
+              last_turn_id: null,
+              created_by_subject: {
+                subject_id: STANDALONE_REQUEST_CONTEXT.subject.id,
+                subject_type: STANDALONE_REQUEST_CONTEXT.subject.type,
+                subject_display_name: STANDALONE_REQUEST_CONTEXT.subject.display_name,
+              },
+              agent: { type: 'inline', spec: agentSpec },
+            },
+            createTurn: () =>
+              Promise.resolve({
+                id: 'turn-detached',
+                stream: async function* stream() {
+                  yield {
+                    type: 'turn.created',
+                    id: 'evt_created',
+                    turn_id: 'turn-detached',
+                    previous_turn_id: null,
+                    state: { status: 'running' },
+                    created_at: '2026-01-01T00:00:00.000Z',
+                    thread_id: null,
+                  };
+                  await doneGate;
+                  yield {
+                    type: 'turn.done',
+                    id: 'evt_done',
+                    state: { status: 'done' },
+                    created_at: '2026-01-01T00:00:01.000Z',
+                    thread_id: null,
+                  };
+                },
+              }),
+          }),
+      } as unknown as Sessions;
+      const logger = createLogger({ silent: true });
+      const eventSubscriptions = new EventSubscriptionRegistry<TurnStreamingEvent>(undefined);
+      const app = new OpenAPIHono();
+      app.route(
+        '/',
+        createTurnsRouter({
+          sessions,
+          sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
+          resolveModelProviderStore: () => new SqliteModelProviderStore(db),
+          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, new SqliteOAuthTokenStore(db)),
+          resolveAgentStore: () => new SqliteAgentStore(db),
+          resolveSkillStore: () => new SqliteSkillStore(db),
+          turnExecutor: testNodeTurnExecutor({ eventSubscriptions, logger }),
+          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+          sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
+          logger,
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          authorizer: new TrueForgeAuthorizer(),
+        }),
+      );
+
+      const response = await app.request('/s1/turns', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ stream: true }),
+      });
+      const reader = response.body?.getReader();
+      const first = await reader?.read();
+      expect(new TextDecoder().decode(first?.value)).toContain('turn.created');
+      await reader?.cancel();
+      releaseDone();
+
+      const persisted: string[] = [];
+      const stream = eventSubscriptions.get(turnStreamId(STANDALONE_REQUEST_CONTEXT.tenant_id, 's1', 'turn-detached'));
+      for await (const event of stream.poll(0, { signal: AbortSignal.timeout(5_000) })) {
+        persisted.push(event.type);
+        if (event.type === 'turn.done') {
+          break;
+        }
+      }
+      expect(persisted).toEqual(['turn.created', 'turn.done']);
+    });
+  });
+
   describe('turn SSE after session deletion', () => {
     it('warns when the stream ends because the session/turn was removed', async () => {
       const warnings: unknown[] = [];
