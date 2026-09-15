@@ -1,6 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import {
   AgentSpecSchema,
+  EventType,
   Sessions,
   TurnNotFoundError,
   type TurnStreamingEvent,
@@ -8,6 +9,7 @@ import {
 import type { Kysely } from 'kysely';
 import { createLogger } from 'winston';
 import { createTurnsRouter } from '../../../src/apis/turns';
+import { createAppErrorHandler } from '../../../src/app';
 import { TrueForgeAuthorizer, type Authorizer } from '../../../src/auth/authorizer';
 import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
@@ -21,7 +23,7 @@ import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteS
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
-import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription/index.js';
+import { EventSubscriptionRegistry, StreamGoneError } from '../../../src/runtime/event-subscription/index.js';
 import { turnStreamId } from '../../../src/runtime/turnRunner';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import { testNodeTurnExecutor } from '../runtime/testNodeTurnExecutor';
@@ -502,6 +504,78 @@ describe('turns', () => {
             typeof message === 'string' && message.includes('Turn stream ended after session/turn was removed'),
         ),
       ).toBe(true);
+    });
+  });
+
+  describe('subscribe to an expired stream', () => {
+    it('answers 412 with the error body when the turn exists but its stream expired', async () => {
+      const db = createSqliteDb(':memory:');
+      await migrateSqliteToLatest(db);
+      const logger = createLogger({ silent: true });
+      const tenantId = STANDALONE_REQUEST_CONTEXT.tenant_id;
+      const agentSpec = AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } });
+      const sessions = {
+        get: () =>
+          Promise.resolve({
+            session_id: 's1',
+            tenant_id: tenantId,
+            spec: agentSpec,
+            record: {
+              session_id: 's1',
+              created_by_subject: {
+                subject_id: STANDALONE_REQUEST_CONTEXT.subject.id,
+                subject_type: STANDALONE_REQUEST_CONTEXT.subject.type,
+                subject_display_name: STANDALONE_REQUEST_CONTEXT.subject.display_name,
+              },
+              agent: { type: 'inline', spec: agentSpec },
+            },
+            getTurn: () => Promise.resolve({ turn_id: 'turn-expired', session_id: 's1', state: { status: 'done' } }),
+          }),
+      } as unknown as Sessions;
+      const eventSubscriptions = new EventSubscriptionRegistry<TurnStreamingEvent>(undefined);
+      const streamId = turnStreamId(tenantId, 's1', 'turn-expired');
+      await eventSubscriptions.get(streamId).put(
+        {
+          type: EventType.TURN_CREATED,
+          id: 'evt_created',
+          turn_id: 'turn-expired',
+          previous_turn_id: null,
+          state: { status: 'running' },
+          created_at: '2026-01-01T00:00:00.000Z',
+          thread_id: null,
+        },
+        { streamTTLSeconds: 1 },
+      );
+      const app = new OpenAPIHono();
+      app.onError(createAppErrorHandler({ logger }));
+      app.route(
+        '/',
+        createTurnsRouter({
+          sessions,
+          sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
+          resolveModelProviderStore: () => new SqliteModelProviderStore(db),
+          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, new SqliteOAuthTokenStore(db)),
+          resolveSkillStore: () => new SqliteSkillStore(db),
+          resolveAgentStore: () => new SqliteAgentStore(db),
+          turnExecutor: testNodeTurnExecutor({ eventSubscriptions, logger }),
+          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+          sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
+          logger,
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          authorizer: new TrueForgeAuthorizer(),
+        }),
+      );
+
+      // Past the stream's TTL, so the registry drops it when subscribe reads it.
+      const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 2_000);
+      try {
+        const response = await app.request('/s1/turns/turn-expired/subscribe');
+
+        expect(response.status).toBe(412);
+        expect(await response.json()).toEqual({ error: { message: new StreamGoneError(streamId).message } });
+      } finally {
+        clock.mockRestore();
+      }
     });
   });
 

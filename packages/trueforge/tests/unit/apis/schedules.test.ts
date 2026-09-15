@@ -4,10 +4,17 @@ import { createScheduleExecutionRouter, createSchedulesRouter } from '../../../s
 import { TrueForgeAuthorizer, type Authorizer } from '../../../src/auth/authorizer';
 import type { RequestContext } from '../../../src/auth/identity';
 import { ScheduleAgentNotFoundError, startScheduleRun } from '../../../src/controller/scheduleDispatch';
+import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
 import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
+import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
+import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
+import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
 import { SqliteScheduleStore } from '../../../src/db/sqlite/schedule-store/SqliteScheduleStore';
+import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteSessionStore';
+import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
+import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import {
   CreateScheduleRunResponseSchema,
   ListScheduleRunsResponseSchema,
@@ -471,6 +478,90 @@ describe('internal schedule execution', () => {
     expect(mockedStartScheduleRun).toHaveBeenCalledWith(
       expect.objectContaining({ item: expect.objectContaining({ run: expect.objectContaining({ id: run.id }) }) }),
     );
+  });
+
+  it('answers 422 when the turn cannot start because the agent needs a sandbox', async () => {
+    const actual = jest.requireActual<typeof import('../../../src/controller/scheduleDispatch')>(
+      '../../../src/controller/scheduleDispatch',
+    );
+    mockedStartScheduleRun.mockReset();
+    mockedStartScheduleRun.mockImplementation(actual.startScheduleRun);
+    const db = createSqliteDb(':memory:');
+    await migrateSqliteToLatest(db);
+    const agentStore = new SqliteAgentStore(db);
+    const scheduleStore = new SqliteScheduleStore(db, new BetterSqliteAtomicRunner(db));
+    const modelProviderStore = new SqliteModelProviderStore(db);
+    await modelProviderStore.upsertProvider({
+      tenant_id: 'default',
+      name: 'test-provider',
+      manifest: {
+        type: 'custom',
+        name: 'test-provider',
+        base_url: 'https://llm.test.example.com/v1',
+        auth: { api_key: 'sk-test' },
+        models: [
+          {
+            model_id: 'test-model',
+            name: 'test-model',
+            properties: { context_length: 128000, max_output_tokens: 4096 },
+          },
+        ],
+      },
+    });
+    const alice = { subject_id: 'alice', subject_type: 'user' as const, subject_display_name: 'alice' };
+    const agent = await agentStore.createAgent({
+      tenant_id: 'default',
+      created_by_subject: alice,
+      name: 'sandboxed',
+      description: 'Needs a sandbox.',
+      manifest: AgentSpecSchema.parse({
+        model: { name: 'test-provider/test-model' },
+        instructions: 'test',
+        config: { sandbox: { enabled: true } },
+      }),
+      external_id: null,
+    });
+    const { schedule } = await scheduleStore.createScheduleAndRun({
+      tenant_id: 'default',
+      agent_id: agent.id,
+      agent_name: agent.name,
+      name: 'sandboxed-report',
+      manifest: { task: 'Say hi', cron: '0 13 * * *', timezone: 'UTC', status: 'active' },
+      created_by_subject: alice,
+      runFrom: new Date(),
+    });
+    const run = await scheduleStore.createRun({
+      tenant_id: 'default',
+      schedule_id: schedule.id,
+      name: 'manual-sandboxed',
+      scheduled_for: new Date(),
+      status: 'triggered',
+      created_by_subject: alice,
+      triggered_at: new Date(),
+    });
+    const tokenStore = new SqliteOAuthTokenStore(db);
+    const app = createScheduleExecutionRouter({
+      ...stubTurnExecutionDeps(agentStore, scheduleStore),
+      sessions: new Sessions({ sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)) }),
+      turnExecutor: testNodeTurnExecutor({ sandboxIntegration: undefined }),
+      resolveModelProviderStore: () => modelProviderStore,
+      resolveMcpServerStore: () =>
+        new McpServerWithAuthStore({
+          store: new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
+          tokenStore,
+          clientName: 'test-client',
+        }),
+      resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+      turnSkillsResolverStore: new SqliteSkillStore(db),
+    });
+
+    const response = await app.request('/runs/execute', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ schedule_run_id: run.id }),
+    });
+
+    expect(response.status).toBe(422);
   });
 
   it('maps an unknown run to 404', async () => {
