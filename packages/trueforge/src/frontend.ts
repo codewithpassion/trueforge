@@ -7,16 +7,15 @@ import { compress } from 'hono/compress';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import {
+  applyShellTokens,
+  HASHED_ASSET_PREFIX,
+  IMMUTABLE_CACHE_CONTROL,
+  REVALIDATE_CACHE_CONTROL,
+} from './frontendShell';
+
 /** Routes the server answers itself; never served from the build. /api covers every version below it. */
 const SERVER_PATH_PREFIXES = ['/api', '/healthz'];
-
-/** Only Vite's hashed asset names can be cached forever. */
-const HASHED_ASSET_PREFIX = '/assets/';
-const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
-const REVALIDATE_CACHE_CONTROL = 'no-cache';
-
-/** Vite writes this into the production shell; replaced once at process start. Must not appear in JS identifiers. */
-const SHELL_BASE_TOKEN = '%%TRUEFORGE_BASE_PATH%%';
 
 function isServerPath(pathname: string): boolean {
   return SERVER_PATH_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -24,10 +23,6 @@ function isServerPath(pathname: string): boolean {
 
 function isAppShellPath(pathname: string): boolean {
   return pathname === '/' || pathname === '/index.html';
-}
-
-function applyShellTokens(options: { html: string; uiBasePath: string }): string {
-  return options.html.replaceAll(SHELL_BASE_TOKEN, options.uiBasePath);
 }
 
 function createShellResponse(options: { html: string; method: string }): Response {
