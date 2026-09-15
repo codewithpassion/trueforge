@@ -46,6 +46,40 @@ export class D1WriteOutcomeUnknownError extends Error {
   }
 }
 
+/** D1 rejects any single string, BLOB, or row larger than this. */
+export const D1_MAX_VALUE_BYTES = 2_000_000;
+
+/**
+ * A bound value is over D1's per-value limit. Thrown before the statement is sent, so callers get a
+ * named error instead of D1's raw rejection (local D1 does not enforce the limit at all).
+ */
+export class D1ValueTooLargeError extends Error {
+  constructor(readonly byteLength: number) {
+    super(
+      `A ${String(byteLength)}-byte value exceeds the ${String(D1_MAX_VALUE_BYTES)}-byte limit D1 applies to one stored value`,
+    );
+    this.name = 'D1ValueTooLargeError';
+  }
+}
+
+/** Receives how many statements were sent to D1, for per-invocation query budgeting. */
+export type D1StatementCounter = (statements: number) => void;
+
+function assertValuesFitD1(parameters: readonly unknown[]): void {
+  for (const value of parameters) {
+    let byteLength = 0;
+    if (typeof value === 'string') {
+      // UTF-8 needs at most 3 bytes per UTF-16 unit, so short strings skip the encode.
+      byteLength = value.length * 3 > D1_MAX_VALUE_BYTES ? new TextEncoder().encode(value).byteLength : 0;
+    } else if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+      byteLength = value.byteLength;
+    }
+    if (byteLength > D1_MAX_VALUE_BYTES) {
+      throw new D1ValueTooLargeError(byteLength);
+    }
+  }
+}
+
 /** Statements that return rows (SELECT or RETURNING) do not need a change count. */
 function returnsRows(query: CompiledQuery): boolean {
   const node = query.query;
@@ -63,12 +97,16 @@ function returnsRows(query: CompiledQuery): boolean {
 
 export class D1Connection implements DatabaseConnection {
   readonly #target: D1Queryable;
+  readonly #onStatements: D1StatementCounter | undefined;
 
-  constructor(target: D1Queryable) {
+  constructor(target: D1Queryable, onStatements: D1StatementCounter | undefined) {
     this.#target = target;
+    this.#onStatements = onStatements;
   }
 
   async executeQuery<R>(query: CompiledQuery): Promise<QueryResult<R>> {
+    assertValuesFitD1(query.parameters);
+    this.#onStatements?.(1);
     const { results, meta } = await this.#target
       .prepare(query.sql)
       .bind(...query.parameters)
@@ -92,6 +130,11 @@ export class D1Connection implements DatabaseConnection {
     if (queries.length === 0) {
       return [];
     }
+    for (const query of queries) {
+      assertValuesFitD1(query.parameters);
+    }
+    // D1 counts every statement in a batch against the invocation's query limit.
+    this.#onStatements?.(queries.length);
     const results = await this.#target.batch(
       queries.map(query => this.#target.prepare(query.sql).bind(...query.parameters)),
     );
@@ -113,9 +156,11 @@ export class D1Connection implements DatabaseConnection {
 
 class D1Driver implements Driver {
   readonly #target: D1Queryable;
+  readonly #onStatements: D1StatementCounter | undefined;
 
-  constructor(target: D1Queryable) {
+  constructor(target: D1Queryable, onStatements: D1StatementCounter | undefined) {
     this.#target = target;
+    this.#onStatements = onStatements;
   }
 
   init(): Promise<void> {
@@ -123,7 +168,7 @@ class D1Driver implements Driver {
   }
 
   acquireConnection(): Promise<DatabaseConnection> {
-    return Promise.resolve(new D1Connection(this.#target));
+    return Promise.resolve(new D1Connection(this.#target, this.#onStatements));
   }
 
   beginTransaction(): Promise<void> {
@@ -149,13 +194,15 @@ class D1Driver implements Driver {
 
 class D1Dialect implements Dialect {
   readonly #target: D1Queryable;
+  readonly #onStatements: D1StatementCounter | undefined;
 
-  constructor(target: D1Queryable) {
+  constructor(target: D1Queryable, onStatements: D1StatementCounter | undefined) {
     this.#target = target;
+    this.#onStatements = onStatements;
   }
 
   createDriver(): Driver {
-    return new D1Driver(this.#target);
+    return new D1Driver(this.#target, this.#onStatements);
   }
 
   createQueryCompiler() {
@@ -172,9 +219,15 @@ class D1Dialect implements Dialect {
 }
 
 /** Every statement this instance runs goes to `queryable`, so reads and batches share its consistency. */
-export function createD1Db({ queryable }: { queryable: D1Queryable }): Kysely<Database> {
+export function createD1Db({
+  queryable,
+  onStatements,
+}: {
+  queryable: D1Queryable;
+  onStatements?: D1StatementCounter | undefined;
+}): Kysely<Database> {
   return new Kysely<Database>({
-    dialect: new D1Dialect(queryable),
+    dialect: new D1Dialect(queryable, onStatements),
     plugins: [new ParseJSONResultsPlugin({ shouldParse: shouldParseJsonResultColumn })],
   });
 }

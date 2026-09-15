@@ -2,18 +2,22 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { Kysely } from 'kysely';
 import type { AtomicRunner, BatchStatementResult, BatchWriteInput } from '../sqlite/atomic';
 import type { Database } from '../sqlite/types';
-import { createD1Db, D1Connection } from './client';
+import { createD1Db, D1Connection, type D1StatementCounter } from './client';
 
 export class D1AtomicRunner implements AtomicRunner<Database> {
   readonly #database: D1Database;
+  readonly #onStatements: D1StatementCounter | undefined;
 
-  constructor(database: D1Database) {
+  constructor(database: D1Database, onStatements?: D1StatementCounter) {
     this.#database = database;
+    this.#onStatements = onStatements;
   }
 
   /** A fresh `first-primary` session per group: sequential consistency, no snapshot. */
   readGroup<T>(callback: (db: Kysely<Database>) => Promise<T>): Promise<T> {
-    return callback(createD1Db({ queryable: this.#database.withSession('first-primary') }));
+    return callback(
+      createD1Db({ queryable: this.#database.withSession('first-primary'), onStatements: this.#onStatements }),
+    );
   }
 
   /** Runs on the executor's own session, so the batch sees the reads the caller made through it. */

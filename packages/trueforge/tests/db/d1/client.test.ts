@@ -2,7 +2,14 @@ import { env } from 'cloudflare:test';
 import { sql, type Kysely } from 'kysely';
 
 import { D1AtomicRunner } from '../../../src/db/d1/atomic';
-import { createD1Db, D1WriteOutcomeUnknownError, type D1Queryable, type D1Statement } from '../../../src/db/d1/client';
+import {
+  createD1Db,
+  D1_MAX_VALUE_BYTES,
+  D1ValueTooLargeError,
+  D1WriteOutcomeUnknownError,
+  type D1Queryable,
+  type D1Statement,
+} from '../../../src/db/d1/client';
 import { isUniqueViolation } from '../../../src/db/sqlite/errors';
 import type { Database } from '../../../src/db/sqlite/types';
 
@@ -47,6 +54,83 @@ function stubQueryable(metas: readonly { changes?: unknown; last_row_id?: unknow
     batch: statements => Promise.resolve(statements.map((_, index) => ({ results: [], meta: metas[index] ?? {} }))),
   };
 }
+
+describe('D1 value size guard and statement counter', () => {
+  function recordingQueryable(): { queryable: D1Queryable; sent: string[] } {
+    const sent: string[] = [];
+    const statement: D1Statement = { all: <R>() => Promise.resolve({ results: new Array<R>(), meta: { changes: 1 } }) };
+    return {
+      sent,
+      queryable: {
+        prepare: sqlText => {
+          sent.push(sqlText);
+          return { bind: () => statement };
+        },
+        batch: statements => Promise.resolve(statements.map(() => ({ results: [], meta: { changes: 1 } }))),
+      },
+    };
+  }
+
+  it('rejects a statement whose bound string is over the limit before sending it', async () => {
+    const { queryable, sent } = recordingQueryable();
+    const db = createD1Db({ queryable });
+    // Multi-byte text: the UTF-8 size, not the string length, is what D1 limits.
+    const oversized = 'é'.repeat(D1_MAX_VALUE_BYTES / 2 + 1);
+
+    await expect(sql`INSERT INTO parent (id) VALUES (${oversized})`.execute(db)).rejects.toBeInstanceOf(
+      D1ValueTooLargeError,
+    );
+    expect(sent).toEqual([]);
+  });
+
+  it('accepts a value at exactly the limit', async () => {
+    const { queryable } = recordingQueryable();
+    const db = createD1Db({ queryable });
+
+    await expect(
+      sql`INSERT INTO parent (id) VALUES (${'a'.repeat(D1_MAX_VALUE_BYTES)})`.execute(db),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects an oversized member of a batch before sending any statement', async () => {
+    const { queryable } = recordingQueryable();
+    let batched = 0;
+    const db = createD1Db({
+      queryable: {
+        ...queryable,
+        batch: statements => {
+          batched += statements.length;
+          return queryable.batch(statements);
+        },
+      },
+    });
+    const runner = new D1AtomicRunner(env.DB);
+    const queries = [
+      sql`UPDATE parent SET version = 2`.compile(db),
+      sql`INSERT INTO child (id) VALUES (${new Uint8Array(D1_MAX_VALUE_BYTES + 1)})`.compile(db),
+    ];
+
+    await expect(runner.batchWrite({ executor: db, queries })).rejects.toBeInstanceOf(D1ValueTooLargeError);
+    expect(batched).toBe(0);
+  });
+
+  it('counts single statements and every member of a batch', async () => {
+    const { queryable } = recordingQueryable();
+    let statements = 0;
+    const db = createD1Db({
+      queryable,
+      onStatements: count => {
+        statements += count;
+      },
+    });
+    const runner = new D1AtomicRunner(env.DB);
+
+    await sql`SELECT 1`.execute(db);
+    await runner.batchWrite({ executor: db, queries: guardedChain(db, 1) });
+
+    expect(statements).toBe(3);
+  });
+});
 
 describe('D1AtomicRunner.batchWrite', () => {
   it('reports zero changes for a failed guard and leaves chained inserts unwritten', async () => {
