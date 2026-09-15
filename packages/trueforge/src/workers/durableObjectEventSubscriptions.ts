@@ -26,6 +26,7 @@ class StreamChangeNotifier {
     }
   }
 
+  /** Parked pollers on one stream; exposed for tests through `waitingPollers`. */
   waiterCount(streamId: string): number {
     return this.#waiters.get(streamId)?.size ?? 0;
   }
@@ -213,7 +214,10 @@ export class DurableObjectEventSubscriptions<T extends object> {
     });
   }
 
-  /** Pollers parked until the stream's next event; tests use it to see a cancelled reader release its poll. */
+  /**
+   * Pollers parked until the stream's next event. Tests use it to show that a reader cancelled inside the
+   * object releases its poll at once, while one cancelled across RPC stays parked until the next event.
+   */
   waitingPollers(streamId: string): number {
     return this.#notifier.waiterCount(streamId);
   }

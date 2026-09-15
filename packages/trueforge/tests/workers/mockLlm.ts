@@ -1,8 +1,8 @@
 /**
  * OpenAI-compatible chat completions served to the Worker through miniflare's outbound service.
  * The base URL picks the behavior: https://llm.test/<scenario>/v1, where scenario is `text`,
- * `tools-<K>` (K datetime tool calls, then text), `slow` (one delta, then a stalled stream), or
- * `huge` (one reply larger than D1 stores per value).
+ * `tools-<K>` (K datetime tool calls, then text), `slow` (one delta, then a stalled stream), `gap` (one
+ * delta, a second after `GAP_MS`, then a stalled stream), or `huge` (one reply larger than D1 stores per value).
  */
 export const HUGE_REPLY_BYTES = 2_100_000;
 
@@ -49,23 +49,36 @@ function toolCallReply(input: { toolName: string; callIndex: number }): Response
 /** Bounded so a turn whose Durable Object was torn down cannot hold the test process open. */
 const STALL_MS = 20_000;
 
-function stalledReply(signal: AbortSignal): Response {
+/** Long enough for a test to cancel its reader after the first delta and before the second. */
+export const GAP_MS = 5_000;
+
+function stalledReply({ signal, secondDeltaAfterMs }: { signal: AbortSignal; secondDeltaAfterMs?: number }): Response {
   const encoder = new TextEncoder();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const clearTimers = (): void => {
+    for (const timer of timers) {
+      clearTimeout(timer);
+    }
+  };
   return sse(
     new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(encoder.encode(chunk({ role: 'assistant', content: 'thinking' }, null)));
         const end = (): void => {
-          clearTimeout(timer);
+          clearTimers();
           controller.close();
         };
-        timer = setTimeout(end, STALL_MS);
+        if (secondDeltaAfterMs !== undefined) {
+          timers.push(
+            setTimeout(() => {
+              controller.enqueue(encoder.encode(chunk({ content: ' still thinking' }, null)));
+            }, secondDeltaAfterMs),
+          );
+        }
+        timers.push(setTimeout(end, STALL_MS));
         signal.addEventListener('abort', end, { once: true });
       },
-      cancel() {
-        clearTimeout(timer);
-      },
+      cancel: clearTimers,
     }),
   );
 }
@@ -89,7 +102,10 @@ export async function handleMockLlmRequest(request: Request): Promise<Response> 
     return textReply('x'.repeat(HUGE_REPLY_BYTES));
   }
   if (scenario === 'slow') {
-    return stalledReply(request.signal);
+    return stalledReply({ signal: request.signal });
+  }
+  if (scenario === 'gap') {
+    return stalledReply({ signal: request.signal, secondDeltaAfterMs: GAP_MS });
   }
   const toolCalls = /^tools-(\d+)$/.exec(scenario);
   if (toolCalls?.[1] !== undefined) {

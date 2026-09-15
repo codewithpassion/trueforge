@@ -84,7 +84,8 @@ export async function* decodeTurnEvents({
     }
   } finally {
     signal.removeEventListener('abort', cancel);
-    // Releases the RPC stream so the Durable Object stops polling.
+    // Local to the Worker: the cancel does not reach the Durable Object, whose poll ends only when a later
+    // event for this stream arrives (writing it to the gone reader fails) or the turn ends.
     await reader.cancel();
   }
 }

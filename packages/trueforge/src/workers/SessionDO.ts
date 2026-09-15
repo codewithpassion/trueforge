@@ -218,7 +218,10 @@ export class SessionDO extends DurableObject {
     };
   }
 
-  /** Pollers parked on a turn's stream in this instance; tests use it to see a cancelled reader release its poll. */
+  /**
+   * Pollers parked on a turn's stream in this instance. Tests use it to show that a reader cancelled inside
+   * the object releases its poll at once, while one cancelled across RPC stays parked until the next event.
+   */
   waitingPollers(request: { tenant_id: string; session_id: string; turn_id: string }): number {
     return this.#events.waitingPollers(turnStreamId(request.tenant_id, request.session_id, request.turn_id));
   }

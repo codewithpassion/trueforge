@@ -13,6 +13,7 @@ import {
   TENANT_ID,
   USER_REF,
 } from './harness';
+import { GAP_MS } from './mockLlm';
 
 function startRequest(sessionId: string, extraText: string[] = []) {
   return {
@@ -238,13 +239,55 @@ describe('SessionDO', () => {
 
     await reader.cancel();
 
-    // Observed in workerd: the pending read rejects, but the cancel never reaches the Durable Object.
+    // Pins current workerd behavior: the pending read rejects, but the cancel never reaches the Durable Object.
+    // If workerd starts propagating the cancel, flip this assertion to 0 or delete this test.
     await expect(pendingRead).rejects.toThrow('Stream was cancelled.');
     await new Promise(resolve => setTimeout(resolve, 2_000));
     expect(await waitingPollers()).toBe(1);
     // Cancelling the turn puts turn.done, the next event, which wakes the parked poll.
     await stub.cancel({ ...request, reason: CancellationReason.ClientCancelled });
     await expect.poll(waitingPollers, { timeout: 10_000 }).toBe(0);
+  });
+
+  it('releases the parked poll on the next non-terminal event after the caller cancels across RPC', async () => {
+    const sessionId = 'stream-rpc-cancel-delta';
+    const stores = await createMockSession({ sessionId, scenario: 'gap' });
+    const stub = sessionStub(sessionId);
+    const started = await stub.startTurnStreaming(startRequest(sessionId));
+    if (!started.ok) {
+      throw new Error(`startTurnStreaming failed: ${started.code} ${started.message}`);
+    }
+    const reader = started.stream.getReader();
+    const turnId = await readTurnIdThroughModelDelta(reader);
+    const request = { tenant_id: TENANT_ID, session_id: sessionId, turn_id: turnId };
+    const waitingPollers = () => runInDurableObject(stub, instance => instance.waitingPollers(request));
+    const storedDeltas = () =>
+      runInDurableObject(
+        stub,
+        (_instance, state) =>
+          state.storage.sql
+            .exec(
+              'SELECT seq FROM turn_events WHERE stream_id = ? AND data LIKE ?',
+              turnStreamId(TENANT_ID, sessionId, turnId),
+              `%"type":"model.message.delta"%`,
+            )
+            .toArray().length,
+      );
+    const pendingRead = reader.read();
+    await expect.poll(waitingPollers, { timeout: 10_000 }).toBe(1);
+
+    await reader.cancel();
+
+    await expect(pendingRead).rejects.toThrow('Stream was cancelled.');
+    expect(await storedDeltas()).toBe(1);
+    await expect.poll(storedDeltas, { timeout: GAP_MS * 3 }).toBe(2);
+    // Time for the woken poll to pull again and park, if the object still encoded for the gone reader.
+    await new Promise(resolve => setTimeout(resolve, 2_000));
+    expect(await waitingPollers()).toBe(0);
+    expect((await stores.sessionStore.getTurn({ session_id: sessionId, turn_id: turnId }))?.state.status).toBe(
+      'running',
+    );
+    await stub.cancel({ ...request, reason: CancellationReason.ClientCancelled });
   });
 
   it('reports cancelled: false for a turn it does not run', async () => {
