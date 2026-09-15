@@ -1427,6 +1427,7 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       expect(results.every(r => r.status === 'fulfilled')).toBe(true);
       const session = await store.getSession({ tenant_id: tenant, session_id: sessionId });
       expect(['turn-a', 'turn-b']).toContain(mustGet(session).last_turn_id);
+      expect(mustGet(session).metrics.total_turns).toBe(3);
       const turns = await store.listTurns({
         session_id: sessionId,
         limit: 10,
@@ -1449,6 +1450,39 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
           makeCreateTurnInput({ sessionId, turnId: 'turn-2', previousTurnId: 'turn-1', firstTurnId: 'turn-1' }),
         ),
       ).rejects.toBeInstanceOf(PreviousTurnRunningError);
+    });
+
+    it('createTurn rejected for a running previous turn writes nothing for the rejected turn', async () => {
+      const store = createStore();
+      await seedSession(store);
+      await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-1' }));
+      const rejected = makeCreateTurnInput({
+        sessionId,
+        turnId: 'turn-2',
+        previousTurnId: 'turn-1',
+        firstTurnId: 'turn-1',
+        new_context_appends: [
+          {
+            thread_id: MAIN_THREAD_ID,
+            context: [userMessage('retry')],
+            current_context_usage: getEmptyCurrentContextUsage(),
+          },
+        ],
+        capability_states: [{ thread_id: MAIN_THREAD_ID, capability_state: { probe: 'retry' } }],
+      });
+
+      await expect(store.createTurn(rejected)).rejects.toBeInstanceOf(PreviousTurnRunningError);
+      expect(await store.getTurn({ session_id: sessionId, turn_id: 'turn-2' })).toBeUndefined();
+      const afterReject = mustGet(await store.getSession({ tenant_id: tenant, session_id: sessionId }));
+      expect(afterReject.last_turn_id).toBe('turn-1');
+      expect(afterReject.metrics.total_turns).toBe(1);
+
+      // Leftover thread, context, or capability rows for turn-2 would collide with this retry.
+      await finishTurn(store, 'turn-1');
+      await store.createTurn(rejected);
+      const created = mustGet(await store.getTurn({ session_id: sessionId, turn_id: 'turn-2' }));
+      expect(contextContents(created.snapshot.threads[MAIN_THREAD_ID]?.context)).toEqual(['retry']);
+      expect(created.snapshot.threads[MAIN_THREAD_ID]?.capability_state).toEqual({ probe: 'retry' });
     });
 
     it('rejects duplicate turn_id with conflict', async () => {

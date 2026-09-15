@@ -9,7 +9,7 @@ import { HTTPException } from 'hono/http-exception';
 import { validateGitAgentSkills } from '../../../src/db/gitSkillMounts';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import type { ISkillStore } from '../../../src/db/skillStore';
-import { createSqliteDb } from '../../../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
@@ -125,7 +125,7 @@ describe('validateAgentSpec', () => {
     });
     return {
       modelProviderStore,
-      mcpServerStore: new SqliteMcpServerStore(db),
+      mcpServerStore: new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
       skillStore: new SqliteSkillStore(db),
       sandboxProviderStore: new SqliteSandboxProviderStore(db),
       sandboxIntegration: createNodeSandboxIntegration({ localSupport: options?.localSupport }),

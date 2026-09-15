@@ -30,6 +30,7 @@ import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import {
   manualRunName,
+  ScheduleConcurrentUpdateError,
   ScheduleNameConflictError,
   ScheduleRunConflictError,
   type IScheduleStore,
@@ -486,6 +487,9 @@ export function createSchedulesRouter<TTransaction>(deps: SchedulesRouterDeps<TT
     } catch (error) {
       if (error instanceof ScheduleNameConflictError) {
         return c.json({ error: { message: error.message } }, 409);
+      }
+      if (error instanceof ScheduleConcurrentUpdateError) {
+        return c.json({ error: { message: `${error.message}. Retry the request.` } }, 409);
       }
       if (error instanceof ScheduleRunConflictError) {
         return c.json({ error: { message: `${error.message}. Retry the request.` } }, 409);

@@ -34,10 +34,14 @@ export interface CreateMcpServerInput {
   tenant_id: string;
   name: ResourceName;
   manifest: McpServerManifest;
+  /** DCR registration written with the row, so no second write is needed. */
+  oauth_client?: ContractOAuthClientRecord;
 }
 
-/** Same shape as create for now; kept as a distinct name for the upsert path. */
-export type UpsertMcpServerInput = CreateMcpServerInput;
+export interface UpsertMcpServerInput extends CreateMcpServerInput {
+  /** Delete every user's tokens and pending authorizations in the same write (OAuth resource changed). */
+  reset_authorizations?: boolean;
+}
 
 /** Unique `(tenant_id, name)` violation on create. */
 export class McpServerNameConflictError extends Error {
@@ -95,8 +99,8 @@ export interface IMcpServerStore<TTransaction = never> extends IOAuthClientStore
   /** Inserts a new server with a generated ULID. Throws McpServerNameConflictError on name clash. */
   createServer(input: CreateMcpServerInput, transaction?: TTransaction): Promise<McpServerRecord>;
   /**
-   * Creates the server or replaces `manifest` (+ `updated_at`) only.
-   * Never overwrites `id`, `oauth_server`, or `oauth_client`.
+   * Creates the server or replaces `manifest` (+ `updated_at`). Never overwrites `id`;
+   * replaces `oauth_server` / `oauth_client` only when `oauth_client` is given.
    */
   upsertServer(input: UpsertMcpServerInput, transaction?: TTransaction): Promise<McpServerRecord>;
 }

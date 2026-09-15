@@ -4,9 +4,10 @@ import { TrueForge } from '@truefoundry/trueforge-sdk';
 import configuration from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import {
-  cronRunName,
+  ScheduleConcurrentUpdateError,
   type IScheduleStore,
   type ScheduleDispatchItem,
+  type ScheduleRecord,
   type ScheduleRunRecord,
 } from '../db/scheduleStore';
 import type { WithTransaction } from '../db/transaction';
@@ -181,53 +182,53 @@ async function finishScheduledRun<TTransaction>(params: {
   withTransaction: WithTransaction<TTransaction>;
 }): Promise<void> {
   const { store, withTransaction, run, status, reason, now } = params;
-  await withTransaction(async txn => {
-    const latest = await store.getScheduleForUpdate({ tenant_id: run.tenant_id, id: run.schedule_id }, txn);
-
-    const updated = await store.updateRunStatus(
-      { tenant_id: run.tenant_id, id: run.id, status, reason: reason ?? null },
-      txn,
-    );
-    if (updated === undefined) {
-      return;
-    }
-
-    if (latest?.status !== 'active') {
-      return;
-    }
-
-    // `now` selected this run (`scheduled_for <= now`), so anchoring here gives a
-    // trigger time strictly later than the run being finished.
-    const advanceFrom = new Date(Math.max(Date.parse(run.scheduled_for), now.getTime()));
-
-    let nextTrigger: Date;
+  // The run was already handed off, so a concurrent schedule edit must not fail the finish:
+  // re-read and retry instead (nothing was written by the losing attempt).
+  for (let attempt = 1; ; attempt += 1) {
     try {
-      nextTrigger = nextTriggerAfter({
-        cron: latest.manifest.cron,
-        timezone: latest.manifest.timezone,
-        from: advanceFrom,
+      await withTransaction(async txn => {
+        const latest = await store.getScheduleForUpdate({ tenant_id: run.tenant_id, id: run.schedule_id }, txn);
+        await store.finishRun(
+          {
+            run,
+            status,
+            reason: reason ?? null,
+            schedule: latest,
+            next_scheduled_for: latest?.status === 'active' ? nextRunAfter({ schedule: latest, run, now }) : undefined,
+          },
+          txn,
+        );
       });
+      return;
     } catch (error) {
-      if (!(error instanceof InvalidCronError)) {
+      if (!(error instanceof ScheduleConcurrentUpdateError) || attempt >= FINISH_RUN_ATTEMPTS) {
         throw error;
       }
-      // No later trigger time (calendar dead end). Ideally should not happen.
-      // Still finish the current row; just do not add another.
-      return;
     }
+  }
+}
 
-    await store.createRun(
-      {
-        tenant_id: latest.tenant_id,
-        schedule_id: latest.id,
-        name: cronRunName(nextTrigger),
-        scheduled_for: nextTrigger,
-        status: 'scheduled',
-        created_by_subject: latest.created_by_subject,
-      },
-      txn,
-    );
-  });
+const FINISH_RUN_ATTEMPTS = 3;
+
+function nextRunAfter(params: { schedule: ScheduleRecord; run: ScheduleRunRecord; now: Date }): Date | undefined {
+  const { schedule, run, now } = params;
+  // `now` selected this run (`scheduled_for <= now`), so anchoring here gives a
+  // trigger time strictly later than the run being finished.
+  const advanceFrom = new Date(Math.max(Date.parse(run.scheduled_for), now.getTime()));
+  try {
+    return nextTriggerAfter({
+      cron: schedule.manifest.cron,
+      timezone: schedule.manifest.timezone,
+      from: advanceFrom,
+    });
+  } catch (error) {
+    if (!(error instanceof InvalidCronError)) {
+      throw error;
+    }
+    // No later trigger time (calendar dead end). Ideally should not happen.
+    // Still finish the current row; just do not add another.
+    return undefined;
+  }
 }
 
 /**

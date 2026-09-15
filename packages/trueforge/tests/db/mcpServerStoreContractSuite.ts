@@ -162,6 +162,32 @@ export function runMcpServerStoreContractSuite(getStore: () => IMcpServerStore):
     expect(await store.getClient({ id: created.id })).toEqual(sampleOAuthClient);
   });
 
+  it('create and upsert write oauth_client with the row when given', async () => {
+    const store = getStore();
+    const created = await store.createServer({
+      tenant_id: TENANT,
+      name: 'linear',
+      manifest: manifest(),
+      oauth_client: sampleOAuthClient,
+    });
+    expect(await store.getClient({ id: created.id })).toEqual(sampleOAuthClient);
+
+    const rotated: OAuthClientRecord = {
+      ...sampleOAuthClient,
+      client: { clientId: 'client-2', clientSecret: 'secret-2' },
+    };
+    const updated = await store.upsertServer({
+      tenant_id: TENANT,
+      name: 'linear',
+      manifest: manifest({ url: 'https://mcp.linear.app/mcp/v2' }),
+      oauth_client: rotated,
+      reset_authorizations: true,
+    });
+    expect(updated.id).toBe(created.id);
+    expect(updated.manifest).toEqual(manifest({ url: 'https://mcp.linear.app/mcp/v2' }));
+    expect(await store.getClient({ id: created.id })).toEqual(rotated);
+  });
+
   it('save/get/delete OAuth client round-trips and clears registration', async () => {
     const store = getStore();
     const created = await store.upsertServer({

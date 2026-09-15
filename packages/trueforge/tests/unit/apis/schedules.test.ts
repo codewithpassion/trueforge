@@ -12,7 +12,7 @@ import type { RequestContext } from '../../../src/auth/identity';
 import { ScheduleAgentNotFoundError, startScheduleRun } from '../../../src/controller/scheduleDispatch';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
-import { createSqliteDb } from '../../../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteScheduleStore } from '../../../src/db/sqlite/schedule-store/SqliteScheduleStore';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
@@ -81,7 +81,7 @@ async function setup(authorizer: Authorizer = new TrueForgeAuthorizer()) {
   const db = createSqliteDb(':memory:');
   await migrateSqliteToLatest(db);
   const agentStore = new SqliteAgentStore(db);
-  const scheduleStore = new SqliteScheduleStore(db);
+  const scheduleStore = new SqliteScheduleStore(db, new BetterSqliteAtomicRunner(db));
   await agentStore.createAgent({
     tenant_id: 'default',
     created_by_subject: {
@@ -431,7 +431,7 @@ describe('internal schedule execution', () => {
     const db = createSqliteDb(':memory:');
     await migrateSqliteToLatest(db);
     const agentStore = new SqliteAgentStore(db);
-    const scheduleStore = new SqliteScheduleStore(db);
+    const scheduleStore = new SqliteScheduleStore(db, new BetterSqliteAtomicRunner(db));
     const agent = await agentStore.createAgent({
       tenant_id: 'default',
       created_by_subject: {
@@ -490,7 +490,7 @@ describe('internal schedule execution', () => {
     const db = createSqliteDb(':memory:');
     await migrateSqliteToLatest(db);
     const agentStore = new SqliteAgentStore(db);
-    const scheduleStore = new SqliteScheduleStore(db);
+    const scheduleStore = new SqliteScheduleStore(db, new BetterSqliteAtomicRunner(db));
     const app = createScheduleExecutionRouter(stubTurnExecutionDeps(agentStore, scheduleStore));
 
     const response = await app.request('/runs/execute', {

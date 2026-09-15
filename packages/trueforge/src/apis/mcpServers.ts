@@ -15,7 +15,7 @@ import {
 import type { WithTransaction } from '../db/transaction';
 import { createMcpOAuthClient } from '../mcp/auth/mcpDcr';
 import { mcpOAuthCallbackUrl } from '../mcp/auth/mcpOAuthHelpers';
-import type { IOAuthTokenStore, OAuthClientRecord } from '../mcp/auth/types';
+import type { OAuthClientRecord } from '../mcp/auth/types';
 import {
   authorizeMcpServerRoute,
   createMcpServerRoute,
@@ -40,7 +40,6 @@ import { MissingStoredSecretError, resolveStoredSecretValue, toRedactedSecretVal
 
 export interface McpServersRouterDeps<TTransaction> {
   resolveMcpServerStore: (c: Context) => IMcpServerWithAuthStore<TTransaction>;
-  tokenStore: IOAuthTokenStore<TTransaction>;
   withTransaction: WithTransaction<TTransaction>;
   logger: Logger;
   resolveRequestContext: ResolveRequestContext;
@@ -225,20 +224,17 @@ export function createSettingsMcpServersRouter<TTransaction>(deps: McpServersRou
     }
 
     try {
-      const record = await deps.withTransaction(async transaction => {
-        const saved = await deps.resolveMcpServerStore(c).createServer(
+      const record = await deps.withTransaction(async transaction =>
+        deps.resolveMcpServerStore(c).createServer(
           {
             tenant_id: requestContext.tenant_id,
             name: manifest.name,
             manifest,
+            ...(dcrClientToSave === undefined ? {} : { oauth_client: dcrClientToSave }),
           },
           transaction,
-        );
-        if (dcrClientToSave !== undefined) {
-          await deps.resolveMcpServerStore(c).saveClient({ id: saved.id, record: dcrClientToSave }, transaction);
-        }
-        return saved;
-      });
+        ),
+      );
 
       return c.json(
         {
@@ -299,24 +295,19 @@ export function createSettingsMcpServersRouter<TTransaction>(deps: McpServersRou
           }
         }
 
-        const saved = await deps.resolveMcpServerStore(c).upsertServer(
+        // One store write: a new DCR registration (create, missing client, or URL change) replaces
+        // the shared client, and a URL change (the OAuth resource/audience) drops every user's
+        // tokens and in-flight authorizes.
+        return deps.resolveMcpServerStore(c).upsertServer(
           {
             tenant_id: requestContext.tenant_id,
             name: manifest.name,
             manifest,
+            ...(dcrClientToSave === undefined ? {} : { oauth_client: dcrClientToSave }),
+            reset_authorizations: urlChanged,
           },
           transaction,
         );
-        if (dcrClientToSave !== undefined) {
-          // New DCR registration (create, missing client, or URL change): replace the shared client.
-          await deps.resolveMcpServerStore(c).saveClient({ id: saved.id, record: dcrClientToSave }, transaction);
-        }
-        if (urlChanged) {
-          // URL is the OAuth resource/audience — drop every user's tokens and in-flight authorizes.
-          await deps.tokenStore.deleteTokensForServer({ id: saved.id }, transaction);
-          await deps.tokenStore.deletePendingAuthorizationsForServer({ id: saved.id }, transaction);
-        }
-        return saved;
       });
 
       return c.json(

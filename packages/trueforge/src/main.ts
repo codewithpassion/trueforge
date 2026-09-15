@@ -283,7 +283,7 @@ async function createStandalonePersistence(options: {
 }): Promise<ServerPersistence<Transaction<SqliteDatabase>>> {
   const { sqlitePath, logger } = options;
   await mkdir(path.dirname(sqlitePath), { recursive: true });
-  const [{ createSqliteDb }, { migrateSqliteToLatest }, sqliteStores] = await Promise.all([
+  const [{ BetterSqliteAtomicRunner, createSqliteDb }, { migrateSqliteToLatest }, sqliteStores] = await Promise.all([
     import('./db/sqlite/client'),
     import('./db/migrateSqlite'),
     Promise.all([
@@ -319,7 +319,7 @@ async function createStandalonePersistence(options: {
   const agentStore = new SqliteAgentStore(db);
   const modelProviderStore = new SqliteModelProviderStore(db);
   const mcpServerStore = new McpServerWithAuthStore({
-    store: new SqliteMcpServerStore(db),
+    store: new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
     tokenStore,
     clientName: configuration.MCP_DCR_OAUTH_CLIENT_NAME,
   });
@@ -327,12 +327,12 @@ async function createStandalonePersistence(options: {
   const skillStore = new SqliteSkillStore(db);
   return {
     withTransaction: callback => db.transaction().execute(callback),
-    sessionStore: new SqliteSessionStore(db),
+    sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
     sessionImport: undefined,
     sessionMetricsStore: new SqliteSessionMetricsStore(db),
     mcpOAuthStore: mcpServerStore,
     tokenStore,
-    scheduleStore: new SqliteScheduleStore(db),
+    scheduleStore: new SqliteScheduleStore(db, new BetterSqliteAtomicRunner(db)),
     resolveModelProviderStore: () => modelProviderStore,
     resolveMcpServerStore: () => mcpServerStore,
     resolveSandboxProviderStore: () => sandboxProviderStore,

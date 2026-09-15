@@ -10,7 +10,7 @@ import configuration from '../../../src/config';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import type { IMcpServerWithAuthStore } from '../../../src/db/mcpServerStore';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
-import { createSqliteDb } from '../../../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import { mcpOAuthCallbackUrl } from '../../../src/mcp/auth/mcpOAuthHelpers';
@@ -88,7 +88,7 @@ describe('MCP OAuth authorize + callback', () => {
     await migrateSqliteToLatest(db);
     tokenStore = new SqliteOAuthTokenStore(db);
     mcpServerStore = new McpServerWithAuthStore({
-      store: new SqliteMcpServerStore(db),
+      store: new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
       tokenStore,
       clientName: configuration.MCP_DCR_OAUTH_CLIENT_NAME,
     });
@@ -96,14 +96,12 @@ describe('MCP OAuth authorize + callback', () => {
     logger = winston.createLogger({ silent: true });
     settingsRouter = createSettingsMcpServersRouter({
       resolveMcpServerStore: () => mcpServerStore,
-      tokenStore,
       withTransaction,
       logger,
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
     });
     mcpServersRouter = createMcpServersRouter({
       resolveMcpServerStore: () => mcpServerStore,
-      tokenStore,
       withTransaction,
       logger,
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
@@ -230,7 +228,6 @@ describe('MCP OAuth authorize + callback', () => {
   it('authorize for one user does not authenticate another user on the same server', async () => {
     const otherRouter = createMcpServersRouter({
       resolveMcpServerStore: () => mcpServerStore,
-      tokenStore,
       withTransaction,
       logger,
       resolveRequestContext: () => ({

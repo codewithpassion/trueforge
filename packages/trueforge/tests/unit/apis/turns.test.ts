@@ -13,7 +13,7 @@ import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
-import { createSqliteDb } from '../../../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
@@ -27,7 +27,7 @@ import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIn
 
 function mcpServerStoreWithAuth(db: Kysely<Database>, tokenStore: SqliteOAuthTokenStore) {
   return new McpServerWithAuthStore({
-    store: new SqliteMcpServerStore(db),
+    store: new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
     tokenStore,
     clientName: 'test-client',
   });
@@ -42,7 +42,7 @@ describe('turns', () => {
     it('returns 403 for all turn routes when the caller is not the session creator', async () => {
       const db = createSqliteDb(':memory:');
       await migrateSqliteToLatest(db);
-      const sessionStore = new SqliteSessionStore(db);
+      const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
       const sessions = new Sessions({ sessionStore });
 
       await sessionStore.createSession({
@@ -121,7 +121,7 @@ describe('turns', () => {
     it('lets an agent manager use read routes but keeps create-turn and sandbox download creator-only', async () => {
       const db = createSqliteDb(':memory:');
       await migrateSqliteToLatest(db);
-      const sessionStore = new SqliteSessionStore(db);
+      const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
       const agentStore = new SqliteAgentStore(db);
       const agent = await agentStore.createAgent({
         tenant_id: 'default',
@@ -275,7 +275,7 @@ describe('turns', () => {
         '/',
         createTurnsRouter({
           sessions,
-          sessionStore: new SqliteSessionStore(db),
+          sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
           activeTurns: new ActiveTurnRegistry(),
           resolveModelProviderStore: () => modelProviderStore,
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
@@ -383,7 +383,7 @@ describe('turns', () => {
         '/',
         createTurnsRouter({
           sessions,
-          sessionStore: new SqliteSessionStore(db),
+          sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
           activeTurns: new ActiveTurnRegistry(),
           resolveModelProviderStore: () => modelProviderStore,
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
@@ -428,7 +428,7 @@ describe('turns', () => {
     async function referencedAgentHarness(authorizer: Authorizer) {
       const db = createSqliteDb(':memory:');
       await migrateSqliteToLatest(db);
-      const sessionStore = new SqliteSessionStore(db);
+      const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
       const sessions = new Sessions({ sessionStore });
       const agentStore = new SqliteAgentStore(db);
       const agent = await agentStore.createAgent({
@@ -513,7 +513,7 @@ describe('turns', () => {
     it('rejects a sandbox-enabled turn with 422', async () => {
       const db = createSqliteDb(':memory:');
       await migrateSqliteToLatest(db);
-      const sessionStore = new SqliteSessionStore(db);
+      const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
       const sessions = new Sessions({ sessionStore });
       const modelProviderStore = new SqliteModelProviderStore(db);
       await modelProviderStore.upsertProvider({

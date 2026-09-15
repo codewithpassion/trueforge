@@ -23,7 +23,7 @@ import { SkillCatalog } from '../src/catalog/SkillCatalog';
 import configuration from '../src/config';
 import { McpServerWithAuthStore } from '../src/db/McpServerWithAuthStore';
 import { SqliteAgentStore } from '../src/db/sqlite/agent-store/SqliteAgentStore';
-import { createSqliteDb } from '../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
@@ -72,7 +72,7 @@ const app = createServerApp({
   resolveModelProviderStore: () => new SqliteModelProviderStore(db),
   resolveMcpServerStore: () =>
     new McpServerWithAuthStore({
-      store: new SqliteMcpServerStore(db),
+      store: new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
       tokenStore,
       clientName: configuration.MCP_DCR_OAUTH_CLIENT_NAME,
     }),
@@ -86,7 +86,7 @@ const app = createServerApp({
   agentStore,
   turnSkillsResolverStore: skillStore,
   withTransaction: callback => db.transaction().execute(callback),
-  scheduleStore: new SqliteScheduleStore(db),
+  scheduleStore: new SqliteScheduleStore(db, new BetterSqliteAtomicRunner(db)),
   tokenStore,
   sessionStore,
   sessionMetricsStore: new SqliteSessionMetricsStore(db),

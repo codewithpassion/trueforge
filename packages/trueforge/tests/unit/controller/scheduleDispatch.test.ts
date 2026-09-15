@@ -8,7 +8,7 @@ import {
   ScheduleRunNotFoundError,
   startScheduleRun,
 } from '../../../src/controller/scheduleDispatch';
-import type { ScheduleDispatchItem, ScheduleRunRecord } from '../../../src/db/scheduleStore';
+import type { ScheduleDispatchItem } from '../../../src/db/scheduleStore';
 import { ScheduleManifestSchema } from '../../../src/schemas/schedule';
 
 describe('scheduleRunFailureReason', () => {
@@ -67,8 +67,7 @@ function fakeStore(dispatchItem: ScheduleDispatchItem) {
     listScheduledRuns: jest.fn().mockResolvedValue([dispatchItem.run]),
     getSchedule: jest.fn().mockResolvedValue(dispatchItem.schedule),
     getScheduleForUpdate: jest.fn().mockResolvedValue(dispatchItem.schedule),
-    updateRunStatus: jest.fn().mockResolvedValue(dispatchItem.run satisfies ScheduleRunRecord),
-    createRun: jest.fn().mockResolvedValue(undefined),
+    finishRun: jest.fn().mockResolvedValue(undefined),
   };
 }
 

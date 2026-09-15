@@ -215,6 +215,27 @@ export class ScheduleNameConflictError extends Error {
   }
 }
 
+/** The schedule changed after it was read for this write; nothing was written. */
+export class ScheduleConcurrentUpdateError extends Error {
+  readonly schedule_id: string;
+
+  constructor(schedule_id: string, options?: ErrorOptions) {
+    super(`Schedule was modified concurrently: ${schedule_id}`, options);
+    this.name = 'ScheduleConcurrentUpdateError';
+    this.schedule_id = schedule_id;
+  }
+}
+
+export interface FinishScheduleRunInput {
+  run: ScheduleRunRecord;
+  status: ScheduleRunStatus;
+  reason: string | null;
+  /** Owning schedule as read for this finish; undefined when it no longer exists. */
+  schedule: ScheduleRecord | undefined;
+  /** Next pending run time; undefined when the schedule is not active or its cron has no later trigger. */
+  next_scheduled_for: Date | undefined;
+}
+
 /**
  * Pending run is replaced only when `status`, `cron`, or `timezone` change.
  * `name` and `task` edits leave the pending row alone.
@@ -235,7 +256,7 @@ export interface IScheduleStore<TTransaction = never> {
   getSchedule(input: GetScheduleInput, transaction?: TTransaction): Promise<ScheduleRecord | undefined>;
   /**
    * Load one schedule while holding a row lock for the lifetime of `transaction`.
-   * Postgres: `SELECT … FOR UPDATE`. SQLite: plain read under a write txn.
+   * Postgres: `SELECT … FOR UPDATE`. SQLite dialect: plain read; its writes guard on this `updated_at`.
    */
   getScheduleForUpdate(input: GetScheduleInput, transaction: TTransaction): Promise<ScheduleRecord | undefined>;
   /**
@@ -246,7 +267,9 @@ export interface IScheduleStore<TTransaction = never> {
   /**
    * Updates a schedule, then syncs the pending run only when `status`, `cron`, or
    * `timezone` change. `name` / `task` edits leave the pending row alone.
-   * Returns undefined if the schedule is gone.
+   * Returns undefined if the schedule is gone. Throws `ScheduleConcurrentUpdateError`
+   * when another write changed the schedule after it was read (SQLite dialect only;
+   * Postgres serializes on the row lock instead).
    */
   updateScheduleAndRun(
     input: UpdateScheduleInput,
@@ -281,6 +304,13 @@ export interface IScheduleStore<TTransaction = never> {
     input: UpdateScheduleRunStatusInput,
     transaction?: TTransaction,
   ): Promise<ScheduleRunRecord | undefined>;
+  /**
+   * Records a dispatched run's outcome and adds the schedule's next pending run in one
+   * atomic write. A run that is already gone is a no-op. Throws
+   * `ScheduleConcurrentUpdateError` when `schedule` changed since it was read
+   * (SQLite dialect only); the caller retries with a fresh read.
+   */
+  finishRun(input: FinishScheduleRunInput, transaction?: TTransaction): Promise<void>;
   /**
    * `scheduled` runs with `scheduled_for <= now`, oldest first.
    * Triggered / terminal rows are never returned.

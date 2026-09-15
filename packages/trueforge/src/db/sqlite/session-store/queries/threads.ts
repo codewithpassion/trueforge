@@ -11,210 +11,130 @@ import type {
   SubAgentCompletionMarker,
 } from '@truefoundry/trueforge-core/core/runtime/AgentThread.types';
 import type { CurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
-import { sql, type Kysely, type RawBuilder, type Transaction } from 'kysely';
+import { sql, type CompiledQuery, type Kysely, type RawBuilder } from 'kysely';
+import type { AtomicRunner } from '../../atomic';
 import { jsonbBind, jsonbSet, nowIso } from '../../sqlExpressions';
-import type { Database, TurnThreadCheckpoint } from '../../types';
-import { sortedByAppendId } from '../sqlExpressions';
+import type { Database } from '../../types';
 import {
-  assertTurnRunning,
-  classifyTurnFenceWriteFailure,
-  classifyTurnThreadWriteFailure,
+  appendContextQueries,
+  insertCapabilityStatesQuery,
+  insertTurnThreadsQuery,
+  turnRunning,
+  type CapabilityStateRow,
+  type ContextAppendRow,
   type TurnKeys,
-} from './turns';
-
-type DbOrTrx = Kysely<Database> | Transaction<Database>;
+  type TurnThreadRow,
+} from '../sqlExpressions';
+import { assertTurnRunning, classifyTurnFenceWriteFailure, classifyTurnThreadWriteFailure } from './turns';
 
 /**
- * addThreads — fenced tx: INSERT log rows, INSERT turn_thread rows,
- * INSERT turn_thread_context rows, INSERT capability rows.
+ * addThreads — fenced batch: turn_thread rows (decisive), log + mapping rows, capability rows,
+ * each conditional on the turn still running.
  */
-export async function addThreads(db: Kysely<Database>, input: AddThreadsInput): Promise<void> {
-  await db.transaction().execute(async trx => {
-    await assertTurnRunning(trx, {
-      session_id: input.session_id,
-      turn_id: input.turn_id,
+export async function addThreads(
+  db: Kysely<Database>,
+  atomic: AtomicRunner<Database>,
+  input: AddThreadsInput,
+): Promise<void> {
+  const keys: TurnKeys = { session_id: input.session_id, turn_id: input.turn_id };
+  if (input.threads.length === 0) {
+    await assertTurnRunning(db, keys);
+    return;
+  }
+
+  const now = nowIso();
+  const guard = turnRunning(keys);
+  const threadRows: TurnThreadRow[] = [];
+  const appendRows: ContextAppendRow[] = [];
+  const capabilityRows: CapabilityStateRow[] = [];
+
+  for (const thread of input.threads) {
+    threadRows.push({
+      thread_id: thread.thread_id,
+      checkpoint: { parent: thread.parent ?? null, completion: thread.completion ?? null },
+      agent_info: thread.agent_info ?? null,
+      current_context_usage: thread.current_context_usage,
     });
 
-    const now = nowIso();
-    const logRows: {
-      session_id: string;
-      thread_id: string;
-      turn_id: string;
-      body: RawBuilder<string>;
-      created_at: string;
-    }[] = [];
-    const capabilityStateRows: {
-      session_id: string;
-      turn_id: string;
-      thread_id: string;
-      key: string;
-      state: RawBuilder<string> | null;
-      updated_at: string;
-    }[] = [];
-    const turnThreadPlans: {
-      thread_id: string;
-      checkpoint: TurnThreadCheckpoint;
-      agent_info: RawBuilder<string> | null;
-      current_context_usage: CurrentContextUsage;
-    }[] = [];
+    for (const body of thread.context) {
+      appendRows.push({ thread_id: thread.thread_id, body });
+    }
 
-    for (const thread of input.threads) {
-      const threadCheckpoint: TurnThreadCheckpoint = {
-        parent: thread.parent ?? null,
-        completion: thread.completion ?? null,
-      };
-      turnThreadPlans.push({
-        thread_id: thread.thread_id,
-        checkpoint: threadCheckpoint,
-        agent_info: thread.agent_info != null ? jsonbBind(thread.agent_info) : null,
-        current_context_usage: thread.current_context_usage,
-      });
-
-      for (const body of thread.context) {
-        logRows.push({
-          session_id: input.session_id,
-          thread_id: thread.thread_id,
-          turn_id: input.turn_id,
-          body: jsonbBind(body),
-          created_at: now,
-        });
-      }
-
-      const capabilityState = thread.capability_state;
-      if (capabilityState != null) {
-        for (const key of Object.keys(capabilityState)) {
-          const state = capabilityState[key];
-          if (state === undefined) {
-            throw new Error(
-              `capability_state['${key}'] for thread '${thread.thread_id}' is undefined — undefined is banned from capability state`,
-            );
-          }
-          capabilityStateRows.push({
-            session_id: input.session_id,
-            turn_id: input.turn_id,
-            thread_id: thread.thread_id,
-            key,
-            state: state !== null ? jsonbBind(state) : null,
-            updated_at: now,
-          });
+    const capabilityState = thread.capability_state;
+    if (capabilityState != null) {
+      for (const key of Object.keys(capabilityState)) {
+        const state = capabilityState[key];
+        if (state === undefined) {
+          throw new Error(
+            `capability_state['${key}'] for thread '${thread.thread_id}' is undefined — undefined is banned from capability state`,
+          );
         }
+        capabilityRows.push({ thread_id: thread.thread_id, key, state });
       }
     }
+  }
 
-    const newIdsByThread = new Map<string, number[]>();
-    if (logRows.length > 0) {
-      const inserted = await trx
-        .insertInto('thread_context_log')
-        .values(logRows)
-        .returning(['thread_id', 'append_id'])
-        .execute();
-      for (const row of sortedByAppendId(inserted)) {
-        const list = newIdsByThread.get(row.thread_id);
-        if (list === undefined) {
-          newIdsByThread.set(row.thread_id, [row.append_id]);
-        } else {
-          list.push(row.append_id);
-        }
-      }
-    }
+  const queries: CompiledQuery[] = [
+    insertTurnThreadsQuery(db, { keys, rows: threadRows, guard, updated_at: now }),
+    ...appendContextQueries(db, { keys, rows: appendRows, guard, created_at: now }),
+  ];
+  if (capabilityRows.length > 0) {
+    queries.push(insertCapabilityStatesQuery(db, { keys, rows: capabilityRows, guard, updated_at: now }));
+  }
 
-    const turnThreadRows = turnThreadPlans.map(plan => ({
-      session_id: input.session_id,
-      turn_id: input.turn_id,
-      thread_id: plan.thread_id,
-      checkpoint: jsonbBind(plan.checkpoint),
-      agent_info: plan.agent_info,
-      current_context_usage: jsonbBind(plan.current_context_usage),
-      updated_at: now,
-    }));
-
-    if (turnThreadRows.length > 0) {
-      await trx.insertInto('turn_thread').values(turnThreadRows).execute();
-    }
-
-    const contextMappingRows: {
-      session_id: string;
-      turn_id: string;
-      thread_id: string;
-      pos: number;
-      append_id: number;
-    }[] = [];
-
-    for (const plan of turnThreadPlans) {
-      const newIds = newIdsByThread.get(plan.thread_id) ?? [];
-      for (let i = 0; i < newIds.length; i++) {
-        const appendId = newIds[i];
-        if (appendId !== undefined) {
-          contextMappingRows.push({
-            session_id: input.session_id,
-            turn_id: input.turn_id,
-            thread_id: plan.thread_id,
-            pos: i + 1,
-            append_id: appendId,
-          });
-        }
-      }
-    }
-
-    if (contextMappingRows.length > 0) {
-      await trx.insertInto('turn_thread_context').values(contextMappingRows).execute();
-    }
-
-    if (capabilityStateRows.length > 0) {
-      await trx.insertInto('thread_capability_state').values(capabilityStateRows).execute();
-    }
-  });
+  const [threadInsert] = await atomic.batchWrite({ executor: db, queries });
+  if ((threadInsert?.changes ?? 0) === 0) {
+    await classifyTurnFenceWriteFailure(db, keys);
+  }
 }
 
 /**
- * removeThreads — fenced tx: DELETE this turn's turn_thread rows,
+ * removeThreads — fenced batch: DELETE this turn's turn_thread rows,
  * turn_thread_context rows, and capability rows.
  * Older turns keep their per-turn maps. Log rows stay (other turns may reference them).
  * Empty thread_ids is a no-op.
  */
-export async function removeThreads(db: Kysely<Database>, input: RemoveThreadsInput): Promise<void> {
+export async function removeThreads(
+  db: Kysely<Database>,
+  atomic: AtomicRunner<Database>,
+  input: RemoveThreadsInput,
+): Promise<void> {
   if (input.thread_ids.length === 0) {
     return;
   }
 
-  await db.transaction().execute(async trx => {
-    await assertTurnRunning(trx, {
-      session_id: input.session_id,
-      turn_id: input.turn_id,
-    });
-
-    await trx
-      .deleteFrom('turn_thread_context')
-      .where('session_id', '=', input.session_id)
-      .where('turn_id', '=', input.turn_id)
-      .where('thread_id', 'in', input.thread_ids)
-      .execute();
-
-    await trx
-      .deleteFrom('turn_thread')
-      .where('session_id', '=', input.session_id)
-      .where('turn_id', '=', input.turn_id)
-      .where('thread_id', 'in', input.thread_ids)
-      .execute();
-
-    await trx
-      .deleteFrom('thread_capability_state')
-      .where('session_id', '=', input.session_id)
-      .where('turn_id', '=', input.turn_id)
-      .where('thread_id', 'in', input.thread_ids)
-      .execute();
+  const keys: TurnKeys = { session_id: input.session_id, turn_id: input.turn_id };
+  const guard = turnRunning(keys);
+  const [threadDelete] = await atomic.batchWrite({
+    executor: db,
+    queries: [
+      db
+        .deleteFrom('turn_thread')
+        .where('session_id', '=', keys.session_id)
+        .where('turn_id', '=', keys.turn_id)
+        .where('thread_id', 'in', input.thread_ids)
+        .where(guard)
+        .compile(),
+      db
+        .deleteFrom('turn_thread_context')
+        .where('session_id', '=', keys.session_id)
+        .where('turn_id', '=', keys.turn_id)
+        .where('thread_id', 'in', input.thread_ids)
+        .where(guard)
+        .compile(),
+      db
+        .deleteFrom('thread_capability_state')
+        .where('session_id', '=', keys.session_id)
+        .where('turn_id', '=', keys.turn_id)
+        .where('thread_id', 'in', input.thread_ids)
+        .where(guard)
+        .compile(),
+    ],
   });
-}
-
-async function getNextPos(db: DbOrTrx, keys: TurnKeys, thread_id: string): Promise<number> {
-  const maxRow = await db
-    .selectFrom('turn_thread_context')
-    .select([sql<number | null>`MAX(pos)`.as('max_pos')])
-    .where('session_id', '=', keys.session_id)
-    .where('turn_id', '=', keys.turn_id)
-    .where('thread_id', '=', thread_id)
-    .executeTakeFirst();
-  return (maxRow?.max_pos ?? 0) + 1;
+  // Unknown thread ids delete nothing on a running turn; only a non-running turn is an error.
+  if ((threadDelete?.changes ?? 0) === 0) {
+    await assertTurnRunning(db, keys);
+  }
 }
 
 function completionPatchExpr(completion: SubAgentCompletionMarker | null): RawBuilder<string> {
@@ -233,6 +153,7 @@ function usageSetExpr(usage: CurrentContextUsage | null): RawBuilder<string> {
 
 async function fencedTurnThreadContextUpdate(
   db: Kysely<Database>,
+  atomic: AtomicRunner<Database>,
   args: {
     keys: TurnKeys;
     thread_id: string;
@@ -245,64 +166,19 @@ async function fencedTurnThreadContextUpdate(
   },
 ): Promise<void> {
   const { keys, thread_id, context, replace_array } = args;
+  const now = nowIso();
 
-  await db.transaction().execute(async trx => {
-    await assertTurnRunning(trx, keys);
+  const usageExpr =
+    args.usage_unconditional !== null ? jsonbBind(args.usage_unconditional) : usageSetExpr(args.current_context_usage);
 
-    const now = nowIso();
-
-    if (replace_array) {
-      await trx
-        .deleteFrom('turn_thread_context')
-        .where('session_id', '=', keys.session_id)
-        .where('turn_id', '=', keys.turn_id)
-        .where('thread_id', '=', thread_id)
-        .execute();
-    }
-
-    if (context.length > 0) {
-      const logRows = context.map(body => ({
-        session_id: keys.session_id,
-        thread_id,
-        turn_id: keys.turn_id,
-        body: jsonbBind(body),
-        created_at: now,
-      }));
-
-      const inserted = await trx.insertInto('thread_context_log').values(logRows).returning(['append_id']).execute();
-
-      let nextPos = replace_array ? 1 : await getNextPos(trx, keys, thread_id);
-
-      const contextMappingRows: {
-        session_id: string;
-        turn_id: string;
-        thread_id: string;
-        pos: number;
-        append_id: number;
-      }[] = [];
-
-      for (const row of sortedByAppendId(inserted)) {
-        contextMappingRows.push({
-          session_id: keys.session_id,
-          turn_id: keys.turn_id,
-          thread_id,
-          pos: nextPos,
-          append_id: row.append_id,
-        });
-        nextPos++;
-      }
-
-      if (contextMappingRows.length > 0) {
-        await trx.insertInto('turn_thread_context').values(contextMappingRows).execute();
-      }
-    }
-
-    const usageExpr =
-      args.usage_unconditional !== null
-        ? jsonbBind(args.usage_unconditional)
-        : usageSetExpr(args.current_context_usage);
-
-    const updateResult = await trx
+  // The thread UPDATE is decisive; the rest require the same "running turn + thread row" state,
+  // which no statement in this batch changes.
+  const guard = sql<boolean>`${turnRunning(keys)} AND EXISTS (
+    SELECT 1 FROM turn_thread
+    WHERE session_id = ${keys.session_id} AND turn_id = ${keys.turn_id} AND thread_id = ${thread_id}
+  )`;
+  const queries: CompiledQuery[] = [
+    db
       .updateTable('turn_thread')
       .set({
         checkpoint: completionPatchExpr(args.completion),
@@ -312,20 +188,47 @@ async function fencedTurnThreadContextUpdate(
       .where('session_id', '=', keys.session_id)
       .where('turn_id', '=', keys.turn_id)
       .where('thread_id', '=', thread_id)
-      .executeTakeFirst();
+      .where(turnRunning(keys))
+      .compile(),
+  ];
 
-    if (Number(updateResult.numUpdatedRows) === 0) {
-      await classifyTurnThreadWriteFailure(trx, keys, thread_id);
-    }
-  });
+  if (replace_array) {
+    queries.push(
+      db
+        .deleteFrom('turn_thread_context')
+        .where('session_id', '=', keys.session_id)
+        .where('turn_id', '=', keys.turn_id)
+        .where('thread_id', '=', thread_id)
+        .where(guard)
+        .compile(),
+    );
+  }
+
+  queries.push(
+    ...appendContextQueries(db, {
+      keys,
+      rows: context.map(body => ({ thread_id, body })),
+      guard,
+      created_at: now,
+    }),
+  );
+
+  const [threadUpdate] = await atomic.batchWrite({ executor: db, queries });
+  if ((threadUpdate?.changes ?? 0) === 0) {
+    await classifyTurnThreadWriteFailure(db, keys, thread_id);
+  }
 }
 
 /**
- * appendToThreadContext — fenced transaction: inserts log rows, appends mapping rows,
+ * appendToThreadContext — fenced batch: inserts log rows, appends mapping rows,
  * updates usage (COALESCE: provided wins, else keep), patches completion.
  */
-export async function appendToThreadContext(db: Kysely<Database>, input: AppendToThreadContextInput): Promise<void> {
-  await fencedTurnThreadContextUpdate(db, {
+export async function appendToThreadContext(
+  db: Kysely<Database>,
+  atomic: AtomicRunner<Database>,
+  input: AppendToThreadContextInput,
+): Promise<void> {
+  await fencedTurnThreadContextUpdate(db, atomic, {
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,
@@ -343,8 +246,12 @@ export async function appendToThreadContext(db: Kysely<Database>, input: AppendT
  * overwriteThreadContext — same fenced shape; context mapping is REPLACED.
  * Old log rows stay — ancestor turns' context mapping may reference them.
  */
-export async function overwriteThreadContext(db: Kysely<Database>, input: OverwriteThreadContextInput): Promise<void> {
-  await fencedTurnThreadContextUpdate(db, {
+export async function overwriteThreadContext(
+  db: Kysely<Database>,
+  atomic: AtomicRunner<Database>,
+  input: OverwriteThreadContextInput,
+): Promise<void> {
+  await fencedTurnThreadContextUpdate(db, atomic, {
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,

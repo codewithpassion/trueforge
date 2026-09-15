@@ -33,6 +33,7 @@ import {
   encodeOffsetPageToken,
 } from '@truefoundry/trueforge-core/agent-session/store/OffsetPageToken';
 import type { Kysely } from 'kysely';
+import type { AtomicRunner } from '../atomic';
 import type { Database } from '../types';
 import { patchThreadCapabilityState as patchThreadCapabilityStateQuery } from './queries/capabilities';
 import {
@@ -87,10 +88,14 @@ type TurnCustom = Record<string, never>;
  *    finished tip can leave more than one turn `running` at once.
  * 2. Every turn-scoped write is fenced on `state->>'status' = 'running'`.
  * 3. Terminal turns are IMMUTABLE — a terminal read is a final read.
- * 4. BEGIN IMMEDIATE provides write locking (no FOR SHARE / FOR UPDATE).
+ * 4. Multi-statement writes are conditional-chain `AtomicRunner` batches (no interactive write
+ *    transactions), so the same SQL runs on better-sqlite3 and D1.
  */
 export class SqliteSessionStore implements ISessionStore<SessionCustom, TurnCustom> {
-  constructor(private readonly db: Kysely<Database>) {}
+  constructor(
+    private readonly db: Kysely<Database>,
+    private readonly atomic: AtomicRunner<Database>,
+  ) {}
 
   createSession(input: CreateSessionInput<SessionCustom>): Promise<void> {
     return createSessionQuery(this.db, input);
@@ -130,7 +135,7 @@ export class SqliteSessionStore implements ISessionStore<SessionCustom, TurnCust
   }
 
   async createTurn(input: CreateTurnInput<TurnCustom>): Promise<void> {
-    await createTurnQuery(this.db, {
+    await createTurnQuery(this.db, this.atomic, {
       session_id: input.turn.session_id,
       turn: {
         turn_id: input.turn.turn_id,
@@ -156,11 +161,11 @@ export class SqliteSessionStore implements ISessionStore<SessionCustom, TurnCust
   }
 
   freezeAndGetTurn(input: FreezeAndGetTurnInput): Promise<TurnRecord<TurnCustom>> {
-    return freezeAndGetTurnQuery(this.db, input);
+    return freezeAndGetTurnQuery(this.db, this.atomic, input);
   }
 
   getTurn(input: GetTurnInput): Promise<TurnRecord<TurnCustom> | undefined> {
-    return getTurnQuery(this.db, input);
+    return getTurnQuery(this.atomic, input);
   }
 
   async listTurns(
@@ -183,7 +188,7 @@ export class SqliteSessionStore implements ISessionStore<SessionCustom, TurnCust
   }
 
   updateTurnState(input: UpdateTurnStateInput): Promise<void> {
-    return updateTurnStateQuery(this.db, input);
+    return updateTurnStateQuery(this.db, this.atomic, input);
   }
 
   appendToEvents(input: AppendToEventsInput): Promise<void> {
@@ -191,19 +196,19 @@ export class SqliteSessionStore implements ISessionStore<SessionCustom, TurnCust
   }
 
   addThreads(input: AddThreadsInput): Promise<void> {
-    return addThreadsQuery(this.db, input);
+    return addThreadsQuery(this.db, this.atomic, input);
   }
 
   removeThreads(input: RemoveThreadsInput): Promise<void> {
-    return removeThreadsQuery(this.db, input);
+    return removeThreadsQuery(this.db, this.atomic, input);
   }
 
   appendToThreadContext(input: AppendToThreadContextInput): Promise<void> {
-    return appendToThreadContextQuery(this.db, input);
+    return appendToThreadContextQuery(this.db, this.atomic, input);
   }
 
   overwriteThreadContext(input: OverwriteThreadContextInput): Promise<void> {
-    return overwriteThreadContextQuery(this.db, input);
+    return overwriteThreadContextQuery(this.db, this.atomic, input);
   }
 
   patchMCPServers(input: PatchMCPServersInput): Promise<void> {

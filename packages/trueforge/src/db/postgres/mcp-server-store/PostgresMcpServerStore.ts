@@ -14,6 +14,8 @@ import {
 } from '../../mcpServerStore';
 import { isUniqueViolation } from '../client';
 import { json, now } from '../sqlExpressions';
+import { deletePendingAuthorizationsForServer } from '../token-store/queries/pendingAuthorization';
+import { deleteTokensForServer } from '../token-store/queries/token';
 import type { Database, McpServerTable } from '../types';
 
 function toRecord(row: Selectable<McpServerTable>): McpServerRecord {
@@ -74,6 +76,7 @@ export class PostgresMcpServerStore implements IMcpServerStore<Transaction<Datab
 
   async createServer(input: CreateMcpServerInput, transaction?: Transaction<Database>): Promise<McpServerRecord> {
     const db = transaction ?? this.#db;
+    const stored = input.oauth_client === undefined ? undefined : toStoredOAuthClientRecord(input.oauth_client);
     try {
       const row = await db
         .insertInto('mcp_server')
@@ -82,8 +85,8 @@ export class PostgresMcpServerStore implements IMcpServerStore<Transaction<Datab
           tenant_id: input.tenant_id,
           name: input.name,
           manifest: json(input.manifest),
-          oauth_server: null,
-          oauth_client: null,
+          oauth_server: stored === undefined ? null : json(stored.server),
+          oauth_client: stored === undefined ? null : json(stored.client),
           created_at: now(),
           updated_at: now(),
         })
@@ -98,8 +101,10 @@ export class PostgresMcpServerStore implements IMcpServerStore<Transaction<Datab
     }
   }
 
+  /** Callers pass the route transaction, so the row and authorization resets commit together. */
   async upsertServer(input: UpsertMcpServerInput, transaction?: Transaction<Database>): Promise<McpServerRecord> {
     const db = transaction ?? this.#db;
+    const stored = input.oauth_client === undefined ? undefined : toStoredOAuthClientRecord(input.oauth_client);
     const row = await db
       .insertInto('mcp_server')
       .values({
@@ -107,8 +112,8 @@ export class PostgresMcpServerStore implements IMcpServerStore<Transaction<Datab
         tenant_id: input.tenant_id,
         name: input.name,
         manifest: json(input.manifest),
-        oauth_server: null,
-        oauth_client: null,
+        oauth_server: stored === undefined ? null : json(stored.server),
+        oauth_client: stored === undefined ? null : json(stored.client),
         created_at: now(),
         updated_at: now(),
       })
@@ -116,10 +121,15 @@ export class PostgresMcpServerStore implements IMcpServerStore<Transaction<Datab
         oc.columns(['tenant_id', 'name']).doUpdateSet({
           manifest: json(input.manifest),
           updated_at: now(),
+          ...(stored === undefined ? {} : { oauth_server: json(stored.server), oauth_client: json(stored.client) }),
         }),
       )
       .returningAll()
       .executeTakeFirstOrThrow();
+    if (input.reset_authorizations === true) {
+      await deleteTokensForServer(db, { id: row.id });
+      await deletePendingAuthorizationsForServer(db, { id: row.id });
+    }
     return toRecord(row);
   }
 

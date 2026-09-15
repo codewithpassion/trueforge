@@ -19,10 +19,12 @@ import {
   TurnNotFoundError,
 } from '@truefoundry/trueforge-core/agent-session/store/SessionStoreErrors';
 import { sql, type Kysely } from 'kysely';
-import { jsonbBind, jsonText } from '../../sqlExpressions';
+import { jsonText } from '../../sqlExpressions';
 import type { Database } from '../../types';
-import { classifyTurnFenceWriteFailure, type TurnKeys } from './turns';
+import { jsonRowSource, rowJsonb, rowText, turnRunning, type TurnKeys } from '../sqlExpressions';
+import { classifyTurnFenceWriteFailure } from './turns';
 
+/** appendToEvents — one INSERT ... SELECT fenced on the turn still running. */
 export async function appendToEvents(db: Kysely<Database>, input: AppendToEventsInput): Promise<void> {
   if (input.events.length === 0) {
     return;
@@ -33,30 +35,20 @@ export async function appendToEvents(db: Kysely<Database>, input: AppendToEvents
     turn_id: input.turn_id,
   };
 
-  // Fence check first inside BEGIN IMMEDIATE; then batched insert.
-  await db.transaction().execute(async trx => {
-    const fenceRow = await trx
-      .selectFrom('turn')
-      .select(sql`1`.as('one'))
-      .where('session_id', '=', keys.session_id)
-      .where('turn_id', '=', keys.turn_id)
-      .where(sql<boolean>`state->>'status' = 'running'`)
-      .executeTakeFirst();
+  const rows = input.events.map(event => ({ id: event.id, created_at: event.created_at, event }));
+  const result = await db
+    .insertInto('session_event')
+    .columns(['session_id', 'turn_id', 'event_id', 'event', 'created_at'])
+    .expression(
+      sql`SELECT ${keys.session_id}, ${keys.turn_id}, ${rowText('id')}, ${rowJsonb('event')}, ${rowText('created_at')}
+        FROM ${jsonRowSource(rows)}
+        WHERE ${turnRunning(keys)}`,
+    )
+    .executeTakeFirst();
 
-    if (!fenceRow) {
-      await classifyTurnFenceWriteFailure(trx, keys);
-    }
-
-    const eventRows = input.events.map(event => ({
-      session_id: input.session_id,
-      turn_id: input.turn_id,
-      event_id: event.id,
-      event: jsonbBind(event),
-      created_at: event.created_at,
-    }));
-
-    await trx.insertInto('session_event').values(eventRows).execute();
-  });
+  if (Number(result.numInsertedOrUpdatedRows ?? 0n) === 0) {
+    await classifyTurnFenceWriteFailure(db, keys);
+  }
 }
 
 /**

@@ -8,7 +8,7 @@ import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
-import { createSqliteDb } from '../../../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
@@ -67,12 +67,12 @@ async function postTurnRejectingWith(error: AgentHarnessError): Promise<Response
     '/',
     createTurnsRouter({
       sessions,
-      sessionStore: new SqliteSessionStore(db),
+      sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
       activeTurns: new ActiveTurnRegistry(),
       resolveModelProviderStore: () => modelProviderStore,
       resolveMcpServerStore: () =>
         new McpServerWithAuthStore({
-          store: new SqliteMcpServerStore(db),
+          store: new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
           tokenStore,
           clientName: 'test-client',
         }),

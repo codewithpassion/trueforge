@@ -14,6 +14,7 @@ import {
   type TransactionSettings,
 } from 'kysely';
 
+import type { AtomicRunner, BatchStatementResult, BatchWriteInput } from './atomic';
 import type { Database as Schema } from './types';
 
 /**
@@ -164,6 +165,35 @@ export function createSqliteDb(filename: string): Kysely<Schema> {
     // Parse only projected JSON columns once; never re-parse nested string values.
     plugins: [new ParseJSONResultsPlugin({ shouldParse: shouldParseJsonResultColumn })],
   });
+}
+
+export class BetterSqliteAtomicRunner<DB> implements AtomicRunner<DB> {
+  readonly #db: Kysely<DB>;
+
+  constructor(db: Kysely<DB>) {
+    this.#db = db;
+  }
+
+  readGroup<T>(callback: (db: Kysely<DB>) => Promise<T>): Promise<T> {
+    return this.#db.transaction().setAccessMode('read only').execute(callback);
+  }
+
+  async batchWrite({ executor, queries }: BatchWriteInput<DB>): Promise<readonly BatchStatementResult[]> {
+    const run = async (trx: Kysely<DB>): Promise<BatchStatementResult[]> => {
+      const results: BatchStatementResult[] = [];
+      for (const query of queries) {
+        const result = await trx.executeQuery(query);
+        results.push({ changes: Number(result.numAffectedRows ?? 0n) });
+      }
+      return results;
+    };
+    // The single better-sqlite3 connection is already inside the caller's transaction;
+    // opening another would deadlock on Kysely's connection mutex.
+    if (executor.isTransaction) {
+      return run(executor);
+    }
+    return executor.transaction().setAccessMode('read write').execute(run);
+  }
 }
 
 /**

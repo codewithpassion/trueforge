@@ -1,3 +1,4 @@
+import { BetterSqliteAtomicRunner } from '../../../../src/db/sqlite/client';
 import { SqliteSessionMetricsStore } from '../../../../src/db/sqlite/session-metrics/SqliteSessionMetricsStore';
 import { SqliteSessionStore } from '../../../../src/db/sqlite/session-store/SqliteSessionStore';
 import { runSessionMetricsStoreContractSuite } from '../../session-metrics/metricsContractSuite';
@@ -15,7 +16,7 @@ describe('SqliteSessionMetricsStore (metrics contract)', () => {
   });
 
   runSessionMetricsStoreContractSuite(() => {
-    const sessionStore = new SqliteSessionStore(env.db);
+    const sessionStore = new SqliteSessionStore(env.db, new BetterSqliteAtomicRunner(env.db));
     return {
       sessionStore,
       metricsStore: new SqliteSessionMetricsStore(env.db),

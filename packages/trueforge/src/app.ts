@@ -316,7 +316,6 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
     withAuth(
       createMcpServersRouter({
         resolveMcpServerStore: deps.resolveMcpServerStore,
-        tokenStore: deps.tokenStore,
         withTransaction: deps.withTransaction,
         logger: deps.logger,
         resolveRequestContext,
@@ -375,7 +374,6 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       createSettingsRouter({
         resolveModelProviderStore: deps.resolveModelProviderStore,
         resolveMcpServerStore: deps.resolveMcpServerStore,
-        tokenStore: deps.tokenStore,
         resolveSkillStore: deps.resolveSkillStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
         sandboxIntegration: deps.sandboxIntegration,

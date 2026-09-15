@@ -15,6 +15,7 @@ import {
   type CreateScheduleInput,
   type CreateScheduleRunInput,
   type DeleteScheduleInput,
+  type FinishScheduleRunInput,
   type GetOwnedIdsInput,
   type GetRunByIdInput,
   type GetRunInput,
@@ -361,6 +362,28 @@ export class PostgresScheduleStore implements IScheduleStore<Transaction<Databas
       .returningAll()
       .executeTakeFirst();
     return row === undefined ? undefined : toRunRecord(row);
+  }
+
+  /** Callers hold the schedule row lock (`getScheduleForUpdate`), so the schedule cannot change underneath. */
+  async finishRun(input: FinishScheduleRunInput, transaction?: Transaction<Database>): Promise<void> {
+    const updated = await this.updateRunStatus(
+      { tenant_id: input.run.tenant_id, id: input.run.id, status: input.status, reason: input.reason },
+      transaction,
+    );
+    if (updated === undefined || input.schedule === undefined || input.next_scheduled_for === undefined) {
+      return;
+    }
+    await this.createRun(
+      {
+        tenant_id: input.schedule.tenant_id,
+        schedule_id: input.schedule.id,
+        name: cronRunName(input.next_scheduled_for),
+        scheduled_for: input.next_scheduled_for,
+        status: 'scheduled',
+        created_by_subject: input.schedule.created_by_subject,
+      },
+      transaction,
+    );
   }
 
   async listScheduledRuns(

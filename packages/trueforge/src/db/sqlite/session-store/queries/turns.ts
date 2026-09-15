@@ -14,9 +14,7 @@ import type {
 import {
   PreviousTurnRunningError,
   SessionNotFoundError,
-  SessionStoreConflictError,
   SessionStoreInvariantError,
-  SessionStoreNotFoundError,
   TurnAlreadyExistsError,
   TurnNotFoundError,
   TurnNotRunningError,
@@ -27,11 +25,22 @@ import type { AgentThreadSnapshot, ContextMessage } from '@truefoundry/trueforge
 import type { CurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
 import { getEmptyCurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
 import type { SandboxInfo } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
-import { sql, type Kysely, type RawBuilder, type Transaction } from 'kysely';
+import { sql, type CompiledQuery, type Kysely } from 'kysely';
+import type { AtomicRunner, BatchStatementResult } from '../../atomic';
 import { isUniqueViolation } from '../../client';
 import { jsonbBind, jsonText, nowIso } from '../../sqlExpressions';
 import type { Database, TurnCheckpoint, TurnThreadCheckpoint } from '../../types';
-import { sortedByAppendId } from '../sqlExpressions';
+import {
+  appendContextQueries,
+  insertCapabilityStatesQuery,
+  insertTurnThreadsQuery,
+  turnExists,
+  turnRunning,
+  type CapabilityStateRow,
+  type ContextAppendRow,
+  type TurnKeys,
+  type TurnThreadRow,
+} from '../sqlExpressions';
 
 type TurnCustom = Record<string, never>;
 
@@ -54,11 +63,6 @@ export interface NewThreadRegistration {
   thread_id: string;
   parent: AgentParent | null;
   agent_info: AgentInfo | null;
-}
-
-export interface TurnKeys {
-  session_id: string;
-  turn_id: string;
 }
 
 export interface NewContextAppend {
@@ -108,22 +112,46 @@ export interface ListTurnsResult {
   next_offset: number | null;
 }
 
-type DbOrTrx = Kysely<Database> | Transaction<Database>;
+type DbOrTrx = Kysely<Database>;
 
-/** Same tx as the turn flip; BEGIN IMMEDIATE serializes concurrent terminal folds. */
-async function addSessionCostAndDuration(
-  trx: Transaction<Database>,
-  input: { session_id: string; turn_created_at: Date; turn_state: TerminalTurnState },
-): Promise<void> {
-  const elapsed_ms = Date.parse(input.turn_state.completed_at) - input.turn_created_at.getTime();
+/**
+ * Running → terminal as one batch. The event insert goes first because its `changes` is
+ * decisive; the metrics fold and state flip then require "still running AND this event
+ * exists", which only that insert can make true (a pre-existing event id errors instead).
+ */
+function terminalTransitionQueries(
+  db: Kysely<Database>,
+  input: {
+    keys: TurnKeys;
+    state: TerminalTurnState;
+    turn_created_at: string;
+    turn_done_event: UpdateTurnStateInput['turn_done_event'];
+  },
+): CompiledQuery[] {
+  const { keys, state, turn_done_event } = input;
+  const eventWritten = sql<boolean>`EXISTS (
+    SELECT 1 FROM session_event
+    WHERE session_id = ${keys.session_id} AND turn_id = ${keys.turn_id} AND event_id = ${turn_done_event.id}
+  )`;
+  const insertEvent = db
+    .insertInto('session_event')
+    .columns(['session_id', 'turn_id', 'event_id', 'event', 'created_at'])
+    .expression(
+      sql`SELECT session_id, turn_id, ${turn_done_event.id}, ${jsonbBind(turn_done_event)}, ${turn_done_event.created_at}
+        FROM turn
+        WHERE session_id = ${keys.session_id} AND turn_id = ${keys.turn_id} AND state->>'status' = 'running'`,
+    )
+    .compile();
+
+  const elapsed_ms = Date.parse(state.completed_at) - Date.parse(input.turn_created_at);
   const total_duration_ms = elapsed_ms > 0 ? Math.trunc(elapsed_ms) : 0;
-  const turnCost = input.turn_state.metrics?.total_cost_in_usd;
+  const turnCost = state.metrics?.total_cost_in_usd;
   const withDuration = sql<SessionMetrics>`jsonb_set(
     metrics,
     '$.total_duration_ms',
     jsonb((metrics->>'total_duration_ms') + ${total_duration_ms})
   )`;
-  await trx
+  const foldMetrics = db
     .updateTable('session')
     .set({
       metrics:
@@ -135,8 +163,33 @@ async function addSessionCostAndDuration(
               jsonb(COALESCE(metrics->>'total_cost_in_usd', 0) + ${turnCost})
             )`,
     })
-    .where('session_id', '=', input.session_id)
-    .execute();
+    .where('session_id', '=', keys.session_id)
+    .where(turnRunning(keys))
+    .where(eventWritten)
+    .compile();
+
+  const flipState = db
+    .updateTable('turn')
+    .set({ state: jsonbBind(state), updated_at: nowIso() })
+    .where('session_id', '=', keys.session_id)
+    .where('turn_id', '=', keys.turn_id)
+    .where(sql<boolean>`state->>'status' = 'running'`)
+    .where(eventWritten)
+    .compile();
+
+  return [insertEvent, foldMetrics, flipState];
+}
+
+async function loadTurnForTransition(
+  db: DbOrTrx,
+  keys: TurnKeys,
+): Promise<{ state: TurnState; created_at: string } | undefined> {
+  return await db
+    .selectFrom('turn')
+    .select([jsonText<TurnState>(sql.ref('state')).as('state'), 'created_at'])
+    .where('session_id', '=', keys.session_id)
+    .where('turn_id', '=', keys.turn_id)
+    .executeTakeFirst();
 }
 
 function terminalTurnState(state: TurnState, turn_id: string): TerminalTurnState {
@@ -340,406 +393,270 @@ async function assembleTurnRecord(
 }
 
 /**
- * createTurn — IMMEDIATE tx (BEGIN IMMEDIATE covers write locking; no FOR UPDATE/FOR SHARE).
- * Context order lives in turn_thread_context (pos, append_id); no context_ids array.
+ * createTurn — reads and validation, then one conditional-chain batch. Statement 1 inserts
+ * the turn only while the session exists and the previous turn is not running; every later
+ * statement requires the new turn row. Tip equality is not checked, so concurrent forks from
+ * one finished turn both succeed. Context order lives in turn_thread_context (pos, append_id).
  */
-export async function createTurn(db: Kysely<Database>, input: CreateTurnInput): Promise<void> {
-  try {
-    await db.transaction().execute(async trx => {
-      // Step 1: read session tip; no FOR UPDATE (BEGIN IMMEDIATE is the lock).
-      const locked = await trx
-        .selectFrom('session')
-        .select(['last_turn_id'])
-        .where('session_id', '=', input.session_id)
-        .executeTakeFirst();
+export async function createTurn(
+  db: Kysely<Database>,
+  atomic: AtomicRunner<Database>,
+  input: CreateTurnInput,
+): Promise<void> {
+  const session = await db
+    .selectFrom('session')
+    .select(['last_turn_id'])
+    .where('session_id', '=', input.session_id)
+    .executeTakeFirst();
+  if (!session) {
+    throw new SessionNotFoundError(input.session_id);
+  }
 
-      if (!locked) {
-        throw new SessionNotFoundError(input.session_id);
+  const prevTurnId = input.turn.previous_turn_id;
+
+  let prevCheckpoint: TurnCheckpoint | null = null;
+  const prevThreadRows: TurnThreadRow[] = [];
+
+  if (prevTurnId != null) {
+    // Terminal turns are immutable, so this read stays valid; the batch re-checks "not running".
+    const prevRows = await db
+      .selectFrom('turn as t')
+      .leftJoin('turn_thread as tt', join =>
+        join.onRef('tt.session_id', '=', 't.session_id').onRef('tt.turn_id', '=', 't.turn_id'),
+      )
+      .select([
+        jsonText<TurnCheckpoint>(sql.ref('t.checkpoint')).as('turn_checkpoint'),
+        jsonText<TurnState>(sql.ref('t.state')).as('turn_state'),
+        'tt.thread_id',
+        jsonText<TurnThreadCheckpoint | null>(sql.ref('tt.checkpoint')).as('thread_checkpoint'),
+        jsonText<AgentInfo | null>(sql.ref('tt.agent_info')).as('agent_info'),
+        jsonText<CurrentContextUsage | null>(sql.ref('tt.current_context_usage')).as('current_context_usage'),
+      ])
+      .where('t.session_id', '=', input.session_id)
+      .where('t.turn_id', '=', prevTurnId)
+      .execute();
+
+    const first = prevRows[0];
+    if (first !== undefined) {
+      if (first.turn_state.status === 'running') {
+        throw new PreviousTurnRunningError(prevTurnId);
       }
+      prevCheckpoint = first.turn_checkpoint;
 
-      // Step 2: bump session tip + optional title coalesce.
-      let sessionUpdate = trx
-        .updateTable('session')
-        .set({
-          last_turn_id: input.turn.turn_id,
-          updated_at: nowIso(),
-          last_activity_timestamp_ms: input.last_activity_timestamp_ms,
-          // total_turns rides the same tip UPDATE so a later failure in this tx rolls it back.
-          metrics: sql`jsonb_set(metrics, '$.total_turns', jsonb((metrics->>'total_turns') + 1))`,
-        })
-        .where('session_id', '=', input.session_id);
-
-      if (input.update_session_title_if_not_exist !== null) {
-        const titleValue = input.update_session_title_if_not_exist;
-        sessionUpdate = sessionUpdate.set({
-          title: sql<string>`COALESCE(title, ${titleValue})`,
-        });
-      }
-
-      await sessionUpdate.execute();
-
-      const prevTurnId = input.turn.previous_turn_id;
-
-      let prevCheckpoint: TurnCheckpoint | null = null;
-      const prevThreadRows: {
-        thread_id: string;
-        checkpoint: TurnThreadCheckpoint;
-        agent_info: AgentInfo | null;
-        current_context_usage: CurrentContextUsage;
-        context_pos_max: number;
-      }[] = [];
-
-      if (prevTurnId != null) {
-        // Read previous turn + its turn_thread rows in one join.
-        const prevRows = await trx
-          .selectFrom('turn as t')
-          .leftJoin('turn_thread as tt', join =>
-            join.onRef('tt.session_id', '=', 't.session_id').onRef('tt.turn_id', '=', 't.turn_id'),
-          )
-          .leftJoin(
-            db
-              .selectFrom('turn_thread_context')
-              .select(['thread_id', 'turn_id', sql<number>`MAX(pos)`.as('max_pos')])
-              .where('session_id', '=', input.session_id)
-              .where('turn_id', '=', prevTurnId)
-              .groupBy(['thread_id', 'turn_id'])
-              .as('tc_agg'),
-            join => join.onRef('tc_agg.thread_id', '=', 'tt.thread_id').onRef('tc_agg.turn_id', '=', 'tt.turn_id'),
-          )
-          .select([
-            jsonText<TurnCheckpoint>(sql.ref('t.checkpoint')).as('turn_checkpoint'),
-            jsonText<TurnState>(sql.ref('t.state')).as('turn_state'),
-            'tt.thread_id',
-            jsonText<TurnThreadCheckpoint | null>(sql.ref('tt.checkpoint')).as('thread_checkpoint'),
-            jsonText<AgentInfo | null>(sql.ref('tt.agent_info')).as('agent_info'),
-            jsonText<CurrentContextUsage | null>(sql.ref('tt.current_context_usage')).as('current_context_usage'),
-            'tc_agg.max_pos',
-          ])
-          .where('t.session_id', '=', input.session_id)
-          .where('t.turn_id', '=', prevTurnId)
-          .execute();
-
-        const first = prevRows[0];
-        if (first !== undefined) {
-          if (first.turn_state.status === 'running') {
-            throw new PreviousTurnRunningError(prevTurnId);
-          }
-          prevCheckpoint = first.turn_checkpoint;
-
-          for (const row of prevRows) {
-            if (row.thread_id === null) {
-              continue;
-            }
-            if (row.thread_checkpoint === null || row.current_context_usage === null) {
-              throw new SessionStoreInvariantError(`previous turn_thread row for ${row.thread_id} is incomplete`);
-            }
-            prevThreadRows.push({
-              thread_id: row.thread_id,
-              checkpoint: row.thread_checkpoint,
-              agent_info: row.agent_info,
-              current_context_usage: row.current_context_usage,
-              context_pos_max: row.max_pos ?? 0,
-            });
-          }
-        }
-      }
-
-      assertCreateTurnThreadDelta({
-        previousThreadIds: new Set(prevThreadRows.map(r => r.thread_id)),
-        new_threads: input.new_threads,
-        new_context_appends: input.new_context_appends,
-        capability_states: input.capability_states,
-      });
-
-      const checkpoint: TurnCheckpoint = {
-        mcp_servers: input.mcp_servers ?? prevCheckpoint?.mcp_servers ?? null,
-        sandbox_info: input.sandbox_info ?? prevCheckpoint?.sandbox_info ?? null,
-      };
-
-      const now = nowIso();
-
-      const turnCustom = input.turn.custom ?? null;
-
-      // Step 3: insert turn row.
-      await trx
-        .insertInto('turn')
-        .values({
-          session_id: input.session_id,
-          turn_id: input.turn.turn_id,
-          first_turn_id: input.turn.first_turn_id,
-          previous_turn_id: input.turn.previous_turn_id ?? null,
-          ancestor_ids: jsonbBind(input.turn.ancestor_ids),
-          input: jsonbBind(input.turn.input),
-          state: jsonbBind(input.turn.state),
-          checkpoint: jsonbBind(checkpoint),
-          custom: turnCustom !== null ? jsonbBind(turnCustom) : null,
-          created_at: now,
-          updated_at: now,
-        })
-        .execute();
-
-      // Step 4: insert new context log rows.
-      const logRows: {
-        session_id: string;
-        thread_id: string;
-        turn_id: string;
-        body: RawBuilder<string>;
-        created_at: string;
-      }[] = [];
-
-      for (const append of input.new_context_appends) {
-        for (const body of append.context) {
-          logRows.push({
-            session_id: input.session_id,
-            thread_id: append.thread_id,
-            turn_id: input.turn.turn_id,
-            body: jsonbBind(body),
-            created_at: now,
-          });
-        }
-      }
-
-      const newIdsByThread = new Map<string, number[]>();
-      if (logRows.length > 0) {
-        const inserted = await trx
-          .insertInto('thread_context_log')
-          .values(logRows)
-          .returning(['thread_id', 'append_id'])
-          .execute();
-        for (const row of sortedByAppendId(inserted)) {
-          const list = newIdsByThread.get(row.thread_id);
-          if (list === undefined) {
-            newIdsByThread.set(row.thread_id, [row.append_id]);
-          } else {
-            list.push(row.append_id);
-          }
-        }
-      }
-
-      const appendUsageByThread = new Map<string, CurrentContextUsage>();
-      for (const append of input.new_context_appends) {
-        if (append.current_context_usage !== null) {
-          appendUsageByThread.set(append.thread_id, append.current_context_usage);
-        }
-      }
-
-      // Step 5: insert turn_thread rows for carried-forward and new threads.
-      const turnThreadRows: {
-        session_id: string;
-        turn_id: string;
-        thread_id: string;
-        checkpoint: RawBuilder<string>;
-        agent_info: RawBuilder<string> | null;
-        current_context_usage: RawBuilder<string>;
-        updated_at: string;
-      }[] = [];
-
-      const turnThreadContextRows: {
-        session_id: string;
-        turn_id: string;
-        thread_id: string;
-        pos: number;
-        append_id: number;
-      }[] = [];
-
-      for (const parent of prevThreadRows) {
-        const usage = appendUsageByThread.get(parent.thread_id) ?? parent.current_context_usage;
-        turnThreadRows.push({
-          session_id: input.session_id,
-          turn_id: input.turn.turn_id,
-          thread_id: parent.thread_id,
-          checkpoint: jsonbBind(parent.checkpoint),
-          agent_info: parent.agent_info !== null ? jsonbBind(parent.agent_info) : null,
-          current_context_usage: jsonbBind(usage),
-          updated_at: now,
-        });
-      }
-
-      // One SELECT for all parent context mappings (not N+1 per thread).
-      if (prevTurnId != null && prevThreadRows.length > 0) {
-        const parentContextRows = await trx
-          .selectFrom('turn_thread_context')
-          .select(['thread_id', 'pos', 'append_id'])
-          .where('session_id', '=', input.session_id)
-          .where('turn_id', '=', prevTurnId)
-          .where(
-            'thread_id',
-            'in',
-            prevThreadRows.map(r => r.thread_id),
-          )
-          .orderBy('thread_id')
-          .orderBy('pos')
-          .execute();
-
-        for (const cr of parentContextRows) {
-          turnThreadContextRows.push({
-            session_id: input.session_id,
-            turn_id: input.turn.turn_id,
-            thread_id: cr.thread_id,
-            pos: cr.pos,
-            append_id: cr.append_id,
-          });
-        }
-      }
-
-      for (const parent of prevThreadRows) {
-        const newIds = newIdsByThread.get(parent.thread_id) ?? [];
-        const basePos = parent.context_pos_max;
-        for (let i = 0; i < newIds.length; i++) {
-          const appendId = newIds[i];
-          if (appendId !== undefined) {
-            turnThreadContextRows.push({
-              session_id: input.session_id,
-              turn_id: input.turn.turn_id,
-              thread_id: parent.thread_id,
-              pos: basePos + i + 1,
-              append_id: appendId,
-            });
-          }
-        }
-      }
-
-      // Step 5b: new threads — fresh turn_thread + mapping rows.
-      for (const nt of input.new_threads) {
-        const newIds = newIdsByThread.get(nt.thread_id) ?? [];
-        const usage = appendUsageByThread.get(nt.thread_id) ?? getEmptyCurrentContextUsage();
-        const threadCheckpoint: TurnThreadCheckpoint = {
-          parent: nt.parent,
-          completion: null,
-        };
-        turnThreadRows.push({
-          session_id: input.session_id,
-          turn_id: input.turn.turn_id,
-          thread_id: nt.thread_id,
-          checkpoint: jsonbBind(threadCheckpoint),
-          agent_info: nt.agent_info !== null ? jsonbBind(nt.agent_info) : null,
-          current_context_usage: jsonbBind(usage),
-          updated_at: now,
-        });
-
-        for (let i = 0; i < newIds.length; i++) {
-          const appendId = newIds[i];
-          if (appendId !== undefined) {
-            turnThreadContextRows.push({
-              session_id: input.session_id,
-              turn_id: input.turn.turn_id,
-              thread_id: nt.thread_id,
-              pos: i + 1,
-              append_id: appendId,
-            });
-          }
-        }
-      }
-
-      if (turnThreadRows.length > 0) {
-        await trx.insertInto('turn_thread').values(turnThreadRows).execute();
-      }
-
-      if (turnThreadContextRows.length > 0) {
-        await trx.insertInto('turn_thread_context').values(turnThreadContextRows).execute();
-      }
-
-      // Step 6: insert capability state rows (thread coverage asserted above).
-      const capabilityStateRows: {
-        session_id: string;
-        turn_id: string;
-        thread_id: string;
-        key: string;
-        state: RawBuilder<string> | null;
-        updated_at: string;
-      }[] = [];
-
-      for (const capability of input.capability_states) {
-        if (capability.capability_state === null) {
+      for (const row of prevRows) {
+        if (row.thread_id === null) {
           continue;
         }
-        for (const [key, state] of Object.entries(capability.capability_state)) {
-          capabilityStateRows.push({
-            session_id: input.session_id,
-            turn_id: input.turn.turn_id,
-            thread_id: capability.thread_id,
-            key,
-            state: state !== null ? jsonbBind(state) : null,
-            updated_at: now,
-          });
+        if (row.thread_checkpoint === null || row.current_context_usage === null) {
+          throw new SessionStoreInvariantError(`previous turn_thread row for ${row.thread_id} is incomplete`);
         }
+        prevThreadRows.push({
+          thread_id: row.thread_id,
+          checkpoint: row.thread_checkpoint,
+          agent_info: row.agent_info,
+          current_context_usage: row.current_context_usage,
+        });
       }
-
-      if (capabilityStateRows.length > 0) {
-        await trx.insertInto('thread_capability_state').values(capabilityStateRows).execute();
-      }
-    });
-  } catch (err) {
-    if (err instanceof SessionStoreNotFoundError || err instanceof SessionStoreConflictError) {
-      throw err;
     }
+  }
+
+  assertCreateTurnThreadDelta({
+    previousThreadIds: new Set(prevThreadRows.map(r => r.thread_id)),
+    new_threads: input.new_threads,
+    new_context_appends: input.new_context_appends,
+    capability_states: input.capability_states,
+  });
+
+  const checkpoint: TurnCheckpoint = {
+    mcp_servers: input.mcp_servers ?? prevCheckpoint?.mcp_servers ?? null,
+    sandbox_info: input.sandbox_info ?? prevCheckpoint?.sandbox_info ?? null,
+  };
+  const now = nowIso();
+  const turnCustom = input.turn.custom ?? null;
+  const keys: TurnKeys = { session_id: input.session_id, turn_id: input.turn.turn_id };
+  const created = turnExists(keys);
+
+  const previousNotRunning =
+    prevTurnId == null
+      ? sql``
+      : sql` AND NOT EXISTS (
+          SELECT 1 FROM turn
+          WHERE session_id = ${input.session_id} AND turn_id = ${prevTurnId} AND state->>'status' = 'running'
+        )`;
+  const insertTurn = db
+    .insertInto('turn')
+    .columns([
+      'session_id',
+      'turn_id',
+      'first_turn_id',
+      'previous_turn_id',
+      'ancestor_ids',
+      'input',
+      'state',
+      'checkpoint',
+      'custom',
+      'created_at',
+      'updated_at',
+    ])
+    .expression(
+      sql`SELECT ${input.session_id}, ${input.turn.turn_id}, ${input.turn.first_turn_id}, ${prevTurnId ?? null},
+          ${jsonbBind(input.turn.ancestor_ids)}, ${jsonbBind(input.turn.input)}, ${jsonbBind(input.turn.state)},
+          ${jsonbBind(checkpoint)}, ${turnCustom !== null ? jsonbBind(turnCustom) : null}, ${now}, ${now}
+        FROM session
+        WHERE session_id = ${input.session_id}${previousNotRunning}`,
+    )
+    .compile();
+
+  const titleValue = input.update_session_title_if_not_exist;
+  const updateSession = db
+    .updateTable('session')
+    .set({
+      last_turn_id: input.turn.turn_id,
+      updated_at: now,
+      last_activity_timestamp_ms: input.last_activity_timestamp_ms,
+      metrics: sql`jsonb_set(metrics, '$.total_turns', jsonb((metrics->>'total_turns') + 1))`,
+      ...(titleValue !== null ? { title: sql<string>`COALESCE(title, ${titleValue})` } : {}),
+    })
+    .where('session_id', '=', input.session_id)
+    .where(created)
+    .compile();
+
+  const queries: CompiledQuery[] = [insertTurn, updateSession];
+
+  const appendUsageByThread = new Map<string, CurrentContextUsage>();
+  for (const append of input.new_context_appends) {
+    if (append.current_context_usage !== null) {
+      appendUsageByThread.set(append.thread_id, append.current_context_usage);
+    }
+  }
+
+  const turnThreadRows: TurnThreadRow[] = prevThreadRows.map(parent => ({
+    ...parent,
+    current_context_usage: appendUsageByThread.get(parent.thread_id) ?? parent.current_context_usage,
+  }));
+  for (const nt of input.new_threads) {
+    turnThreadRows.push({
+      thread_id: nt.thread_id,
+      checkpoint: { parent: nt.parent, completion: null },
+      agent_info: nt.agent_info,
+      current_context_usage: appendUsageByThread.get(nt.thread_id) ?? getEmptyCurrentContextUsage(),
+    });
+  }
+  if (turnThreadRows.length > 0) {
+    queries.push(insertTurnThreadsQuery(db, { keys, rows: turnThreadRows, guard: created, updated_at: now }));
+  }
+
+  // Carried-forward mapping first, so appended rows number after the parent's max pos.
+  if (prevTurnId != null && prevThreadRows.length > 0) {
+    queries.push(
+      db
+        .insertInto('turn_thread_context')
+        .columns(['session_id', 'turn_id', 'thread_id', 'pos', 'append_id'])
+        .expression(
+          sql`SELECT session_id, ${input.turn.turn_id}, thread_id, pos, append_id
+            FROM turn_thread_context
+            WHERE session_id = ${input.session_id}
+              AND turn_id = ${prevTurnId}
+              AND thread_id IN (SELECT thread_id FROM turn_thread WHERE session_id = ${input.session_id} AND turn_id = ${prevTurnId})
+              AND ${created}`,
+        )
+        .compile(),
+    );
+  }
+
+  const appendRows: ContextAppendRow[] = input.new_context_appends.flatMap(append =>
+    append.context.map(body => ({ thread_id: append.thread_id, body })),
+  );
+  queries.push(...appendContextQueries(db, { keys, rows: appendRows, guard: created, created_at: now }));
+
+  const capabilityRows: CapabilityStateRow[] = [];
+  for (const capability of input.capability_states) {
+    if (capability.capability_state === null) {
+      continue;
+    }
+    for (const [key, state] of Object.entries(capability.capability_state)) {
+      capabilityRows.push({ thread_id: capability.thread_id, key, state });
+    }
+  }
+  if (capabilityRows.length > 0) {
+    queries.push(insertCapabilityStatesQuery(db, { keys, rows: capabilityRows, guard: created, updated_at: now }));
+  }
+
+  let results: readonly BatchStatementResult[];
+  try {
+    results = await atomic.batchWrite({ executor: db, queries });
+  } catch (err) {
     if (isUniqueViolation(err)) {
       throw new TurnAlreadyExistsError(input.turn.turn_id, { cause: err });
     }
     throw err;
   }
+  if ((results[0]?.changes ?? 0) === 0) {
+    await classifyCreateTurnGuardFailure(db, { session_id: input.session_id, previous_turn_id: prevTurnId });
+  }
+}
+
+/** Statement 1 matched no session row, or the previous turn was running when the batch ran. */
+async function classifyCreateTurnGuardFailure(
+  db: DbOrTrx,
+  args: { session_id: string; previous_turn_id: string | null },
+): Promise<never> {
+  const session = await db
+    .selectFrom('session')
+    .select(['session_id'])
+    .where('session_id', '=', args.session_id)
+    .executeTakeFirst();
+  if (!session) {
+    throw new SessionNotFoundError(args.session_id);
+  }
+  if (args.previous_turn_id !== null) {
+    throw new PreviousTurnRunningError(args.previous_turn_id);
+  }
+  throw new SessionStoreInvariantError(`createTurn guard rejected turn for session ${args.session_id}`);
 }
 
 /**
  * freezeAndGetTurn — cancel if still running, then return the assembled record.
  * Terminal turns are returned unchanged (freeze is a plain read).
  */
-export async function freezeAndGetTurn(db: Kysely<Database>, input: FreezeAndGetTurnInput): Promise<TurnRecord> {
-  return await db.transaction().execute(async trx => {
+export async function freezeAndGetTurn(
+  db: Kysely<Database>,
+  atomic: AtomicRunner<Database>,
+  input: FreezeAndGetTurnInput,
+): Promise<TurnRecord> {
+  const keys: TurnKeys = { session_id: input.session_id, turn_id: input.turn_id };
+  const current = await loadTurnForTransition(db, keys);
+  if (current?.state.status === 'running') {
     const cancelledState: TerminalTurnState = {
       status: 'cancelled',
       reason: input.reason,
       completed_at: nowIso(),
     };
+    // Zero changes means another terminal write won; the read below returns its result.
+    await atomic.batchWrite({
+      executor: db,
+      queries: terminalTransitionQueries(db, {
+        keys,
+        state: cancelledState,
+        turn_created_at: current.created_at,
+        turn_done_event: input.turn_done_event,
+      }),
+    });
+  }
 
-    const updateResult = await trx
-      .updateTable('turn')
-      .set({
-        state: jsonbBind(cancelledState),
-        updated_at: nowIso(),
-      })
-      .where('session_id', '=', input.session_id)
-      .where('turn_id', '=', input.turn_id)
-      .where(sql<boolean>`state->>'status' = 'running'`)
-      .returning(['created_at'])
-      .executeTakeFirst();
-
-    if (updateResult !== undefined) {
-      await trx
-        .insertInto('session_event')
-        .values({
-          session_id: input.session_id,
-          turn_id: input.turn_id,
-          event_id: input.turn_done_event.id,
-          event: jsonbBind(input.turn_done_event),
-          created_at: input.turn_done_event.created_at,
-        })
-        .execute();
-      // Only the winning cancel folds; a freeze of an already-terminal turn is a read.
-      await addSessionCostAndDuration(trx, {
-        session_id: input.session_id,
-        turn_created_at: new Date(updateResult.created_at),
-        turn_state: cancelledState,
-      });
-    }
-
-    const record = await assembleTurnRecord(trx, input);
-    if (!record) {
-      throw new TurnNotFoundError(input.turn_id);
-    }
-    return record;
-  });
+  const record = await getTurn(atomic, input);
+  if (!record) {
+    throw new TurnNotFoundError(input.turn_id);
+  }
+  return record;
 }
 
-/**
- * getTurn — deferred read tx so assembleTurnRecord's SELECTs share one snapshot.
- * ImmediateSqliteDriver maps setAccessMode('read only') → BEGIN (not IMMEDIATE).
- */
-export async function getTurn(db: Kysely<Database>, input: GetTurnInput): Promise<TurnRecord<TurnCustom> | undefined> {
-  return db
-    .transaction()
-    .setAccessMode('read only')
-    .execute(trx => assembleTurnRecord(trx, input));
+/** getTurn — assembleTurnRecord's SELECTs share one read group. */
+export async function getTurn(
+  atomic: AtomicRunner<Database>,
+  input: GetTurnInput,
+): Promise<TurnRecord<TurnCustom> | undefined> {
+  return atomic.readGroup(trx => assembleTurnRecord(trx, input));
 }
 
 /**
@@ -791,53 +708,33 @@ export async function listTurns(db: Kysely<Database>, input: ListTurnsInput): Pr
 }
 
 /**
- * updateTurnState — conditional on state->>'status'='running'.
- * 0 rows → SELECT by PK → missing NotFound, present Conflict (first terminal write wins).
+ * updateTurnState — first terminal write wins: the running → terminal flip, its turn.done
+ * event, and the session metrics fold commit together. Missing → NotFound, terminal → Conflict.
  */
-export async function updateTurnState(db: Kysely<Database>, input: UpdateTurnStateInput): Promise<void> {
-  await db.transaction().execute(async trx => {
-    const result = await trx
-      .updateTable('turn')
-      .set({
-        state: jsonbBind(input.state),
-        updated_at: nowIso(),
-      })
-      .where('session_id', '=', input.session_id)
-      .where('turn_id', '=', input.turn_id)
-      .where(sql<boolean>`state->>'status' = 'running'`)
-      .returning(['created_at'])
-      .executeTakeFirst();
+export async function updateTurnState(
+  db: Kysely<Database>,
+  atomic: AtomicRunner<Database>,
+  input: UpdateTurnStateInput,
+): Promise<void> {
+  const keys: TurnKeys = { session_id: input.session_id, turn_id: input.turn_id };
+  const current = await loadTurnForTransition(db, keys);
+  if (!current) {
+    throw new TurnNotFoundError(input.turn_id);
+  }
+  if (current.state.status !== 'running') {
+    throw new TurnNotRunningError(input.turn_id, terminalTurnState(current.state, input.turn_id));
+  }
 
-    // No RETURNING row: UPDATE matched 0 running turns.
-    if (result === undefined) {
-      const existing = await trx
-        .selectFrom('turn')
-        .select([jsonText<TurnState>(sql.ref('state')).as('state')])
-        .where('session_id', '=', input.session_id)
-        .where('turn_id', '=', input.turn_id)
-        .executeTakeFirst();
-
-      if (!existing) {
-        throw new TurnNotFoundError(input.turn_id);
-      }
-      throw new TurnNotRunningError(input.turn_id, terminalTurnState(existing.state, input.turn_id));
-    }
-
-    await addSessionCostAndDuration(trx, {
-      session_id: input.session_id,
-      turn_created_at: new Date(result.created_at),
-      turn_state: input.state,
-    });
-
-    await trx
-      .insertInto('session_event')
-      .values({
-        session_id: input.session_id,
-        turn_id: input.turn_id,
-        event_id: input.turn_done_event.id,
-        event: jsonbBind(input.turn_done_event),
-        created_at: input.turn_done_event.created_at,
-      })
-      .execute();
+  const [eventInsert] = await atomic.batchWrite({
+    executor: db,
+    queries: terminalTransitionQueries(db, {
+      keys,
+      state: input.state,
+      turn_created_at: current.created_at,
+      turn_done_event: input.turn_done_event,
+    }),
   });
+  if ((eventInsert?.changes ?? 0) === 0) {
+    await classifyTurnFenceWriteFailure(db, keys);
+  }
 }

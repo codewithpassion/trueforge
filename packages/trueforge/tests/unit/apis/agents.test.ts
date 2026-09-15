@@ -4,7 +4,7 @@ import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
 import configuration from '../../../src/config';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
-import { createSqliteDb } from '../../../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
@@ -99,7 +99,7 @@ describe('agents router', () => {
     router = createAgentsRouter({
       resolveAgentStore: () => agentStore,
       resolveModelProviderStore: () => modelProviderStore,
-      resolveMcpServerStore: () => new SqliteMcpServerStore(db),
+      resolveMcpServerStore: () => new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
       resolveSkillStore: () => new SqliteSkillStore(db),
       resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
       sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
@@ -110,7 +110,7 @@ describe('agents router', () => {
     deniedRouter = createAgentsRouter({
       resolveAgentStore: () => agentStore,
       resolveModelProviderStore: () => modelProviderStore,
-      resolveMcpServerStore: () => new SqliteMcpServerStore(db),
+      resolveMcpServerStore: () => new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
       resolveSkillStore: () => new SqliteSkillStore(db),
       resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
       sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),

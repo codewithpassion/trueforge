@@ -13,7 +13,7 @@ import { TrueForgeAuthorizer, type Authorizer } from '../../../src/auth/authoriz
 import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
-import { createSqliteDb } from '../../../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
@@ -59,11 +59,11 @@ describe('sessions HTTP agent binding', () => {
   beforeEach(async () => {
     const db = createSqliteDb(':memory:');
     await migrateSqliteToLatest(db);
-    sessionStore = new SqliteSessionStore(db);
+    sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
     sessionMetricsStore = new SqliteSessionMetricsStore(db);
     const sessions = new Sessions({ sessionStore });
     const modelProviderStore = new SqliteModelProviderStore(db);
-    const mcpServerStore = new SqliteMcpServerStore(db);
+    const mcpServerStore = new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db));
     const skillStore = new SqliteSkillStore(db);
     const sandboxProviderStore = new SqliteSandboxProviderStore(db);
     agentStore = new SqliteAgentStore(db);

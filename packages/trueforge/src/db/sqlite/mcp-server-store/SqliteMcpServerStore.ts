@@ -1,4 +1,4 @@
-import type { ExpressionBuilder, Kysely, Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
 import type { OAuthClientRecord } from '../../../mcp/auth/types';
 import type { McpServerManifest } from '../../../schemas/mcpServer';
 import { newId } from '../../../utils/id';
@@ -15,6 +15,7 @@ import {
   type OAuthServer,
   type UpsertMcpServerInput,
 } from '../../mcpServerStore';
+import type { AtomicRunner } from '../atomic';
 import { isUniqueViolation } from '../client';
 import { jsonbBind, jsonText, nowIso } from '../sqlExpressions';
 import type { Database } from '../types';
@@ -33,9 +34,11 @@ function recordColumns(eb: ExpressionBuilder<Database, 'mcp_server'>) {
 
 export class SqliteMcpServerStore implements IMcpServerStore<Transaction<Database>> {
   readonly #db: Kysely<Database>;
+  readonly #atomic: AtomicRunner<Database>;
 
-  constructor(db: Kysely<Database>) {
+  constructor(db: Kysely<Database>, atomic: AtomicRunner<Database>) {
     this.#db = db;
+    this.#atomic = atomic;
   }
 
   async listServers(input: ListMcpServersInput, transaction?: Transaction<Database>): Promise<McpServerRecord[]> {
@@ -79,6 +82,7 @@ export class SqliteMcpServerStore implements IMcpServerStore<Transaction<Databas
   async createServer(input: CreateMcpServerInput, transaction?: Transaction<Database>): Promise<McpServerRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
+    const stored = input.oauth_client === undefined ? undefined : toStoredOAuthClientRecord(input.oauth_client);
     try {
       return await db
         .insertInto('mcp_server')
@@ -87,8 +91,8 @@ export class SqliteMcpServerStore implements IMcpServerStore<Transaction<Databas
           tenant_id: input.tenant_id,
           name: input.name,
           manifest: jsonbBind(input.manifest),
-          oauth_server: null,
-          oauth_client: null,
+          oauth_server: stored === undefined ? null : jsonbBind(stored.server),
+          oauth_client: stored === undefined ? null : jsonbBind(stored.client),
           created_at: timestamp,
           updated_at: timestamp,
         })
@@ -105,15 +109,16 @@ export class SqliteMcpServerStore implements IMcpServerStore<Transaction<Databas
   async upsertServer(input: UpsertMcpServerInput, transaction?: Transaction<Database>): Promise<McpServerRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
-    return await db
+    const stored = input.oauth_client === undefined ? undefined : toStoredOAuthClientRecord(input.oauth_client);
+    const upsert = db
       .insertInto('mcp_server')
       .values({
         id: newId(),
         tenant_id: input.tenant_id,
         name: input.name,
         manifest: jsonbBind(input.manifest),
-        oauth_server: null,
-        oauth_client: null,
+        oauth_server: stored === undefined ? null : jsonbBind(stored.server),
+        oauth_client: stored === undefined ? null : jsonbBind(stored.client),
         created_at: timestamp,
         updated_at: timestamp,
       })
@@ -121,10 +126,32 @@ export class SqliteMcpServerStore implements IMcpServerStore<Transaction<Databas
         oc.columns(['tenant_id', 'name']).doUpdateSet({
           manifest: jsonbBind(input.manifest),
           updated_at: timestamp,
+          ...(stored === undefined
+            ? {}
+            : { oauth_server: jsonbBind(stored.server), oauth_client: jsonbBind(stored.client) }),
         }),
-      )
-      .returning(recordColumns)
-      .executeTakeFirstOrThrow();
+      );
+    if (input.reset_authorizations !== true) {
+      return await upsert.returning(recordColumns).executeTakeFirstOrThrow();
+    }
+
+    // The upsert always writes, so its `updated_at` resolves the row id for the chained deletes.
+    const writtenServer = sql<boolean>`oauth_server_id IN (
+      SELECT id FROM mcp_server WHERE tenant_id = ${input.tenant_id} AND name = ${input.name} AND updated_at = ${timestamp}
+    )`;
+    await this.#atomic.batchWrite({
+      executor: db,
+      queries: [
+        upsert.compile(),
+        db.deleteFrom('oauth_token').where(writtenServer).compile(),
+        db.deleteFrom('oauth_pending_authorization').where(writtenServer).compile(),
+      ],
+    });
+    const record = await this.getServer({ tenant_id: input.tenant_id, name: input.name }, transaction);
+    if (record === undefined) {
+      throw new Error(`MCP server disappeared after upsert: ${input.name}`);
+    }
+    return record;
   }
 
   async getClient(params: { id: string }, transaction?: Transaction<Database>): Promise<OAuthClientRecord | undefined> {
