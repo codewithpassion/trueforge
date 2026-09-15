@@ -4,6 +4,30 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 13 — Alarm-held turns landed, deployed and verified live (2026-09-15)
+
+**Goal:** Review, land and deploy the Cycle 12 fix, then prove it on the live deploy with the turns that failed in Cycle 11.
+
+**What we did:**
+
+- Review `review-p6` found no blockers. A mutation check (making `alarm()` skip the wait) failed 9 of 50 Workers tests, and a local probe showed at most one alarm runs at a time. It raised three should-fix items: a weak budget-test assertion, stale plan text on eviction, and a comment wrongly saying a lost alarm leaves no watchdog (Cloudflare retries alarms up to 6 times).
+- Landed on `feat/cloudflare-workers-port` with no conflicts: `be85cc7e` (fix), `8d7241b4` (plan text), `4e72abc9` (review fixes). The fixes: the budget test asserts the alarm is due now; the fallback alarm is described as a safeguard on top of Cloudflare's retries; the 14-minute budget is measured from alarm entry; `setAlarm` moved inside the guarded start path; `alarm()` keeps waiting when the orphan select throws, which closes the Cycle 12 re-arm loop. Both test changes were mutation-checked. D1 statement comments and log text now cover a turn across its start and alarm runs.
+- Verified: typecheck, `test:trueforge` 595, D1 220, Workers 51 (twice), eslint 0 errors, prettier, `workers:check`, openapi unchanged.
+- Deployed version `7b1b13d5`, with the log tail started before the tests. All four non-streaming turns that failed in Cycle 11 now finish: 3000-word turn in 68 s (7069 chars); large Context7 docs turn in 69 s; four Context7 sub-agents in about 169 s (4 threads, 17+ tool responses); heavy scheduled research run via run-now (`smoke-research`) in about 110 s (9072 chars). No D1 statement warnings, no error logs. `startTurn` RPCs now return in 0.4 to 0.6 s. The 60 s fallback alarms log as canceled, which is expected because the alarm moved.
+- Mid-turn deploy test: a long non-streaming turn started at 13:44:54, then a redeploy (version `a0556864`). The alarm invocation ran 106 s wall (684 ms CPU) and ended with "Durable Object reset because its code was updated."; the drain logged "Unexpected error in turn event drain"; the turn ended at 13:46:40 as cancelled, not stuck in running. This proves the alarm invocation holds the turn.
+- Deploy guide Known limits (`docs/deploy/cloudflare.mdx`): replaced the "use streaming turns for long work" warning with notes that a deploy ends running turns as cancelled (reason may be `client-cancelled`) and that long turns hand over every 14 minutes.
+- Still unverified live: turns over 14 minutes re-arming; the large-tool-response offload and the D1 1000-query budget (Context7 responses are too small); which invocation Cloudflare bills a turn's CPU and D1 queries to.
+- Test data left on the deploy: smoke sessions; agents `smoke-agent` and `smoke-research`; schedules `smoke-hourly` (hourly) and `smoke-research-daily` (03:00 UTC).
+
+**Lessons learned:**
+
+- A mid-turn deploy is a cheap live proof of which invocation holds work: the reset exception lands on the holder.
+- A DO reset records the cancel reason as `client-cancelled`, which is misleading; `abandoned` would be accurate. Not fixed yet.
+
+**Avoid next time:**
+
+- Don't read "no error logs" as proof of a lifecycle fix. Confirm it in the invocation records (wall time, which invocation ended how), and start the log tail before the test.
+
 ## Cycle 12 — Alarm-held turns fix built (2026-09-15)
 
 **Goal:** Build the alarm-driven fix the user chose for the Cycle 11 non-streaming turn defect.
