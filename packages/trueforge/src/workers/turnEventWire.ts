@@ -84,8 +84,8 @@ export async function* decodeTurnEvents({
     }
   } finally {
     signal.removeEventListener('abort', cancel);
-    // Local to the Worker: the cancel does not reach the Durable Object, whose poll ends only when a later
-    // event for this stream arrives (writing it to the gone reader fails) or the turn ends.
+    // Local to the Worker: the cancel does not reach the Durable Object, whose parked poll is released only
+    // when a later event for this stream arrives (it does not park again) or the turn ends.
     await reader.cancel();
   }
 }
