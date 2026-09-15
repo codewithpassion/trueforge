@@ -1,4 +1,4 @@
-import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core';
+import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import type { Kysely, Selectable, Transaction } from 'kysely';
 import type { SkillVersion } from '../../../schemas/skill';
 import { resolveGitTurnSkills, validateGitAgentSkills } from '../../gitSkillMounts';

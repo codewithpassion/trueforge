@@ -1,4 +1,4 @@
-import type { RemoteMcpHeaders } from '@truefoundry/trueforge-core/core';
+import type { RemoteMcpHeaders } from '@truefoundry/trueforge-core/core/mcp/RemoteMCP';
 import type {
   OAuthClientRecord as ContractOAuthClientRecord,
   OAuthPendingAuthorization as ContractOAuthPendingAuthorization,

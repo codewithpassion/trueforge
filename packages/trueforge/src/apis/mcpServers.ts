@@ -1,5 +1,8 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import { extractErrorLogFields, isAuthRequired, McpConnectionError, RemoteMCP } from '@truefoundry/trueforge-core/core';
+import { McpConnectionError } from '@truefoundry/trueforge-core/core/errors';
+import { isAuthRequired } from '@truefoundry/trueforge-core/core/mcp/IMCPServer';
+import { RemoteMCP } from '@truefoundry/trueforge-core/core/mcp/RemoteMCP';
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';

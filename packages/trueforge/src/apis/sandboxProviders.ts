@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import { withTimeout } from '@truefoundry/trueforge-core/core';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
+import { withTimeout } from '@truefoundry/trueforge-core/core/util/promiseUtils';
 import type { Context } from 'hono';
 import type { ResolveRequestContext } from '../auth/identity';
 import type { ISandboxProviderStore, SandboxProviderRecord } from '../db/sandboxProviderStore';

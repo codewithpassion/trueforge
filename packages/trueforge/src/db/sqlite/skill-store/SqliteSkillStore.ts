@@ -1,4 +1,4 @@
-import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core';
+import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import type { ExpressionBuilder, Kysely, Transaction } from 'kysely';
 import type { SkillManifest, SkillVersion } from '../../../schemas/skill';
 import { resolveGitTurnSkills, validateGitAgentSkills } from '../../gitSkillMounts';

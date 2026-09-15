@@ -21,7 +21,7 @@ import {
   ToolApprovalRequiredEventSchema,
   ToolResponseEventSchema,
   ToolResponseRequiredEventSchema,
-} from '@truefoundry/trueforge-core/core';
+} from '@truefoundry/trueforge-core/core/events/schema';
 import { EVENTS_PAGE_LIMIT } from './common';
 
 export type { TurnCreatedEvent } from '@truefoundry/trueforge-core/agent-session';

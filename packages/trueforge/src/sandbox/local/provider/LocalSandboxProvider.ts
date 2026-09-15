@@ -1,22 +1,22 @@
 /**
  * Local SRT SandboxProvider. Code Mode UDS is handle-scoped via {@link CodeModeUdsTransport}.
  */
-import type {
-  CodeModeTransport,
-  ExecResult,
-  SandboxBuild,
-  SandboxExecParams,
-  SandboxProvider,
-} from '@truefoundry/trueforge-core/core';
+import type { CodeModeTransport } from '@truefoundry/trueforge-core/core/sandbox/codeMode/CodeModeTransport';
+import { absolutizeRelativeExecEnv } from '@truefoundry/trueforge-core/core/sandbox/provider/execEnv';
 import {
-  absolutizeRelativeExecEnv,
+  shellEscape,
+  type ExecResult,
+  type SandboxBuild,
+  type SandboxExecParams,
+  type SandboxProvider,
+} from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
+import {
   SandboxFileNotFoundError,
   SandboxFileTooLargeError,
   SandboxNotAvailableError,
   SandboxPathIsDirectoryError,
-  shellEscape,
   validateNoPathTraversal,
-} from '@truefoundry/trueforge-core/core';
+} from '@truefoundry/trueforge-core/core/sandbox/SandboxErrors';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';

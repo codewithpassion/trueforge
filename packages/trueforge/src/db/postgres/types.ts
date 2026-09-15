@@ -12,16 +12,16 @@ import type {
   TurnInputItem,
   TurnState,
 } from '@truefoundry/trueforge-core/agent-session';
+import type { JsonValue } from '@truefoundry/trueforge-core/core/capabilities/AgentCapability';
+import type { MCPServerInitInfo } from '@truefoundry/trueforge-core/core/events/schema';
 import type {
   AgentInfo,
   AgentParent,
   ContextMessage,
-  JsonValue,
-  MCPServerInitInfo,
-  SandboxInfo,
   SubAgentCompletionMarker,
-} from '@truefoundry/trueforge-core/core';
+} from '@truefoundry/trueforge-core/core/runtime/AgentThread.types';
 import type { CurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
+import type { SandboxInfo } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import type { ColumnType, Generated, JSONColumnType } from 'kysely';
 import type { McpServerManifest } from '../../schemas/mcpServer';
 import type { ModelProviderManifest } from '../../schemas/modelProvider';

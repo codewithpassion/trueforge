@@ -1,4 +1,4 @@
-import { SUPPORTED_REASONING_EFFORTS } from '@truefoundry/trueforge-core/core';
+import { SUPPORTED_REASONING_EFFORTS } from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import type { ModelProperties, ReasoningEffort } from '../schemas/modelProvider';

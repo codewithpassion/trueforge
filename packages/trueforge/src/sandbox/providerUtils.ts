@@ -1,14 +1,11 @@
 /** Sandbox provider construction + Daytona snapshot status refresh. */
 import { Daytona, DaytonaError } from '@daytona/sdk';
-import {
-  DaytonaSandboxProvider,
-  SANDBOX_IMAGE_URI,
-  TFYSandboxProvider,
-  withTimeout,
-  type SandboxBuild,
-  type SandboxProvider,
-} from '@truefoundry/trueforge-core/core';
+import { DaytonaSandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/DaytonaProvider';
+import type { SandboxBuild, SandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
+import { TFYSandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/TFYSandboxProvider';
+import { SANDBOX_IMAGE_URI } from '@truefoundry/trueforge-core/core/sandbox/sandboxImage';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
+import { withTimeout } from '@truefoundry/trueforge-core/core/util/promiseUtils';
 import configuration from '../config';
 import type { ISandboxProviderStore, SandboxProviderRecord } from '../db/sandboxProviderStore';
 import {

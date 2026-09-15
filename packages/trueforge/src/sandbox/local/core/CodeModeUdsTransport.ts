@@ -8,14 +8,17 @@
  * hostRun grants the parent in allowRead (Linux) / allowUnixSockets (macOS), not host /tmp.
  * The caller owns that parent directory's lifetime; this transport unlinks the sock it creates.
  */
+import type { CodeModeDispatcher } from '@truefoundry/trueforge-core/core/sandbox/codeMode/CodeModeDispatcher';
 import type {
   CodeModeClientInstall,
-  CodeModeDispatcher,
-  CodeModeReply,
-  CodeModeRequest,
   CodeModeTransport,
-} from '@truefoundry/trueforge-core/core';
-import { CodeModeRequestSchema, validateNoPathTraversal } from '@truefoundry/trueforge-core/core';
+} from '@truefoundry/trueforge-core/core/sandbox/codeMode/CodeModeTransport';
+import {
+  type CodeModeReply,
+  type CodeModeRequest,
+  CodeModeRequestSchema,
+} from '@truefoundry/trueforge-core/core/sandbox/codeMode/types';
+import { validateNoPathTraversal } from '@truefoundry/trueforge-core/core/sandbox/SandboxErrors';
 import { chmodSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { chmod, mkdir, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';

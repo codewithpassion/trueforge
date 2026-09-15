@@ -1,4 +1,4 @@
-import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core';
+import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { HTTPException } from 'hono/http-exception';
 import type { RequestContext } from '../auth/identity';
 import type {

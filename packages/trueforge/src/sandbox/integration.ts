@@ -1,4 +1,4 @@
-import type { SandboxProvider } from '@truefoundry/trueforge-core/core';
+import type { SandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { SandboxBuildMetadata, SandboxProviderManifest, SandboxStatus } from '../schemas/sandboxProvider';

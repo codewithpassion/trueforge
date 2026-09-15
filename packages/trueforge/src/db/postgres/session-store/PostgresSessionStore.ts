@@ -39,7 +39,8 @@ import {
   decodeOffsetPageToken,
   encodeOffsetPageToken,
 } from '@truefoundry/trueforge-core/agent-session/store/OffsetPageToken';
-import type { AgentInfo, ContextMessage, JsonValue } from '@truefoundry/trueforge-core/core';
+import type { JsonValue } from '@truefoundry/trueforge-core/core/capabilities/AgentCapability';
+import type { AgentInfo, ContextMessage } from '@truefoundry/trueforge-core/core/runtime/AgentThread.types';
 import type { CurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';

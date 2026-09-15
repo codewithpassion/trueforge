@@ -4,7 +4,7 @@
  * Implementations: PostgresSkillStore and SqliteSkillStore.
  */
 import type { Skill as AgentSkillRef } from '@truefoundry/trueforge-core/agent-session';
-import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core';
+import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import type { SkillManifest, SkillVersion } from '../schemas/skill';
 
 export interface SkillRecord {

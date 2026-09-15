@@ -3,7 +3,10 @@
  * and OpenAPI request/response shapes. Catalog file schemas live on ModelCatalog.
  */
 import { z } from '@hono/zod-openapi';
-import { SUPPORTED_REASONING_EFFORTS, VERCEL_AI_PROVIDER_NAMES } from '@truefoundry/trueforge-core/core';
+import {
+  SUPPORTED_REASONING_EFFORTS,
+  VERCEL_AI_PROVIDER_NAMES,
+} from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
 import { NameSchema, uniqueNames, type ResourceName } from './common';
 
 /** Every type the harness has an adapter for; a test asserts each one has a schema below. */

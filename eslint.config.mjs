@@ -40,6 +40,14 @@ const browserGlobals = {
   process: 'readonly', // Vite injects import.meta / some env via process in configs
 };
 
+// Shared by the package-wide and Workers blocks: flat config replaces a rule's options per block, so the
+// Workers block must repeat these to keep them.
+const coreBarrelRestrictions = ['@truefoundry/trueforge-core', '@truefoundry/trueforge-core/core'].map(name => ({
+  name,
+  message: 'Barrel reaches Node-only sandbox modules; use a deep import.',
+  allowTypeImports: true,
+}));
+
 export default defineConfig(
   {
     ignores: [
@@ -76,6 +84,13 @@ export default defineConfig(
     },
   },
   {
+    // Server: value imports of the core barrels pull sandbox providers into every bundle.
+    files: ['packages/trueforge/src/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': ['error', { paths: coreBarrelRestrictions }],
+    },
+  },
+  {
     // Workers entry: keep Node-only modules out of the bundle.
     files: ['packages/trueforge/src/workers/**/*.ts'],
     rules: {
@@ -83,6 +98,7 @@ export default defineConfig(
         'error',
         {
           paths: [
+            ...coreBarrelRestrictions,
             'node:fs',
             'node:fs/promises',
             'node:child_process',
@@ -107,16 +123,6 @@ export default defineConfig(
             'ws',
             'winston',
             'env-paths',
-            {
-              name: '@truefoundry/trueforge-core',
-              message: 'Barrel reaches Node-only sandbox modules; use a deep import.',
-              allowTypeImports: true,
-            },
-            {
-              name: '@truefoundry/trueforge-core/core',
-              message: 'Barrel reaches Node-only sandbox modules; use a deep import.',
-              allowTypeImports: true,
-            },
           ],
           patterns: [
             {

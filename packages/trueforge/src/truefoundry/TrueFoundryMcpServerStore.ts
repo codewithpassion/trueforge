@@ -1,4 +1,5 @@
-import { McpConnectionError, type RemoteMcpHeaders } from '@truefoundry/trueforge-core/core';
+import { McpConnectionError } from '@truefoundry/trueforge-core/core/errors';
+import type { RemoteMcpHeaders } from '@truefoundry/trueforge-core/core/mcp/RemoteMCP';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
 import type { RequestContext, RequestSubject } from '../auth/identity';

@@ -8,7 +8,8 @@
  * Env-synthesized truefoundry records use `StoredSandboxProviderManifest` (store/runtime only).
  */
 import { z } from '@hono/zod-openapi';
-import type { DaytonaSandboxProviderOptions, SandboxBuild } from '@truefoundry/trueforge-core/core';
+import type { DaytonaSandboxProviderOptions } from '@truefoundry/trueforge-core/core/sandbox/provider/DaytonaProvider';
+import type { SandboxBuild } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
 
 const DaytonaSandboxProviderAuthSchema = z
   .object({

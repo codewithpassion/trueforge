@@ -14,18 +14,13 @@ import {
   type TurnInputItem,
   type TurnRecordWithoutSnapshot,
 } from '@truefoundry/trueforge-core/agent-session';
-import {
-  AgentHarnessError,
-  existingSandboxIdForProvider,
-  extractErrorLogFields,
-  isAgentInputUserMessage,
-  isFileContentPart,
-  McpConnectionError,
-  rawSandboxId,
-  redisKey,
-  SandboxError,
-  VercelAILLM,
-} from '@truefoundry/trueforge-core/core';
+import { AgentHarnessError, McpConnectionError } from '@truefoundry/trueforge-core/core/errors';
+import { VercelAILLM } from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
+import { redisKey } from '@truefoundry/trueforge-core/core/redisKeys';
+import { isAgentInputUserMessage, isFileContentPart } from '@truefoundry/trueforge-core/core/runtime/UserInputMessage';
+import { SandboxError } from '@truefoundry/trueforge-core/core/sandbox/SandboxErrors';
+import { existingSandboxIdForProvider, rawSandboxId } from '@truefoundry/trueforge-core/core/sandbox/sandboxRef';
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';

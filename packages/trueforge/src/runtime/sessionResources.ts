@@ -1,15 +1,11 @@
 import type { AgentSpec, SessionHandle } from '@truefoundry/trueforge-core/agent-session';
-import {
-  Sandbox,
-  SkillMounter,
-  type AgentDefinition,
-  type AgentTracing,
-  type ModelParams,
-  type RemoteMcpHeaders,
-  type SandboxProvider,
-  type Skill,
-  type VercelAIProviderConfig,
-} from '@truefoundry/trueforge-core/core';
+import type { VercelAIProviderConfig } from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
+import type { RemoteMcpHeaders } from '@truefoundry/trueforge-core/core/mcp/RemoteMCP';
+import type { AgentDefinition, ModelParams } from '@truefoundry/trueforge-core/core/runtime/AgentDefinition';
+import type { SandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
+import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
+import { SkillMounter, type Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
+import type { AgentTracing } from '@truefoundry/trueforge-core/core/tracing/AgentTracing';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
 import configuration from '../config';

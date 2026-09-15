@@ -1,4 +1,4 @@
-import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core';
+import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { HTTPException } from 'hono/http-exception';
 import { parseGitSkill } from '../schemas/skill';
 import type { AgentSkillsInput, ISkillStore } from './skillStore';
