@@ -1,0 +1,162 @@
+---
+title: 'Deploy to Cloudflare Workers'
+sidebarTitle: 'Cloudflare Workers'
+description: 'Run the TrueForge server and chat UI on Cloudflare Workers with D1 storage and OIDC login.'
+---
+
+TrueForge can run on Cloudflare Workers instead of a Node server. The agent features work the same way, except for code execution. Sandbox, skills, and Code Mode are not available on Workers.
+
+The Workers setup is deployed from a clone of this repository. Commands below run from the repository root unless a step says otherwise.
+
+## What runs where
+
+| Part | Role |
+| --- | --- |
+| Worker | Serves the HTTP API and checks login on every request. |
+| Static assets | Serve the chat UI from `/`. Paths that are not files get the UI shell. |
+| `SessionDO` (Durable Object) | Runs turns, one object per session. Holds the event log of running turns, serves `subscribe` streams, and handles cancel. |
+| `SchedulerDO` (Durable Object) | One instance. Its alarm checks for due scheduled runs every 60 seconds and starts them in `SessionDO`. A cron trigger every 5 minutes re-arms the alarm, for example after a deploy. |
+| D1 | Stores sessions, turns, agents, schedules, and settings. |
+
+## Prerequisites
+
+- A Cloudflare account on the **Workers Paid** plan. The Free plan has daily D1 row limits and a CPU time limit that long turns exceed. The Worker sets `limits.cpu_ms` to 300000 (5 minutes), which needs the Paid plan.
+- Node.js 22.14 or newer, [pnpm](https://pnpm.io), and [Bun](https://bun.sh). Package scripts run Wrangler 4.131.2 with `bunx`. The one-off commands below use `bunx wrangler`; add `@4.131.2` if you want the same version.
+- An OIDC identity provider. Workers do not support the no-login mode. See [Setup Login](/authentication/overview) to register a confidential (Web) app.
+
+Install dependencies and log in to Cloudflare:
+
+```bash
+git clone https://github.com/truefoundry/trueforge && cd trueforge
+pnpm install
+bunx wrangler login
+```
+
+## Deploy
+
+<Steps>
+  <Step title="Create the D1 database">
+    Choose a location hint close to where your agents' model and tool traffic goes. Every turn event is a D1 write, so distance adds latency to each one.
+
+    ```bash
+    cd packages/trueforge
+    bunx wrangler d1 create trueforge --location weur
+    ```
+
+    Location hints are `wnam`, `enam`, `weur`, `eeur`, `apac`, and `oc`. The command prints a `database_id`.
+
+  </Step>
+
+  <Step title="Set the database id">
+    In `packages/trueforge/wrangler.jsonc`, replace the placeholder `database_id` with the printed value. Keep `binding`, `database_name`, and `migrations_dir` as they are.
+
+    ```jsonc packages/trueforge/wrangler.jsonc
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "trueforge",
+        "database_id": "<your-database-id>",
+        "migrations_dir": "migrations/d1",
+      },
+    ],
+    ```
+
+  </Step>
+
+  <Step title="Configure OIDC">
+    Set the non-secret values in `vars` in `wrangler.jsonc`. `PUBLIC_BASE_URL` is the origin users open, with no path. Register `<PUBLIC_BASE_URL>/api/v1/auth/callback` as the redirect URI with your identity provider.
+
+    ```jsonc packages/trueforge/wrangler.jsonc
+    "vars": {
+      "TRUEFORGE_RUNTIME": "workers",
+      "OIDC_ISSUER_URL": "https://login.example.com/oauth2/default",
+      "OIDC_CLIENT_ID": "<client-id>",
+      "PUBLIC_BASE_URL": "https://trueforge.example.com",
+    },
+    ```
+
+    The optional `OIDC_*` claim and scope variables from [Setup Login](/authentication/overview) go in `vars` too. Store the client secret as a Worker secret, from `packages/trueforge`:
+
+    ```bash
+    bunx wrangler secret put OIDC_CLIENT_SECRET
+    ```
+
+    <Warning>
+      Never put secrets in `vars`. `wrangler.jsonc` is committed, and `vars` are visible in the Cloudflare dashboard.
+    </Warning>
+
+    The Worker does not start unless all three of `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` are set. If `TRUEFORGE_RUNTIME` is not `workers`, every API request returns `500`. For more protection, put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) in front of the Worker as well.
+
+  </Step>
+
+  <Step title="Deploy">
+    From the repository root:
+
+    ```bash
+    pnpm workers:deploy
+    ```
+
+    This builds the UI into `packages/trueforge/dist-workers-assets`, applies D1 migrations to the remote database, and deploys the Worker with both Durable Objects. Run the same command for every later deploy.
+
+  </Step>
+
+  <Step title="Sign in">
+    Open `PUBLIC_BASE_URL`. You are sent to your identity provider. After sign-in, admins add model providers and MCP servers under **Settings**, the same as on a Node deployment. Provider API keys are stored in D1, not as Worker secrets.
+  </Step>
+</Steps>
+
+To check the build without deploying, run `pnpm workers:check`. It builds the UI and the Worker bundle, and reports the bundle size and the local startup time.
+
+## Local development
+
+Local development uses `wrangler dev` with a local D1 database.
+
+1. Create `packages/trueforge/.env` with the OIDC settings for a test app at your identity provider. Wrangler reads this file and its values replace `vars`. Do not use `.dev.vars`.
+
+   ```bash packages/trueforge/.env
+   OIDC_ISSUER_URL=https://login.example.com/oauth2/default
+   OIDC_CLIENT_ID=<client-id>
+   OIDC_CLIENT_SECRET=<client-secret>
+   PUBLIC_BASE_URL=http://localhost:8787
+   ```
+
+   Wrangler passes every key in this file to the Worker. Leave `STANDALONE` and the `*_CATALOG_PATH` variables out of it.
+
+2. Apply migrations to the local database and start the Worker:
+
+   ```bash
+   pnpm d1:migrate:local
+   pnpm workers:dev
+   ```
+
+3. Open [http://localhost:8787](http://localhost:8787).
+
+To run the scheduled handler on demand during local development, call:
+
+```bash
+curl "http://localhost:8787/cdn-cgi/local/scheduled"
+```
+
+## Not supported on Workers
+
+There is no code execution on Workers. The server reports sandbox and skills as disabled in `GET /api/v1/capabilities`, and the UI hides those features.
+
+| Feature | What callers see |
+| --- | --- |
+| Sandbox and the `exec` tool | Turns and agent specs that enable a sandbox get `422` with "no sandbox provider configured". |
+| Sandbox provider settings | `GET` returns `404`, `PUT` returns `422`. |
+| Skills | Reported as disabled with a reason. No skills are mounted. |
+| Code Mode | Not available, because it needs a sandbox. |
+| File uploads that are not inline | The turn request gets `422` with code `agent_sandbox_required`. |
+| Turn file downloads | Return `412`. |
+| Session import | Returns `500` with "Session import requires Postgres". |
+| TrueFoundry mode | Rejected at startup. Setting `TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL` stops the Worker from starting. |
+
+## Known limits
+
+- **Turns do not survive restarts.** A turn runs inside its `SessionDO`. If Cloudflare evicts the Durable Object or you deploy while a turn runs, the turn stops. A watchdog alarm later marks it as abandoned. Start a new turn to continue the session.
+- **D1 query budget per turn.** D1 allows 1000 queries per Worker invocation on the Paid plan, and a turn runs within one invocation. A measured turn used about 8.2 D1 statements per tool iteration: 99 tool iterations used 814 statements. The server logs a warning at 800. Turns with more than about 120 tool iterations can reach the limit and fail.
+- **Closing a stream does not stop the server-side poll.** When a client disconnects from a `subscribe` stream or a `stream: true` turn, the Durable Object keeps waiting until the next turn event or the end of the turn. The turn itself keeps running. This was observed in local `wrangler dev`; behavior on Cloudflare has not been verified.
+- **Missing UI files return the UI shell.** A request for a file that does not exist, such as an old `/assets/` chunk after a deploy, gets the UI page with status `200` instead of `404`.
+- **The UI is served from `/`.** A Workers deployment cannot serve TrueForge under a path prefix, so `PUBLIC_BASE_URL` must be an origin without a path.
+- **Schedules run at most once per hour.** The minimum interval between runs of a schedule is 3600 seconds.

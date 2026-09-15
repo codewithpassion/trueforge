@@ -40,7 +40,7 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["introduction", "quickstart"]
+            "pages": ["introduction", "quickstart", "deploy/cloudflare"]
           },
           {
             "group": "TrueForge Harness",
