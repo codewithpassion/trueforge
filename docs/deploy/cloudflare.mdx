@@ -85,7 +85,7 @@ bunx wrangler login
       Never put secrets in `vars`. `wrangler.jsonc` is committed, and `vars` are visible in the Cloudflare dashboard.
     </Warning>
 
-    The Worker does not start unless all three of `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` are set. If `TRUEFORGE_RUNTIME` is not `workers`, every API request returns `500`. For more protection, put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) in front of the Worker as well.
+    The Worker does not start unless `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `PUBLIC_BASE_URL` are all set, and `wrangler deploy` rejects it. `pnpm workers:check` does not catch a missing value, because its startup check runs without vars or secrets. If `TRUEFORGE_RUNTIME` is not `workers`, every API request returns `500`. For more protection, put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) in front of the Worker as well.
 
   </Step>
 
