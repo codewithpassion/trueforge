@@ -7,7 +7,7 @@ import configuration from '../../config';
 import { migrateToLatest } from '../migratePostgres';
 import { createDb } from './client';
 
-if (configuration.STANDALONE) {
+if (configuration.RUNTIME !== 'distributed') {
   throw new Error(
     'pnpm migrate targets Postgres only; set STANDALONE=false (and provide POSTGRES_* / Redis env as needed). SQLite migrations run on standalone server boot.',
   );

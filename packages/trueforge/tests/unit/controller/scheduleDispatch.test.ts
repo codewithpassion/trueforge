@@ -1,4 +1,4 @@
-import configuration, { STANDALONE_TRUEFORGE_API_KEY } from '../../../src/config';
+import { STANDALONE_TRUEFORGE_API_KEY } from '../../../src/config';
 import {
   createHttpScheduleRunExecutor,
   loadScheduleDispatchItem,
@@ -10,6 +10,8 @@ import {
 } from '../../../src/controller/scheduleDispatch';
 import { ScheduleConcurrentUpdateError, type ScheduleDispatchItem } from '../../../src/db/scheduleStore';
 import { ScheduleManifestSchema } from '../../../src/schemas/schedule';
+
+const SERVER_URL = 'http://localhost:8790';
 
 describe('scheduleRunFailureReason', () => {
   it('uses Error.message when non-empty', () => {
@@ -80,7 +82,11 @@ async function tickDispatch({
     scheduleStore: store as never,
     logger: logger as never,
     withTransaction: async callback => callback({} as never),
-    executeRun: createHttpScheduleRunExecutor({ baseUrl: configuration.SERVER_URL, fetch: undefined }),
+    executeRun: createHttpScheduleRunExecutor({
+      baseUrl: SERVER_URL,
+      token: STANDALONE_TRUEFORGE_API_KEY,
+      fetch: undefined,
+    }),
   });
   await loop.tick(signal);
   return { store, logger };
@@ -93,13 +99,17 @@ describe('schedule execution HTTP transport', () => {
 
   it('sends one API-key authenticated request with the run id', async () => {
     const request = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
-    const executeRun = createHttpScheduleRunExecutor({ baseUrl: configuration.SERVER_URL, fetch: undefined });
+    const executeRun = createHttpScheduleRunExecutor({
+      baseUrl: SERVER_URL,
+      token: STANDALONE_TRUEFORGE_API_KEY,
+      fetch: undefined,
+    });
 
     await executeRun('run-1');
 
     expect(request).toHaveBeenCalledTimes(1);
     const [url, init] = request.mock.calls[0] ?? [];
-    expect(String(url)).toBe(`${configuration.SERVER_URL}/api/internal/schedules/runs/execute`);
+    expect(String(url)).toBe(`${SERVER_URL}/api/internal/schedules/runs/execute`);
     expect(init?.method).toBe('POST');
     expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${STANDALONE_TRUEFORGE_API_KEY}`);
     expect(init?.body).toBe(JSON.stringify({ schedule_run_id: 'run-1' }));
@@ -118,7 +128,7 @@ describe('scheduleDispatchLoop', () => {
 
     expect(request).toHaveBeenCalledTimes(1);
     const [url, init] = request.mock.calls[0] ?? [];
-    expect(String(url)).toBe(`${configuration.SERVER_URL}/api/internal/schedules/runs/execute`);
+    expect(String(url)).toBe(`${SERVER_URL}/api/internal/schedules/runs/execute`);
     expect(init?.body).toBe(JSON.stringify({ schedule_run_id: 'run-1' }));
   });
 

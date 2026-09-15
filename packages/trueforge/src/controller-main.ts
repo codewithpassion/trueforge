@@ -17,7 +17,7 @@ import { runController } from './controller';
 import { createDb } from './db/postgres/client';
 import { PostgresScheduleStore } from './db/postgres/schedule-store/PostgresScheduleStore';
 import { createControllerLogger } from './logger';
-import { PACKAGE_VERSION } from './packageVersion';
+import { PACKAGE_VERSION } from './packageVersion.gen';
 
 try {
   const logger = createControllerLogger({
@@ -32,6 +32,9 @@ try {
     // starts this script). Run with STANDALONE=false to use it as a dedicated process.
     logger.warn('Standalone mode (STANDALONE=true): the server runs the controller in-process; nothing to do here.');
     process.exit(0);
+  }
+  if (configuration.RUNTIME === 'workers') {
+    throw new Error('TRUEFORGE_RUNTIME=workers has no dedicated controller process.');
   }
 
   const db = createDb({
@@ -50,6 +53,9 @@ try {
     scheduleStore: new PostgresScheduleStore(db),
     withTransaction: callback => db.transaction().execute(callback),
     logger,
+    serverUrl: configuration.SERVER_URL,
+    apiKey: configuration.TRUEFORGE_API_KEY,
+    tls: { enabled: configuration.TRUEFORGE_MTLS_ENABLED, dir: configuration.TRUEFORGE_MTLS_CERTS_DIR },
     gracefulTimeoutSeconds: configuration.GRACEFUL_TIMEOUT_SECONDS,
     onStopped: () => db.destroy(),
   });

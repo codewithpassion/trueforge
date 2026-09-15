@@ -31,7 +31,7 @@
     "build:frontend-assets": "node scripts/copy-frontend.mjs",
     "build:gen:local-sandbox": "node scripts/generate-local-sandbox-scripts.mjs",
     "build:gen:watch": "node --watch-path=catalog/model-catalog.yaml --watch-path=catalog/mcp-catalog.yaml --watch-path=catalog/skill-catalog.yaml --watch-path=catalog/sandbox-catalog.yaml --watch-path=src/sandbox/local/scripts scripts/generate-dev.mjs",
-    "build:gen": "pnpm run build:gen:local-sandbox && node scripts/generate-catalog.mjs",
+    "build:gen": "pnpm run build:gen:local-sandbox && node scripts/generate-catalog.mjs && node scripts/generate-package-version.mjs",
     "build:clean": "node ../../scripts/rm-path.mjs dist",
     "build": "pnpm run build:gen && tsc --noEmit && pnpm run build:clean && tsup && node ../../scripts/chmod-path.mjs dist/cli.js 755 && pnpm run build:frontend-assets",
     "dev:serve": "cross-env NODE_OPTIONS=--conditions=trueforge-dev NODE_ENV=development tsx watch --env-file=.env src/main.ts",

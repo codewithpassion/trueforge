@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import configuration from '../config';
+import { CODE_MODE_SOCKET_PARENT, LOCAL_SANDBOX_ROOT_PARENT } from '../nodeConfig';
 import type { SandboxIntegration } from './integration';
 import { LocalSandboxProvider, type LocalSandboxSupportResult } from './local/provider/LocalSandboxProvider';
 import {
@@ -33,19 +34,19 @@ export function createNodeSandboxIntegration({
       if (record !== undefined) {
         return toSandboxProviderFromRecord({ record, tenant_id, logger });
       }
-      if (!configuration.STANDALONE || localSupport?.supported !== true) {
+      if (configuration.RUNTIME !== 'standalone' || localSupport?.supported !== true) {
         return undefined;
       }
       return new LocalSandboxProvider({
-        sandboxRootPathParent: join(configuration.LOCAL_SANDBOX_ROOT_PARENT, localSandboxSessionSegment(sessionId)),
-        codeModeSocketParentPath: configuration.CODE_MODE_SOCKET_PARENT,
+        sandboxRootPathParent: join(LOCAL_SANDBOX_ROOT_PARENT, localSandboxSessionSegment(sessionId)),
+        codeModeSocketParentPath: CODE_MODE_SOCKET_PARENT,
         support: localSupport,
         fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
         logger,
       });
     },
     // Never in TrueFoundry mode: that mode is distributed-only.
-    isLocalFallbackEnabled: () => configuration.STANDALONE && localSupport?.supported === true,
+    isLocalFallbackEnabled: () => configuration.RUNTIME === 'standalone' && localSupport?.supported === true,
     checkSnapshotStatus,
     createDaytonaProvider: toDaytonaSandboxProvider,
     isDaytonaAuthError,

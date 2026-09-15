@@ -1,25 +1,32 @@
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import configuration from './config';
 import { Controller } from './controller/Controller';
 import { createHttpScheduleRunExecutor, scheduleDispatchLoop } from './controller/scheduleDispatch';
 import type { IScheduleStore } from './db/scheduleStore';
 import type { WithTransaction } from './db/transaction';
 import { createTlsFetch, normalizeTlsUrl } from './http/tls';
 
+/** Where and how the controller reaches the server's HTTP API. */
+export interface ControllerServerTarget {
+  /** `SERVER_URL`: loopback in standalone, the server Service in distributed. */
+  serverUrl: string;
+  /** `TRUEFORGE_API_KEY` presented to the internal execution endpoint. */
+  apiKey: string;
+  /** `TRUEFORGE_MTLS_*`: present a client certificate and upgrade the URL to https. */
+  tls: { enabled: boolean; dir: string };
+}
+
 /**
- * Controller whose schedule loop hands runs to the server over HTTP
- * (`SERVER_URL` + `TRUEFORGE_API_KEY` from process config). Standalone uses
+ * Controller whose schedule loop hands runs to the server over HTTP. Standalone uses
  * loopback; distributed uses the dedicated controller against the server Service.
  */
-export function createController<TTransaction>(params: {
-  scheduleStore: IScheduleStore<TTransaction>;
-  withTransaction: WithTransaction<TTransaction>;
-  logger: Logger;
-}): Controller {
-  const tls = {
-    enabled: configuration.TRUEFORGE_MTLS_ENABLED,
-    dir: configuration.TRUEFORGE_MTLS_CERTS_DIR,
-  };
+export function createController<TTransaction>(
+  params: ControllerServerTarget & {
+    scheduleStore: IScheduleStore<TTransaction>;
+    withTransaction: WithTransaction<TTransaction>;
+    logger: Logger;
+  },
+): Controller {
+  const { tls } = params;
   return new Controller({
     loops: [
       scheduleDispatchLoop({
@@ -27,7 +34,8 @@ export function createController<TTransaction>(params: {
         withTransaction: params.withTransaction,
         logger: params.logger,
         executeRun: createHttpScheduleRunExecutor({
-          baseUrl: normalizeTlsUrl({ url: configuration.SERVER_URL, enabled: tls.enabled }),
+          baseUrl: normalizeTlsUrl({ url: params.serverUrl, enabled: tls.enabled }),
+          token: params.apiKey,
           fetch: createTlsFetch(tls),
         }),
       }),
@@ -39,14 +47,16 @@ export function createController<TTransaction>(params: {
 /**
  * Runs the controller: starts the loops and drains them on SIGTERM/SIGINT.
  */
-export function runController<TTransaction>(params: {
-  scheduleStore: IScheduleStore<TTransaction>;
-  withTransaction: WithTransaction<TTransaction>;
-  logger: Logger;
-  gracefulTimeoutSeconds: number;
-  /** Releases what the caller opened for the loops, e.g. its database pool. */
-  onStopped?: () => Promise<void>;
-}): Controller {
+export function runController<TTransaction>(
+  params: ControllerServerTarget & {
+    scheduleStore: IScheduleStore<TTransaction>;
+    withTransaction: WithTransaction<TTransaction>;
+    logger: Logger;
+    gracefulTimeoutSeconds: number;
+    /** Releases what the caller opened for the loops, e.g. its database pool. */
+    onStopped?: () => Promise<void>;
+  },
+): Controller {
   const { logger, gracefulTimeoutSeconds, onStopped } = params;
   const controller = createController(params);
   controller.start();

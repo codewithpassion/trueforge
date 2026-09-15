@@ -45,14 +45,14 @@ function parseSettingsJson(raw: string): unknown {
 
 /**
  * Returns the configured shared sandbox provider when enabled, or undefined when disabled.
- * Must only be called outside standalone (TrueFoundry wiring).
+ * Must only be called in distributed mode (TrueFoundry wiring).
  */
 export function resolveTrueFoundrySandboxProviderConfig(
   config: ServerConfiguration = configuration,
 ): TrueFoundrySandboxProviderConfig | undefined {
-  if (config.STANDALONE) {
+  if (config.RUNTIME !== 'distributed') {
     throw new HTTPException(500, {
-      message: 'TrueFoundry sandbox provider config is not available in standalone mode',
+      message: 'TrueFoundry sandbox provider config is only available in distributed mode',
     });
   }
   if (!config.TRUEFOUNDRY_SANDBOX_ENABLED) {

@@ -47,7 +47,7 @@ export function createApiKeyAuthMiddleware(apiKey: string): MiddlewareHandler {
  */
 export const truefoundryAdminMiddleware: MiddlewareHandler = async (c, next) => {
   const token = extractRequestToken(c);
-  if (configuration.STANDALONE) {
+  if (configuration.RUNTIME !== 'distributed') {
     throw new HTTPException(403, { message: 'Service API key required' });
   }
   const apiKey = configuration.TRUEFOUNDRY_API_KEY;

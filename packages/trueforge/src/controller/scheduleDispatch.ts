@@ -1,7 +1,6 @@
 import type { SessionHandle, Sessions, TurnInputItem } from '@truefoundry/trueforge-core/agent-session';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { TrueForge } from '@truefoundry/trueforge-sdk';
-import configuration from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import {
   ScheduleConcurrentUpdateError,
@@ -49,14 +48,17 @@ export type ScheduleRunExecutor = (scheduleRunId: string) => Promise<void>;
  */
 export function createHttpScheduleRunExecutor({
   baseUrl,
+  token,
   fetch,
 }: {
   baseUrl: string;
+  /** Service API key the execution endpoint accepts. */
+  token: string;
   fetch: typeof globalThis.fetch | undefined;
 }): ScheduleRunExecutor {
   const client = new TrueForge({
     baseUrl,
-    token: configuration.TRUEFORGE_API_KEY,
+    token,
     timeoutInSeconds: 60,
     ...(fetch === undefined ? {} : { fetch }),
   });

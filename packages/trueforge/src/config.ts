@@ -6,32 +6,25 @@
  * import time, so a misconfigured server fails fast at boot instead of
  * mid-run.
  *
- * `STANDALONE` is a discriminated mode selector:
- * - `true` (default): SQLite only; no Redis / executor peering.
- * - `false`: Postgres + Redis (defaults to local trueforge credentials /
+ * `RUNTIME` is the discriminated mode selector (env `TRUEFORGE_RUNTIME`; when
+ * unset it follows `STANDALONE`):
+ * - `standalone` (default): SQLite only; no Redis / executor peering.
+ * - `distributed`: Postgres + Redis (defaults to local trueforge credentials /
  *   `redis://localhost:6379`).
+ * - `workers`: Cloudflare Workers; OIDC required, no Node-only settings.
+ *
+ * This module must stay free of Node-only module-load work; filesystem defaults
+ * live in `nodeConfig.ts`.
  */
-import { existsSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-import envPaths from 'env-paths';
 
 const DEFAULT_PORT = 8790;
 /** Loopback default; container images set HOST=0.0.0.0 so probes and Service traffic reach the process. */
 const DEFAULT_HOST = 'localhost';
 /** Default HTTP request body ceiling: 30 MB. */
 const DEFAULT_MAX_REQUEST_BODY_BYTES = 30 * 1024 * 1024;
-/**
- * Package root whether this module runs as `src/config.ts` (tsx) or is bundled
- * into `dist/main.js` / `dist/cli.js` (`import.meta` → `dist/` → parent).
- */
-const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-/** Turn ids minted by a standalone process; no peer can ever own them. */
+/** Turn ids minted by a non-peering process; no peer can ever own them. */
 const LOCAL_EXECUTOR_ID = 'local';
-/** OS-standard data dir for SQLite in standalone mode. */
-const ENV_PATHS_APP_NAME = 'trueforge';
 const DEFAULT_POSTGRES_USER = 'trueforge';
 const DEFAULT_POSTGRES_PASSWORD = 'trueforge';
 const DEFAULT_POSTGRES_DB = 'trueforge';
@@ -59,7 +52,7 @@ export interface GetEnvOptions {
   required?: boolean;
 }
 
-function getEnv(key: string, options?: GetEnvOptions): string | undefined {
+export function getEnv(key: string, options?: GetEnvOptions): string | undefined {
   const value = process.env[key];
   if (value !== undefined) {
     return value;
@@ -209,28 +202,8 @@ function parsePostgresSslMode(raw: string | undefined): string {
   }
 }
 
-/**
- * Prefer `dist/_frontend` shipped in the npm tarball (npx / `pnpm start`).
- * Fall back to the monorepo sibling `../frontend/dist` (host-dev before a copy).
- */
-function resolveDefaultFrontendDir(): string {
-  const packaged = path.join(PACKAGE_ROOT, 'dist', '_frontend');
-  if (existsSync(path.join(packaged, 'index.html'))) {
-    return packaged;
-  }
-  return path.join(PACKAGE_ROOT, '..', 'frontend', 'dist');
-}
-
-function resolveFrontendDir(): string {
-  const override = getEnv('FRONTEND_DIR');
-  if (override !== undefined && override.trim() !== '') {
-    return path.resolve(override);
-  }
-  return resolveDefaultFrontendDir();
-}
-
 /** Absolute path from an optional env override; unset/blank → `undefined`. */
-function resolveOptionalPathEnv(envKey: string): string | undefined {
+export function resolveOptionalPathEnv(envKey: string): string | undefined {
   const override = getEnv(envKey);
   if (override === undefined || override.trim() === '') {
     return undefined;
@@ -239,25 +212,29 @@ function resolveOptionalPathEnv(envKey: string): string | undefined {
 }
 
 /**
- * Absolute SQLite file path for standalone mode.
- * Env: `SQLITE_PATH` (optional). Default: `{env-paths data}/db/db.sqlite`.
+ * `TRUEFORGE_RUNTIME` when set, else derived from `STANDALONE` (default true).
+ * An explicit `STANDALONE` that disagrees with `TRUEFORGE_RUNTIME` is rejected.
  */
-function resolveSqlitePath(appDataDir: string): string {
-  const override = getEnv('SQLITE_PATH');
-  if (override !== undefined && override.trim() !== '') {
-    return path.resolve(override);
+function resolveRuntime(): ServerConfiguration['RUNTIME'] {
+  const rawStandalone = getEnv('STANDALONE');
+  const standalone = parseBoolean({ envKey: 'STANDALONE', raw: rawStandalone, defaultValue: true });
+  const rawRuntime = getEnv('TRUEFORGE_RUNTIME');
+  if (rawRuntime === undefined || rawRuntime.trim() === '') {
+    return standalone ? 'standalone' : 'distributed';
   }
-  return path.join(appDataDir, 'db', 'db.sqlite');
-}
-
-/** Parent for local sandbox roots. Same env-paths data dir as SQLite (`{suffix:''}`). */
-function resolveLocalSandboxRootParent(appDataDir: string): string {
-  return path.join(appDataDir, 'sandboxes');
-}
-
-/** Short tmp parent for Code Mode UDS socks (≤65 bytes after realpath). */
-function resolveCodeModeSocketParent(): string {
-  return path.join(os.tmpdir(), 'tf_cms');
+  const runtime = rawRuntime.trim();
+  if (runtime !== 'standalone' && runtime !== 'distributed' && runtime !== 'workers') {
+    throw new Error(
+      `Environment variable TRUEFORGE_RUNTIME must be "standalone", "distributed", or "workers", got ${JSON.stringify(rawRuntime)}`,
+    );
+  }
+  const standaloneSet = rawStandalone !== undefined && rawStandalone.trim() !== '';
+  if (standaloneSet && standalone !== (runtime === 'standalone')) {
+    throw new Error(
+      `TRUEFORGE_RUNTIME=${runtime} contradicts STANDALONE=${rawStandalone.trim()}; unset STANDALONE or make them agree.`,
+    );
+  }
+  return runtime;
 }
 
 /** Redis peering URL for distributed mode. Env: `REDIS_URL`. */
@@ -408,11 +385,7 @@ export interface SharedServerConfiguration {
   ACCESS_LOGS: boolean;
   /** Node environment. Env: `NODE_ENV`. */
   NODE_ENV: string | undefined;
-  /** HTTP port the server listens on. Env: `PORT`. */
-  PORT: number;
-  /** HTTP bind address. Env: `HOST`. Default `localhost`; production images use `0.0.0.0`. */
-  HOST: string;
-  /** Peering identity embedded in the turn ids this process mints; `local` in standalone mode. */
+  /** Peering identity embedded in the turn ids this process mints; `local` outside distributed mode. */
   EXECUTOR_ID: string;
   /**
    * Optional override for the model catalog YAML (discovery presets for
@@ -438,12 +411,6 @@ export interface SharedServerConfiguration {
    * time is used. Env: `SANDBOX_CATALOG_PATH`.
    */
   SANDBOX_CATALOG_PATH: string | undefined;
-  /**
-   * Frontend build served alongside the API; a missing directory leaves the server API-only.
-   * Env: `FRONTEND_DIR`. Default: packaged `dist/_frontend` (npx tarball) or
-   * monorepo `packages/frontend/dist` — always absolute, independent of CWD.
-   */
-  FRONTEND_DIR: string;
   /** Max milliseconds for one MCP request. Env: `MCP_REQUEST_TIMEOUT_MS`. Default 4 minutes. */
   MCP_REQUEST_TIMEOUT_MS: number;
   /** Max milliseconds for an MCP transport connection. Env: `MCP_CONNECT_TIMEOUT_MS`. Default 30 seconds. */
@@ -519,6 +486,14 @@ export interface SharedServerConfiguration {
    * construction fail if empty outside standalone development. Env: `PUBLIC_BASE_URL`.
    */
   PUBLIC_BASE_URL: string;
+}
+
+/** Settings only the Node server and controller processes read. */
+export interface NodeSharedServerConfiguration {
+  /** HTTP port the server listens on. Env: `PORT`. */
+  PORT: number;
+  /** HTTP bind address. Env: `HOST`. Default `localhost`; production images use `0.0.0.0`. */
+  HOST: string;
   /**
    * Base URL the controller uses to reach the server's HTTP API. Dedicated controller
    * (`STANDALONE=false`, `dist/controller-main.js`) and the in-process standalone controller
@@ -547,293 +522,366 @@ export interface SharedServerConfiguration {
   TRUEFORGE_MTLS_CERTS_DIR: string;
 }
 
-export type StandaloneServerConfiguration = SharedServerConfiguration & {
-  /**
-   * Single-process topology: SQLite persistence, no Redis / executor peering.
-   * Env: `STANDALONE`. Default: true.
-   */
-  STANDALONE: true;
-  /**
-   * Absolute SQLite database file path.
-   * Env: `SQLITE_PATH` (optional). Default: env-paths data dir + `db/db.sqlite`.
-   */
-  SQLITE_PATH: string;
-  /**
-   * Parent directory for local sandbox roots (ULID children).
-   * Derived: `{env-paths data}/sandboxes`.
-   */
-  LOCAL_SANDBOX_ROOT_PARENT: string;
-  /**
-   * Parent directory for Code Mode UDS sockets (`tf_cms` under os.tmpdir()).
-   * Caller prepares/removes this directory; must stay ≤65 bytes after realpath.
-   */
-  CODE_MODE_SOCKET_PARENT: string;
-};
+export type StandaloneServerConfiguration = SharedServerConfiguration &
+  NodeSharedServerConfiguration & {
+    RUNTIME: 'standalone';
+    /**
+     * Single-process topology: SQLite persistence, no Redis / executor peering.
+     * Env: `STANDALONE`. Default: true.
+     */
+    STANDALONE: true;
+  };
 
-export type DistributedServerConfiguration = SharedServerConfiguration & {
-  /**
-   * Multi-replica topology: Postgres persistence + Redis executor peering.
-   * Env: `STANDALONE`. Default: true (so this branch requires an explicit `false`).
-   */
+export type DistributedServerConfiguration = SharedServerConfiguration &
+  NodeSharedServerConfiguration & {
+    RUNTIME: 'distributed';
+    /**
+     * Multi-replica topology: Postgres persistence + Redis executor peering.
+     * Env: `STANDALONE`. Default: true (so this branch requires an explicit `false`).
+     */
+    STANDALONE: false;
+    /**
+     * Postgres connection string. Env: `DATABASE_URL` when set; otherwise built from `POSTGRES_*`
+     * (including optional `POSTGRES_SSL_MODE` as `sslmode`).
+     * Form: `postgres://USER:PASSWORD@HOST:PORT/DB` (or `postgresql://…`) with user/password URL-encoded.
+     */
+    DATABASE_URL: string;
+    /** Max connections in the `pg` Pool. Env: `DATABASE_POOL_MAX`. Default 10. */
+    DATABASE_POOL_MAX: number;
+    /**
+     * Postgres `statement_timeout` for app and migrations (same pool).
+     * Env: `POSTGRES_STATEMENT_TIMEOUT_MS`. Default 60000.
+     */
+    POSTGRES_STATEMENT_TIMEOUT_MS: number;
+    /**
+     * Postgres `idle_in_transaction_session_timeout` for app and migrations (same pool).
+     * Env: `POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`. Default 60000.
+     */
+    POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: number;
+    /** Peering URL shared by all replicas. Env: `REDIS_URL`. Default `redis://localhost:6379`. */
+    REDIS_URL: string;
+    /**
+     * OIDC configuration for server authentication.
+     * Undefined means browser login is disabled.
+     */
+    OIDC: OIDCConfig | undefined;
+    /**
+     * When set, models/MCP/agents are backed by the TrueFoundry ServiceFoundry server with the
+     * caller's token. Unset = local Postgres stores. Mutually exclusive with OIDC.
+     * Env: `TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL`.
+     */
+    TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL: string | undefined;
+    /**
+     * Required when `TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL` is set. Env: `TRUEFOUNDRY_API_KEY`.
+     */
+    TRUEFOUNDRY_API_KEY: string | undefined;
+    /** Max ms for non-agent ServiceFoundry HTTP calls. Env: `TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS`. Default 10000. */
+    TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS: number;
+    /** Max ms for agent CRUD ServiceFoundry HTTP calls. Env: `TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS`. Default 3000. */
+    TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS: number;
+    /**
+     * Present this pod's client certificate on outbound calls to the ServiceFoundry server (internal
+     * mutual TLS) and upgrade a mesh-direct peer URL from http to https. Off by default, so an
+     * unconfigured deployment keeps calling over plain HTTP exactly as before.
+     * Env: `TRUEFOUNDRY_MTLS_ENABLED`. Default false.
+     */
+    TRUEFOUNDRY_MTLS_ENABLED: boolean;
+    /**
+     * Directory holding the internal mTLS material used when `TRUEFOUNDRY_MTLS_ENABLED` is true — the
+     * cert triple `tls.crt` / `tls.key` / `ca.crt`, so one chart value configures every component.
+     * Env: `TRUEFOUNDRY_MTLS_CERTS_DIR`. Default `/etc/tls/truefoundry`.
+     */
+    TRUEFOUNDRY_MTLS_CERTS_DIR: string;
+    /**
+     * When TrueFoundry mode is on, enable the shared sandbox for all tenants
+     * (no per-tenant PUT). Env: `TRUEFOUNDRY_SANDBOX_ENABLED`. Default false.
+     */
+    TRUEFOUNDRY_SANDBOX_ENABLED: boolean;
+    /**
+     * Shared sandbox backend when `TRUEFOUNDRY_SANDBOX_ENABLED` is true.
+     * Env: `TRUEFOUNDRY_SANDBOX_PROVIDER` (`daytona` | `truefoundry`).
+     */
+    TRUEFOUNDRY_SANDBOX_PROVIDER: 'daytona' | 'truefoundry' | undefined;
+    /**
+     * Shared API key (required for Daytona; optional for truefoundry).
+     * Env: `TRUEFOUNDRY_SANDBOX_API_KEY`.
+     */
+    TRUEFOUNDRY_SANDBOX_API_KEY: string | undefined;
+    /**
+     * TrueFoundry (on-prem) sandbox HTTP server URL when provider is `truefoundry`.
+     * Env: `TRUEFOUNDRY_SANDBOX_SERVER_URL`.
+     */
+    TRUEFOUNDRY_SANDBOX_SERVER_URL: string | undefined;
+    /**
+     * Static JSON settings for the shared sandbox (provider-specific).
+     * Daytona: `snapshotName`, intervals, `timeoutMs`. TrueFoundry: `nats_bridge_url`.
+     * Env: `TRUEFOUNDRY_SANDBOX_SETTINGS`.
+     */
+    TRUEFOUNDRY_SANDBOX_SETTINGS: string | undefined;
+  };
+
+/**
+ * Cloudflare Workers: no Redis peering, filesystem, or HTTP loopback controller.
+ * OIDC is required because standalone auth (everyone is admin) is not allowed here.
+ */
+export type WorkersServerConfiguration = SharedServerConfiguration & {
+  RUNTIME: 'workers';
+  /** Always false, so `!STANDALONE` keeps meaning "auth may be configured". */
   STANDALONE: false;
-  /**
-   * Postgres connection string. Env: `DATABASE_URL` when set; otherwise built from `POSTGRES_*`
-   * (including optional `POSTGRES_SSL_MODE` as `sslmode`).
-   * Form: `postgres://USER:PASSWORD@HOST:PORT/DB` (or `postgresql://…`) with user/password URL-encoded.
-   */
-  DATABASE_URL: string;
-  /** Max connections in the `pg` Pool. Env: `DATABASE_POOL_MAX`. Default 10. */
-  DATABASE_POOL_MAX: number;
-  /**
-   * Postgres `statement_timeout` for app and migrations (same pool).
-   * Env: `POSTGRES_STATEMENT_TIMEOUT_MS`. Default 60000.
-   */
-  POSTGRES_STATEMENT_TIMEOUT_MS: number;
-  /**
-   * Postgres `idle_in_transaction_session_timeout` for app and migrations (same pool).
-   * Env: `POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`. Default 60000.
-   */
-  POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: number;
-  /** Peering URL shared by all replicas. Env: `REDIS_URL`. Default `redis://localhost:6379`. */
-  REDIS_URL: string;
-  /**
-   * OIDC configuration for server authentication.
-   * Undefined means browser login is disabled.
-   */
-  OIDC: OIDCConfig | undefined;
-  /**
-   * When set, models/MCP/agents are backed by the TrueFoundry ServiceFoundry server with the
-   * caller's token. Unset = local Postgres stores. Mutually exclusive with OIDC.
-   * Env: `TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL`.
-   */
-  TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL: string | undefined;
-  /**
-   * Required when `TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL` is set. Env: `TRUEFOUNDRY_API_KEY`.
-   */
-  TRUEFOUNDRY_API_KEY: string | undefined;
-  /** Max ms for non-agent ServiceFoundry HTTP calls. Env: `TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS`. Default 10000. */
-  TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS: number;
-  /** Max ms for agent CRUD ServiceFoundry HTTP calls. Env: `TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS`. Default 3000. */
-  TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS: number;
-  /**
-   * Present this pod's client certificate on outbound calls to the ServiceFoundry server (internal
-   * mutual TLS) and upgrade a mesh-direct peer URL from http to https. Off by default, so an
-   * unconfigured deployment keeps calling over plain HTTP exactly as before.
-   * Env: `TRUEFOUNDRY_MTLS_ENABLED`. Default false.
-   */
-  TRUEFOUNDRY_MTLS_ENABLED: boolean;
-  /**
-   * Directory holding the internal mTLS material used when `TRUEFOUNDRY_MTLS_ENABLED` is true — the
-   * cert triple `tls.crt` / `tls.key` / `ca.crt`, so one chart value configures every component.
-   * Env: `TRUEFOUNDRY_MTLS_CERTS_DIR`. Default `/etc/tls/truefoundry`.
-   */
-  TRUEFOUNDRY_MTLS_CERTS_DIR: string;
-  /**
-   * When TrueFoundry mode is on, enable the shared sandbox for all tenants
-   * (no per-tenant PUT). Env: `TRUEFOUNDRY_SANDBOX_ENABLED`. Default false.
-   */
-  TRUEFOUNDRY_SANDBOX_ENABLED: boolean;
-  /**
-   * Shared sandbox backend when `TRUEFOUNDRY_SANDBOX_ENABLED` is true.
-   * Env: `TRUEFOUNDRY_SANDBOX_PROVIDER` (`daytona` | `truefoundry`).
-   */
-  TRUEFOUNDRY_SANDBOX_PROVIDER: 'daytona' | 'truefoundry' | undefined;
-  /**
-   * Shared API key (required for Daytona; optional for truefoundry).
-   * Env: `TRUEFOUNDRY_SANDBOX_API_KEY`.
-   */
-  TRUEFOUNDRY_SANDBOX_API_KEY: string | undefined;
-  /**
-   * TrueFoundry (on-prem) sandbox HTTP server URL when provider is `truefoundry`.
-   * Env: `TRUEFOUNDRY_SANDBOX_SERVER_URL`.
-   */
-  TRUEFOUNDRY_SANDBOX_SERVER_URL: string | undefined;
-  /**
-   * Static JSON settings for the shared sandbox (provider-specific).
-   * Daytona: `snapshotName`, intervals, `timeoutMs`. TrueFoundry: `nats_bridge_url`.
-   * Env: `TRUEFOUNDRY_SANDBOX_SETTINGS`.
-   */
-  TRUEFOUNDRY_SANDBOX_SETTINGS: string | undefined;
+  /** OIDC configuration for server authentication. */
+  OIDC: OIDCConfig;
 };
 
-export type ServerConfiguration = StandaloneServerConfiguration | DistributedServerConfiguration;
+export type NodeServerConfiguration = StandaloneServerConfiguration | DistributedServerConfiguration;
+
+export type ServerConfiguration = NodeServerConfiguration | WorkersServerConfiguration;
 
 // ============================================================================
 // CONFIGURATION VALUES
 // ============================================================================
 
-const serverExecutionTimeoutSeconds = parsePositiveInt({
-  envKey: 'SERVER_EXECUTION_TIMEOUT_SECONDS',
-  raw: getEnv('SERVER_EXECUTION_TIMEOUT_SECONDS'),
-  defaultValue: 600,
-});
+/** Reads and validates `process.env`; throws on any invalid or contradictory value. */
+export function parseServerConfiguration(): ServerConfiguration {
+  const runtime = resolveRuntime();
 
-const standalone = parseBoolean({
-  envKey: 'STANDALONE',
-  raw: getEnv('STANDALONE'),
-  defaultValue: true,
-});
+  const serverExecutionTimeoutSeconds = parsePositiveInt({
+    envKey: 'SERVER_EXECUTION_TIMEOUT_SECONDS',
+    raw: getEnv('SERVER_EXECUTION_TIMEOUT_SECONDS'),
+    defaultValue: 600,
+  });
 
-const appDataDirSuffix = getEnv('APP_DATA_DIR_SUFFIX', { defaultValue: '' }) ?? '';
-const appDataDir = envPaths(ENV_PATHS_APP_NAME, { suffix: appDataDirSuffix }).data;
+  const shared: SharedServerConfiguration = {
+    LOG_LEVEL: getEnv('LOG_LEVEL', { defaultValue: 'info' }) ?? 'info',
+    ACCESS_LOGS: parseBoolean({ envKey: 'ACCESS_LOGS', raw: getEnv('ACCESS_LOGS'), defaultValue: true }),
+    NODE_ENV: getEnv('NODE_ENV'),
+    EXECUTOR_ID: runtime === 'distributed' ? randomAlphanumeric(6) : LOCAL_EXECUTOR_ID,
+    MODEL_CATALOG_PATH: resolveOptionalPathEnv('MODEL_CATALOG_PATH'),
+    MCP_CATALOG_PATH: resolveOptionalPathEnv('MCP_CATALOG_PATH'),
+    SKILL_CATALOG_PATH: resolveOptionalPathEnv('SKILL_CATALOG_PATH'),
+    SANDBOX_CATALOG_PATH: resolveOptionalPathEnv('SANDBOX_CATALOG_PATH'),
 
-const port = parsePort(getEnv('PORT'));
-const host = getEnv('HOST', { defaultValue: DEFAULT_HOST }) ?? DEFAULT_HOST;
+    MCP_REQUEST_TIMEOUT_MS: parsePositiveInt({
+      envKey: 'MCP_REQUEST_TIMEOUT_MS',
+      raw: getEnv('MCP_REQUEST_TIMEOUT_MS'),
+      defaultValue: 4 * 60 * 1000,
+    }),
+    MCP_CONNECT_TIMEOUT_MS: parsePositiveInt({
+      envKey: 'MCP_CONNECT_TIMEOUT_MS',
+      raw: getEnv('MCP_CONNECT_TIMEOUT_MS'),
+      defaultValue: 30 * 1000,
+    }),
+    MCP_DCR_OAUTH_CLIENT_NAME:
+      getEnv('MCP_DCR_OAUTH_CLIENT_NAME', { defaultValue: 'truefoundry-harness' }) ?? 'truefoundry-harness',
+    SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD: parsePositiveInt({
+      envKey: 'SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD',
+      raw: getEnv('SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD'),
+      defaultValue: 20_971_520,
+    }),
+    MAX_REQUEST_BODY_BYTES: parsePositiveInt({
+      envKey: 'MAX_REQUEST_BODY_BYTES',
+      raw: getEnv('MAX_REQUEST_BODY_BYTES'),
+      defaultValue: DEFAULT_MAX_REQUEST_BODY_BYTES,
+    }),
+    GRACEFUL_TIMEOUT_SECONDS: parsePositiveInt({
+      envKey: 'GRACEFUL_TIMEOUT_SECONDS',
+      raw: getEnv('GRACEFUL_TIMEOUT_SECONDS'),
+      defaultValue: 30,
+    }),
+    SERVER_EXECUTION_TIMEOUT_SECONDS: serverExecutionTimeoutSeconds,
+    TURN_STREAM_TTL_SECONDS: parsePositiveInt({
+      envKey: 'TURN_STREAM_TTL_SECONDS',
+      raw: getEnv('TURN_STREAM_TTL_SECONDS'),
+      defaultValue: serverExecutionTimeoutSeconds + 300,
+    }),
+    TURN_STREAM_POST_COMPLETION_TTL_SECONDS: parsePositiveInt({
+      envKey: 'TURN_STREAM_POST_COMPLETION_TTL_SECONDS',
+      raw: getEnv('TURN_STREAM_POST_COMPLETION_TTL_SECONDS'),
+      defaultValue: 300,
+    }),
+    TURN_SUBSCRIBE_TIMEOUT_MS: parsePositiveInt({
+      envKey: 'TURN_SUBSCRIBE_TIMEOUT_MS',
+      raw: getEnv('TURN_SUBSCRIBE_TIMEOUT_MS'),
+      defaultValue: 600_000,
+    }),
+    REDIS_REQUEST_REPLY_TIMEOUT_MS: parsePositiveInt({
+      envKey: 'REDIS_REQUEST_REPLY_TIMEOUT_MS',
+      raw: getEnv('REDIS_REQUEST_REPLY_TIMEOUT_MS'),
+      defaultValue: 60_000,
+    }),
+    REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS: parsePositiveInt({
+      envKey: 'REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS',
+      raw: getEnv('REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS'),
+      defaultValue: 5_000,
+    }),
+    REDIS_REQUEST_REPLY_REPLY_TTL_MS: parsePositiveInt({
+      envKey: 'REDIS_REQUEST_REPLY_REPLY_TTL_MS',
+      raw: getEnv('REDIS_REQUEST_REPLY_REPLY_TTL_MS'),
+      defaultValue: 120_000,
+    }),
+    REDIS_REQUEST_REPLY_POLL_INTERVAL_MS: parsePositiveInt({
+      envKey: 'REDIS_REQUEST_REPLY_POLL_INTERVAL_MS',
+      raw: getEnv('REDIS_REQUEST_REPLY_POLL_INTERVAL_MS'),
+      defaultValue: 500,
+    }),
+    PUBLIC_BASE_URL: parsePublicBaseUrl(getEnv('PUBLIC_BASE_URL', { defaultValue: '' })),
+  };
 
-const shared: SharedServerConfiguration = {
-  LOG_LEVEL: getEnv('LOG_LEVEL', { defaultValue: 'info' }) ?? 'info',
-  ACCESS_LOGS: parseBoolean({ envKey: 'ACCESS_LOGS', raw: getEnv('ACCESS_LOGS'), defaultValue: true }),
-  NODE_ENV: getEnv('NODE_ENV'),
-  PORT: port,
-  HOST: host,
-  EXECUTOR_ID: standalone ? LOCAL_EXECUTOR_ID : randomAlphanumeric(6),
-  MODEL_CATALOG_PATH: resolveOptionalPathEnv('MODEL_CATALOG_PATH'),
-  MCP_CATALOG_PATH: resolveOptionalPathEnv('MCP_CATALOG_PATH'),
-  SKILL_CATALOG_PATH: resolveOptionalPathEnv('SKILL_CATALOG_PATH'),
-  SANDBOX_CATALOG_PATH: resolveOptionalPathEnv('SANDBOX_CATALOG_PATH'),
-  FRONTEND_DIR: resolveFrontendDir(),
-
-  MCP_REQUEST_TIMEOUT_MS: parsePositiveInt({
-    envKey: 'MCP_REQUEST_TIMEOUT_MS',
-    raw: getEnv('MCP_REQUEST_TIMEOUT_MS'),
-    defaultValue: 4 * 60 * 1000,
-  }),
-  MCP_CONNECT_TIMEOUT_MS: parsePositiveInt({
-    envKey: 'MCP_CONNECT_TIMEOUT_MS',
-    raw: getEnv('MCP_CONNECT_TIMEOUT_MS'),
-    defaultValue: 30 * 1000,
-  }),
-  MCP_DCR_OAUTH_CLIENT_NAME:
-    getEnv('MCP_DCR_OAUTH_CLIENT_NAME', { defaultValue: 'truefoundry-harness' }) ?? 'truefoundry-harness',
-  SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD: parsePositiveInt({
-    envKey: 'SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD',
-    raw: getEnv('SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD'),
-    defaultValue: 20_971_520,
-  }),
-  MAX_REQUEST_BODY_BYTES: parsePositiveInt({
-    envKey: 'MAX_REQUEST_BODY_BYTES',
-    raw: getEnv('MAX_REQUEST_BODY_BYTES'),
-    defaultValue: DEFAULT_MAX_REQUEST_BODY_BYTES,
-  }),
-  GRACEFUL_TIMEOUT_SECONDS: parsePositiveInt({
-    envKey: 'GRACEFUL_TIMEOUT_SECONDS',
-    raw: getEnv('GRACEFUL_TIMEOUT_SECONDS'),
-    defaultValue: 30,
-  }),
-  SERVER_EXECUTION_TIMEOUT_SECONDS: serverExecutionTimeoutSeconds,
-  TURN_STREAM_TTL_SECONDS: parsePositiveInt({
-    envKey: 'TURN_STREAM_TTL_SECONDS',
-    raw: getEnv('TURN_STREAM_TTL_SECONDS'),
-    defaultValue: serverExecutionTimeoutSeconds + 300,
-  }),
-  TURN_STREAM_POST_COMPLETION_TTL_SECONDS: parsePositiveInt({
-    envKey: 'TURN_STREAM_POST_COMPLETION_TTL_SECONDS',
-    raw: getEnv('TURN_STREAM_POST_COMPLETION_TTL_SECONDS'),
-    defaultValue: 300,
-  }),
-  TURN_SUBSCRIBE_TIMEOUT_MS: parsePositiveInt({
-    envKey: 'TURN_SUBSCRIBE_TIMEOUT_MS',
-    raw: getEnv('TURN_SUBSCRIBE_TIMEOUT_MS'),
-    defaultValue: 600_000,
-  }),
-  REDIS_REQUEST_REPLY_TIMEOUT_MS: parsePositiveInt({
-    envKey: 'REDIS_REQUEST_REPLY_TIMEOUT_MS',
-    raw: getEnv('REDIS_REQUEST_REPLY_TIMEOUT_MS'),
-    defaultValue: 60_000,
-  }),
-  REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS: parsePositiveInt({
-    envKey: 'REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS',
-    raw: getEnv('REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS'),
-    defaultValue: 5_000,
-  }),
-  REDIS_REQUEST_REPLY_REPLY_TTL_MS: parsePositiveInt({
-    envKey: 'REDIS_REQUEST_REPLY_REPLY_TTL_MS',
-    raw: getEnv('REDIS_REQUEST_REPLY_REPLY_TTL_MS'),
-    defaultValue: 120_000,
-  }),
-  REDIS_REQUEST_REPLY_POLL_INTERVAL_MS: parsePositiveInt({
-    envKey: 'REDIS_REQUEST_REPLY_POLL_INTERVAL_MS',
-    raw: getEnv('REDIS_REQUEST_REPLY_POLL_INTERVAL_MS'),
-    defaultValue: 500,
-  }),
-  PUBLIC_BASE_URL: parsePublicBaseUrl(getEnv('PUBLIC_BASE_URL', { defaultValue: '' })),
-  SERVER_URL:
-    getEnv('SERVER_URL', { defaultValue: `http://localhost:${String(port)}` }) ?? `http://localhost:${String(port)}`,
-  TRUEFORGE_API_KEY: standalone
-    ? (getEnv('TRUEFORGE_API_KEY', { defaultValue: STANDALONE_TRUEFORGE_API_KEY }) ?? STANDALONE_TRUEFORGE_API_KEY)
-    : (getEnv('TRUEFORGE_API_KEY', { required: true }) ?? ''),
-  TRUEFORGE_MTLS_ENABLED: parseBoolean({
-    envKey: 'TRUEFORGE_MTLS_ENABLED',
-    raw: getEnv('TRUEFORGE_MTLS_ENABLED'),
-    defaultValue: false,
-  }),
-  TRUEFORGE_MTLS_CERTS_DIR: getEnv('TRUEFORGE_MTLS_CERTS_DIR', { defaultValue: '/etc/tls' }) ?? '/etc/tls',
-};
-
-const configuration: ServerConfiguration = standalone
-  ? {
-      ...shared,
-      STANDALONE: true,
-      SQLITE_PATH: resolveSqlitePath(appDataDir),
-      LOCAL_SANDBOX_ROOT_PARENT: resolveLocalSandboxRootParent(appDataDir),
-      CODE_MODE_SOCKET_PARENT: resolveCodeModeSocketParent(),
+  if (runtime === 'workers') {
+    // Rejected rather than ignored: the deployment would otherwise silently lose its expected auth mode.
+    if (getEnv('TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL') !== undefined) {
+      throw new Error(
+        'TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL (TrueFoundry mode) is not supported when TRUEFORGE_RUNTIME=workers.',
+      );
     }
-  : {
-      ...shared,
-      STANDALONE: false,
-      DATABASE_URL: resolvePostgresDatabaseUrl(),
-      DATABASE_POOL_MAX: parsePositiveInt({
-        envKey: 'DATABASE_POOL_MAX',
-        raw: getEnv('DATABASE_POOL_MAX'),
-        defaultValue: 10,
-      }),
-      POSTGRES_STATEMENT_TIMEOUT_MS: parsePositiveInt({
-        envKey: 'POSTGRES_STATEMENT_TIMEOUT_MS',
-        raw: getEnv('POSTGRES_STATEMENT_TIMEOUT_MS'),
-        defaultValue: 60_000,
-      }),
-      POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: parsePositiveInt({
-        envKey: 'POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS',
-        raw: getEnv('POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS'),
-        defaultValue: 60_000,
-      }),
-      REDIS_URL: resolveRedisUrl(),
-      OIDC: resolveOIDCConfig(),
-      TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL: getEnv('TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL', { required: false }),
-      TRUEFOUNDRY_API_KEY: getEnv('TRUEFOUNDRY_API_KEY', { required: false }),
-      TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS: parsePositiveInt({
-        envKey: 'TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS',
-        raw: getEnv('TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS'),
-        defaultValue: 10_000,
-      }),
-      TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS: parsePositiveInt({
-        envKey: 'TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS',
-        raw: getEnv('TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS'),
-        defaultValue: 3_000,
-      }),
-      TRUEFOUNDRY_MTLS_ENABLED: parseBoolean({
-        envKey: 'TRUEFOUNDRY_MTLS_ENABLED',
-        raw: getEnv('TRUEFOUNDRY_MTLS_ENABLED'),
-        defaultValue: false,
-      }),
-      TRUEFOUNDRY_MTLS_CERTS_DIR:
-        getEnv('TRUEFOUNDRY_MTLS_CERTS_DIR', { defaultValue: '/etc/tls/truefoundry' }) ?? '/etc/tls/truefoundry',
-      TRUEFOUNDRY_SANDBOX_ENABLED: parseBoolean({
-        envKey: 'TRUEFOUNDRY_SANDBOX_ENABLED',
-        raw: getEnv('TRUEFOUNDRY_SANDBOX_ENABLED'),
-        defaultValue: false,
-      }),
-      TRUEFOUNDRY_SANDBOX_PROVIDER: parseTrueFoundrySandboxProvider(
-        getEnv('TRUEFOUNDRY_SANDBOX_PROVIDER', { required: false }),
-      ),
-      TRUEFOUNDRY_SANDBOX_API_KEY: getEnv('TRUEFOUNDRY_SANDBOX_API_KEY', { required: false }),
-      TRUEFOUNDRY_SANDBOX_SERVER_URL: getEnv('TRUEFOUNDRY_SANDBOX_SERVER_URL', { required: false }),
-      TRUEFOUNDRY_SANDBOX_SETTINGS: getEnv('TRUEFOUNDRY_SANDBOX_SETTINGS', { required: false }),
-    };
+    const oidc = resolveOIDCConfig();
+    if (oidc === undefined) {
+      throw new Error(
+        'TRUEFORGE_RUNTIME=workers requires OIDC_ISSUER_URL, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET; ' +
+          'standalone auth is not available on Workers.',
+      );
+    }
+    return { ...shared, RUNTIME: 'workers', STANDALONE: false, OIDC: oidc };
+  }
+
+  const port = parsePort(getEnv('PORT'));
+  const nodeShared: NodeSharedServerConfiguration = {
+    PORT: port,
+    HOST: getEnv('HOST', { defaultValue: DEFAULT_HOST }) ?? DEFAULT_HOST,
+    SERVER_URL:
+      getEnv('SERVER_URL', { defaultValue: `http://localhost:${String(port)}` }) ?? `http://localhost:${String(port)}`,
+    TRUEFORGE_API_KEY:
+      runtime === 'standalone'
+        ? (getEnv('TRUEFORGE_API_KEY', { defaultValue: STANDALONE_TRUEFORGE_API_KEY }) ?? STANDALONE_TRUEFORGE_API_KEY)
+        : (getEnv('TRUEFORGE_API_KEY', { required: true }) ?? ''),
+    TRUEFORGE_MTLS_ENABLED: parseBoolean({
+      envKey: 'TRUEFORGE_MTLS_ENABLED',
+      raw: getEnv('TRUEFORGE_MTLS_ENABLED'),
+      defaultValue: false,
+    }),
+    TRUEFORGE_MTLS_CERTS_DIR: getEnv('TRUEFORGE_MTLS_CERTS_DIR', { defaultValue: '/etc/tls' }) ?? '/etc/tls',
+  };
+
+  if (runtime === 'standalone') {
+    return { ...shared, ...nodeShared, RUNTIME: 'standalone', STANDALONE: true };
+  }
+
+  const configuration: DistributedServerConfiguration = {
+    ...shared,
+    ...nodeShared,
+    RUNTIME: 'distributed',
+    STANDALONE: false,
+    DATABASE_URL: resolvePostgresDatabaseUrl(),
+    DATABASE_POOL_MAX: parsePositiveInt({
+      envKey: 'DATABASE_POOL_MAX',
+      raw: getEnv('DATABASE_POOL_MAX'),
+      defaultValue: 10,
+    }),
+    POSTGRES_STATEMENT_TIMEOUT_MS: parsePositiveInt({
+      envKey: 'POSTGRES_STATEMENT_TIMEOUT_MS',
+      raw: getEnv('POSTGRES_STATEMENT_TIMEOUT_MS'),
+      defaultValue: 60_000,
+    }),
+    POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: parsePositiveInt({
+      envKey: 'POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS',
+      raw: getEnv('POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS'),
+      defaultValue: 60_000,
+    }),
+    REDIS_URL: resolveRedisUrl(),
+    OIDC: resolveOIDCConfig(),
+    TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL: getEnv('TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL', { required: false }),
+    TRUEFOUNDRY_API_KEY: getEnv('TRUEFOUNDRY_API_KEY', { required: false }),
+    TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS: parsePositiveInt({
+      envKey: 'TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS',
+      raw: getEnv('TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS'),
+      defaultValue: 10_000,
+    }),
+    TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS: parsePositiveInt({
+      envKey: 'TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS',
+      raw: getEnv('TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_AGENT_TIMEOUT_MS'),
+      defaultValue: 3_000,
+    }),
+    TRUEFOUNDRY_MTLS_ENABLED: parseBoolean({
+      envKey: 'TRUEFOUNDRY_MTLS_ENABLED',
+      raw: getEnv('TRUEFOUNDRY_MTLS_ENABLED'),
+      defaultValue: false,
+    }),
+    TRUEFOUNDRY_MTLS_CERTS_DIR:
+      getEnv('TRUEFOUNDRY_MTLS_CERTS_DIR', { defaultValue: '/etc/tls/truefoundry' }) ?? '/etc/tls/truefoundry',
+    TRUEFOUNDRY_SANDBOX_ENABLED: parseBoolean({
+      envKey: 'TRUEFOUNDRY_SANDBOX_ENABLED',
+      raw: getEnv('TRUEFOUNDRY_SANDBOX_ENABLED'),
+      defaultValue: false,
+    }),
+    TRUEFOUNDRY_SANDBOX_PROVIDER: parseTrueFoundrySandboxProvider(
+      getEnv('TRUEFOUNDRY_SANDBOX_PROVIDER', { required: false }),
+    ),
+    TRUEFOUNDRY_SANDBOX_API_KEY: getEnv('TRUEFOUNDRY_SANDBOX_API_KEY', { required: false }),
+    TRUEFOUNDRY_SANDBOX_SERVER_URL: getEnv('TRUEFOUNDRY_SANDBOX_SERVER_URL', { required: false }),
+    TRUEFOUNDRY_SANDBOX_SETTINGS: getEnv('TRUEFOUNDRY_SANDBOX_SETTINGS', { required: false }),
+  };
+
+  if (isTrueFoundryModeEnabled(configuration)) {
+    // TrueFoundry authenticates each caller with their own gateway token, so browser SSO must be off.
+    if (isOidcConfigured(configuration)) {
+      throw new Error(
+        'TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL (TrueFoundry mode) and OIDC (SSO) cannot both be enabled at once.',
+      );
+    }
+    // TRUEFOUNDRY_API_KEY is required when TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL is set.
+    if (configuration.TRUEFOUNDRY_API_KEY === undefined) {
+      throw new Error('TRUEFOUNDRY_API_KEY is required when TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL is set.');
+    }
+
+    // Shared sandbox
+    if (configuration.TRUEFOUNDRY_SANDBOX_ENABLED) {
+      if (configuration.TRUEFOUNDRY_SANDBOX_PROVIDER === undefined) {
+        throw new Error(
+          'TRUEFOUNDRY_SANDBOX_ENABLED is true but TRUEFOUNDRY_SANDBOX_PROVIDER is not set. ' +
+            'Set TRUEFOUNDRY_SANDBOX_PROVIDER to "daytona" or "truefoundry", or set TRUEFOUNDRY_SANDBOX_ENABLED=false.',
+        );
+      }
+      if (configuration.TRUEFOUNDRY_SANDBOX_SETTINGS === undefined) {
+        throw new Error(
+          'TRUEFOUNDRY_SANDBOX_ENABLED is true but TRUEFOUNDRY_SANDBOX_SETTINGS is not set. ' +
+            'Provide a JSON settings object, or set TRUEFOUNDRY_SANDBOX_ENABLED=false.',
+        );
+      }
+      try {
+        JSON.parse(configuration.TRUEFOUNDRY_SANDBOX_SETTINGS);
+      } catch (error) {
+        throw new Error('TRUEFOUNDRY_SANDBOX_SETTINGS must be valid JSON', { cause: error });
+      }
+      if (
+        configuration.TRUEFOUNDRY_SANDBOX_PROVIDER === 'daytona' &&
+        configuration.TRUEFOUNDRY_SANDBOX_API_KEY === undefined
+      ) {
+        throw new Error(
+          'TRUEFOUNDRY_SANDBOX_PROVIDER=daytona requires TRUEFOUNDRY_SANDBOX_API_KEY, or set TRUEFOUNDRY_SANDBOX_ENABLED=false.',
+        );
+      }
+      if (
+        configuration.TRUEFOUNDRY_SANDBOX_PROVIDER === 'truefoundry' &&
+        configuration.TRUEFOUNDRY_SANDBOX_SERVER_URL === undefined
+      ) {
+        throw new Error(
+          'TRUEFOUNDRY_SANDBOX_PROVIDER=truefoundry requires TRUEFOUNDRY_SANDBOX_SERVER_URL, or set TRUEFOUNDRY_SANDBOX_ENABLED=false.',
+        );
+      }
+    }
+  }
+
+  if (configuration.TRUEFORGE_API_KEY.trim() === '') {
+    throw new Error('TRUEFORGE_API_KEY must not be empty when STANDALONE=false.');
+  }
+
+  return configuration;
+}
+
+const configuration = parseServerConfiguration();
 
 export function isOidcConfigured(
   value: ServerConfiguration,
-): value is DistributedServerConfiguration & { OIDC: OIDCConfig } {
+): value is (DistributedServerConfiguration | WorkersServerConfiguration) & { OIDC: OIDCConfig } {
   return !value.STANDALONE && value.OIDC !== undefined;
 }
 
@@ -844,7 +892,7 @@ export function isOidcConfigured(
 export function isTrueFoundryModeEnabled(
   config: ServerConfiguration = configuration,
 ): config is DistributedServerConfiguration & { TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL: string } {
-  return !config.STANDALONE && config.TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL !== undefined;
+  return config.RUNTIME === 'distributed' && config.TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL !== undefined;
 }
 
 /** Runtime auth/integration mode for this process. */
@@ -866,60 +914,6 @@ export function getTrueForgeAuthMode(config: ServerConfiguration = configuration
     return TrueForgeAuthMode.Oidc;
   }
   return TrueForgeAuthMode.Standalone;
-}
-
-if (isTrueFoundryModeEnabled(configuration)) {
-  // TrueFoundry authenticates each caller with their own gateway token, so browser SSO must be off.
-  if (isOidcConfigured(configuration)) {
-    throw new Error(
-      'TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL (TrueFoundry mode) and OIDC (SSO) cannot both be enabled at once.',
-    );
-  }
-  // TRUEFOUNDRY_API_KEY is required when TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL is set.
-  if (configuration.TRUEFOUNDRY_API_KEY === undefined) {
-    throw new Error('TRUEFOUNDRY_API_KEY is required when TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL is set.');
-  }
-
-  // Shared sandbox
-  if (configuration.TRUEFOUNDRY_SANDBOX_ENABLED) {
-    if (configuration.TRUEFOUNDRY_SANDBOX_PROVIDER === undefined) {
-      throw new Error(
-        'TRUEFOUNDRY_SANDBOX_ENABLED is true but TRUEFOUNDRY_SANDBOX_PROVIDER is not set. ' +
-          'Set TRUEFOUNDRY_SANDBOX_PROVIDER to "daytona" or "truefoundry", or set TRUEFOUNDRY_SANDBOX_ENABLED=false.',
-      );
-    }
-    if (configuration.TRUEFOUNDRY_SANDBOX_SETTINGS === undefined) {
-      throw new Error(
-        'TRUEFOUNDRY_SANDBOX_ENABLED is true but TRUEFOUNDRY_SANDBOX_SETTINGS is not set. ' +
-          'Provide a JSON settings object, or set TRUEFOUNDRY_SANDBOX_ENABLED=false.',
-      );
-    }
-    try {
-      JSON.parse(configuration.TRUEFOUNDRY_SANDBOX_SETTINGS);
-    } catch (error) {
-      throw new Error('TRUEFOUNDRY_SANDBOX_SETTINGS must be valid JSON', { cause: error });
-    }
-    if (
-      configuration.TRUEFOUNDRY_SANDBOX_PROVIDER === 'daytona' &&
-      configuration.TRUEFOUNDRY_SANDBOX_API_KEY === undefined
-    ) {
-      throw new Error(
-        'TRUEFOUNDRY_SANDBOX_PROVIDER=daytona requires TRUEFOUNDRY_SANDBOX_API_KEY, or set TRUEFOUNDRY_SANDBOX_ENABLED=false.',
-      );
-    }
-    if (
-      configuration.TRUEFOUNDRY_SANDBOX_PROVIDER === 'truefoundry' &&
-      configuration.TRUEFOUNDRY_SANDBOX_SERVER_URL === undefined
-    ) {
-      throw new Error(
-        'TRUEFOUNDRY_SANDBOX_PROVIDER=truefoundry requires TRUEFOUNDRY_SANDBOX_SERVER_URL, or set TRUEFOUNDRY_SANDBOX_ENABLED=false.',
-      );
-    }
-  }
-}
-
-if (!configuration.STANDALONE && configuration.TRUEFORGE_API_KEY.trim() === '') {
-  throw new Error('TRUEFORGE_API_KEY must not be empty when STANDALONE=false.');
 }
 
 /**

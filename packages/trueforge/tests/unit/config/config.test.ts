@@ -10,6 +10,7 @@ function distributed(overrides: {
   TRUEFOUNDRY_SANDBOX_SETTINGS?: string;
 }): ServerConfiguration {
   return {
+    RUNTIME: 'distributed',
     STANDALONE: false,
     TRUEFOUNDRY_SANDBOX_ENABLED: false,
     TRUEFOUNDRY_SANDBOX_PROVIDER: undefined,

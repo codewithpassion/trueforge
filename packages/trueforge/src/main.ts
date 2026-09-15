@@ -19,7 +19,7 @@ import {
   removeCodeModeSocketParent,
 } from './sandbox/localLifecycle';
 
-let configuration: typeof import('./config').default;
+let configuration: NodeServerConfiguration;
 let isOidcConfigured: typeof import('./config').isOidcConfigured;
 let isTrueFoundryModeEnabled: typeof import('./config').isTrueFoundryModeEnabled;
 let getTrueForgeAuthMode: typeof import('./config').getTrueForgeAuthMode;
@@ -27,14 +27,14 @@ let getPublicUiBasePath: typeof import('./config').getPublicUiBasePath;
 let TrueForgeAuthMode: typeof import('./config').TrueForgeAuthMode;
 
 try {
-  ({
-    default: configuration,
-    isOidcConfigured,
-    isTrueFoundryModeEnabled,
-    getTrueForgeAuthMode,
-    getPublicUiBasePath,
-    TrueForgeAuthMode,
-  } = await import('./config'));
+  const loaded = await import('./config');
+  const loadedConfiguration = loaded.default;
+  if (loadedConfiguration.RUNTIME === 'workers') {
+    throw new Error('TRUEFORGE_RUNTIME=workers runs only in the Workers entry, not the Node server.');
+  }
+  configuration = loadedConfiguration;
+  ({ isOidcConfigured, isTrueFoundryModeEnabled, getTrueForgeAuthMode, getPublicUiBasePath, TrueForgeAuthMode } =
+    loaded);
 } catch (error) {
   console.error(
     'Failed to start server: Failed to load configuration:',
@@ -64,7 +64,7 @@ import { McpCatalog } from './catalog/McpCatalog';
 import { ModelCatalog } from './catalog/ModelCatalog';
 import { SandboxCatalog } from './catalog/SandboxCatalog';
 import { SkillCatalog } from './catalog/SkillCatalog';
-import { type DistributedServerConfiguration } from './config';
+import { type DistributedServerConfiguration, type NodeServerConfiguration } from './config';
 import { createController } from './controller';
 import type { AgentRecord, IAgentStore } from './db/agentStore';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from './db/mcpServerStore';
@@ -83,7 +83,8 @@ import { mountFrontend } from './frontend';
 import { createClientCertificateMiddleware, serverTlsServeOptions } from './http/tls';
 import { createServerLogger, shouldColorize } from './logger';
 import type { IOAuthTokenStore } from './mcp/auth/types';
-import { PACKAGE_VERSION } from './packageVersion';
+import { CODE_MODE_SOCKET_PARENT, FRONTEND_DIR, LOCAL_SANDBOX_ROOT_PARENT, SQLITE_PATH } from './nodeConfig';
+import { PACKAGE_VERSION } from './packageVersion.gen';
 import { ActiveTurnRegistry } from './runtime/activeTurns';
 import { EventSubscriptionRegistry } from './runtime/event-subscription';
 import type { SandboxIntegration } from './sandbox/integration';
@@ -541,6 +542,9 @@ async function createServerRuntime<TTransaction>(
         scheduleStore,
         withTransaction,
         logger,
+        serverUrl: configuration.SERVER_URL,
+        apiKey: configuration.TRUEFORGE_API_KEY,
+        tls: { enabled: configuration.TRUEFORGE_MTLS_ENABLED, dir: configuration.TRUEFORGE_MTLS_CERTS_DIR },
       })
     : undefined;
 
@@ -609,11 +613,11 @@ try {
   let localSandboxSupport: LocalSandboxSupportResult | undefined;
   if (configuration.STANDALONE) {
     printStandaloneStartupBanner({ version: PACKAGE_VERSION, color: shouldColorize() });
-    await prepareCodeModeSocketParent({ path: configuration.CODE_MODE_SOCKET_PARENT, logger });
-    await ensureLocalSandboxRootParent(configuration.LOCAL_SANDBOX_ROOT_PARENT);
+    await prepareCodeModeSocketParent({ path: CODE_MODE_SOCKET_PARENT, logger });
+    await ensureLocalSandboxRootParent(LOCAL_SANDBOX_ROOT_PARENT);
     const { LocalSandboxProvider } = await import('./sandbox/local/provider/LocalSandboxProvider');
     const support = await LocalSandboxProvider.isSupported({
-      codeModeSocketParentPath: configuration.CODE_MODE_SOCKET_PARENT,
+      codeModeSocketParentPath: CODE_MODE_SOCKET_PARENT,
     });
     localSandboxSupport = support;
     if (support.supported) {
@@ -636,7 +640,7 @@ try {
   const sandboxIntegration = createNodeSandboxIntegration({ localSupport: localSandboxSupport });
   const { activeTurns, app, controller, destroyDb, redis, requestReplyRouter } = configuration.STANDALONE
     ? await createServerRuntime(
-        await createStandalonePersistence({ sqlitePath: configuration.SQLITE_PATH, logger }),
+        await createStandalonePersistence({ sqlitePath: SQLITE_PATH, logger }),
         logger,
         sandboxIntegration,
       )
@@ -648,14 +652,14 @@ try {
 
   if (
     mountFrontend(app, {
-      dir: configuration.FRONTEND_DIR,
+      dir: FRONTEND_DIR,
       uiBasePath: getPublicUiBasePath(),
     })
   ) {
-    logger.info(`Serving frontend from ${configuration.FRONTEND_DIR}`);
+    logger.info(`Serving frontend from ${FRONTEND_DIR}`);
   } else {
     logger.warn(
-      `No frontend build at ${configuration.FRONTEND_DIR}: serving the API only. ` +
+      `No frontend build at ${FRONTEND_DIR}: serving the API only. ` +
         'Run `pnpm --filter frontend build` (and copy via build:frontend-assets) to serve the UI, or `pnpm standalone:dev` / `pnpm dev` for Vite.',
     );
   }
@@ -756,7 +760,7 @@ try {
         logger.warn('[Redis] Error closing client during shutdown', extractErrorLogFields(error));
       });
       if (configuration.STANDALONE) {
-        await removeCodeModeSocketParent(configuration.CODE_MODE_SOCKET_PARENT).catch((error: unknown) => {
+        await removeCodeModeSocketParent(CODE_MODE_SOCKET_PARENT).catch((error: unknown) => {
           logger.warn('Error removing Code Mode socket parent during shutdown', extractErrorLogFields(error));
         });
       }

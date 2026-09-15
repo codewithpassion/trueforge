@@ -49,7 +49,7 @@ import type { ISessionMetricsStore } from './db/sessionMetricsStore';
 import type { ISkillStore } from './db/skillStore';
 import type { WithTransaction } from './db/transaction';
 import type { IOAuthTokenStore } from './mcp/auth/types';
-import { PACKAGE_VERSION } from './packageVersion';
+import { PACKAGE_VERSION } from './packageVersion.gen';
 import { OPENAPI_DOCUMENT_TAGS } from './routes/openapiTags';
 import type { ActiveTurnRegistry } from './runtime/activeTurns';
 import type { EventSubscriptionRegistry } from './runtime/event-subscription';
@@ -231,7 +231,6 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
   const app = new OpenAPIHono({ defaultHook: zodValidationHook });
   const authMiddleware = createAuthMiddleware(deps.authenticator);
   const adminAuthMiddleware = createAdminAuthMiddleware(deps.authenticator);
-  const scheduleExecutionAuthMiddleware = createApiKeyAuthMiddleware(configuration.TRUEFORGE_API_KEY);
   const authEnabled = getTrueForgeAuthMode() !== TrueForgeAuthMode.Standalone;
   const scheduleTurnDeps = {
     scheduleStore: deps.scheduleStore,
@@ -351,10 +350,16 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       authMiddleware,
     ),
   );
-  app.route(
-    '/api/internal/schedules',
-    withAuth(createScheduleExecutionRouter(scheduleTurnDeps), scheduleExecutionAuthMiddleware),
-  );
+  // The HTTP loopback controller is Node-only; Workers have no service API key to accept.
+  if (configuration.RUNTIME !== 'workers') {
+    app.route(
+      '/api/internal/schedules',
+      withAuth(
+        createScheduleExecutionRouter(scheduleTurnDeps),
+        createApiKeyAuthMiddleware(configuration.TRUEFORGE_API_KEY),
+      ),
+    );
+  }
   app.route(
     '/api/v1/schedules',
     withAuth(

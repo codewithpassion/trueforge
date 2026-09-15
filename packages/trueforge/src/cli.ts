@@ -11,7 +11,7 @@
  */
 import { parseArgs } from 'node:util';
 
-import { PACKAGE_VERSION } from './packageVersion';
+import { PACKAGE_VERSION } from './packageVersion.gen';
 
 function printUsage(): void {
   console.log(`Usage:
