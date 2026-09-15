@@ -8,6 +8,7 @@ import {
 } from '@truefoundry/trueforge-core/agent-session';
 import type { Kysely } from 'kysely';
 import { createLogger } from 'winston';
+import { makeDoneTurnState, makeTurnDoneEvent } from '../../../../trueforge-core/tests/agent-session/testHelpers';
 import { createTurnsRouter } from '../../../src/apis/turns';
 import { createAppErrorHandler } from '../../../src/app';
 import { TrueForgeAuthorizer, type Authorizer } from '../../../src/auth/authorizer';
@@ -27,6 +28,7 @@ import { EventSubscriptionRegistry, StreamGoneError } from '../../../src/runtime
 import { turnStreamId } from '../../../src/runtime/turnRunner';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import { testNodeTurnExecutor } from '../runtime/testNodeTurnExecutor';
+import { ScriptedTurnSessions, seedStandaloneSessionTurn } from './scriptedSessions';
 
 function mcpServerStoreWithAuth(db: Kysely<Database>, tokenStore: SqliteOAuthTokenStore) {
   return new McpServerWithAuthStore({
@@ -224,50 +226,24 @@ describe('turns', () => {
         releaseRest = resolve;
       });
 
-      const sessions = {
-        get: () =>
-          Promise.resolve({
-            session_id: 's1',
-            tenant_id: STANDALONE_REQUEST_CONTEXT.tenant_id,
-            spec: AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } }),
-            record: {
-              last_turn_id: null,
-              created_by_subject: {
-                subject_id: STANDALONE_REQUEST_CONTEXT.subject.id,
-                subject_type: STANDALONE_REQUEST_CONTEXT.subject.type,
-                subject_display_name: STANDALONE_REQUEST_CONTEXT.subject.display_name,
-              },
-              agent: {
-                type: 'inline',
-                spec: AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } }),
-              },
-            },
-            createTurn: () =>
-              Promise.resolve({
-                id: 'turn-non-stream',
-                record: {
-                  turn_id: 'turn-non-stream',
-                  session_id: 's1',
-                  previous_turn_id: null,
-                  input: [],
-                  state: { status: 'running' },
-                  created_at: new Date('2026-01-01T00:00:00.000Z'),
-                },
-                stream: async function* stream() {
-                  yield {
-                    type: 'turn.created',
-                    id: 'evt_created',
-                    turn_id: 'turn-non-stream',
-                    previous_turn_id: null,
-                    state: { status: 'running' },
-                    created_at: '2026-01-01T00:00:00.000Z',
-                    thread_id: null,
-                  };
-                  await restParked;
-                },
-              }),
-          }),
-      } as unknown as Sessions;
+      const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
+      const storedTurn = await seedStandaloneSessionTurn({ sessionStore, turn_id: 'turn-non-stream' });
+      const sessions = new ScriptedTurnSessions({
+        sessionStore,
+        turn_id: 'turn-non-stream',
+        events: async function* stream() {
+          yield {
+            type: EventType.TURN_CREATED,
+            id: 'evt_created',
+            turn_id: 'turn-non-stream',
+            previous_turn_id: null,
+            state: { status: 'running' },
+            created_at: '2026-01-01T00:00:00.000Z',
+            thread_id: null,
+          };
+          await restParked;
+        },
+      });
 
       const eventSubscriptions = new EventSubscriptionRegistry<TurnStreamingEvent>(undefined);
       const tokenStore = new SqliteOAuthTokenStore(db);
@@ -276,7 +252,7 @@ describe('turns', () => {
         '/',
         createTurnsRouter({
           sessions,
-          sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
+          sessionStore,
           resolveModelProviderStore: () => modelProviderStore,
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
           resolveAgentStore: () => new SqliteAgentStore(db),
@@ -306,7 +282,7 @@ describe('turns', () => {
           previous_turn_id: null,
           input: [],
           state: { status: 'running' },
-          created_at: '2026-01-01T00:00:00.000Z',
+          created_at: storedTurn.created_at.toISOString(),
         },
       });
 
@@ -327,47 +303,25 @@ describe('turns', () => {
       const doneGate = new Promise<void>(resolve => {
         releaseDone = resolve;
       });
-      const agentSpec = AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } });
-      const sessions = {
-        get: () =>
-          Promise.resolve({
-            session_id: 's1',
-            tenant_id: STANDALONE_REQUEST_CONTEXT.tenant_id,
-            spec: agentSpec,
-            record: {
-              last_turn_id: null,
-              created_by_subject: {
-                subject_id: STANDALONE_REQUEST_CONTEXT.subject.id,
-                subject_type: STANDALONE_REQUEST_CONTEXT.subject.type,
-                subject_display_name: STANDALONE_REQUEST_CONTEXT.subject.display_name,
-              },
-              agent: { type: 'inline', spec: agentSpec },
-            },
-            createTurn: () =>
-              Promise.resolve({
-                id: 'turn-detached',
-                stream: async function* stream() {
-                  yield {
-                    type: 'turn.created',
-                    id: 'evt_created',
-                    turn_id: 'turn-detached',
-                    previous_turn_id: null,
-                    state: { status: 'running' },
-                    created_at: '2026-01-01T00:00:00.000Z',
-                    thread_id: null,
-                  };
-                  await doneGate;
-                  yield {
-                    type: 'turn.done',
-                    id: 'evt_done',
-                    state: { status: 'done' },
-                    created_at: '2026-01-01T00:00:01.000Z',
-                    thread_id: null,
-                  };
-                },
-              }),
-          }),
-      } as unknown as Sessions;
+      const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
+      await seedStandaloneSessionTurn({ sessionStore, turn_id: 'turn-detached' });
+      const sessions = new ScriptedTurnSessions({
+        sessionStore,
+        turn_id: 'turn-detached',
+        events: async function* stream() {
+          yield {
+            type: EventType.TURN_CREATED,
+            id: 'evt_created',
+            turn_id: 'turn-detached',
+            previous_turn_id: null,
+            state: { status: 'running' },
+            created_at: '2026-01-01T00:00:00.000Z',
+            thread_id: null,
+          };
+          await doneGate;
+          yield makeTurnDoneEvent(makeDoneTurnState());
+        },
+      });
       const logger = createLogger({ silent: true });
       const eventSubscriptions = new EventSubscriptionRegistry<TurnStreamingEvent>(undefined);
       const app = new OpenAPIHono();
@@ -375,7 +329,7 @@ describe('turns', () => {
         '/',
         createTurnsRouter({
           sessions,
-          sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
+          sessionStore,
           resolveModelProviderStore: () => new SqliteModelProviderStore(db),
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, new SqliteOAuthTokenStore(db)),
           resolveAgentStore: () => new SqliteAgentStore(db),
@@ -443,32 +397,15 @@ describe('turns', () => {
         },
       });
 
-      const agentSpec = AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } });
-      const sessions = {
-        get: () =>
-          Promise.resolve({
-            session_id: 's1',
-            tenant_id: STANDALONE_REQUEST_CONTEXT.tenant_id,
-            spec: agentSpec,
-            record: {
-              session_id: 's1',
-              last_turn_id: null,
-              created_by_subject: {
-                subject_id: STANDALONE_REQUEST_CONTEXT.subject.id,
-                subject_type: STANDALONE_REQUEST_CONTEXT.subject.type,
-                subject_display_name: STANDALONE_REQUEST_CONTEXT.subject.display_name,
-              },
-              agent: { type: 'inline', spec: agentSpec },
-            },
-            createTurn: () =>
-              Promise.resolve({
-                id: 'turn-gone',
-                stream: async function* stream() {
-                  throw new TurnNotFoundError('turn-gone');
-                },
-              }),
-          }),
-      } as unknown as Sessions;
+      const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
+      await seedStandaloneSessionTurn({ sessionStore, turn_id: 'turn-gone' });
+      const sessions = new ScriptedTurnSessions({
+        sessionStore,
+        turn_id: 'turn-gone',
+        events: async function* stream() {
+          throw new TurnNotFoundError('turn-gone');
+        },
+      });
 
       const tokenStore = new SqliteOAuthTokenStore(db);
       const app = new OpenAPIHono();
@@ -476,7 +413,7 @@ describe('turns', () => {
         '/',
         createTurnsRouter({
           sessions,
-          sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
+          sessionStore,
           resolveModelProviderStore: () => modelProviderStore,
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
           resolveSkillStore: () => new SqliteSkillStore(db),
@@ -513,25 +450,16 @@ describe('turns', () => {
       await migrateSqliteToLatest(db);
       const logger = createLogger({ silent: true });
       const tenantId = STANDALONE_REQUEST_CONTEXT.tenant_id;
-      const agentSpec = AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } });
-      const sessions = {
-        get: () =>
-          Promise.resolve({
-            session_id: 's1',
-            tenant_id: tenantId,
-            spec: agentSpec,
-            record: {
-              session_id: 's1',
-              created_by_subject: {
-                subject_id: STANDALONE_REQUEST_CONTEXT.subject.id,
-                subject_type: STANDALONE_REQUEST_CONTEXT.subject.type,
-                subject_display_name: STANDALONE_REQUEST_CONTEXT.subject.display_name,
-              },
-              agent: { type: 'inline', spec: agentSpec },
-            },
-            getTurn: () => Promise.resolve({ turn_id: 'turn-expired', session_id: 's1', state: { status: 'done' } }),
-          }),
-      } as unknown as Sessions;
+      const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
+      await seedStandaloneSessionTurn({ sessionStore, turn_id: 'turn-expired' });
+      const doneState = makeDoneTurnState();
+      await sessionStore.updateTurnState({
+        session_id: 's1',
+        turn_id: 'turn-expired',
+        state: doneState,
+        turn_done_event: makeTurnDoneEvent(doneState),
+      });
+      const sessions = new Sessions({ sessionStore });
       const eventSubscriptions = new EventSubscriptionRegistry<TurnStreamingEvent>(undefined);
       const streamId = turnStreamId(tenantId, 's1', 'turn-expired');
       await eventSubscriptions.get(streamId).put(
