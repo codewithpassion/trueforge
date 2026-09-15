@@ -4,6 +4,38 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 6 — Phase 2b: D1 dialect, atomic runner, persistence, and D1 contract tests (2026-09-15)
+
+**Goal:** Run the SQLite stores on Cloudflare D1 through a Kysely dialect and batch-based atomic runner, with shared contract tests that cover both backends.
+
+**What we did:**
+
+- Built in a worktree and reviewed twice by Opus. It landed as `63ea82b7` (three worktree commits squashed) plus follow-up `63a8e0a9`.
+- Wrote a custom Kysely dialect in `src/db/d1/client.ts` over a small structural `D1Queryable`, because kysely-d1 0.4.0 only accepts `D1Database` and not sessions. `D1AtomicRunner` runs each batch on the caller's own session (`instanceof D1Connection` check). `createD1Persistence({ database, mcpClientName })` returns `withTransaction` (a new first-primary session per call) and the store set from the shared `db/sqlite/stores.ts`, which `main.ts` also uses. `jsonColumns.ts` owns JSON columns. `errors.ts` owns `isUniqueViolation`, which now matches D1's "UNIQUE constraint failed" text. The store transaction type is widened to `Kysely<Database>`.
+- Rewrote ten IN-list sites to `IN (SELECT value FROM json_each(?))` via `jsonListValues`. Tests assert at most 100 params for 500 ids on both backends. The review measured query plans on a 200k-row table and found them on par with literal lists.
+- `scripts/dump-sqlite-schema.mjs` writes `migrations/d1/0001_init.sql` from Kysely-migrated SQLite. The output is deterministic and applies to local D1 (39 commands). The review diffed `sqlite_master`, `table_list`, foreign keys and AUTOINCREMENT between the Kysely-migrated and dump-applied databases: identical.
+- D1 facts: it binds strings, numbers, null and `Uint8Array`, and booleans become 1/0. `Date`, bigint and `undefined` fail with `D1_TYPE_ERROR`. Raw JSONB columns come back as number arrays, so reads project `json(col)`. More than 100 params fails with "too many SQL variables". Local D1 (miniflare) accepted a 2.1 MB value, so it does not enforce the 2,000,000-byte cap. The workerd bundled with vitest-pool-workers supports compatibility dates only up to 2026-08-22, so D1 tests use 2026-08-15.
+- Review 1 (no blockers): `BigInt(meta.changes/last_row_id)` was unguarded, the D1-specific tests had not been ported, and an esbuild check with `--packages=external` hid a core barrel reach (already fixed on main by Phase 1d). Review 2 (no blockers in the fix commit) found three problems. The merge would have silently dropped `a429f9e6`'s four multi-chunk tests in a whole-file conflict; they were moved into the shared `sessionStoreAtomicWritesSuite` during landing. `executeQuery` left `numAffectedRows` unset, so Kysely's builders read 0 after a committed write. The batch-metadata error was a plain `Error`.
+- Fixes: all atomicWrites cases (11) and concurrentUpdate cases (4) now run on SQLite and D1 from shared suites with injected clocks. `D1WriteOutcomeUnknownError` is thrown when a write statement lacks a numeric `meta.changes` (single statements and batch statement 0); reads are unaffected. The chunking case now asserts the statement count, the harness takes env from `cloudflare:test`, and the factory is `createD1Db({ queryable })`. New rules in `src/db/sqlite/AGENTS.md`: D1 migrations are paired with SQLite ones, stores don't import `client.ts`, multi-write methods use `batchWrite` with the conditional chain, placeholder lists are never expanded, a context mapping stays in the same batch as its log insert, and values stay under 2 MB.
+- Bundle reach: the D1 persistence bundle pulls in `node:crypto`, `node:path` (via `config.ts` from the MCP OAuth helpers) and cron-parser's `fs` (loaded lazily, only inside `parseFile`). It does not pull in `@vercel/oidc`, Daytona, axios, ws or dotenv. `app.ts` reaches `@vercel/oidc` through the AI SDK.
+- Checks: typecheck green, `test:trueforge` 561, `test:trueforge-core` 440 (1 skipped), `test:store:sqlite` 192 (1 skipped), `test:store:d1` 202, then 204 after `63a8e0a9` (1 skipped), Postgres store suite passed, eslint 0 errors.
+- Cleanup: the earlier Docker smoke run left a root-owned, gitignored `data/` directory (Postgres bind mount) that made plain `eslint .` fail with EACCES. Its timestamp confirmed the smoke run created it, and a throwaway container removed it.
+- Carried to Phase 3: a domain size guard for turn input/state and for single rows over 2 MB. SessionDO must persist turn ids before `createTurn` and map `D1WriteOutcomeUnknownError` to a distinct 503 code. cron-parser and `@vercel/oidc` must load in workerd. The D1 query budget per invocation still needs measuring. The Workers entry must assert `RUNTIME === 'workers'`.
+
+**Lessons learned:**
+
+- If worktree commits aren't green one by one, squash them when landing.
+- When a slice moves tests into shared suites, check every parallel slice that added cases to the old files before resolving conflicts.
+- Local D1 does not enforce D1's limits reliably. Enforce and test size limits in application code.
+- Kysely treats a missing `numAffectedRows` as 0, so a D1 dialect must throw instead of guessing.
+- Bundle checks for Workers must include workspace packages. `--packages=external` hides reaches.
+- Docker bind mounts from a smoke run leave root-owned files that break repo-wide tools.
+
+**Avoid next time:**
+
+- Don't run `pnpm smoke` in the main checkout without cleaning up `data/` afterwards.
+- Don't accept "no separate fix commit was needed" from a landing agent without checking that the queued follow-up instructions were applied.
+
 ## Cycle 5 — Phase 1c landed, Phase 1d and 2a follow-ups landed; Phase 1 complete (2026-09-15)
 
 **Goal:** Land the remaining Phase 1 slices (1c workers config, 1d deep imports) and the Phase 2a review follow-ups, then verify Phase 1 end to end on `feat/cloudflare-workers-port`.
