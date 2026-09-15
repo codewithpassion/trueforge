@@ -41,6 +41,16 @@ const custom = {
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export function runModelProviderStoreContractSuite(getStore: () => IModelProviderStore): void {
+  it('upsert stores a document over 1 MB, which the statement binds twice', async () => {
+    const store = getStore();
+    const large = { ...custom, auth: { api_key: 'k'.repeat(1_100_000) } } satisfies ModelProviderManifest;
+
+    await store.upsertProvider({ tenant_id: TENANT, name: 'internal', manifest: custom });
+    const replaced = await store.upsertProvider({ tenant_id: TENANT, name: 'internal', manifest: large });
+
+    expect(replaced.manifest).toEqual(large);
+  });
+
   it('upsert creates a provider and round-trips the document', async () => {
     const store = getStore();
     const created = await store.upsertProvider({ tenant_id: TENANT, name: 'anthropic', manifest: anthropic });

@@ -70,11 +70,33 @@ describe('assertStatementFitsD1', () => {
     }).toThrow(expect.objectContaining({ scope: 'value', byteLength: D1_MAX_VALUE_BYTES + 1 }));
   });
 
-  it('rejects values that fit alone but not together as a statement', () => {
+  it('rejects distinct values that fit alone but not together as a statement', () => {
     const almostHalf = 'é'.repeat(D1_MAX_VALUE_BYTES / 4);
+    const otherAlmostHalf = `${'é'.repeat(D1_MAX_VALUE_BYTES / 4 - 1)}ee`;
     expect(() => {
-      assertStatementFitsD1([almostHalf, almostHalf, new Uint8Array(1), 7]);
+      assertStatementFitsD1([almostHalf, otherAlmostHalf, new Uint8Array(1), 7]);
     }).toThrow(expect.objectContaining({ scope: 'statement', byteLength: D1_MAX_VALUE_BYTES + 1 + 8 }));
+  });
+
+  it('counts a string bound more than once a single time', () => {
+    const document = 'a'.repeat(D1_MAX_VALUE_BYTES / 2 + 1);
+    expect(() => {
+      assertStatementFitsD1([document, 'id', document, document]);
+    }).not.toThrow();
+  });
+
+  it('still rejects a repeated string that is over the limit on its own', () => {
+    const oversized = 'a'.repeat(D1_MAX_VALUE_BYTES + 1);
+    expect(() => {
+      assertStatementFitsD1([oversized, oversized]);
+    }).toThrow(expect.objectContaining({ scope: 'value', byteLength: D1_MAX_VALUE_BYTES + 1 }));
+  });
+
+  it('counts repeated non-string values once per occurrence', () => {
+    const half = new Uint8Array(D1_MAX_VALUE_BYTES / 2 + 1);
+    expect(() => {
+      assertStatementFitsD1([half, half]);
+    }).toThrow(expect.objectContaining({ scope: 'statement', byteLength: D1_MAX_VALUE_BYTES + 2 }));
   });
 
   it('accepts values that sum to exactly the limit', () => {

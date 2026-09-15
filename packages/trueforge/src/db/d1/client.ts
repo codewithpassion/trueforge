@@ -89,20 +89,36 @@ function boundByteLength(value: unknown, { exact }: { exact: boolean }): number 
   return SCALAR_BYTES;
 }
 
+/** Kysely binds a repeated string once per use (an upsert's VALUES and update set), but the row holds it once. */
+function distinctBoundValues(parameters: readonly unknown[]): unknown[] {
+  const strings = new Set<string>();
+  return parameters.filter(value => {
+    if (typeof value !== 'string') {
+      return true;
+    }
+    if (strings.has(value)) {
+      return false;
+    }
+    strings.add(value);
+    return true;
+  });
+}
+
 /**
- * Rejects a statement D1 would refuse for size. The sum of all bound values is an upper bound for the
- * row an INSERT writes, so it errs toward rejecting a statement whose values span several rows.
+ * Rejects a statement D1 would refuse for size. The sum of distinct bound values is an upper bound for
+ * the row an INSERT writes, so it errs toward rejecting a statement whose values span several rows.
  */
 export function assertStatementFitsD1(parameters: readonly unknown[]): void {
+  const values = distinctBoundValues(parameters);
   let upperBound = 0;
-  for (const value of parameters) {
+  for (const value of values) {
     upperBound += boundByteLength(value, { exact: false });
   }
   if (upperBound <= D1_MAX_VALUE_BYTES) {
     return;
   }
   let total = 0;
-  for (const value of parameters) {
+  for (const value of values) {
     const byteLength = boundByteLength(value, { exact: true });
     if (byteLength > D1_MAX_VALUE_BYTES) {
       throw new D1ValueTooLargeError({ byteLength, scope: 'value' });

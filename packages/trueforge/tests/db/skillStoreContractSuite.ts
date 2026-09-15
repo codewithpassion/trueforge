@@ -40,6 +40,17 @@ export function runSkillStoreContractSuite(getStore: () => ISkillStore): void {
     expect(skills).toEqual([created]);
   });
 
+  it('upsert stores a manifest over 1 MB, which the statement binds twice', async () => {
+    const store = getStore();
+    const large = manifest({ description: 'd'.repeat(1_100_000) });
+
+    await store.upsertSkill({ tenant_id: TENANT, name: 'algorithmic-art', manifest: manifest() });
+    const replaced = await store.upsertSkill({ tenant_id: TENANT, name: 'algorithmic-art', manifest: large });
+
+    expect(replaced.manifest).toEqual(large);
+    expect(await store.listSkills({ tenant_id: TENANT, names: undefined })).toEqual([replaced]);
+  });
+
   it('createSkill inserts and throws SkillNameConflictError on name clash', async () => {
     const store = getStore();
     const created = await store.createSkill({

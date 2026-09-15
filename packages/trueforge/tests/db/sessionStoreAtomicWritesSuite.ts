@@ -435,6 +435,16 @@ export function runSessionStoreAtomicWritesSuite(
     return result.rows.map(row => row.event_id);
   }
 
+  it('patchMCPServers with a patch over 1 MB, which the statement binds twice', async () => {
+    await store.createTurn(makeCreateTurnInput({ sessionId: SESSION, turnId: 'turn-1' }));
+    const server = { id: 'svc', name: 'n'.repeat(1_050_000), transport_type: 'sse' as const };
+
+    await store.patchMCPServers({ session_id: SESSION, turn_id: 'turn-1', mcp_servers: [server] });
+
+    const turn = await store.getTurn({ session_id: SESSION, turn_id: 'turn-1' });
+    expect(turn?.snapshot.mcp_servers).toEqual({ svc: server });
+  });
+
   it('appendToEvents over the cap writes one chunk per event in input order', async () => {
     await store.createTurn(makeCreateTurnInput({ sessionId: SESSION, turnId: 'turn-1' }));
     const events = largeEvents();

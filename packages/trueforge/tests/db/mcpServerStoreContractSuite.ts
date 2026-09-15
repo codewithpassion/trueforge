@@ -66,6 +66,22 @@ export function runMcpServerStoreContractSuite(deps: {
     expect(fetched).toEqual(created);
   });
 
+  it('upsert stores a manifest over 1 MB with an OAuth client, which the statement binds twice', async () => {
+    const store = getStore();
+    const large = manifest({ description: 'd'.repeat(1_100_000) });
+
+    await store.upsertServer({ tenant_id: TENANT, name: 'linear', manifest: manifest() });
+    const replaced = await store.upsertServer({
+      tenant_id: TENANT,
+      name: 'linear',
+      manifest: large,
+      oauth_client: sampleOAuthClient,
+    });
+
+    expect(replaced.manifest).toEqual(large);
+    expect(await store.getClient({ id: replaced.id })).toEqual(sampleOAuthClient);
+  });
+
   it('createServer inserts and throws McpServerNameConflictError on name clash', async () => {
     const store = getStore();
     const created = await store.createServer({
