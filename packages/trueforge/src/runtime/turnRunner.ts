@@ -192,7 +192,7 @@ const MAX_SESSION_TITLE_LENGTH = 50;
 
 /**
  * Derives a session title from the first user message of the first turn. Returns the
- * trimmed text (capped at {@link MAX_SESSION_TITLE_LENGTH}) or `undefined` when no usable
+ * trimmed text (capped at `MAX_SESSION_TITLE_LENGTH`) or `undefined` when no usable
  * text is present (e.g. file-only or tool-approval input).
  */
 export function deriveSessionTitle(input: TurnInputItem[] | undefined): string | undefined {
@@ -277,7 +277,7 @@ export async function drainTurnEvents(input: {
   }
 }
 
-/** Inputs for {@link drainTurnEvents} produced by {@link beginTurnExecution}. */
+/** Inputs for `drainTurnEvents`, produced by `beginTurnExecution`. */
 export interface TurnEventDrainInput {
   trackedStream: AsyncIterable<TurnStreamingEvent>;
   turnEventStream: EventSubscription<TurnStreamingEvent>;

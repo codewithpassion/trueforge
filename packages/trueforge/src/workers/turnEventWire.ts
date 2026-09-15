@@ -49,7 +49,7 @@ export function encodeTurnEvents(
   });
 }
 
-/** Reverses {@link encodeTurnEvents}; aborting `signal` or returning early cancels the byte stream. */
+/** Reverses `encodeTurnEvents`; aborting `signal` or returning early cancels the byte stream. */
 export async function* decodeTurnEvents({
   stream,
   signal,

@@ -1,5 +1,5 @@
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import { fetch as undiciFetch } from 'undici';
+import { fetch as undiciFetch, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
 import { Controller } from './controller/Controller';
 import { createHttpScheduleRunExecutor, scheduleDispatchLoop } from './controller/scheduleDispatch';
 import type { IScheduleStore } from './db/scheduleStore';
@@ -18,6 +18,30 @@ function requestUrlFromFetchInput(input: Parameters<typeof fetch>[0]): string {
 }
 
 /**
+ * Copies what the SDK client sends into undici's init. The global fetch types and the undici package
+ * disagree on `FormData` and `Headers`, so headers become a plain record and only text bodies pass.
+ */
+function toUndiciInit({
+  init,
+  dispatcher,
+}: {
+  init: RequestInit | undefined;
+  dispatcher: Dispatcher;
+}): UndiciRequestInit {
+  const body = init?.body;
+  if (body !== undefined && body !== null && typeof body !== 'string') {
+    throw new TypeError('The mTLS fetch sends only text request bodies');
+  }
+  return {
+    dispatcher,
+    ...(init?.method === undefined ? {} : { method: init.method }),
+    ...(init?.headers === undefined ? {} : { headers: Object.fromEntries(new Headers(init.headers)) }),
+    ...(body === undefined || body === null ? {} : { body }),
+    ...(init?.signal === undefined || init.signal === null ? {} : { signal: init.signal }),
+  };
+}
+
+/**
  * `fetch` for the schedule controller SDK client. Undefined when mTLS is off. Kept out of
  * `http/tls.ts`, which the Workers type graph reaches, because undici's Response is not the Workers one.
  */
@@ -29,8 +53,7 @@ function createTlsFetch(options: TlsOptions): typeof fetch | undefined {
   if (dispatcher === undefined) {
     return undefined;
   }
-  // Casts bridge undici ↔ DOM fetch types (Fern only needs string URL + init + dispatcher).
-  return (input, init) => undiciFetch(requestUrlFromFetchInput(input), { ...(init as object), dispatcher });
+  return (input, init) => undiciFetch(requestUrlFromFetchInput(input), toUndiciInit({ init, dispatcher }));
 }
 
 /** Where and how the controller reaches the server's HTTP API. */
