@@ -70,6 +70,73 @@ describe('eventRendezvous', () => {
     expect(offered).toEqual([1, 2, 3, 4]);
   });
 
+  it('releases the producer when the signal aborts while the consumer holds an item', async () => {
+    const abort = new AbortController();
+    const { produce, offered, finished } = countingProducer(3);
+    const events = eventRendezvous({ produce, signal: abort.signal });
+
+    expect(await events.next()).toEqual({ done: false, value: 1 });
+    abort.abort();
+    await finished;
+
+    expect(offered).toEqual([1, 2, 3]);
+  });
+
+  it('lets the producer finish when the consumer returns before its first pull', async () => {
+    const { produce, offered, finished } = countingProducer(3);
+    const events = eventRendezvous({ produce, signal: new AbortController().signal });
+
+    expect(await events.return(undefined)).toEqual({ done: true, value: undefined });
+    await finished;
+
+    expect(offered).toEqual([1, 2, 3]);
+    expect(await events.next()).toEqual({ done: true, value: undefined });
+  });
+
+  it('throws a producer rejection from the next pull after the items offered before it', async () => {
+    const events = eventRendezvous<number>({
+      produce: async offer => {
+        await offer(1);
+        throw new Error('drain failed');
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(await events.next()).toEqual({ done: false, value: 1 });
+    await expect(events.next()).rejects.toThrow('drain failed');
+  });
+
+  it('drops a producer rejection after the consumer stopped without an unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      let rejected: () => void = () => undefined;
+      const producerSettled = new Promise<void>(resolve => {
+        rejected = resolve;
+      });
+      const events = eventRendezvous<number>({
+        produce: async offer => {
+          await offer(1);
+          rejected();
+          throw new Error('drain failed after the consumer left');
+        },
+        signal: new AbortController().signal,
+      });
+
+      await events.return(undefined);
+      await producerSettled;
+      await settle();
+      await settle();
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('ends a parked consumer and releases the producer when the signal aborts', async () => {
     const abort = new AbortController();
     let release: () => void = () => undefined;
