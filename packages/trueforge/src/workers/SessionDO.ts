@@ -31,9 +31,7 @@ const KEEPALIVE_INTERVAL_MS = 20_000;
 const WATCHDOG_DELAY_MS = 60_000;
 /** D1 allows 1000 queries per invocation; a turn past this many statements is close to failing. */
 export const D1_TURN_STATEMENT_WARNING = 800;
-/** The watchdog stops retrying an orphan after this many failed attempts... */
-const WATCHDOG_MAX_ATTEMPTS = 10;
-/** ...or once this long has passed since its first failure. */
+/** The watchdog stops retrying an orphan once this long has passed since its first failure. */
 const WATCHDOG_RETRY_WINDOW_MS = 60 * 60 * 1000;
 
 interface StartedTurnRow extends Record<string, SqlStorageValue> {
@@ -270,11 +268,12 @@ export class SessionDO extends DurableObject {
     if (orphans.length === 0) {
       return false;
     }
-    const persistence = this.#persistence({ watchdog: true });
-    const sessions = new Sessions({ sessionStore: persistence.sessionStore });
     let failed = false;
     for (const orphan of orphans) {
       try {
+        // Built per orphan inside the guard, so a failure to open the stores is bounded like any other.
+        const persistence = this.#persistence({ watchdog: true });
+        const sessions = new Sessions({ sessionStore: persistence.sessionStore });
         const turn = await persistence.sessionStore.getTurn({
           session_id: orphan.session_id,
           turn_id: orphan.turn_id,
@@ -312,12 +311,12 @@ export class SessionDO extends DurableObject {
     };
     // A value D1 refuses fails the same way on every retry.
     const permanent = error instanceof D1ValueTooLargeError;
-    if (permanent || attempts >= WATCHDOG_MAX_ATTEMPTS || now - firstFailedAt >= WATCHDOG_RETRY_WINDOW_MS) {
+    if (permanent || now - firstFailedAt >= WATCHDOG_RETRY_WINDOW_MS) {
       this.ctx.storage.sql.exec('DELETE FROM started_turns WHERE turn_id = ?', orphan.turn_id);
       this.#logger.error(
         permanent
           ? 'Watchdog dropped an orphaned turn it can never settle; the turn may stay running in D1'
-          : 'Watchdog gave up on an orphaned turn after repeated failures; the turn may stay running in D1',
+          : 'Watchdog gave up on an orphaned turn after an hour of failures; the turn may stay running in D1',
         logFields,
       );
       return false;

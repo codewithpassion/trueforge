@@ -377,7 +377,7 @@ describe('SessionDO', () => {
     expect(await startedTurnRows(stub)).toEqual([]);
   });
 
-  it('watchdog alarm retries a failing orphan, then drops it after 10 attempts or an hour', async () => {
+  it('watchdog alarm retries a failing orphan, then drops it an hour after its first failure', async () => {
     await createMockSession({ sessionId: 'watchdog-bounded', scenario: 'slow' });
     const turnId = await startedTurnId('watchdog-bounded');
     await abortAllDurableObjects();
@@ -396,37 +396,75 @@ describe('SessionDO', () => {
       ]);
       expect(logLinesAbout(warnings, turnId)).toHaveLength(1);
       expect(logLinesAbout(errors, turnId)).toEqual([]);
+      // Many attempts within the hour still retry: only the time since the first failure decides.
       await runInDurableObject(stub, async (_instance, state) => {
         expect(await state.storage.getAlarm()).not.toBeNull();
-        state.storage.sql.exec('UPDATE started_turns SET attempts = 9 WHERE turn_id = ?', turnId);
+        state.storage.sql.exec('UPDATE started_turns SET attempts = 99 WHERE turn_id = ?', turnId);
+      });
+
+      expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+      expect(await startedTurnRows(stub)).toEqual([
+        { turn_id: turnId, attempts: 100, first_failed_at: expect.any(Number) },
+      ]);
+      expect(logLinesAbout(errors, turnId)).toEqual([]);
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          'UPDATE started_turns SET first_failed_at = ? WHERE turn_id = ?',
+          Date.now() - 60 * 60 * 1000 - 1,
+          turnId,
+        );
       });
 
       expect(await runDurableObjectAlarm(stub)).toBe(true);
 
       expect(await startedTurnRows(stub)).toEqual([]);
       expect(logLinesAbout(errors, turnId)).toEqual([
-        expect.stringContaining('Watchdog gave up on an orphaned turn after repeated failures'),
+        expect.stringContaining('Watchdog gave up on an orphaned turn after an hour of failures'),
       ]);
-
-      await runInDurableObject(stub, async (_instance, state) => {
-        state.storage.sql.exec(
-          'INSERT INTO started_turns (turn_id, tenant_id, session_id, attempts, first_failed_at) VALUES (?, ?, ?, 1, ?)',
-          turnId,
-          TENANT_ID,
-          'watchdog-bounded',
-          Date.now() - 60 * 60 * 1000 - 1,
-        );
-        await state.storage.setAlarm(Date.now() + 60_000);
-      });
-
-      expect(await runDurableObjectAlarm(stub)).toBe(true);
-
-      expect(await startedTurnRows(stub)).toEqual([]);
-      expect(logLinesAbout(errors, turnId)).toHaveLength(2);
     } finally {
       errors.mockRestore();
       warnings.mockRestore();
     }
+  });
+
+  it('watchdog alarm records a retry for an orphan when it cannot open its D1 stores', async () => {
+    const stores = await createMockSession({ sessionId: 'watchdog-no-stores', scenario: 'slow' });
+    const turnId = await startedTurnId('watchdog-no-stores');
+    await abortAllDurableObjects();
+    const stub = sessionStub('watchdog-no-stores');
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await runInDurableObject(stub, async (instance, state) => {
+        const unavailable = {
+          get DB(): never {
+            throw new Error('D1 binding unavailable');
+          },
+        };
+        expect(Reflect.set(instance, 'env', unavailable)).toBe(true);
+
+        await instance.alarm();
+
+        expect(await state.storage.getAlarm()).not.toBeNull();
+      });
+
+      expect(await startedTurnRows(stub)).toEqual([
+        { turn_id: turnId, attempts: 1, first_failed_at: expect.any(Number) },
+      ]);
+      expect(logLinesAbout(warnings, turnId)).toEqual([expect.stringContaining('D1 binding unavailable')]);
+    } finally {
+      warnings.mockRestore();
+    }
+    // A fresh instance has its binding again, and the next alarm settles the orphan.
+    await abortAllDurableObjects();
+    const freshStub = sessionStub('watchdog-no-stores');
+
+    expect(await runDurableObjectAlarm(freshStub)).toBe(true);
+
+    expect(await startedTurnRows(freshStub)).toEqual([]);
+    expect(
+      (await stores.sessionStore.getTurn({ session_id: 'watchdog-no-stores', turn_id: turnId }))?.state,
+    ).toMatchObject({ status: 'cancelled', reason: CancellationReason.Abandoned });
   });
 
   it('adds the retry columns to a started_turns table created before them and keeps its rows', async () => {
