@@ -4,6 +4,40 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 7 — Phase 3 landed with three review rounds; Phase 4 SchedulerDO built, reviewed, and landed (2026-09-15)
+
+**Goal:** Land Phase 3 (TurnExecutor port and SessionDO) through its review rounds, then build, review, and land Phase 4 (scheduled runs dispatched from a singleton SchedulerDO).
+
+**What we did:**
+
+- Phase 3 was built in a worktree. It adds the TurnExecutor port in `runtime/turnExecutor.ts` (`start`, `startStreaming`, `subscribe`, `cancel`). These return data results because error classes do not survive DO RPC. It also adds `runtime/turnRunner.ts`, `runtime/nodeTurnExecutor.ts`, and `runtime/createServerRuntime.ts`, which Node and Workers share. SessionDO is keyed `tenant_id:session_id` and keeps `turn_events` and `started_turns` in DO SQLite. It persists the turn id before `createTurn`, runs a keepalive interval, and has an alarm watchdog that freezes orphaned turns. The Workers entry fails closed unless `RUNTIME === 'workers'`. Phase 3 also adds a D1 value size guard, `wrangler.jsonc`, and a Workers vitest project. Measured D1 budget: about 8.2 statements per tool iteration. 99 iterations used 814 statements, against a limit of 1000 per invocation, and the warning fires at 800.
+- Review 1 found no blockers and 8 should-fix items: a whole-row D1 size check, lost backpressure on Node `stream:true`, a 413 check that only ran after RPC (Workers RPC caps serialized messages at 32 MiB), two sources of platform types, an untested 412, an untested `WorkersTurnExecutor`, a create path that could return an empty 200, and an undocumented status change on the internal schedule route. Seven commits fixed them. One of those commits (`58bf5cb4`) fails `workers:check` on its own because of stray lines in generated types, and the next commit fixes it. We kept the history.
+- Phase 3 landed as `b3810a8d..9060314e` (11 commits, no conflicts). The landing agent skipped `test:workers`, so the orchestrator ran it on the branch (27 passed).
+- Review 2 found 1 blocker, introduced by the first fix round. The statement guard summed every bound value, but Kysely upserts bind the same JSON twice. Skill, model provider, and MCP server upserts and `patchMCPServers` over about 1 MB were rejected on D1 and accepted on Node. Should-fix items: unpinned `bunx wrangler` made the drift check depend on the machine, the watchdog retried forever, `eventRendezvous` had edge cases, and the 422 test was weak. Fixed on the branch as `104f79b1..70d24978` (8 commits): distinct-value counting with 1.1 MB upsert cases on SQLite, D1 and Postgres; wrangler pinned to 4.131.2 everywhere, a header-insensitive drift check, and `.bak`-based regeneration; a bounded watchdog with a guarded `ALTER TABLE`; rendezvous fixes; 412 from `startTurnStreaming` when there is no live tip; all four Sessions casts removed; and a cancel-propagation test.
+- Confirmed in local workerd that a Worker-side `ReadableStream.cancel()` does not reach SessionDO over RPC. Only a later event releases the parked poller, and so far that is proven only for `turn.done`. The internal schedule execute route never marks runs failed; the controller does that.
+- Review 3 found no blockers. Should-fix: a pre-aborted signal in `eventRendezvous` and an inaccurate cancel comment. The unpropagated cancel is acceptable for now without mitigation, because approvals and ask-user end the turn. Follow-ups: a test that a non-terminal event releases the poller, with a heartbeat fallback, and a watchdog bound that works out to 10 minutes rather than 1 hour. These are queued as a fourth small fix round and not yet applied.
+- A local `.env` leaks values into `wrangler types` output when vars are strict, so `scripts/worker-types.mjs` pins an empty env file.
+- Phase 4 was built in a worktree. `executeScheduleRun({ item, deps })` in `controller/scheduleRunExecution.ts` is shared by the Node route, run-now, and SchedulerDO. SchedulerDO is a singleton. `ensureAlarm` arms only when idle. The alarm runs `dispatchScheduledRuns` with a 14-minute abort, logs a failed pass, and always re-arms 60 s later in `finally`. A `*/5` cron calls `ensureAlarm`. Phase 4 also adds `createWorkersRuntimeDeps(env)`, a v2 migration, and 7 Workers tests. The local cron URL is `/cdn-cgi/local/scheduled`, and the minimum schedule interval is 3600 s. Smoke in `workers:dev`: a `stream:true` turn reached `turn.done`, a due run started exactly one turn, and pausing stopped pending rows.
+- The Phase 4 review found no blockers. It flagged stale plan bullets (the orchestrator fixed them) and a Workers console logger that dropped Error message, stack, and cause (fixed with `extractErrorLogFields`, which guards against circular causes). The scheduler alarm tests ran real dispatch passes; they are now stubbed and pass under `--sequence.shuffle`. The smoke evidence was real but reported too strongly. "One turn despite four passes" was really three failed passes on a name collision the smoke setup caused, then a manual rename, then one success. Recorded but not implemented: a derived turn id to close the duplicate-turn window during deploys, a per-run timeout, and marking name-collision runs failed. The SDK client tree-shakes to 0 bytes in the bundle.
+- Phase 4 landed on the branch as `0e28405a`, `715eaf21`, `70011af4`; landing verification was still finishing when this entry was written.
+- Process gap: the orchestrator ran the progress skill before every docs commit in Cycles 1-6, but landing and fix agents committed code without it. From now on the orchestrator runs the progress skill before launching each landing or fix agent that commits.
+- Correction to Cycle 6: its "avoid next time" note implied that the Phase 2b landing agent skipped the queued follow-up fixes. It did not. Follow-up commit `63a8e0a9` already contained them, and the check ran before that commit landed.
+- Remaining work: the fourth Phase 3 fix round, and Phase 5 (static assets, final wrangler config, runtime selector docs, deploy guide). Phase 5 ends with a smoke on the final branch that re-checks `stream:true`, `stream:false` plus subscribe, and cancel. The CI backlog is deferred.
+
+**Lessons learned:**
+
+- A fix round can introduce new defects. The second Phase 3 review found a blocker that the first fix round created, so fix commits need their own review.
+- Pin every tool version that feeds a committed generated file. Unpinned `bunx wrangler` made the type drift check machine-dependent.
+- Kysely upserts bind the same value more than once, so size guards must count distinct bound values.
+- The unpropagated RPC cancel only showed up because test hooks let us observe internal waiters.
+- Read the saved smoke output yourself. Agent summaries of it can't be trusted.
+
+**Avoid next time:**
+
+- Don't let agents commit before the progress step when the user asked for it before every commit.
+- Don't describe a smoke result more strongly than the saved outputs show.
+- Don't trust a landing agent's report that the required suites ran. Check that `test:workers` and the other suites actually ran on the landed branch.
+
 ## Cycle 6 — Phase 2b: D1 dialect, atomic runner, persistence, and D1 contract tests (2026-09-15)
 
 **Goal:** Run the SQLite stores on Cloudflare D1 through a Kysely dialect and batch-based atomic runner, with shared contract tests that cover both backends.
