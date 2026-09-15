@@ -94,7 +94,7 @@ function startFailure(error: unknown): TurnExecutorFailure | undefined {
 export class SessionDO extends DurableObject {
   readonly #activeTurns = new ActiveTurnRegistry();
   readonly #events: DurableObjectEventSubscriptions<TurnStreamingEvent>;
-  /** Turns between their start request and the end of their drain in this instance, each to its settled drain. */
+  /** Turns this instance runs, from start request to drain end; each promise resolves when its drain settles. */
   readonly #running = new Map<string, Promise<undefined>>();
   readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'SessionDO' } });
 
@@ -137,11 +137,11 @@ export class SessionDO extends DurableObject {
     );
     const { promise: settled, resolve: settle } = Promise.withResolvers<undefined>();
     this.#running.set(turnId, settled);
-    // Work after an RPC invocation ends is not kept alive, so an alarm invocation holds the turn until it settles.
-    await this.ctx.storage.setAlarm(Date.now());
 
     let started: Awaited<ReturnType<typeof startTurnInProcess>>;
     try {
+      // Work after an RPC invocation ends is not kept alive, so an alarm invocation holds the turn until it settles.
+      await this.ctx.storage.setAlarm(Date.now());
       started = await startTurnInProcess({
         session,
         turn_id: turnId,
@@ -258,15 +258,26 @@ export class SessionDO extends DurableObject {
    * instance's turns run, then prunes expired streams.
    */
   override async alarm(): Promise<void> {
+    // Counted from entry, so the orphan passes and the wait together stay inside the wall limit.
+    const deadline = Date.now() + ALARM_PASS_BUDGET_MS;
     // Stays true if settling orphans throws outright, so the next alarm retries them.
     let orphansRemain = true;
     try {
       if (this.#running.size > 0) {
-        // An invocation lost with its instance leaves no pending alarm; this fallback freezes the turns it held.
+        // Cloudflare retries a failed alarm a few times; this fallback is a safeguard on top, freezing the held turns.
         await this.ctx.storage.setAlarm(Date.now() + WATCHDOG_DELAY_MS);
       }
-      orphansRemain = await this.#freezeOrphans();
-      if (await this.#awaitRunningTurns()) {
+      try {
+        orphansRemain = await this.#freezeOrphans();
+      } catch (error) {
+        // A failed orphan pass must not stop this invocation from holding the running turns.
+        this.#logger.error(
+          'Watchdog could not read the turns this Durable Object started',
+          extractErrorLogFields(error),
+        );
+        orphansRemain = true;
+      }
+      if (await this.#awaitRunningTurns(deadline)) {
         // Clears the rows of the turns that just settled, and any whose start failed meanwhile.
         orphansRemain = await this.#freezeOrphans();
       }
@@ -297,7 +308,7 @@ export class SessionDO extends DurableObject {
       return false;
     }
     let failed = false;
-    // Shared by the whole pass, since D1's query limit covers the alarm invocation.
+    // Shared by the whole pass, so its statement count covers every orphan it settles.
     let persistence: ReturnType<typeof createD1Persistence> | undefined;
     for (const orphan of orphans) {
       try {
@@ -363,16 +374,19 @@ export class SessionDO extends DurableObject {
 
   /**
    * Waits until no turn runs in this instance, including turns started while waiting, or until the pass
-   * budget is spent. Returns whether any turn was running.
+   * deadline. Returns whether any turn was running.
    */
-  async #awaitRunningTurns(): Promise<boolean> {
+  async #awaitRunningTurns(deadline: number): Promise<boolean> {
     if (this.#running.size === 0) {
       return false;
     }
     const { promise: budgetSpent, resolve: spend } = Promise.withResolvers<boolean>();
-    const budget = setTimeout(() => {
-      spend(true);
-    }, ALARM_PASS_BUDGET_MS);
+    const budget = setTimeout(
+      () => {
+        spend(true);
+      },
+      Math.max(0, deadline - Date.now()),
+    );
     try {
       let spent = false;
       while (this.#running.size > 0 && !spent) {
@@ -395,7 +409,7 @@ export class SessionDO extends DurableObject {
         const before = statements;
         statements += count;
         if (before <= D1_TURN_STATEMENT_WARNING && statements > D1_TURN_STATEMENT_WARNING) {
-          this.#logger.warn('Turn crossed the D1 statement warning threshold for one invocation', {
+          this.#logger.warn('Turn crossed the D1 statement warning threshold across its start and alarm invocations', {
             ...logFields,
             statements,
             threshold: D1_TURN_STATEMENT_WARNING,

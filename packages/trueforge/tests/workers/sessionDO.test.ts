@@ -390,7 +390,8 @@ describe('SessionDO', () => {
       await runInDurableObject(stub, async (instance, state) => {
         await instance.alarm();
 
-        expect(await state.storage.getAlarm()).not.toBeNull();
+        // Due now, not the 60-second fallback the alarm armed on entry.
+        expect(await state.storage.getAlarm()).toBeLessThanOrEqual(Date.now());
       });
       expect((await turnStatus({ sessionId, turnId }))?.status).toBe('running');
     } finally {
@@ -419,6 +420,30 @@ describe('SessionDO', () => {
       reason: 'cancelled-for-next-turn',
     });
     expect(await turnStatus({ sessionId, turnId: secondTurnId })).toMatchObject({ status: 'done' });
+  });
+
+  it('an alarm whose orphan pass throws still holds a running turn until turn.done', async () => {
+    const sessionId = 'alarm-orphan-read-fails';
+    await createMockSession({ sessionId, scenario: 'delay-2000' });
+    const stub = sessionStub(sessionId);
+    const turnId = await startedTurnId(sessionId);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await runInDurableObject(stub, async (instance, state) => {
+        state.storage.sql.exec('DROP TABLE started_turns');
+
+        // The pass after the wait reads the missing table again and fails the invocation.
+        await expect(instance.alarm()).rejects.toThrow(/started_turns/);
+        expect((await turnStatus({ sessionId, turnId }))?.status).toBe('done');
+
+        state.storage.sql.exec(
+          'CREATE TABLE started_turns (turn_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, first_failed_at INTEGER)',
+        );
+      });
+      expect(errors.mock.calls.flat().join('\n')).toContain('Watchdog could not read the turns');
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   it('an alarm freezes an orphan but never a turn its own instance runs', async () => {
