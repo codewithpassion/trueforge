@@ -59,6 +59,10 @@ function check() {
 function write() {
   const committed = path.join(packageDir, COMMITTED);
   const backup = path.join(packageDir, BACKUP);
+  // A backup left by a killed run is the good file; the committed name may hold a partial one.
+  if (existsSync(backup)) {
+    renameSync(backup, committed);
+  }
   const hadCommitted = existsSync(committed);
   if (hadCommitted) {
     renameSync(committed, backup);
