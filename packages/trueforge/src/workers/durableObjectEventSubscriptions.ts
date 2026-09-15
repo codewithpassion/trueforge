@@ -17,6 +17,7 @@ interface StreamTip {
 /** Wakes parked pollers in this Durable Object when their stream gains an event. */
 class StreamChangeNotifier {
   readonly #waiters = new Map<string, Set<() => void>>();
+  readonly #livePolls = new Map<string, number>();
 
   notify(streamId: string): void {
     const waiters = this.#waiters.get(streamId);
@@ -29,6 +30,24 @@ class StreamChangeNotifier {
   /** Parked pollers on one stream; exposed for tests through `waitingPollers`. */
   waiterCount(streamId: string): number {
     return this.#waiters.get(streamId)?.size ?? 0;
+  }
+
+  /** Counts a poll generator from its first pull until its body exits; returns the release. */
+  trackPoll(streamId: string): () => void {
+    this.#livePolls.set(streamId, this.livePollCount(streamId) + 1);
+    return () => {
+      const remaining = this.livePollCount(streamId) - 1;
+      if (remaining > 0) {
+        this.#livePolls.set(streamId, remaining);
+      } else {
+        this.#livePolls.delete(streamId);
+      }
+    };
+  }
+
+  /** Poll generators on one stream that have not finished; exposed for tests through `livePolls`. */
+  livePollCount(streamId: string): number {
+    return this.#livePolls.get(streamId) ?? 0;
   }
 
   /** Resolves on the next change, when `signal` aborts, or after `timeoutMs`. */
@@ -128,40 +147,45 @@ class DurableObjectEventSubscription<T extends object> implements EventSubscript
   ): AsyncGenerator<SequencedEvent<T>, void, unknown> {
     const signal = options?.signal;
     let cursor = afterSequenceNumber ?? 0;
-    for (;;) {
-      if (signal?.aborted) {
-        return;
-      }
-      const now = Date.now();
-      const tip = this.#liveTip(now);
-      if (tip === undefined) {
-        throw new StreamGoneError(this.#streamId);
-      }
-      const rows = this.#sql
-        .exec<{ seq: number; data: string }>(
-          'SELECT seq, data FROM turn_events WHERE stream_id = ? AND seq > ? ORDER BY seq LIMIT ?',
-          this.#streamId,
-          cursor,
-          POLL_BATCH_SIZE,
-        )
-        .toArray();
-      if (rows.length === 0) {
-        // Also wake at expiry, so a parked poller observes the stream as gone.
-        await this.#notifier.wait({
-          streamId: this.#streamId,
-          signal,
-          timeoutMs: tip.expires_at === null ? undefined : tip.expires_at - now,
-        });
-        continue;
-      }
-      for (const row of rows) {
-        cursor = row.seq;
-        const event: unknown = JSON.parse(row.data);
-        if (!this.#isEvent(event)) {
-          throw new Error(`Corrupt stream entry ${String(row.seq)} on ${this.#streamId}`);
+    const release = this.#notifier.trackPoll(this.#streamId);
+    try {
+      for (;;) {
+        if (signal?.aborted) {
+          return;
         }
-        yield event;
+        const now = Date.now();
+        const tip = this.#liveTip(now);
+        if (tip === undefined) {
+          throw new StreamGoneError(this.#streamId);
+        }
+        const rows = this.#sql
+          .exec<{ seq: number; data: string }>(
+            'SELECT seq, data FROM turn_events WHERE stream_id = ? AND seq > ? ORDER BY seq LIMIT ?',
+            this.#streamId,
+            cursor,
+            POLL_BATCH_SIZE,
+          )
+          .toArray();
+        if (rows.length === 0) {
+          // Also wake at expiry, so a parked poller observes the stream as gone.
+          await this.#notifier.wait({
+            streamId: this.#streamId,
+            signal,
+            timeoutMs: tip.expires_at === null ? undefined : tip.expires_at - now,
+          });
+          continue;
+        }
+        for (const row of rows) {
+          cursor = row.seq;
+          const event: unknown = JSON.parse(row.data);
+          if (!this.#isEvent(event)) {
+            throw new Error(`Corrupt stream entry ${String(row.seq)} on ${this.#streamId}`);
+          }
+          yield event;
+        }
       }
+    } finally {
+      release();
     }
   }
 
@@ -220,6 +244,14 @@ export class DurableObjectEventSubscriptions<T extends object> {
    */
   waitingPollers(streamId: string): number {
     return this.#notifier.waiterCount(streamId);
+  }
+
+  /**
+   * Poll generators on the stream whose body has not exited, parked or suspended at `yield`. Tests use it
+   * to show that a poll cancelled across RPC finishes at the next event rather than staying suspended.
+   */
+  livePolls(streamId: string): number {
+    return this.#notifier.livePollCount(streamId);
   }
 
   deleteExpired(now: number): void {

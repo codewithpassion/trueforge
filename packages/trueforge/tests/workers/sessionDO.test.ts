@@ -234,16 +234,19 @@ describe('SessionDO', () => {
     const turnId = await readTurnIdThroughModelDelta(reader);
     const request = { tenant_id: TENANT_ID, session_id: 'stream-rpc-cancel', turn_id: turnId };
     const waitingPollers = () => runInDurableObject(stub, instance => instance.waitingPollers(request));
+    const livePolls = () => runInDurableObject(stub, instance => instance.livePolls(request));
     const pendingRead = reader.read();
     await expect.poll(waitingPollers, { timeout: 10_000 }).toBe(1);
 
     await reader.cancel();
 
     // Pins current workerd behavior: the pending read rejects, but the cancel never reaches the Durable Object.
-    // If workerd starts propagating the cancel, flip this assertion to 0 or delete this test.
+    // If workerd starts propagating the cancel, flip these assertions to 0 or delete this test.
     await expect(pendingRead).rejects.toThrow('Stream was cancelled.');
     await new Promise(resolve => setTimeout(resolve, 2_000));
     expect(await waitingPollers()).toBe(1);
+    // Control for the non-terminal release test: without a further event the poll generator does not finish.
+    expect(await livePolls()).toBe(1);
     // Cancelling the turn puts turn.done, the next event, which wakes the parked poll.
     await stub.cancel({ ...request, reason: CancellationReason.ClientCancelled });
     await expect.poll(waitingPollers, { timeout: 10_000 }).toBe(0);
@@ -273,17 +276,23 @@ describe('SessionDO', () => {
             )
             .toArray().length,
       );
+    const livePolls = () => runInDurableObject(stub, instance => instance.livePolls(request));
     const pendingRead = reader.read();
     await expect.poll(waitingPollers, { timeout: 10_000 }).toBe(1);
+    expect(await livePolls()).toBe(1);
 
     await reader.cancel();
 
     await expect(pendingRead).rejects.toThrow('Stream was cancelled.');
+    // The cancel happened before the second delta, so whatever releases the poll below is that delta.
     expect(await storedDeltas()).toBe(1);
     await expect.poll(storedDeltas, { timeout: GAP_MS * 3 }).toBe(2);
+    // The poll generator's body exited, not merely left the waiter set while suspended at `yield`.
+    await expect.poll(livePolls, { timeout: 10_000 }).toBe(0);
     // Time for the woken poll to pull again and park, if the object still encoded for the gone reader.
     await new Promise(resolve => setTimeout(resolve, 2_000));
     expect(await waitingPollers()).toBe(0);
+    // The turn had not ended, so the release came from the non-terminal delta rather than turn.done.
     expect((await stores.sessionStore.getTurn({ session_id: sessionId, turn_id: turnId }))?.state.status).toBe(
       'running',
     );
@@ -375,6 +384,49 @@ describe('SessionDO', () => {
       (await stores.sessionStore.getTurn({ session_id: 'watchdog-unsettled', turn_id: unsettledTurnId }))?.state.status,
     ).toBe('running');
     expect(await startedTurnRows(stub)).toEqual([]);
+  });
+
+  it('watchdog alarm opens its D1 stores once for all orphans in one pass', async () => {
+    await createMockSession({ sessionId: 'watchdog-shared-a', scenario: 'slow' });
+    await createMockSession({ sessionId: 'watchdog-shared-b', scenario: 'slow' });
+    const firstTurnId = await startedTurnId('watchdog-shared-a');
+    const secondTurnId = await startedTurnId('watchdog-shared-b');
+    await abortAllDurableObjects();
+    const stub = sessionStub('watchdog-shared-a');
+
+    await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(
+        'INSERT INTO started_turns (turn_id, tenant_id, session_id) VALUES (?, ?, ?)',
+        secondTurnId,
+        TENANT_ID,
+        'watchdog-shared-b',
+      );
+      // Each store creation reads the binding once, so the read count is the number of statement counters.
+      let bindingReads = 0;
+      const counted = {
+        get DB() {
+          bindingReads += 1;
+          return env.DB;
+        },
+      };
+      expect(Reflect.set(instance, 'env', counted)).toBe(true);
+
+      await instance.alarm();
+
+      expect(bindingReads).toBe(1);
+    });
+
+    expect(await startedTurnRows(stub)).toEqual([]);
+    const stores = d1Persistence();
+    for (const turn of [
+      { session_id: 'watchdog-shared-a', turn_id: firstTurnId },
+      { session_id: 'watchdog-shared-b', turn_id: secondTurnId },
+    ]) {
+      expect((await stores.sessionStore.getTurn(turn))?.state).toMatchObject({
+        status: 'cancelled',
+        reason: CancellationReason.Abandoned,
+      });
+    }
   });
 
   it('watchdog alarm retries a failing orphan, then drops it an hour after its first failure', async () => {

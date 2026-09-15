@@ -224,6 +224,14 @@ export class SessionDO extends DurableObject {
     return this.#events.waitingPollers(turnStreamId(request.tenant_id, request.session_id, request.turn_id));
   }
 
+  /**
+   * Unfinished poll generators on a turn's stream in this instance. Tests use it to show that a poll whose
+   * reader was cancelled across RPC finishes at the next event instead of staying suspended.
+   */
+  livePolls(request: { tenant_id: string; session_id: string; turn_id: string }): number {
+    return this.#events.livePolls(turnStreamId(request.tenant_id, request.session_id, request.turn_id));
+  }
+
   /** `cancelled: false` means no turn with this id runs in this instance. */
   cancel(request: { session_id: string; turn_id: string; reason: CancellationReason }): {
     ok: true;
@@ -269,10 +277,12 @@ export class SessionDO extends DurableObject {
       return false;
     }
     let failed = false;
+    // Shared by the whole pass, since D1's query limit covers the alarm invocation.
+    let persistence: ReturnType<typeof createD1Persistence> | undefined;
     for (const orphan of orphans) {
       try {
-        // Built per orphan inside the guard, so a failure to open the stores is bounded like any other.
-        const persistence = this.#persistence({ watchdog: true });
+        // Opened inside the guard, so a failure to open the stores is recorded against this orphan.
+        persistence ??= this.#persistence({ watchdog: true });
         const sessions = new Sessions({ sessionStore: persistence.sessionStore });
         const turn = await persistence.sessionStore.getTurn({
           session_id: orphan.session_id,
@@ -345,7 +355,7 @@ export class SessionDO extends DurableObject {
     this.ctx.waitUntil(settled);
   }
 
-  /** Fresh stores per turn so the statement count covers exactly one turn. */
+  /** Fresh stores per turn or watchdog pass, so the statement count covers exactly one invocation. */
   #persistence(logFields: Record<string, unknown>) {
     let statements = 0;
     return createD1Persistence({
