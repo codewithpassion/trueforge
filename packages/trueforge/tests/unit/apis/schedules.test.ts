@@ -570,7 +570,9 @@ describe('internal schedule execution', () => {
     const message = 'no sandbox provider configured — PUT /settings/sandbox-providers';
     expect(response.status).toBe(422);
     expect(await response.json()).toEqual({ error: { message } });
-    // The route leaves the run alone; the dispatch loop marks it failed from the non-2xx answer.
+    // The route leaves the run alone; the dispatch loop marks it failed from the non-2xx answer. The fixture
+    // run is `triggered` only to show the row is untouched: in the real dispatch loop the run is still
+    // `scheduled` at execute time and the controller records the failure afterwards.
     expect(await scheduleStore.getRun({ tenant_id: 'default', id: run.id })).toMatchObject({
       status: 'triggered',
       reason: null,

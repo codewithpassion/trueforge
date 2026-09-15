@@ -106,7 +106,8 @@ function distinctBoundValues(parameters: readonly unknown[]): unknown[] {
 
 /**
  * Rejects a statement D1 would refuse for size. The sum of distinct bound values is an upper bound for
- * the row an INSERT writes, so it errs toward rejecting a statement whose values span several rows.
+ * the row an INSERT writes, assuming no row stores the same string in two columns, so it errs toward
+ * rejecting a statement whose values span several rows.
  */
 export function assertStatementFitsD1(parameters: readonly unknown[]): void {
   const values = distinctBoundValues(parameters);
