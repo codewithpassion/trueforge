@@ -4,6 +4,35 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 4 — Phase 2a: AtomicRunner and conditional-chain SQLite writes; Phase 1d built (2026-09-15)
+
+**Goal:** Replace interactive SQLite store transactions with batch-shaped conditional writes that D1 can run, and cut the core barrel out of the server's Worker graph.
+
+**What we did:**
+
+- Phase 2a ran in its own worktree and was cherry-picked onto `feat/cloudflare-workers-port` as `5a8d4bbd` (AtomicRunner and conditional-chain writes) and `9f13052d` (review fixes). Conflicts with Phase 1b in `settings.ts`, `main.ts`, `sandboxFileDownload.test.ts` and `turns.test.ts` were resolved by keeping both sides.
+- Added `AtomicRunner { readGroup; batchWrite({ executor, queries }) }` in `db/sqlite/atomic.ts`. `BetterSqliteAtomicRunner` in `db/sqlite/client.ts` joins an outer transaction when one is passed and otherwise uses `BEGIN IMMEDIATE`. Rewrote `createTurn`, `freezeAndGetTurn`, `updateTurnState`, `getTurn`, `addThreads`, `removeThreads`, append/overwrite thread context, `appendToEvents`, `patchThreadCapabilityState`, schedule create/update, the new `IScheduleStore.finishRun`, and MCP `createServer`/`upsertServer` (including `oauth_client` and `reset_authorizations`). `session-store` and `schedule-store` no longer call `db.transaction()`.
+- Found that the old store transactions used plain `BEGIN`, not `BEGIN IMMEDIATE` as their comments said.
+- Plan correction: `createTurn` allows concurrent forks from a finished tip and rejects only a running previous turn (option A, `ISessionStore` unchanged).
+- The Opus review found one D1-only blocker. `updateScheduleAndRun` guards matched only a computed `updated_at` (`max(Date.now(), prev+1)`) that two writers could both produce. The guards now also match the name, status and manifest that statement 1 wrote. Should-fix items: a single JSON bound value could exceed D1's 2 MB value cap (now `chunkJsonRows` at 1 MiB, one log+mapping pair per chunk), and `finishScheduledRun` gave up after 3 conflicts and left the run pending (now retries until it succeeds). Nits: the `createTurn` guard also matches `created_at` and `previous_turn_id`, the MCP contract asserts that a reset deletes tokens, and a stale comment was fixed.
+- D1 limits confirmed from Cloudflare docs: 2,000,000 bytes per value/row, 100 bound parameters per statement, 100 KB SQL text, 32 args per function, 1000 queries per Worker invocation. The `removeThreads` IN list is now bound as JSON, and tests assert at most 100 params and under 100 KB for 300-row inputs. A second Opus review of the fix commit is still running.
+- D1 gaps left open: read-then-write races on model provider and MCP PUT secrets, `sandboxProviders.ts` awaiting `buildImage` inside `withTransaction` (pre-existing), D1 unique-violation message mapping (Phase 2b), and the 1000-queries-per-invocation budget against per-event persistence in SessionDO (measure in Phase 3).
+- Checks after landing: typecheck green, `test:trueforge` 543, `test:trueforge-core` 440 (1 skipped), `test:store:sqlite` 183 (1 skipped), Postgres store suite via Docker 169 (1 skipped), eslint 0 errors.
+- Phase 1d (worktree commits `008ba395` and `b25b1b04`, not landed yet): 35 server files moved from the `@truefoundry/trueforge-core/core` barrel to deep imports, with a package-wide ESLint barrel ban using `allowTypeImports`. The stub Worker bundle went from 6608 KiB to 4006 KiB, and Daytona, NATS, ws, axios, socket.io and tweetnacl are gone from it. The Opus review found no blockers; the changeset was reworded so it makes no bundle-size claim for the published server. Still open: `sessionResources.ts` value-imports `Sandbox` and `SkillMounter`, which pulls in the gitignored `sandboxScripts.gen.ts` (Phase 3), and schemas import `VercelAILLM` constants (leaf-module follow-up). Phase 1c (workers config, generated package version) is still running in a worktree.
+
+**Lessons learned:**
+
+- Parallel worktree agents save wall-clock time, but every shared file turns into a merge conflict. Keep slices disjoint by file and land them in a planned order.
+- A guard that later batch statements match on must be unique to this call's write (minted ids or the full written content), never a derived timestamp.
+- D1's per-statement limits (100 params, 2 MB per value) matter as much as the missing transactions.
+- In ESLint flat config, a later block for the same rule replaces its options, so shared restriction lists have to be spread into each block.
+
+**Avoid next time:**
+
+- Don't derive optimistic-concurrency tokens from clocks.
+- Don't bind unbounded row lists on D1, either as one value or as a growing placeholder list.
+- Don't add uncommitted files to the main checkout while a landing agent that needs a clean tree is running.
+
 ## Cycle 3 — Phase 0 results and Phase 1b: sandbox, TLS, and session-import seams (2026-09-15)
 
 **Goal:** Close the Phase 0 gates, then inject the sandbox, client-TLS and session-import dependencies so `app.ts` no longer reaches Node-only modules through them.
