@@ -1,6 +1,8 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { AgentSpecSchema, InMemorySessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import { createLogger } from 'winston';
 import { createScheduleExecutionRouter, createSchedulesRouter } from '../../../src/apis/schedules';
+import { createAppErrorHandler } from '../../../src/app';
 import { TrueForgeAuthorizer, type Authorizer } from '../../../src/auth/authorizer';
 import type { RequestContext } from '../../../src/auth/identity';
 import { ScheduleAgentNotFoundError, startScheduleRun } from '../../../src/controller/scheduleDispatch';
@@ -540,7 +542,10 @@ describe('internal schedule execution', () => {
       triggered_at: new Date(),
     });
     const tokenStore = new SqliteOAuthTokenStore(db);
-    const app = createScheduleExecutionRouter({
+    // Behind the server's error handler, which renders the route's HTTPException as the error envelope.
+    const app = new OpenAPIHono();
+    app.onError(createAppErrorHandler({ logger: createLogger({ silent: true }) }));
+    const executionRouter = createScheduleExecutionRouter({
       ...stubTurnExecutionDeps(agentStore, scheduleStore),
       sessions: new Sessions({ sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)) }),
       turnExecutor: testNodeTurnExecutor({ sandboxIntegration: undefined }),
@@ -554,6 +559,7 @@ describe('internal schedule execution', () => {
       resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
       turnSkillsResolverStore: new SqliteSkillStore(db),
     });
+    app.route('/', executionRouter);
 
     const response = await app.request('/runs/execute', {
       method: 'POST',
@@ -561,7 +567,14 @@ describe('internal schedule execution', () => {
       body: JSON.stringify({ schedule_run_id: run.id }),
     });
 
+    const message = 'no sandbox provider configured — PUT /settings/sandbox-providers';
     expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ error: { message } });
+    // The route leaves the run alone; the dispatch loop marks it failed from the non-2xx answer.
+    expect(await scheduleStore.getRun({ tenant_id: 'default', id: run.id })).toMatchObject({
+      status: 'triggered',
+      reason: null,
+    });
   });
 
   it('maps an unknown run to 404', async () => {
