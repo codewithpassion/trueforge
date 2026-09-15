@@ -18,6 +18,8 @@ function typesBody(file) {
 function main() {
   const check = process.argv.includes('--check');
   const output = check ? CHECK_OUTPUT : COMMITTED;
+  // Wrangler skips writing when the file's header hash already matches, which would keep a hand edit.
+  rmSync(path.join(packageDir, output), { force: true });
   mkdirSync(path.join(packageDir, '.wrangler'), { recursive: true });
   writeFileSync(path.join(packageDir, EMPTY_ENV), '');
   try {
