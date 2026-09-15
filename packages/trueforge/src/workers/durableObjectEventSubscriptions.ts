@@ -26,6 +26,10 @@ class StreamChangeNotifier {
     }
   }
 
+  waiterCount(streamId: string): number {
+    return this.#waiters.get(streamId)?.size ?? 0;
+  }
+
   /** Resolves on the next change, when `signal` aborts, or after `timeoutMs`. */
   wait({
     streamId,
@@ -207,6 +211,11 @@ export class DurableObjectEventSubscriptions<T extends object> {
       notifier: this.#notifier,
       isEvent: this.#isEvent,
     });
+  }
+
+  /** Pollers parked until the stream's next event; tests use it to see a cancelled reader release its poll. */
+  waitingPollers(streamId: string): number {
+    return this.#notifier.waiterCount(streamId);
   }
 
   deleteExpired(now: number): void {

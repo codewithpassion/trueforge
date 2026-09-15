@@ -218,6 +218,11 @@ export class SessionDO extends DurableObject {
     };
   }
 
+  /** Pollers parked on a turn's stream in this instance; tests use it to see a cancelled reader release its poll. */
+  waitingPollers(request: { tenant_id: string; session_id: string; turn_id: string }): number {
+    return this.#events.waitingPollers(turnStreamId(request.tenant_id, request.session_id, request.turn_id));
+  }
+
   /** `cancelled: false` means no turn with this id runs in this instance. */
   cancel(request: { session_id: string; turn_id: string; reason: CancellationReason }): {
     ok: true;

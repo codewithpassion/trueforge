@@ -58,6 +58,29 @@ function startedTurnRows(stub: ReturnType<typeof sessionStub>) {
   );
 }
 
+/** Reads a slow turn's stream through its one model delta, after which the poll parks; returns the turn id. */
+async function readTurnIdThroughModelDelta(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder();
+  let received = '';
+  while (!received.includes('model.message.delta')) {
+    const { done, value } = await reader.read();
+    if (done) {
+      throw new Error('The stream ended before the model delta');
+    }
+    received += decoder.decode(value, { stream: true });
+  }
+  const created: unknown = JSON.parse(received.slice(0, received.indexOf('\n')));
+  if (
+    typeof created !== 'object' ||
+    created === null ||
+    !('turn_id' in created) ||
+    typeof created.turn_id !== 'string'
+  ) {
+    throw new Error('The stream did not start with turn.created');
+  }
+  return created.turn_id;
+}
+
 /** Console lines a spied logger method wrote about one turn. */
 function logLinesAbout(spy: { mock: { calls: unknown[][] } }, turnId: string): unknown[] {
   return spy.mock.calls.map(([line]) => line).filter(line => typeof line === 'string' && line.includes(turnId));
@@ -175,6 +198,53 @@ describe('SessionDO', () => {
       status: 'cancelled',
       reason: CancellationReason.ClientCancelled,
     });
+  });
+
+  it('releases the poll when its event stream is cancelled inside the Durable Object', async () => {
+    await createMockSession({ sessionId: 'stream-local-cancel', scenario: 'slow' });
+
+    await runInDurableObject(sessionStub('stream-local-cancel'), async instance => {
+      const started = await instance.startTurnStreaming(startRequest('stream-local-cancel'));
+      if (!started.ok) {
+        throw new Error(`startTurnStreaming failed: ${started.code} ${started.message}`);
+      }
+      const reader = started.stream.getReader();
+      const turnId = await readTurnIdThroughModelDelta(reader);
+      const request = { tenant_id: TENANT_ID, session_id: 'stream-local-cancel', turn_id: turnId };
+      const pendingRead = reader.read();
+      await expect.poll(() => instance.waitingPollers(request), { timeout: 10_000 }).toBe(1);
+
+      await reader.cancel();
+
+      expect(await pendingRead).toMatchObject({ done: true });
+      expect(instance.waitingPollers(request)).toBe(0);
+      instance.cancel({ ...request, reason: CancellationReason.ClientCancelled });
+    });
+  });
+
+  it('keeps the poll parked when the caller cancels its reader across RPC, until the next event', async () => {
+    await createMockSession({ sessionId: 'stream-rpc-cancel', scenario: 'slow' });
+    const stub = sessionStub('stream-rpc-cancel');
+    const started = await stub.startTurnStreaming(startRequest('stream-rpc-cancel'));
+    if (!started.ok) {
+      throw new Error(`startTurnStreaming failed: ${started.code} ${started.message}`);
+    }
+    const reader = started.stream.getReader();
+    const turnId = await readTurnIdThroughModelDelta(reader);
+    const request = { tenant_id: TENANT_ID, session_id: 'stream-rpc-cancel', turn_id: turnId };
+    const waitingPollers = () => runInDurableObject(stub, instance => instance.waitingPollers(request));
+    const pendingRead = reader.read();
+    await expect.poll(waitingPollers, { timeout: 10_000 }).toBe(1);
+
+    await reader.cancel();
+
+    // Observed in workerd: the pending read rejects, but the cancel never reaches the Durable Object.
+    await expect(pendingRead).rejects.toThrow('Stream was cancelled.');
+    await new Promise(resolve => setTimeout(resolve, 2_000));
+    expect(await waitingPollers()).toBe(1);
+    // Cancelling the turn puts turn.done, the next event, which wakes the parked poll.
+    await stub.cancel({ ...request, reason: CancellationReason.ClientCancelled });
+    await expect.poll(waitingPollers, { timeout: 10_000 }).toBe(0);
   });
 
   it('reports cancelled: false for a turn it does not run', async () => {
