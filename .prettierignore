@@ -18,4 +18,6 @@ pnpm-lock.yaml
 packages/trueforge/worker-configuration*.d.ts
 # Wrangler local state and `workers:check` bundle output.
 .wrangler/
+# Workers static assets copied from the frontend build.
+packages/trueforge/dist-workers-assets/
 *.tsbuildinfo

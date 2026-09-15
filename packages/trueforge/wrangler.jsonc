@@ -24,15 +24,21 @@
   ],
   // Only re-arms the scheduler's alarm; dispatch itself runs from that alarm.
   "triggers": { "crons": ["*/5 * * * *"] },
+  // Built by `pnpm build:workers-assets`; unmatched paths get the UI shell.
   "assets": {
-    "directory": "../frontend/dist",
+    "directory": "./dist-workers-assets",
     "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/healthz"],
   },
-  // Secrets such as OIDC_CLIENT_SECRET come from packages/trueforge/.env locally. Keep *_CATALOG_PATH unset.
+  "limits": { "cpu_ms": 300000 },
+  "observability": { "enabled": true },
+  // Placeholders: set real values per deployment. Secrets such as OIDC_CLIENT_SECRET go through
+  // `wrangler secret put`, or packages/trueforge/.env locally. Keep *_CATALOG_PATH unset.
   "vars": {
     "TRUEFORGE_RUNTIME": "workers",
     "OIDC_ISSUER_URL": "https://issuer.example.com/",
     "OIDC_CLIENT_ID": "trueforge-workers-local",
+    "PUBLIC_BASE_URL": "https://trueforge.example.com",
   },
 }

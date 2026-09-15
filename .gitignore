@@ -22,6 +22,8 @@ packages/trueforge/src/packageVersion.gen.ts
 worker-startup.cpuprofile
 worker-configuration.check.d.ts
 worker-configuration.d.ts.bak
+# Workers static assets built from the frontend by `build:workers-assets`
+packages/trueforge/dist-workers-assets/
 data/
 # Helm subchart deps are fetched via `helm dependency build` (pinned by the
 # committed Chart.lock); the downloaded .tgz/dirs are not committed.

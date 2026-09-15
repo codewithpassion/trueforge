@@ -66,6 +66,8 @@ export default defineConfig(
       'packages/trueforge/worker-configuration*.d.ts',
       // Wrangler local state and `workers:check` bundle output.
       '**/.wrangler/**',
+      // Workers static assets copied from the frontend build.
+      'packages/trueforge/dist-workers-assets/**',
       // Railway IaC config: consumed by the railway CLI, not part of a package tsconfig.
       '.railway/**',
     ],
