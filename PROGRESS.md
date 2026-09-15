@@ -4,6 +4,30 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 8 — Phase 4 landing verified; fourth Phase 3 fix round reviewed; Phase 5 built and in review fixes (2026-09-15)
+
+**Goal:** Confirm the Phase 4 landing, close the fourth Phase 3 fix round through review, and build and review Phase 5 (static assets, final wrangler config, deploy guide).
+
+**What we did:**
+
+- Verified the Phase 4 landing (`0e28405a`, `715eaf21`, `70011af4`). Passing: typecheck, `test:trueforge` (588), core (440), SQLite store (196), D1 store (220), Workers (39), the Postgres store suite, eslint (0 errors), and `workers:check` with no type drift (4970 KiB). The banned-module scan was clean; the `dialect/postgres` files it matched belong to kysely itself, not to a driver. `pnpm workers:types` produced no diff, so there was no extra commit. The landing agent skipped `openapi:write`; the next fix round ran it and got no diff.
+- Fourth Phase 3 fix round, `b044f470..f848975b` (6 commits). `eventRendezvous` now handles a signal that is already aborted, and the comments about the unpropagated RPC cancel are corrected. A new Workers test uses a `gap` mock scenario: after a Worker-side cancel, a later non-terminal event releases the parked DO poll while the turn keeps running. Because of that, no heartbeat was added. The SessionDO watchdog is now bounded by one hour since the first failure. The old attempt cap is gone because 10 attempts on 60 s alarms ran out after about 10 minutes. `D1ValueTooLargeError` is dropped at once, and failures to create persistence are bounded too. `worker-types.mjs` restores a leftover `.bak` before regenerating. On the tip: typecheck, `test:trueforge` 589, SQLite 196, D1 220, Workers 41, eslint 0 errors, `workers:check`, and `openapi:write` with no diff.
+- The Opus review of that round found no blockers and nothing to fix before landing. The reviewer added a live-poll counter to a scratch copy. It showed the DO poll generator finishes at the next non-terminal event (0 live polls at t+5 s while the turn was running) and stays parked when no further event arrives. The reviewer also simulated `worker-types.mjs` failures (leftover `.bak`, a failing `bunx`, empty output); the committed file stayed intact in every case. Nits being applied: the test comment claims more than `waitingPollers` alone proves; per-orphan store creation moved the 800-statement warning to per-orphan scope, but D1's limit of 1000 queries applies per alarm invocation, so stores will be created lazily once inside the guard; and one docblock line is over 120 characters.
+- Phase 5 was built in a worktree (`39765e5c..10d6c6fe`). `src/frontendShell.ts` owns the base-path token and the cache policy. `scripts/build-workers-assets.ts` builds `dist-workers-assets` without `.br`/`.gz` files and writes `_headers`. The `/assets/*` rule needs ` ! Cache-Control` because Cloudflare joins repeated headers. The build also sets the final `wrangler.jsonc` assets block, `limits.cpu_ms`, and observability, and adds `workers:deploy`, `d1:migrate:local`, and `d1:migrate:remote`. `TRUEFORGE_RUNTIME` is documented, and `docs/deploy/cloudflare.mdx` is under Getting Started. Smoke on the final tree covered the shell and deep links, immutable hashed assets, a JSON 404 from the API, `/api/v1/docs`, `stream:true` to `turn.done`, `stream:false` plus subscribe with `Last-Event-ID`, and cancel.
+- The Phase 5 review found no blockers and 4 should-fix items. (1) A missing hashed asset got the SPA fallback: HTML with a one-year immutable cache, so after a rollback or version skew browsers would keep a blank app. The fix sets `not_found_handling` to `"none"` and handles misses in the Worker: 404 under `/assets/`, and the shell with `no-cache` only for HTML navigations. We rejected adding `/assets/*` to `run_worker_first`, because every asset request would then bill the Worker and skip `_headers`. (2) `/api` without a trailing slash reached the shell. `SERVER_PATH_PREFIXES` and `isServerPath` moved to `frontendShell.ts`, and `"/api"` was added to `run_worker_first` with a test that keeps the two in sync. (3) A stale `wrangler.jsonc` comment. (4) The `PUBLIC_BASE_URL` placeholder is removed so a missing value fails clearly, and the workers config now rejects a path prefix. Accepted as is: the frontend package keeps its own copy of the shell token because of the build boundary. Evidence gaps being closed: saved outputs for cancel, the API 404 bodies, and asset headers; a curl check that misses reach the Worker; corrected cancel wording in the guide; and a Node Docker smoke run inside the Phase 5 worktree, with `.env` and the root-owned `data/` removed afterwards.
+- Process: the progress skill now runs before each orchestrator docs commit and before launching any agent that commits on the branch.
+
+**Lessons learned:**
+
+- A counter of waiters can read zero in two different states: the poll was released, or it is suspended at a yield. Pair it with a counter of live generators.
+- Per-invocation limits such as D1's query cap need counters scoped to the invocation, not to one helper instance.
+- An SPA fallback combined with URL-matched cache headers can cache HTML under an asset URL for a year.
+
+**Avoid next time:**
+
+- Don't assert behavior from a single counter without ruling out the other state it could mean.
+- Don't put placeholder values for required URLs in committed config.
+
 ## Cycle 7 — Phase 3 landed with three review rounds; Phase 4 SchedulerDO built, reviewed, and landed (2026-09-15)
 
 **Goal:** Land Phase 3 (TurnExecutor port and SessionDO) through its review rounds, then build, review, and land Phase 4 (scheduled runs dispatched from a singleton SchedulerDO).
