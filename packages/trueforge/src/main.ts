@@ -3,7 +3,8 @@
  * stores, and starts the HTTP server. Any config, migration, or store error
  * aborts startup.
  *
- * `STANDALONE=true` (default): SQLite, no Redis. `STANDALONE=false`: Postgres + Redis.
+ * `TRUEFORGE_RUNTIME=standalone` (default): SQLite, no Redis. `distributed`: Postgres + Redis.
+ * When unset, `STANDALONE=true|false` picks between those two. `workers` is rejected here.
  *
  * Config is validated at import time (`./config`). Runtime startup failures
  * (migrate, Redis, listen) are caught below and exit non-zero. SQLite vs

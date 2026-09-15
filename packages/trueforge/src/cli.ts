@@ -6,8 +6,8 @@
  * and `--port`. Flags must be applied before importing `./main` because config
  * reads `process.env` at module load.
  *
- * Topology defaults from env / config (`STANDALONE=true` unless set): standalone
- * uses SQLite with no Redis; `STANDALONE=false` uses Postgres + Redis peering.
+ * Topology comes from `TRUEFORGE_RUNTIME`, or `STANDALONE` when that is unset (standalone
+ * by default): standalone uses SQLite with no Redis; distributed uses Postgres + Redis peering.
  */
 import { parseArgs } from 'node:util';
 
@@ -20,7 +20,7 @@ function printUsage(): void {
 
 TrueForge v${PACKAGE_VERSION}. Start the agent server.
 Defaults to standalone mode (SQLite, no Redis) — local use only, not production-safe.
-Set STANDALONE=false with Postgres and Redis for multi-replica peering.
+Set TRUEFORGE_RUNTIME=distributed (or STANDALONE=false) with Postgres and Redis for multi-replica peering.
 
 Options:
   --port <n>   HTTP port (default: 8790, or PORT env)

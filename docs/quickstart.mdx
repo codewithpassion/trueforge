@@ -137,6 +137,7 @@ TrueForge runs in [two modes](/introduction#two-ways-to-run-it): **local mode** 
     </Warning>
 
     `STANDALONE=false` and `HOST=0.0.0.0` are baked into `Dockerfile.dev`. Railway injects `PORT` automatically.
+    `TRUEFORGE_RUNTIME=distributed` selects the same topology; if you set both variables, they must agree.
 
   </Tab>
 </Tabs>
