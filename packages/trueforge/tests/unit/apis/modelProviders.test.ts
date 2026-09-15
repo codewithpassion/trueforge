@@ -17,6 +17,7 @@ import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import { toRedactedSecretValue } from '../../../src/utils/secretRedaction';
 
 const model = {
@@ -106,6 +107,7 @@ async function createRouters(): Promise<{
       tokenStore,
       resolveSkillStore: () => new SqliteSkillStore(db),
       resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+      sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
       withTransaction: callback => db.transaction().execute(callback),
       logger: winston.createLogger({ silent: true }),
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,

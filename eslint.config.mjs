@@ -76,6 +76,81 @@ export default defineConfig(
     },
   },
   {
+    // Workers entry: keep Node-only modules out of the bundle.
+    files: ['packages/trueforge/src/workers/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            'node:fs',
+            'node:fs/promises',
+            'node:child_process',
+            'node:https',
+            'node:net',
+            'node:tls',
+            'node:os',
+            'fs',
+            'fs/promises',
+            'child_process',
+            'https',
+            'net',
+            'tls',
+            'os',
+            'undici',
+            'better-sqlite3',
+            'pg',
+            'redis',
+            '@anthropic-ai/sandbox-runtime',
+            '@daytona/sdk',
+            '@nats-io/nats-core',
+            'ws',
+            'winston',
+            'env-paths',
+            {
+              name: '@truefoundry/trueforge-core',
+              message: 'Barrel reaches Node-only sandbox modules; use a deep import.',
+              allowTypeImports: true,
+            },
+            {
+              name: '@truefoundry/trueforge-core/core',
+              message: 'Barrel reaches Node-only sandbox modules; use a deep import.',
+              allowTypeImports: true,
+            },
+          ],
+          patterns: [
+            {
+              group: ['@hono/node-server', '@hono/node-server/*'],
+              message: 'Node HTTP server is not available on Workers.',
+            },
+            {
+              group: ['**/db/postgres', '**/db/postgres/**'],
+              message: 'Postgres stores are Node-only; Workers use D1.',
+            },
+            {
+              group: ['**/truefoundry', '**/truefoundry/**'],
+              message: 'TrueFoundry mode is not supported on Workers.',
+            },
+            {
+              group: [
+                '**/sandbox/local',
+                '**/sandbox/local/**',
+                '**/sandbox/providerUtils',
+                '**/sandbox/nodeSandboxIntegration',
+                '**/http/tls',
+                '**/db/sqlite/client',
+                '**/db/migrateSqlite',
+                '**/db/migratePostgres',
+                '**/frontend',
+              ],
+              message: 'Node-only module; inject it from the Node entry point instead.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ['packages/frontend/src/**/*.{ts,tsx}'],
     extends: [
       js.configs.recommended,

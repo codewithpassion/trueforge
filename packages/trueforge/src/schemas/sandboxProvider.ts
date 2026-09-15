@@ -8,7 +8,7 @@
  * Env-synthesized truefoundry records use `StoredSandboxProviderManifest` (store/runtime only).
  */
 import { z } from '@hono/zod-openapi';
-import type { DaytonaSandboxProviderOptions } from '@truefoundry/trueforge-core/core';
+import type { DaytonaSandboxProviderOptions, SandboxBuild } from '@truefoundry/trueforge-core/core';
 
 const DaytonaSandboxProviderAuthSchema = z
   .object({
@@ -142,5 +142,14 @@ export function toDaytonaSandboxProviderInput(manifest: SandboxProviderManifest)
     autoStopIntervalInMinutes: manifest.auto_stop_interval_in_minutes,
     autoArchiveIntervalInMinutes: manifest.auto_archive_interval_in_minutes,
     autoDeleteIntervalInMinutes: manifest.auto_delete_interval_in_minutes,
+  };
+}
+
+/** Maps a core `SandboxBuild` onto the persisted/wire status shape (metadata passes through). */
+export function toSandboxStatus(build: SandboxBuild): SandboxStatus {
+  return {
+    status: build.status,
+    status_reason: build.reason,
+    build_metadata: build.metadata,
   };
 }

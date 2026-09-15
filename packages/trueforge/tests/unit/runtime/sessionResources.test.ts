@@ -17,14 +17,21 @@ import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkill
 import {
   buildGatewayMetadata,
   getModelDetails,
-  localSandboxSessionSegment,
   TFG_METADATA_PREFIX,
   validateAgentSpec,
   withGatewayMetadataHeaders,
   X_TFY_METADATA,
 } from '../../../src/runtime/sessionResources';
-import { setCachedLocalSandboxSupport } from '../../../src/sandbox/localRuntime';
+import type { LocalSandboxSupportResult } from '../../../src/sandbox/local/provider/LocalSandboxProvider';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import type { ReasoningEffort } from '../../../src/schemas/modelProvider';
+
+const LOCAL_SUPPORTED: LocalSandboxSupportResult = {
+  supported: true,
+  platform: 'darwin',
+  shell: '/bin/bash',
+  python: '/usr/bin/python3',
+};
 
 async function createGatewayMetadataSession(input: { agent: SessionAgent }): Promise<SessionHandle> {
   const sessions = new Sessions({ sessionStore: new InMemorySessionStore() });
@@ -86,23 +93,11 @@ describe('withGatewayMetadataHeaders', () => {
   });
 });
 
-describe('localSandboxSessionSegment', () => {
-  it('keeps a single-segment session id and rejects missing or unsafe values', () => {
-    expect(localSandboxSessionSegment('sess_1')).toBe('sess_1');
-    expect(localSandboxSessionSegment(undefined)).toBe('_');
-    expect(localSandboxSessionSegment('')).toBe('_');
-    expect(localSandboxSessionSegment('a/b')).toBe('_');
-    expect(localSandboxSessionSegment('..')).toBe('_');
-    expect(localSandboxSessionSegment('foo..bar')).toBe('_');
-  });
-});
-
 describe('validateAgentSpec', () => {
-  afterEach(() => {
-    setCachedLocalSandboxSupport(undefined);
-  });
-
-  async function setup(options?: { reasoningEfforts?: ReasoningEffort[] | undefined }) {
+  async function setup(options?: {
+    reasoningEfforts?: ReasoningEffort[] | undefined;
+    localSupport?: LocalSandboxSupportResult | undefined;
+  }) {
     const db = createSqliteDb(':memory:');
     await migrateSqliteToLatest(db);
     const modelProviderStore = new SqliteModelProviderStore(db);
@@ -133,6 +128,7 @@ describe('validateAgentSpec', () => {
       mcpServerStore: new SqliteMcpServerStore(db),
       skillStore: new SqliteSkillStore(db),
       sandboxProviderStore: new SqliteSandboxProviderStore(db),
+      sandboxIntegration: createNodeSandboxIntegration({ localSupport: options?.localSupport }),
     };
   }
 
@@ -308,9 +304,8 @@ describe('validateAgentSpec', () => {
     } satisfies Partial<HTTPException>);
   });
 
-  it('admits sandbox.enabled when a sandbox provider row exists', async () => {
-    const stores = await setup();
-    await stores.sandboxProviderStore.upsertSandboxProvider({
+  async function storeDaytonaProvider(store: SqliteSandboxProviderStore): Promise<void> {
+    await store.upsertSandboxProvider({
       tenant_id: 'default',
       manifest: {
         type: 'daytona',
@@ -324,6 +319,11 @@ describe('validateAgentSpec', () => {
       status_reason: 'Sandbox image build started.',
       build_metadata: { build_ref: 'trueforge-build-029ea5ff', image_uri: 'tfy.jfrog.io/tfy-images/sandbox:029ea5ff' },
     });
+  }
+
+  it('admits sandbox.enabled when a sandbox provider row exists', async () => {
+    const stores = await setup();
+    await storeDaytonaProvider(stores.sandboxProviderStore);
 
     await expect(
       validateAgentSpec({
@@ -338,14 +338,29 @@ describe('validateAgentSpec', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('admits sandbox.enabled when local fallback is cached and the store is empty', async () => {
+  it('rejects sandbox.enabled without a sandbox integration even when a provider row exists', async () => {
     const stores = await setup();
-    setCachedLocalSandboxSupport({
-      supported: true,
-      platform: 'darwin',
-      shell: '/bin/bash',
-      python: '/usr/bin/python3',
-    });
+    await storeDaytonaProvider(stores.sandboxProviderStore);
+
+    await expect(
+      validateAgentSpec({
+        spec: AgentSpecSchema.parse({
+          model: { name: 'test-provider/test-model' },
+          instructions: 'test',
+          config: { sandbox: { enabled: true } },
+        }),
+        tenant_id: 'default',
+        ...stores,
+        sandboxIntegration: undefined,
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining('no sandbox provider is configured'),
+    } satisfies Partial<HTTPException>);
+  });
+
+  it('admits sandbox.enabled when local fallback is supported and the store is empty', async () => {
+    const stores = await setup({ localSupport: LOCAL_SUPPORTED });
     await expect(
       validateAgentSpec({
         spec: AgentSpecSchema.parse({
@@ -361,13 +376,7 @@ describe('validateAgentSpec', () => {
   });
 
   it('rejects registry catalog rows as git mounts (standalone)', async () => {
-    const stores = await setup();
-    setCachedLocalSandboxSupport({
-      supported: true,
-      platform: 'darwin',
-      shell: '/bin/bash',
-      python: '/usr/bin/python3',
-    });
+    const stores = await setup({ localSupport: LOCAL_SUPPORTED });
     const fqn = 'agent-skill:acme/team-a/echo:1';
     const now = '2026-01-01T00:00:00.000Z';
     const skillStore: ISkillStore = {
@@ -419,13 +428,7 @@ describe('validateAgentSpec', () => {
   });
 
   it('validates skills via skillStore.validateAgentSkills', async () => {
-    const stores = await setup();
-    setCachedLocalSandboxSupport({
-      supported: true,
-      platform: 'darwin',
-      shell: '/bin/bash',
-      python: '/usr/bin/python3',
-    });
+    const stores = await setup({ localSupport: LOCAL_SUPPORTED });
     const validateAgentSkills = jest.spyOn(stores.skillStore, 'validateAgentSkills').mockResolvedValue(undefined);
     await expect(
       validateAgentSpec({
@@ -445,13 +448,7 @@ describe('validateAgentSpec', () => {
   });
 
   it('rejects preload on git skills', async () => {
-    const stores = await setup();
-    setCachedLocalSandboxSupport({
-      supported: true,
-      platform: 'darwin',
-      shell: '/bin/bash',
-      python: '/usr/bin/python3',
-    });
+    const stores = await setup({ localSupport: LOCAL_SUPPORTED });
     await stores.skillStore.upsertSkill({
       tenant_id: 'default',
       name: 'echo',

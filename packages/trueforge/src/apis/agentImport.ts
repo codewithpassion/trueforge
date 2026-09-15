@@ -2,19 +2,16 @@
  * Internal import under /api/internal/import (agents + sessions + checkpoint).
  */
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import type { ISessionStore } from '@truefoundry/trueforge-core/agent-session';
 import { HTTPException } from 'hono/http-exception';
 import { AgentExternalIdConflictError, AgentNameConflictError, type IAgentStore } from '../db/agentStore';
-import { PostgresSessionStore, SessionImportValidationError } from '../db/postgres/session-store/PostgresSessionStore';
+import { SessionImportValidationError, type SessionImport } from '../db/sessionImport';
 import { getImportSessionsCheckpointRoute, importAgentsRoute, importSessionRoute } from '../routes/agentImportRoutes';
 import type { ImportAgentItemResult } from '../schemas/agentImport';
-import {
-  TFY_ASSUME_USER_HEADER,
-  tenantSystemAssumeUserHeader,
-} from '../truefoundry/TrueFoundryServiceFoundryServerClient';
+import { TFY_ASSUME_USER_HEADER, tenantSystemAssumeUserHeader } from '../truefoundry/assumeUserHeaders';
 
 export interface AgentImportRouterDeps {
-  sessionStore: ISessionStore;
+  /** Undefined when the session store cannot import (e.g. standalone SQLite). */
+  sessionImport: SessionImport | undefined;
   /** TrueFoundryAgentStore (or DB store) with SF client assume-user headers when needed. */
   resolveImportAgentStore: (serviceFoundryServerHeaders: Record<string, string>) => IAgentStore;
 }
@@ -24,6 +21,15 @@ function errorDetail(error: unknown): string {
     return String(error);
   }
   return error.stack ? `${error.message}\n${error.stack}` : error.message;
+}
+
+function requireSessionImport(sessionImport: SessionImport | undefined): SessionImport {
+  if (sessionImport === undefined) {
+    throw new HTTPException(500, {
+      message: 'Session import requires Postgres (STANDALONE=false)',
+    });
+  }
+  return sessionImport;
 }
 
 export function createAgentImportRouter(deps: AgentImportRouterDeps) {
@@ -74,14 +80,10 @@ export function createAgentImportRouter(deps: AgentImportRouterDeps) {
   };
 
   const importSessionHandler: RouteHandler<typeof importSessionRoute> = async c => {
-    if (!(deps.sessionStore instanceof PostgresSessionStore)) {
-      throw new HTTPException(500, {
-        message: 'Session import requires Postgres (STANDALONE=false)',
-      });
-    }
+    const sessionImport = requireSessionImport(deps.sessionImport);
     const body = c.req.valid('json');
     try {
-      const result = await deps.sessionStore.importSessionSnapshot(body);
+      const result = await sessionImport.importSessionSnapshot(body);
       if (!result.imported) {
         return c.json({ data: result }, 409);
       }
@@ -95,14 +97,10 @@ export function createAgentImportRouter(deps: AgentImportRouterDeps) {
   };
 
   const checkpointHandler: RouteHandler<typeof getImportSessionsCheckpointRoute> = async c => {
-    if (!(deps.sessionStore instanceof PostgresSessionStore)) {
-      throw new HTTPException(500, {
-        message: 'Session import requires Postgres (STANDALONE=false)',
-      });
-    }
+    const sessionImport = requireSessionImport(deps.sessionImport);
     const { tenant_id } = c.req.valid('query');
     try {
-      const data = await deps.sessionStore.getImportSessionsCheckpoint({ tenant_id });
+      const data = await sessionImport.getImportSessionsCheckpoint({ tenant_id });
       return c.json({ data }, 200);
     } catch (error) {
       throw new HTTPException(500, { message: errorDetail(error), cause: error });

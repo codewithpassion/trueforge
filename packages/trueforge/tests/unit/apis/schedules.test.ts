@@ -16,6 +16,7 @@ import { createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteScheduleStore } from '../../../src/db/sqlite/schedule-store/SqliteScheduleStore';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import {
   CreateScheduleRunResponseSchema,
   ListScheduleRunsResponseSchema,
@@ -72,6 +73,7 @@ function stubTurnExecutionDeps(agentStore: SqliteAgentStore, scheduleStore: Sqli
     resolveMcpServerStore: () => ({}) as never,
     turnSkillsResolverStore: { resolveTurnSkills: async () => [] },
     resolveSandboxProviderStore: () => ({}) as never,
+    sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
   };
 }
 

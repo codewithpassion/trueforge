@@ -13,6 +13,7 @@ import configuration from '../config';
 import type { ISandboxProviderStore, SandboxProviderRecord } from '../db/sandboxProviderStore';
 import {
   toDaytonaSandboxProviderInput,
+  toSandboxStatus,
   type SandboxBuildMetadata,
   type SandboxProviderManifest,
   type SandboxStatus,
@@ -90,15 +91,6 @@ export function toSandboxProviderFromRecord({
         logger,
       });
   }
-}
-
-/** Maps a core `SandboxBuild` onto the persisted/wire status shape (metadata passes through). */
-export function toSandboxStatus(build: SandboxBuild): SandboxStatus {
-  return {
-    status: build.status,
-    status_reason: build.reason,
-    build_metadata: build.metadata,
-  };
 }
 
 function sandboxStatusFromRecord(record: SandboxProviderRecord): SandboxStatus {

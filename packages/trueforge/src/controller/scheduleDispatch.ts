@@ -10,7 +10,6 @@ import {
   type ScheduleRunRecord,
 } from '../db/scheduleStore';
 import type { WithTransaction } from '../db/transaction';
-import { createTlsFetch, normalizeTlsUrl } from '../http/tls';
 import { nextTriggerAfter } from '../runtime/cron';
 import { InvalidCronError, type ScheduleRunStatus } from '../schemas/schedule';
 import type { ControlLoop } from './Controller';
@@ -43,18 +42,22 @@ const SCHEDULE_DISPATCH_LOOP_NAME = 'schedule-dispatch';
 
 export type ScheduleRunExecutor = (scheduleRunId: string) => Promise<void>;
 
-/** HTTP handoff to `POST /api/internal/schedules/runs/execute` (dedicated controller or standalone loopback). */
-export function createHttpScheduleRunExecutor(): ScheduleRunExecutor {
-  const tls = {
-    enabled: configuration.TRUEFORGE_MTLS_ENABLED,
-    dir: configuration.TRUEFORGE_MTLS_CERTS_DIR,
-  };
-  const tlsFetch = createTlsFetch(tls);
+/**
+ * HTTP handoff to `POST /api/internal/schedules/runs/execute` (dedicated controller or standalone loopback).
+ * `fetch` is the transport override (mTLS on Node); undefined uses the SDK default.
+ */
+export function createHttpScheduleRunExecutor({
+  baseUrl,
+  fetch,
+}: {
+  baseUrl: string;
+  fetch: typeof globalThis.fetch | undefined;
+}): ScheduleRunExecutor {
   const client = new TrueForge({
-    baseUrl: normalizeTlsUrl({ url: configuration.SERVER_URL, enabled: tls.enabled }),
+    baseUrl,
     token: configuration.TRUEFORGE_API_KEY,
     timeoutInSeconds: 60,
-    ...(tlsFetch === undefined ? {} : { fetch: tlsFetch }),
+    ...(fetch === undefined ? {} : { fetch }),
   });
   return scheduleRunId => client.internal.schedules.executeRun({ scheduleRunId });
 }
@@ -339,9 +342,9 @@ export function scheduleDispatchLoop<TTransaction>(params: {
   scheduleStore: IScheduleStore<TTransaction>;
   logger: Logger;
   withTransaction: WithTransaction<TTransaction>;
+  executeRun: ScheduleRunExecutor;
 }): ControlLoop {
-  const { scheduleStore, withTransaction, logger } = params;
-  const executeRun = createHttpScheduleRunExecutor();
+  const { scheduleStore, withTransaction, logger, executeRun } = params;
   return {
     name: SCHEDULE_DISPATCH_LOOP_NAME,
     intervalMs: SCHEDULE_DISPATCH_INTERVAL_MS,

@@ -18,7 +18,6 @@ import {
   prepareCodeModeSocketParent,
   removeCodeModeSocketParent,
 } from './sandbox/localLifecycle';
-import { setCachedLocalSandboxSupport } from './sandbox/localRuntime';
 
 let configuration: typeof import('./config').default;
 let isOidcConfigured: typeof import('./config').isOidcConfigured;
@@ -75,17 +74,21 @@ import type { PostgresAgentStore } from './db/postgres/agent-store/PostgresAgent
 import type { Database as PostgresDatabase } from './db/postgres/types';
 import type { ISandboxProviderStore } from './db/sandboxProviderStore';
 import type { IScheduleStore } from './db/scheduleStore';
+import type { SessionImport } from './db/sessionImport';
 import type { ISessionMetricsStore } from './db/sessionMetricsStore';
 import type { ISkillStore } from './db/skillStore';
 import type { Database as SqliteDatabase } from './db/sqlite/types';
 import type { WithTransaction } from './db/transaction';
 import { mountFrontend } from './frontend';
-import { serverTlsServeOptions } from './http/tls';
+import { createClientCertificateMiddleware, serverTlsServeOptions } from './http/tls';
 import { createServerLogger, shouldColorize } from './logger';
 import type { IOAuthTokenStore } from './mcp/auth/types';
 import { PACKAGE_VERSION } from './packageVersion';
 import { ActiveTurnRegistry } from './runtime/activeTurns';
 import { EventSubscriptionRegistry } from './runtime/event-subscription';
+import type { SandboxIntegration } from './sandbox/integration';
+import type { LocalSandboxSupportResult } from './sandbox/local/provider/LocalSandboxProvider';
+import { createNodeSandboxIntegration } from './sandbox/nodeSandboxIntegration';
 import { printStandaloneStartupBanner } from './startupBanner';
 import {
   parsePerServerMcpHeaders,
@@ -104,6 +107,8 @@ import { TrueFoundryAdminSkillStore, TrueFoundrySkillStore } from './truefoundry
 interface ServerPersistence<TTransaction> {
   withTransaction: WithTransaction<TTransaction>;
   sessionStore: ISessionStore;
+  /** Postgres only; undefined disables the session import routes. */
+  sessionImport: SessionImport | undefined;
   sessionMetricsStore: ISessionMetricsStore;
   tokenStore: IOAuthTokenStore<TTransaction>;
   scheduleStore: IScheduleStore<TTransaction>;
@@ -323,6 +328,7 @@ async function createStandalonePersistence(options: {
   return {
     withTransaction: callback => db.transaction().execute(callback),
     sessionStore: new SqliteSessionStore(db),
+    sessionImport: undefined,
     sessionMetricsStore: new SqliteSessionMetricsStore(db),
     mcpOAuthStore: mcpServerStore,
     tokenStore,
@@ -451,9 +457,11 @@ async function createDistributedPersistence(options: {
     persistenceStore: skillStore,
     client: serviceFoundryClient,
   });
+  const sessionStore = new PostgresSessionStore(db);
   return {
     withTransaction: callback => db.transaction().execute(callback),
-    sessionStore: new PostgresSessionStore(db),
+    sessionStore,
+    sessionImport: sessionStore,
     sessionMetricsStore: new PostgresSessionMetricsStore(db),
     mcpOAuthStore: mcpServerWithAuthStore,
     tokenStore,
@@ -473,7 +481,11 @@ async function createDistributedPersistence(options: {
 }
 
 /** Keeps `TTransaction` concrete when wiring a single persistence topology into the app. */
-async function createServerRuntime<TTransaction>(persistence: ServerPersistence<TTransaction>, logger: Logger) {
+async function createServerRuntime<TTransaction>(
+  persistence: ServerPersistence<TTransaction>,
+  logger: Logger,
+  sandboxIntegration: SandboxIntegration,
+) {
   const {
     withTransaction,
     sessionStore,
@@ -559,6 +571,11 @@ async function createServerRuntime<TTransaction>(persistence: ServerPersistence<
     resolveAgentStore,
     resolveImportAgentStore,
     resolveSandboxProviderStore,
+    sandboxIntegration,
+    clientCertificateMiddleware:
+      !configuration.STANDALONE && configuration.TRUEFORGE_MTLS_ENABLED
+        ? createClientCertificateMiddleware(logger)
+        : undefined,
     resolveSkillStore,
     withTransaction,
     tokenStore,
@@ -566,6 +583,7 @@ async function createServerRuntime<TTransaction>(persistence: ServerPersistence<
     agentStore,
     turnSkillsResolverStore,
     sessionStore,
+    sessionImport: persistence.sessionImport,
     sessionMetricsStore,
     sessions,
     activeTurns,
@@ -588,6 +606,7 @@ try {
     version: PACKAGE_VERSION,
   });
 
+  let localSandboxSupport: LocalSandboxSupportResult | undefined;
   if (configuration.STANDALONE) {
     printStandaloneStartupBanner({ version: PACKAGE_VERSION, color: shouldColorize() });
     await prepareCodeModeSocketParent({ path: configuration.CODE_MODE_SOCKET_PARENT, logger });
@@ -596,7 +615,7 @@ try {
     const support = await LocalSandboxProvider.isSupported({
       codeModeSocketParentPath: configuration.CODE_MODE_SOCKET_PARENT,
     });
-    setCachedLocalSandboxSupport(support);
+    localSandboxSupport = support;
     if (support.supported) {
       logger.info('Local sandbox fallback is available', {
         platform: support.platform,
@@ -614,12 +633,18 @@ try {
     logger.info('TrueForge starting', { mode: 'distributed' });
   }
 
+  const sandboxIntegration = createNodeSandboxIntegration({ localSupport: localSandboxSupport });
   const { activeTurns, app, controller, destroyDb, redis, requestReplyRouter } = configuration.STANDALONE
     ? await createServerRuntime(
         await createStandalonePersistence({ sqlitePath: configuration.SQLITE_PATH, logger }),
         logger,
+        sandboxIntegration,
       )
-    : await createServerRuntime(await createDistributedPersistence({ configuration, logger }), logger);
+    : await createServerRuntime(
+        await createDistributedPersistence({ configuration, logger }),
+        logger,
+        sandboxIntegration,
+      );
 
   if (
     mountFrontend(app, {

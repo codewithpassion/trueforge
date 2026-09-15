@@ -1,8 +1,10 @@
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
+import configuration from './config';
 import { Controller } from './controller/Controller';
-import { scheduleDispatchLoop } from './controller/scheduleDispatch';
+import { createHttpScheduleRunExecutor, scheduleDispatchLoop } from './controller/scheduleDispatch';
 import type { IScheduleStore } from './db/scheduleStore';
 import type { WithTransaction } from './db/transaction';
+import { createTlsFetch, normalizeTlsUrl } from './http/tls';
 
 /**
  * Controller whose schedule loop hands runs to the server over HTTP
@@ -14,12 +16,20 @@ export function createController<TTransaction>(params: {
   withTransaction: WithTransaction<TTransaction>;
   logger: Logger;
 }): Controller {
+  const tls = {
+    enabled: configuration.TRUEFORGE_MTLS_ENABLED,
+    dir: configuration.TRUEFORGE_MTLS_CERTS_DIR,
+  };
   return new Controller({
     loops: [
       scheduleDispatchLoop({
         scheduleStore: params.scheduleStore,
         withTransaction: params.withTransaction,
         logger: params.logger,
+        executeRun: createHttpScheduleRunExecutor({
+          baseUrl: normalizeTlsUrl({ url: configuration.SERVER_URL, enabled: tls.enabled }),
+          fetch: createTlsFetch(tls),
+        }),
       }),
     ],
     logger: params.logger,

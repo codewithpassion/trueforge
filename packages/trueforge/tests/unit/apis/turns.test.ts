@@ -23,6 +23,7 @@ import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/Sqlite
 import type { Database } from '../../../src/db/sqlite/types';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription/index.js';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 
 function mcpServerStoreWithAuth(db: Kysely<Database>, tokenStore: SqliteOAuthTokenStore) {
   return new McpServerWithAuthStore({
@@ -75,6 +76,7 @@ describe('turns', () => {
           resolveAgentStore: () => new SqliteAgentStore(db),
           eventSubscriptions: new EventSubscriptionRegistry(undefined),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+          sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger: createLogger({ silent: true }),
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
           authorizer: new TrueForgeAuthorizer(),
@@ -152,6 +154,7 @@ describe('turns', () => {
           resolveAgentStore: () => agentStore,
           eventSubscriptions: new EventSubscriptionRegistry(undefined),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+          sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger: createLogger({ silent: true }),
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
           authorizer: {
@@ -280,6 +283,7 @@ describe('turns', () => {
           resolveSkillStore: () => new SqliteSkillStore(db),
           eventSubscriptions,
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+          sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger,
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
           authorizer: new TrueForgeAuthorizer(),
@@ -387,6 +391,7 @@ describe('turns', () => {
           resolveAgentStore: () => new SqliteAgentStore(db),
           eventSubscriptions: new EventSubscriptionRegistry(undefined),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+          sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger,
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
           authorizer: new TrueForgeAuthorizer(),
@@ -469,6 +474,7 @@ describe('turns', () => {
           resolveAgentStore: () => agentStore,
           eventSubscriptions: new EventSubscriptionRegistry(undefined),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+          sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger: createLogger({ silent: true }),
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
           authorizer,
@@ -500,6 +506,84 @@ describe('turns', () => {
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ error: { message: `Agent not found: ${agent.id}` } });
       expect(deniedCanAccessAgent.mock.calls.map(([input]) => input.action)).toEqual(['use']);
+    });
+  });
+
+  describe('without a sandbox integration', () => {
+    it('rejects a sandbox-enabled turn with 422', async () => {
+      const db = createSqliteDb(':memory:');
+      await migrateSqliteToLatest(db);
+      const sessionStore = new SqliteSessionStore(db);
+      const sessions = new Sessions({ sessionStore });
+      const modelProviderStore = new SqliteModelProviderStore(db);
+      await modelProviderStore.upsertProvider({
+        tenant_id: 'default',
+        name: 'test-provider',
+        manifest: {
+          type: 'custom',
+          name: 'test-provider',
+          base_url: 'https://llm.test.example.com/v1',
+          auth: { api_key: 'sk-test' },
+          models: [
+            {
+              model_id: 'test-model',
+              name: 'test-model',
+              properties: { context_length: 128000, max_output_tokens: 4096 },
+            },
+          ],
+        },
+      });
+      await sessionStore.createSession({
+        tenant_id: 'default',
+        session_id: 's1',
+        created_by_subject: {
+          subject_id: STANDALONE_REQUEST_CONTEXT.subject.id,
+          subject_type: STANDALONE_REQUEST_CONTEXT.subject.type,
+          subject_display_name: STANDALONE_REQUEST_CONTEXT.subject.display_name,
+        },
+        agent: {
+          type: 'inline',
+          spec: AgentSpecSchema.parse({
+            model: { name: 'test-provider/test-model' },
+            instructions: 'test',
+            config: { sandbox: { enabled: true } },
+          }),
+        },
+        custom: null,
+        metadata: {},
+        external_id: null,
+        source: null,
+      });
+      const tokenStore = new SqliteOAuthTokenStore(db);
+      const app = new OpenAPIHono();
+      app.route(
+        '/',
+        createTurnsRouter({
+          sessions,
+          sessionStore,
+          activeTurns: new ActiveTurnRegistry(),
+          resolveModelProviderStore: () => modelProviderStore,
+          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
+          resolveSkillStore: () => new SqliteSkillStore(db),
+          resolveAgentStore: () => new SqliteAgentStore(db),
+          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+          sandboxIntegration: undefined,
+          logger: createLogger({ silent: true }),
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          authorizer: new TrueForgeAuthorizer(),
+        }),
+      );
+
+      const response = await app.request('/s1/turns', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ stream: false }),
+      });
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: { message: 'no sandbox provider configured — PUT /settings/sandbox-providers' },
+      });
     });
   });
 });

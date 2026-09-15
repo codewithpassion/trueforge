@@ -43,7 +43,8 @@ import type { AgentInfo, ContextMessage, JsonValue } from '@truefoundry/trueforg
 import type { CurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
-import type { ImportSessionRequest } from '../../../schemas/agentImport';
+import type { ImportSessionRequest, ImportSessionResult, ImportSessionsCheckpoint } from '../../../schemas/agentImport';
+import { SessionImportValidationError, type SessionImport } from '../../sessionImport';
 import { json, jsonUnknown } from '../sqlExpressions';
 import type { Database, TurnCheckpoint, TurnThreadCheckpoint } from '../types';
 import { patchThreadCapabilityState as patchThreadCapabilityStateQuery } from './queries/capabilities';
@@ -81,14 +82,6 @@ import {
 /** Prefix on session.agent_id when the SF agent is not yet imported locally. */
 const IMPORT_UNRESOLVED_AGENT_ID_PREFIX = 'tfy-import:';
 
-/** Client/data rejection for session import — map to HTTP 4xx (not retryable). */
-export class SessionImportValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SessionImportValidationError';
-  }
-}
-
 type SessionCustom = Record<string, never>;
 type TurnCustom = Record<string, never>;
 
@@ -114,7 +107,7 @@ type TurnCustom = Record<string, never>;
  * 2. Every turn-scoped write is fenced on `state->>'status' = 'running'`.
  * 3. Terminal turns are IMMUTABLE — a terminal read is a final read.
  */
-export class PostgresSessionStore implements ISessionStore<SessionCustom, TurnCustom> {
+export class PostgresSessionStore implements ISessionStore<SessionCustom, TurnCustom>, SessionImport {
   constructor(private readonly db: Kysely<Database>) {}
 
   createSession(input: CreateSessionInput<SessionCustom>): Promise<void> {
@@ -253,7 +246,7 @@ export class PostgresSessionStore implements ISessionStore<SessionCustom, TurnCu
 
   // --- temporary SF→TrueForge migration (remove after backfill) ---
 
-  async getImportSessionsCheckpoint(input: { tenant_id: string }): Promise<{ created_at: string | null }> {
+  async getImportSessionsCheckpoint(input: { tenant_id: string }): Promise<ImportSessionsCheckpoint> {
     const row = await this.db
       .selectFrom('session')
       .select(sql<string | null>`min(created_at)`.as('created_at'))
@@ -266,7 +259,7 @@ export class PostgresSessionStore implements ISessionStore<SessionCustom, TurnCu
     return { created_at: new Date(row.created_at).toISOString() };
   }
 
-  async importSessionSnapshot(input: ImportSessionRequest): Promise<{ imported: boolean; session_id: string }> {
+  async importSessionSnapshot(input: ImportSessionRequest): Promise<ImportSessionResult> {
     const sessionId = input.session.session_id;
     const agentName = input.session.agent_name;
     const agentSpec = input.session.agent_spec;

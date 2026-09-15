@@ -143,15 +143,19 @@ export const ImportSessionsCheckpointQuerySchema = z
   .strict()
   .openapi('ImportSessionsCheckpointQuery');
 
+// Unnamed so the OpenAPI document keeps the checkpoint inline.
+const ImportSessionsCheckpointSchema = z.object({
+  created_at: z.string().nullable(),
+});
+
 export const ImportSessionsCheckpointResponseSchema = z
   .object({
-    data: z.object({
-      created_at: z.string().nullable(),
-    }),
+    data: ImportSessionsCheckpointSchema,
   })
   .strict()
   .openapi('ImportSessionsCheckpointResponse');
 
 export type ImportSessionRequest = z.infer<typeof ImportSessionRequestSchema>;
 export type ImportSessionResult = z.infer<typeof ImportSessionResultSchema>;
+export type ImportSessionsCheckpoint = z.infer<typeof ImportSessionsCheckpointSchema>;
 export type ImportSessionsCheckpointQuery = z.infer<typeof ImportSessionsCheckpointQuerySchema>;

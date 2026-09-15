@@ -41,6 +41,7 @@ import {
 import type { ActiveTurnRegistry } from '../runtime/activeTurns';
 import { executorFromTurnId } from '../runtime/peeringIds';
 import { validateAgentSpec } from '../runtime/sessionResources';
+import type { SandboxIntegration } from '../sandbox/integration';
 import { honoQueriesToRecord } from '../schemas/deepObjectQuery';
 import { isSessionAgentNameRef, parseListSessionsQuery, type Session } from '../schemas/session';
 import { newId } from '../utils/id';
@@ -81,6 +82,7 @@ export interface SessionsRouterDeps {
   resolveSkillStore: ResolveSkillStore;
   resolveAgentStore: (c: Context) => IAgentStore;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore;
+  sandboxIntegration: SandboxIntegration | undefined;
   redis?: RedisClientType | undefined;
   requestReplyRouter: RequestReplyRouter;
   resolveRequestContext: ResolveRequestContext;
@@ -237,6 +239,7 @@ type InternalSessionsRouterDeps = Pick<
   | 'resolveSkillStore'
   | 'resolveAgentStore'
   | 'resolveSandboxProviderStore'
+  | 'sandboxIntegration'
   | 'resolveRequestContext'
   | 'authorizer'
 >;
@@ -290,6 +293,7 @@ function createGetOrCreateSessionByExternalIdHandler(
         mcpServerStore: deps.resolveMcpServerStore(c),
         skillStore: deps.resolveSkillStore(c),
         sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+        sandboxIntegration: deps.sandboxIntegration,
       });
       agent = { type: 'inline', spec: body.agent.spec };
     }
@@ -362,6 +366,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
       mcpServerStore: deps.resolveMcpServerStore(c),
       skillStore: deps.resolveSkillStore(c),
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+      sandboxIntegration: deps.sandboxIntegration,
     });
     const session = await deps.sessions.create({
       tenant_id: requestContext.tenant_id,
@@ -453,6 +458,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
         mcpServerStore: deps.resolveMcpServerStore(c),
         skillStore: deps.resolveSkillStore(c),
         sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+        sandboxIntegration: deps.sandboxIntegration,
       });
     }
     try {

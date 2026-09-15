@@ -1,12 +1,3 @@
-// Stub the Daytona-touching helpers so the router never talks to Daytona: the PUT path builds via
-// toDaytonaSandboxProvider, and the GET path refreshes via checkSnapshotStatus. isDaytonaAuthError,
-// isDaytonaPermissionError and toSandboxStatus stay real so the error mapping and PUT wire shape are
-// exercised.
-jest.mock('../../../src/sandbox/providerUtils', () => {
-  const actual = jest.requireActual('../../../src/sandbox/providerUtils');
-  return { ...actual, toDaytonaSandboxProvider: jest.fn(), checkSnapshotStatus: jest.fn() };
-});
-
 import { DaytonaError } from '@daytona/sdk';
 import type { SandboxBuild } from '@truefoundry/trueforge-core/core';
 import { createLogger } from 'winston';
@@ -21,11 +12,20 @@ import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import type { ISandboxProviderStore } from '../../../src/db/sandboxProviderStore';
 import { createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
-import { checkSnapshotStatus, toDaytonaSandboxProvider } from '../../../src/sandbox/providerUtils';
+import type { SandboxIntegration } from '../../../src/sandbox/integration';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import { toRedactedSecretValue } from '../../../src/utils/secretRedaction';
 
-const mockProviderFactory = toDaytonaSandboxProvider as jest.Mock;
-const mockCheckStatus = checkSnapshotStatus as jest.Mock;
+// Stub the Daytona-touching port methods so the router never talks to Daytona: the PUT path builds via
+// createDaytonaProvider, and the GET path refreshes via checkSnapshotStatus. The Daytona error
+// classifiers stay real so the error mapping is exercised.
+const mockProviderFactory = jest.fn();
+const mockCheckStatus = jest.fn();
+const sandboxIntegration: SandboxIntegration = {
+  ...createNodeSandboxIntegration({ localSupport: undefined }),
+  createDaytonaProvider: mockProviderFactory,
+  checkSnapshotStatus: mockCheckStatus,
+};
 const silentLogger = createLogger({ silent: true });
 
 const putBody = {
@@ -77,7 +77,10 @@ function putInit(manifest: unknown): RequestInit {
   };
 }
 
-async function createRouters(): Promise<{
+// Options object so an explicit `sandboxIntegration: undefined` is not replaced by the default.
+async function createRouters(
+  options: { sandboxIntegration: SandboxIntegration | undefined } = { sandboxIntegration },
+): Promise<{
   settingsRouter: ReturnType<typeof createSandboxProvidersRouter>;
   sandboxProviderStore: ISandboxProviderStore;
 }> {
@@ -90,6 +93,7 @@ async function createRouters(): Promise<{
       withTransaction: callback => db.transaction().execute(callback),
       logger: silentLogger,
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+      sandboxIntegration: options.sandboxIntegration,
     }),
     sandboxProviderStore,
   };
@@ -117,6 +121,7 @@ describe('sandboxProviders router', () => {
       withTransaction: callback => db.transaction().execute(callback),
       logger: silentLogger,
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+      sandboxIntegration,
     });
     catalogRouter = createCatalogRouter({
       modelCatalog: ModelCatalog.load(),
@@ -222,6 +227,30 @@ describe('sandboxProviders router', () => {
 
     const withSnapshotName = await settingsRouter.request('/', putInit({ ...putBody, snapshot_name: 'legacy' }));
     expect(withSnapshotName.status).toBe(400);
+  });
+});
+
+describe('sandboxProviders router without a sandbox integration', () => {
+  const unsupported = { error: { message: 'Sandbox providers are not supported by this server' } };
+
+  it('GET returns 404 without reading the store', async () => {
+    const { settingsRouter, sandboxProviderStore } = await createRouters({ sandboxIntegration: undefined });
+    const getSandboxProvider = jest.spyOn(sandboxProviderStore, 'getSandboxProvider');
+
+    const response = await settingsRouter.request('/');
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual(unsupported);
+    expect(getSandboxProvider).not.toHaveBeenCalled();
+  });
+
+  it('PUT returns 422 and persists nothing', async () => {
+    const { settingsRouter, sandboxProviderStore } = await createRouters({ sandboxIntegration: undefined });
+
+    const response = await settingsRouter.request('/', putInit(putBody));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual(unsupported);
+    expect(mockProviderFactory).not.toHaveBeenCalled();
+    expect(await sandboxProviderStore.getSandboxProvider('default')).toBeUndefined();
   });
 });
 

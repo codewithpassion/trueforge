@@ -56,10 +56,9 @@ import {
   gatewayMetadataHeaders,
   getMcpConnection,
   getModelDetails,
-  resolveSandboxProvider,
   withGatewayMetadataHeaders,
 } from '../runtime/sessionResources';
-import { checkSnapshotStatus } from '../sandbox/providerUtils';
+import type { SandboxIntegration } from '../sandbox/integration';
 import { canReadAgentBoundResource } from './agentAccess';
 
 export function toWireTurn(record: TurnRecordWithoutSnapshot): Turn {
@@ -115,6 +114,7 @@ export interface TurnsRouterDeps {
   /** Resumable live turn-event transport: create-turn writes, subscribe polls. */
   eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore;
+  sandboxIntegration: SandboxIntegration | undefined;
   logger: Logger;
   resolveRequestContext: ResolveRequestContext;
   authorizer: Authorizer;
@@ -125,7 +125,10 @@ export interface TurnsRouterDeps {
  * stores; callers must resolve them from the request context (e.g. schedule `resolveTurnDeps(c, agent)`)
  * so TrueFoundry mode stays token-bound for models, MCP, and skills.
  */
-export type BeginTurnExecutionDeps = Pick<TurnsRouterDeps, 'activeTurns' | 'eventSubscriptions' | 'logger'> & {
+export type BeginTurnExecutionDeps = Pick<
+  TurnsRouterDeps,
+  'activeTurns' | 'eventSubscriptions' | 'logger' | 'sandboxIntegration'
+> & {
   agentStore: IAgentStore;
   modelProviderStore: IModelProviderStore;
   mcpServerStore: IMcpServerWithAuthStore;
@@ -143,6 +146,7 @@ function createTurnResolver(deps: {
   sandboxProviderStore: ISandboxProviderStore;
   agentStore: IAgentStore;
   modelProviderStore: IModelProviderStore;
+  sandboxIntegration: SandboxIntegration | undefined;
   logger: Logger;
   signal: AbortSignal;
   userRef: string;
@@ -155,6 +159,7 @@ function createTurnResolver(deps: {
     sandboxProviderStore,
     agentStore,
     modelProviderStore,
+    sandboxIntegration,
     logger,
     signal,
     userRef,
@@ -209,14 +214,15 @@ function createTurnResolver(deps: {
     },
     mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,
     mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
+    // Stays wired without an integration so sandbox-enabled specs get the 422 below instead of running sandbox-less.
     sandboxProvider: async ({ spec, existingSandboxId, tracing }) => {
-      const provider = await resolveSandboxProvider({
+      const provider = await sandboxIntegration?.resolveProvider({
         tenant_id,
         store: sandboxProviderStore,
         logger,
         sessionId,
       });
-      if (provider === undefined) {
+      if (sandboxIntegration === undefined || provider === undefined) {
         throw new HTTPException(422, {
           message: 'no sandbox provider configured — PUT /settings/sandbox-providers',
         });
@@ -229,7 +235,7 @@ function createTurnResolver(deps: {
       // Restoring an existing sandbox goes through daytona.get and never touches the snapshot.
       // Local fallback has no image build.
       if (carriedSandboxId === undefined && provider.type !== 'local') {
-        const status = await checkSnapshotStatus({ store: sandboxProviderStore, tenant_id, logger });
+        const status = await sandboxIntegration.checkSnapshotStatus({ store: sandboxProviderStore, tenant_id, logger });
         if (status?.status !== 'ready') {
           throw new HTTPException(422, {
             message:
@@ -401,6 +407,7 @@ export async function beginTurnExecution(params: {
     sandboxProviderStore: deps.sandboxProviderStore,
     agentStore: deps.agentStore,
     modelProviderStore: deps.modelProviderStore,
+    sandboxIntegration: deps.sandboxIntegration,
     logger: deps.logger,
     signal: abortController.signal,
     userRef,
@@ -650,7 +657,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
         return c.json({ error: { message: `Turn has no sandbox: ${turnId}` } }, 412);
       }
 
-      const provider = await resolveSandboxProvider({
+      const provider = await deps.sandboxIntegration?.resolveProvider({
         tenant_id: requestContext.tenant_id,
         store: deps.resolveSandboxProviderStore(c),
         logger: deps.logger,

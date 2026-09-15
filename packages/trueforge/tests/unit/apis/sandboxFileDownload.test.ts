@@ -1,6 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import type { AgentSpec } from '@truefoundry/trueforge-core/agent-session';
-import { AgentSpecSchema, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import type { AgentSpec, TurnRecord } from '@truefoundry/trueforge-core/agent-session';
+import { AgentSpecSchema, InMemorySessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import type { Kysely } from 'kysely';
 import { createLogger } from 'winston';
 import { createTurnsRouter, toContentDisposition } from '../../../src/apis/turns';
 import { TrueForgeAuthorizer } from '../../../src/auth/authorizer';
@@ -15,8 +16,11 @@ import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provi
 import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteSessionStore';
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
+import type { Database } from '../../../src/db/sqlite/types';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
+import type { SandboxIntegration } from '../../../src/sandbox/integration';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 
 /** Parsed rather than built literally, so config defaults match what the create route stores. */
 function agentSpec(): AgentSpec {
@@ -26,34 +30,50 @@ function agentSpec(): AgentSpec {
   });
 }
 
+function turnsRouter(input: {
+  db: Kysely<Database>;
+  sessions: Sessions;
+  sessionStore: SqliteSessionStore | InMemorySessionStore;
+  sandboxIntegration: SandboxIntegration | undefined;
+}) {
+  const { db, sessions, sessionStore, sandboxIntegration } = input;
+  const tokenStore = new SqliteOAuthTokenStore(db);
+  return createTurnsRouter({
+    sessions,
+    sessionStore,
+    activeTurns: new ActiveTurnRegistry(),
+    resolveModelProviderStore: () => new SqliteModelProviderStore(db),
+    resolveMcpServerStore: () =>
+      new McpServerWithAuthStore({
+        store: new SqliteMcpServerStore(db),
+        tokenStore,
+        clientName: 'test-client',
+      }),
+    resolveSkillStore: () => new SqliteSkillStore(db),
+    resolveAgentStore: () => new SqliteAgentStore(db),
+    eventSubscriptions: new EventSubscriptionRegistry(undefined),
+    resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+    sandboxIntegration,
+    logger: createLogger({ silent: true }),
+    resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+    authorizer: new TrueForgeAuthorizer(),
+  });
+}
+
 async function buildApp() {
   const db = createSqliteDb(':memory:');
   await migrateSqliteToLatest(db);
   const sessionStore = new SqliteSessionStore(db);
   const sessions = new Sessions({ sessionStore });
-  const tokenStore = new SqliteOAuthTokenStore(db);
   const app = new OpenAPIHono();
 
   app.route(
     '/',
-    createTurnsRouter({
+    turnsRouter({
+      db,
       sessions,
       sessionStore,
-      activeTurns: new ActiveTurnRegistry(),
-      resolveModelProviderStore: () => new SqliteModelProviderStore(db),
-      resolveMcpServerStore: () =>
-        new McpServerWithAuthStore({
-          store: new SqliteMcpServerStore(db),
-          tokenStore,
-          clientName: 'test-client',
-        }),
-      resolveSkillStore: () => new SqliteSkillStore(db),
-      resolveAgentStore: () => new SqliteAgentStore(db),
-      eventSubscriptions: new EventSubscriptionRegistry(undefined),
-      resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
-      logger: createLogger({ silent: true }),
-      resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-      authorizer: new TrueForgeAuthorizer(),
+      sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
     }),
   );
 
@@ -138,6 +158,49 @@ describe('GET /{session_id}/turns/{turn_id}/download-sandbox-file', () => {
     const response = await app.request(downloadUrl({ sessionId: session.session_id, path: '/workspace/report.pdf' }));
 
     expect(response.status).toBe(404);
+  });
+
+  it('returns 412 when a turn ran in a sandbox but the server has no sandbox integration', async () => {
+    // Every turn reports a sandbox, so the handler reaches the provider lookup.
+    class SandboxTurnSessionStore extends InMemorySessionStore {
+      override getTurn(input: { session_id: string; turn_id: string }): Promise<TurnRecord | undefined> {
+        return Promise.resolve({
+          turn_id: input.turn_id,
+          session_id: input.session_id,
+          first_turn_id: input.turn_id,
+          ancestor_ids: [],
+          previous_turn_id: null,
+          state: { status: 'running' },
+          input: [],
+          snapshot: { threads: {}, mcp_servers: null, sandbox_info: { sandbox_id: 'sbx-1' } },
+          created_at: new Date('2026-09-01T00:00:00.000Z'),
+          updated_at: new Date('2026-09-01T00:00:00.000Z'),
+          custom: null,
+        });
+      }
+    }
+    const db = createSqliteDb(':memory:');
+    await migrateSqliteToLatest(db);
+    const sessionStore = new SandboxTurnSessionStore();
+    const sessions = new Sessions({ sessionStore });
+    const session = await sessions.create({
+      tenant_id: 'default',
+      session_id: 'with-sandbox',
+      created_by_subject: {
+        subject_id: STANDALONE_REQUEST_CONTEXT.subject.id,
+        subject_type: STANDALONE_REQUEST_CONTEXT.subject.type,
+        subject_display_name: STANDALONE_REQUEST_CONTEXT.subject.display_name,
+      },
+      agent: { type: 'inline', spec: agentSpec() },
+      external_id: null,
+    });
+    const app = new OpenAPIHono();
+    app.route('/', turnsRouter({ db, sessions, sessionStore, sandboxIntegration: undefined }));
+
+    const response = await app.request(downloadUrl({ sessionId: session.session_id, path: '/workspace/report.pdf' }));
+
+    expect(response.status).toBe(412);
+    expect(await response.json()).toEqual({ error: { message: 'No sandbox provider configured' } });
   });
 });
 

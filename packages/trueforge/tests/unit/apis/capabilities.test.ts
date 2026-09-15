@@ -1,6 +1,3 @@
-// Sandbox capability is driven by the refreshed image status; stub it so tests never touch Daytona.
-jest.mock('../../../src/sandbox/providerUtils', () => ({ checkSnapshotStatus: jest.fn() }));
-
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import type { Configuration } from 'openid-client';
@@ -16,12 +13,25 @@ import type { OIDCConfig } from '../../../src/config';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
-import { setCachedLocalSandboxSupport } from '../../../src/sandbox/localRuntime';
-import { checkSnapshotStatus } from '../../../src/sandbox/providerUtils';
+import type { SandboxIntegration } from '../../../src/sandbox/integration';
+import type { LocalSandboxSupportResult } from '../../../src/sandbox/local/provider/LocalSandboxProvider';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import type { SandboxBuildStatus, SandboxStatus } from '../../../src/schemas/sandboxProvider';
 
-const mockStatus = checkSnapshotStatus as jest.Mock;
+// Sandbox capability is driven by the refreshed image status; stub it so tests never touch Daytona.
+const mockStatus = jest.fn();
 const silentLogger = createLogger({ silent: true });
+
+const LOCAL_SUPPORTED: LocalSandboxSupportResult = {
+  supported: true,
+  platform: 'darwin',
+  shell: '/bin/bash',
+  python: '/usr/bin/python3',
+};
+
+function stubIntegration(localSupport?: LocalSandboxSupportResult): SandboxIntegration {
+  return { ...createNodeSandboxIntegration({ localSupport }), checkSnapshotStatus: mockStatus };
+}
 
 const buildWithStatus = (status: SandboxBuildStatus): SandboxStatus => ({
   status,
@@ -62,14 +72,13 @@ describe('capabilities routers', () => {
   beforeEach(() => {
     mockStatus.mockReset();
     mockStatus.mockResolvedValue(undefined);
-    setCachedLocalSandboxSupport(undefined);
   });
 
-  afterEach(() => {
-    setCachedLocalSandboxSupport(undefined);
-  });
-
-  function makeRouter(authenticator: Authenticator = new StandaloneAuthenticator()): OpenAPIHono {
+  // Options object so an explicit `sandboxIntegration: undefined` is not replaced by the default.
+  function makeRouter(
+    options: { sandboxIntegration: SandboxIntegration | undefined } = { sandboxIntegration: stubIntegration() },
+    authenticator: Authenticator = new StandaloneAuthenticator(),
+  ): OpenAPIHono {
     const db = createSqliteDb(':memory:');
     return withAuth(
       createCapabilitiesRouter({
@@ -77,6 +86,7 @@ describe('capabilities routers', () => {
         withTransaction: callback => db.transaction().execute(callback),
         logger: silentLogger,
         resolveRequestContext,
+        sandboxIntegration: options.sandboxIntegration,
       }),
       authenticator,
     );
@@ -101,16 +111,29 @@ describe('capabilities routers', () => {
     });
   });
 
-  it('reports sandbox + skill enabled when local fallback is cached and no image status exists', async () => {
+  it('reports sandbox + skill disabled with a reason when the runtime has no sandbox integration', async () => {
+    disableOidcAuth();
+    const router = makeRouter({ sandboxIntegration: undefined });
+
+    const response = await router.request('/');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      data: {
+        sandbox: { enabled: false },
+        skill: {
+          enabled: false,
+          reason: 'Skills run in a sandbox, which this server does not support.',
+        },
+        settings: { enabled: true },
+      },
+    });
+    expect(mockStatus).not.toHaveBeenCalled();
+  });
+
+  it('reports sandbox + skill enabled when local fallback is supported and no image status exists', async () => {
     disableOidcAuth();
     mockStatus.mockResolvedValue(undefined);
-    setCachedLocalSandboxSupport({
-      supported: true,
-      platform: 'darwin',
-      shell: '/bin/bash',
-      python: '/usr/bin/python3',
-    });
-    const router = makeRouter();
+    const router = makeRouter({ sandboxIntegration: stubIntegration(LOCAL_SUPPORTED) });
 
     const response = await router.request('/');
     expect(response.status).toBe(200);
@@ -250,6 +273,7 @@ describe('capabilities routers', () => {
           withTransaction: callback => db.transaction().execute(callback),
           logger: silentLogger,
           resolveRequestContext,
+          sandboxIntegration: stubIntegration(),
         }),
         new OidcAuthenticator(),
       );

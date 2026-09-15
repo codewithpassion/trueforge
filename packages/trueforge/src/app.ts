@@ -44,15 +44,16 @@ import type { IMcpServerWithAuthStore } from './db/mcpServerStore';
 import type { IModelProviderStore } from './db/modelProviderStore';
 import type { ISandboxProviderStore } from './db/sandboxProviderStore';
 import type { IScheduleStore } from './db/scheduleStore';
+import type { SessionImport } from './db/sessionImport';
 import type { ISessionMetricsStore } from './db/sessionMetricsStore';
 import type { ISkillStore } from './db/skillStore';
 import type { WithTransaction } from './db/transaction';
-import { createClientCertificateMiddleware } from './http/tls';
 import type { IOAuthTokenStore } from './mcp/auth/types';
 import { PACKAGE_VERSION } from './packageVersion';
 import { OPENAPI_DOCUMENT_TAGS } from './routes/openapiTags';
 import type { ActiveTurnRegistry } from './runtime/activeTurns';
 import type { EventSubscriptionRegistry } from './runtime/event-subscription';
+import type { SandboxIntegration } from './sandbox/integration';
 import { InvalidCronError } from './schemas/schedule';
 import { zodErrorResponse, zodValidationHook } from './zodErrorResponse';
 
@@ -192,12 +193,18 @@ export interface ServerDeps<TTransaction> {
    * (`TRUEFOUNDRY_SANDBOX_*` + static SETTINGS JSON).
    */
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
+  /** Undefined when this runtime cannot run sandboxes; sandbox features then report unavailable. */
+  sandboxIntegration: SandboxIntegration | undefined;
+  /** Rejects requests without a verified client certificate; set only when mTLS is on. */
+  clientCertificateMiddleware: MiddlewareHandler | undefined;
   /** Per-request store: DB git skills, or TrueFoundry registry catalog in TrueFoundry mode. */
   resolveSkillStore: ResolveSkillStore<TTransaction>;
   withTransaction: WithTransaction<TTransaction>;
   tokenStore: IOAuthTokenStore<TTransaction>;
   scheduleStore: IScheduleStore<TTransaction>;
   sessionStore: ISessionStore;
+  /** Historical session backfill; undefined makes the import session routes fail with 500. */
+  sessionImport: SessionImport | undefined;
   sessionMetricsStore: ISessionMetricsStore;
   /** Persistence agent store (schedule runs resolve the bound agent without an HTTP caller). */
   agentStore: IAgentStore<TTransaction>;
@@ -235,6 +242,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
     resolveModelProviderStore: deps.resolveModelProviderStore,
     resolveMcpServerStore: deps.resolveMcpServerStore,
     resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+    sandboxIntegration: deps.sandboxIntegration,
     activeTurns: deps.activeTurns,
     turnSkillsResolverStore: deps.turnSkillsResolverStore,
   };
@@ -242,8 +250,8 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
   if (configuration.ACCESS_LOGS) {
     app.use('*', createAccessLogMiddleware(deps.logger));
   }
-  if (!configuration.STANDALONE && configuration.TRUEFORGE_MTLS_ENABLED) {
-    app.use('*', createClientCertificateMiddleware(deps.logger));
+  if (deps.clientCertificateMiddleware !== undefined) {
+    app.use('*', deps.clientCertificateMiddleware);
   }
   app.use('*', createRequestBodyLimitMiddleware(configuration.MAX_REQUEST_BODY_BYTES));
 
@@ -262,6 +270,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
     withAuth(
       createCapabilitiesRouter({
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+        sandboxIntegration: deps.sandboxIntegration,
         withTransaction: deps.withTransaction,
         logger: deps.logger,
         resolveRequestContext,
@@ -335,6 +344,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         resolveMcpServerStore: deps.resolveMcpServerStore,
         resolveSkillStore: deps.resolveSkillStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+        sandboxIntegration: deps.sandboxIntegration,
         withTransaction: deps.withTransaction,
         resolveRequestContext,
         authorizer: deps.authorizer,
@@ -368,6 +378,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         tokenStore: deps.tokenStore,
         resolveSkillStore: deps.resolveSkillStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+        sandboxIntegration: deps.sandboxIntegration,
         withTransaction: deps.withTransaction,
         logger: deps.logger,
         resolveRequestContext,
@@ -379,7 +390,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
     '/api/internal/import',
     withAuth(
       createAgentImportRouter({
-        sessionStore: deps.sessionStore,
+        sessionImport: deps.sessionImport,
         resolveImportAgentStore: deps.resolveImportAgentStore,
       }),
       truefoundryAdminMiddleware,
@@ -395,6 +406,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         resolveSkillStore: deps.resolveSkillStore,
         resolveAgentStore: deps.resolveAgentStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+        sandboxIntegration: deps.sandboxIntegration,
         resolveRequestContext,
         authorizer: deps.authorizer,
       }),
@@ -438,6 +450,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         resolveSkillStore: deps.resolveSkillStore,
         resolveAgentStore: deps.resolveAgentStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+        sandboxIntegration: deps.sandboxIntegration,
         redis: deps.redis,
         requestReplyRouter: deps.requestReplyRouter,
         resolveRequestContext,
@@ -460,6 +473,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         resolveAgentStore: deps.resolveAgentStore,
         eventSubscriptions: deps.eventSubscriptions,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+        sandboxIntegration: deps.sandboxIntegration,
         logger: deps.logger,
         resolveRequestContext,
         authorizer: deps.authorizer,

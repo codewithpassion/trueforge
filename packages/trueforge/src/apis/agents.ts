@@ -27,6 +27,7 @@ import {
   putAgentRoute,
 } from '../routes/agentRoutes';
 import { validateAgentSpec } from '../runtime/sessionResources';
+import type { SandboxIntegration } from '../sandbox/integration';
 import { type Agent, type CreateAgentRequest } from '../schemas/agent';
 import { agentIfAccessible, listAccessibleAgents } from './agentAccess';
 import { buildAgentCodeSnippets } from './agentCodeSnippets';
@@ -38,6 +39,7 @@ export interface AgentsRouterDeps<TTransaction> {
   resolveMcpServerStore: (c: Context) => IMcpServerStore<TTransaction>;
   resolveSkillStore: ResolveSkillStore<TTransaction>;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
+  sandboxIntegration: SandboxIntegration | undefined;
   withTransaction: WithTransaction<TTransaction>;
   resolveRequestContext: ResolveRequestContext;
   authorizer: Authorizer;
@@ -60,6 +62,7 @@ async function validateManifest<TTransaction>({
   mcpServerStore,
   skillStore,
   sandboxProviderStore,
+  sandboxIntegration,
   tenant_id,
 }: {
   spec: AgentSpec;
@@ -67,6 +70,7 @@ async function validateManifest<TTransaction>({
   mcpServerStore: IMcpServerStore<TTransaction>;
   skillStore: ISkillStore<TTransaction>;
   sandboxProviderStore: ISandboxProviderStore<TTransaction>;
+  sandboxIntegration: SandboxIntegration | undefined;
   tenant_id: string;
 }): Promise<AgentSpec> {
   await validateAgentSpec({
@@ -76,6 +80,7 @@ async function validateManifest<TTransaction>({
     mcpServerStore,
     skillStore,
     sandboxProviderStore,
+    sandboxIntegration,
   });
   return spec;
 }
@@ -112,6 +117,7 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
       mcpServerStore: deps.resolveMcpServerStore(c),
       skillStore: deps.resolveSkillStore(c),
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+      sandboxIntegration: deps.sandboxIntegration,
       tenant_id: requestContext.tenant_id,
     });
     try {
@@ -216,6 +222,7 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
       mcpServerStore: deps.resolveMcpServerStore(c),
       skillStore: deps.resolveSkillStore(c),
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+      sandboxIntegration: deps.sandboxIntegration,
       tenant_id: requestContext.tenant_id,
     });
     const record = await deps.resolveAgentStore(c).updateAgent({

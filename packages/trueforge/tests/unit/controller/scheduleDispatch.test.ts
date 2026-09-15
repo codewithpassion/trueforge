@@ -80,6 +80,7 @@ async function tickDispatch() {
     scheduleStore: store as never,
     logger: logger as never,
     withTransaction: async callback => callback({} as never),
+    executeRun: createHttpScheduleRunExecutor({ baseUrl: configuration.SERVER_URL, fetch: undefined }),
   });
   await loop.tick(new AbortController().signal);
   return { store, logger };
@@ -92,7 +93,7 @@ describe('schedule execution HTTP transport', () => {
 
   it('sends one API-key authenticated request with the run id', async () => {
     const request = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
-    const executeRun = createHttpScheduleRunExecutor();
+    const executeRun = createHttpScheduleRunExecutor({ baseUrl: configuration.SERVER_URL, fetch: undefined });
 
     await executeRun('run-1');
 

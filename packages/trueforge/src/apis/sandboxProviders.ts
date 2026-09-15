@@ -6,24 +6,25 @@ import type { ResolveRequestContext } from '../auth/identity';
 import type { ISandboxProviderStore, SandboxProviderRecord } from '../db/sandboxProviderStore';
 import type { WithTransaction } from '../db/transaction';
 import { getSandboxProviderRoute, putSandboxProviderRoute } from '../routes/sandboxProviderRoutes';
+import type { SandboxIntegration } from '../sandbox/integration';
 import {
-  checkSnapshotStatus,
-  isDaytonaAuthError,
-  isDaytonaPermissionError,
-  toDaytonaSandboxProvider,
   toSandboxStatus,
-} from '../sandbox/providerUtils';
-import type { SandboxProviderManifest, UpdateSandboxProviderRequest } from '../schemas/sandboxProvider';
+  type SandboxProviderManifest,
+  type UpdateSandboxProviderRequest,
+} from '../schemas/sandboxProvider';
 import { MissingStoredSecretError, resolveStoredSecretValue, toRedactedSecretValue } from '../utils/secretRedaction';
 
 /** Cap the Daytona register round-trip so a slow/unreachable provider can't hold the request (or DB txn) open. */
 const BUILD_REQUEST_TIMEOUT_MS = 3_000;
+
+const SANDBOX_UNSUPPORTED_MESSAGE = 'Sandbox providers are not supported by this server';
 
 export interface SandboxProvidersRouterDeps<TTransaction> {
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
   withTransaction: WithTransaction<TTransaction>;
   logger: Logger;
   resolveRequestContext: ResolveRequestContext;
+  sandboxIntegration: SandboxIntegration | undefined;
 }
 
 function redactSandboxProvider(manifest: SandboxProviderManifest): SandboxProviderManifest {
@@ -36,6 +37,10 @@ function redactSandboxProvider(manifest: SandboxProviderManifest): SandboxProvid
 /** Admin/settings sandbox provider surface (mounted at /api/v1/settings/sandbox-providers). */
 export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvidersRouterDeps<TTransaction>) {
   const getHandler: RouteHandler<typeof getSandboxProviderRoute> = async c => {
+    const integration = deps.sandboxIntegration;
+    if (integration === undefined) {
+      return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 404);
+    }
     const requestContext = deps.resolveRequestContext(c);
     const store = deps.resolveSandboxProviderStore(c);
     const record = await store.getSandboxProvider(requestContext.tenant_id);
@@ -43,7 +48,7 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
       return c.json({ error: { message: 'No sandbox provider configured' } }, 404);
     }
     // Refresh the persisted build status (and re-activate an idle snapshot) on every GET.
-    const status = await checkSnapshotStatus({
+    const status = await integration.checkSnapshotStatus({
       store,
       tenant_id: requestContext.tenant_id,
       logger: deps.logger,
@@ -61,6 +66,10 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
   };
 
   const putHandler: RouteHandler<typeof putSandboxProviderRoute> = async c => {
+    const integration = deps.sandboxIntegration;
+    if (integration === undefined) {
+      return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 422);
+    }
     const body: UpdateSandboxProviderRequest = c.req.valid('json');
     const requestContext = deps.resolveRequestContext(c);
     const store = deps.resolveSandboxProviderStore(c);
@@ -81,7 +90,7 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
         const resolved = resolveManifest(locked);
         // Pass persisted build_metadata so a settings re-save does not start a new snapshot for a
         // bumped SANDBOX_IMAGE_URI (upgrades are unsupported — first configure has no metadata).
-        const provider = toDaytonaSandboxProvider({
+        const provider = integration.createDaytonaProvider({
           manifest: resolved,
           tenant_id: requestContext.tenant_id,
           logger: deps.logger,
@@ -110,10 +119,10 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
       if (error instanceof MissingStoredSecretError) {
         return c.json({ error: { message: 'API key is required' } }, 400);
       }
-      if (isDaytonaAuthError(error)) {
+      if (integration.isDaytonaAuthError(error)) {
         return c.json({ error: { message: 'Daytona rejected the API key — check the credentials' } }, 422);
       }
-      if (isDaytonaPermissionError(error)) {
+      if (integration.isDaytonaPermissionError(error)) {
         return c.json(
           {
             error: {

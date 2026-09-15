@@ -6,8 +6,7 @@ import { hasAdminRole, type ResolveRequestContext } from '../auth/identity';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { WithTransaction } from '../db/transaction';
 import { getCapabilitiesRoute } from '../routes/capabilityRoutes';
-import { isLocalSandboxFallbackEnabled } from '../sandbox/localRuntime';
-import { checkSnapshotStatus } from '../sandbox/providerUtils';
+import type { SandboxIntegration } from '../sandbox/integration';
 import type { SandboxBuildStatus } from '../schemas/sandboxProvider';
 
 /**
@@ -26,15 +25,30 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
   withTransaction: WithTransaction<TTransaction>;
   logger: Logger;
   resolveRequestContext: ResolveRequestContext;
+  sandboxIntegration: SandboxIntegration | undefined;
 }) {
   const router = new OpenAPIHono();
   router.openapi(getCapabilitiesRoute, async c => {
     const requestContext = deps.resolveRequestContext(c);
+    const settingsEnabled = hasAdminRole(requestContext);
+    const integration = deps.sandboxIntegration;
+    if (integration === undefined) {
+      return c.json(
+        {
+          data: {
+            sandbox: { enabled: false },
+            skill: { enabled: false, reason: 'Skills run in a sandbox, which this server does not support.' },
+            settings: { enabled: settingsEnabled },
+          },
+        },
+        200,
+      );
+    }
     // Sandbox is usable only when a provider is configured AND its image build reports ready.
     // Refresh the persisted status (and re-activate an idle snapshot); fail closed (disabled) if it throws.
     let status: SandboxBuildStatus | undefined;
     try {
-      const refreshed = await checkSnapshotStatus({
+      const refreshed = await integration.checkSnapshotStatus({
         store: deps.resolveSandboxProviderStore(c),
         tenant_id: requestContext.tenant_id,
         logger: deps.logger,
@@ -43,8 +57,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
     } catch (error) {
       deps.logger.warn('Sandbox image status check failed; reporting sandbox disabled', extractErrorLogFields(error));
     }
-    const sandboxEnabled = status === 'ready' || (status === undefined && isLocalSandboxFallbackEnabled());
-    const settingsEnabled = hasAdminRole(requestContext);
+    const sandboxEnabled = status === 'ready' || (status === undefined && integration.isLocalFallbackEnabled());
     return c.json(
       {
         data: {

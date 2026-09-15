@@ -12,15 +12,12 @@ import {
 } from '@truefoundry/trueforge-core/core';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
-import { join } from 'node:path';
 import configuration from '../config';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { ISkillStore } from '../db/skillStore';
-import { LocalSandboxProvider } from '../sandbox/local/provider/LocalSandboxProvider';
-import { getCachedLocalSandboxSupport, isLocalSandboxFallbackEnabled } from '../sandbox/localRuntime';
-import { toSandboxProviderFromRecord } from '../sandbox/providerUtils';
+import type { SandboxIntegration } from '../sandbox/integration';
 import type { ReasoningEffort } from '../schemas/modelProvider';
 
 export interface McpConnection {
@@ -179,50 +176,6 @@ export async function getMcpConnection({
 }
 
 /**
- * Build a runtime SandboxProvider from the configured store row, or the
- * in-memory local fallback when standalone + the cached probe is supported.
- * Builds a fresh provider client per call (no network I/O).
- */
-/** Single path segment under the sandboxes parent (`_` when sessionId is missing or unsafe). */
-export function localSandboxSessionSegment(sessionId: string | undefined): string {
-  if (sessionId === undefined || sessionId.length === 0 || sessionId.includes('/') || sessionId.includes('..')) {
-    return '_';
-  }
-  return sessionId;
-}
-
-export async function resolveSandboxProvider({
-  tenant_id,
-  store,
-  logger,
-  sessionId,
-}: {
-  tenant_id: string;
-  store: ISandboxProviderStore;
-  logger: Logger;
-  sessionId: string;
-}): Promise<SandboxProvider | undefined> {
-  const record = await store.getSandboxProvider(tenant_id);
-  if (record !== undefined) {
-    return toSandboxProviderFromRecord({ record, tenant_id, logger });
-  }
-  if (!configuration.STANDALONE) {
-    return undefined;
-  }
-  const support = getCachedLocalSandboxSupport();
-  if (support?.supported !== true) {
-    return undefined;
-  }
-  return new LocalSandboxProvider({
-    sandboxRootPathParent: join(configuration.LOCAL_SANDBOX_ROOT_PARENT, localSandboxSessionSegment(sessionId)),
-    codeModeSocketParentPath: configuration.CODE_MODE_SOCKET_PARENT,
-    support,
-    fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
-    logger,
-  });
-}
-
-/**
  * Builds a Sandbox for one turn from a resolved provider and skill mounts.
  */
 export function buildTurnSandbox(input: {
@@ -259,6 +212,7 @@ export async function validateAgentSpec({
   mcpServerStore,
   skillStore,
   sandboxProviderStore,
+  sandboxIntegration,
 }: {
   spec: AgentSpec;
   tenant_id: string;
@@ -266,6 +220,7 @@ export async function validateAgentSpec({
   mcpServerStore: IMcpServerStore;
   skillStore: ISkillStore;
   sandboxProviderStore: ISandboxProviderStore;
+  sandboxIntegration: SandboxIntegration | undefined;
 }): Promise<void> {
   const resolved = await getModelDetails({
     tenant_id,
@@ -311,8 +266,12 @@ export async function validateAgentSpec({
   const wantsSandbox = spec.config.sandbox.enabled;
   const hasSkills = requestedSkills.length > 0;
   if (wantsSandbox || hasSkills) {
-    const record = await sandboxProviderStore.getSandboxProvider(tenant_id);
-    if (record === undefined && !isLocalSandboxFallbackEnabled()) {
+    // Without an integration a stored record is unusable, so it does not count as configured.
+    const configured =
+      sandboxIntegration !== undefined &&
+      ((await sandboxProviderStore.getSandboxProvider(tenant_id)) !== undefined ||
+        sandboxIntegration.isLocalFallbackEnabled());
+    if (!configured) {
       throw new HTTPException(422, {
         message: hasSkills
           ? 'skills require a sandbox provider — configure via PUT /settings/sandbox-providers'

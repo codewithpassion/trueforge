@@ -4,6 +4,33 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 3 — Phase 0 results and Phase 1b: sandbox, TLS, and session-import seams (2026-09-15)
+
+**Goal:** Close the Phase 0 gates, then inject the sandbox, client-TLS and session-import dependencies so `app.ts` no longer reaches Node-only modules through them.
+
+**What we did:**
+
+- Phase 0 spike (scratch only). Gate 1: `process.env` is populated from vars. Gate 2: D1 batch semantics confirmed locally. A plain guard reports `[0,1]` changes and the insert persists, an `EXISTS` chain reports `[0,0,0]`, a statement error rolls back the batch, and `BEGIN` is rejected. `--remote` was not run because there was no account login. Gate 3: workspace packages only resolve with `WRANGLER_BUILD_CONDITIONS=trueforge-dev,workerd,worker,browser` (wrangler has no config key for it). The stubbed bundle is 9.3 MiB and starts in 130 ms, with about 2.9 MB of sandbox-only code, 1.1 MB of `undici` and 0.25 MB of `pg`.
+- The spike found load-time crashes that `wrangler deploy --dry-run` misses: `fileURLToPath(import.meta.url)` in `config.ts`, `createRequire(import.meta.url).resolve` in `sandbox/local/core/hostRun.ts`, and `readFileSync(package.json)` in `packageVersion.ts`. It also added plan items: `apis/agentImport.ts` (`pg`, `undici`), capabilities/sandboxProviders importing `providerUtils`, `scheduleDispatch` reaching `http`/`tls` through `apis/schedules`, `packageVersion.ts`, and the core barrel.
+- Plan correction: the `createTurn` contract allows concurrent forks from a finished tip (storeContractSuite "concurrent createTurn forking the same tip") and rejects only a running previous turn. The plan wrongly asked for exactly one winner, and the Phase 2a agent caught it. New rule: statement 1 is `INSERT INTO turn ... SELECT` guarded on the previous turn not running, and later statements chain on `EXISTS(new turn)`. `append_id` stays AUTOINCREMENT, and context order comes from `ROW_NUMBER() OVER (ORDER BY append_id)` (window functions verified on local D1).
+- Phase 1b: added a `SandboxIntegration` port (`sandbox/integration.ts`) and its Node implementation (`sandbox/nodeSandboxIntegration.ts`), built in `main.ts` after the boot probe and passed through `ServerDeps` and the routers. Deleted the `localRuntime.ts` module cache. With no integration, capabilities report sandbox/skill disabled, sandbox-enabled turns and agents return 422, settings GET returns 404 and PUT 422, and turn file download returns 412. OpenAPI is unchanged because route handler types only allow declared statuses.
+- `clientCertificateMiddleware` is now injected. `createHttpScheduleRunExecutor({ baseUrl, fetch })` takes a TLS fetch built in `controller.ts`. A `SessionImport` port (`db/sessionImport.ts`, owns `SessionImportValidationError`, implemented by `PostgresSessionStore`) replaces the `instanceof PostgresSessionStore` check in `agentImport`. Assume-user header helpers moved to `truefoundry/assumeUserHeaders.ts`.
+- Added an ESLint block for `src/workers/**` that bans Node-only modules, value imports from core barrels, and `db/postgres/**` and `truefoundry/**` paths. The `app.ts` esbuild graph went from 108 to 93 files. Node is now reached only through `config.ts`, `packageVersion.ts` and the core barrel, which later slices handle.
+- The Opus adversarial review found no blockers and checked Node behavior parity step by step. Should-fix items applied: `SessionImport` returns the existing `z.infer` `ImportSessionResult` (plus a new unnamed `ImportSessionsCheckpointSchema` so OpenAPI stays unchanged, confirmed by regenerating it), ESLint also bans bare builtin names, barrels use `@typescript-eslint/no-restricted-imports` with `allowTypeImports`, a 412 file-download test is added, internal Node-only paths are banned, and optional `ServerDeps` fields are required `T | undefined`. Final checks: typecheck green, `test:trueforge` 543 passed, `test:trueforge-core` 439 passed, eslint 0 errors.
+- Checks at the end of round 2: typecheck green, `test:trueforge` 542 passed, `test:trueforge-core` 439 passed.
+
+**Lessons learned:**
+
+- A successful `wrangler deploy --dry-run` does not mean the Worker boots. Run `wrangler dev` plus `curl /healthz`, and `wrangler check startup`.
+- The agent worktree under `.claude/worktrees` makes repo-wide `lint:ci` and `format:check` fail. Verify with `--ignore-pattern '.claude/**'` and add `.claude/` to `.git/info/exclude`.
+- ESLint `no-restricted-imports` paths are exact strings, so `fs` and `node:fs` both need listing. The base rule also blocks type-only imports.
+- A hand-written DTO next to an existing `z.infer` alias violates AGENTS.md even when the shapes match.
+
+**Avoid next time:**
+
+- Don't specify store concurrency semantics in a plan without reading the contract suite first.
+- Don't send agents scope additions after they finish. Send them before the agent wraps up, or bundle them into the next round.
+
 ## Cycle 2 — Phase 1a: portable Logger type and sandbox guidance leaf (2026-09-15)
 
 **Goal:** Remove winston and the sandbox module graph from core's type-level and import-level dependencies so core code can bundle for Workers.

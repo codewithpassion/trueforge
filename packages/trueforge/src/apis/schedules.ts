@@ -52,6 +52,7 @@ import {
 import type { ActiveTurnRegistry } from '../runtime/activeTurns';
 import { minIntervalSeconds, nextTriggerAfter } from '../runtime/cron';
 import type { EventSubscriptionRegistry } from '../runtime/event-subscription';
+import type { SandboxIntegration } from '../sandbox/integration';
 import {
   InvalidCronError,
   SCHEDULE_MIN_INTERVAL_SECONDS,
@@ -72,6 +73,7 @@ export interface ScheduleTurnExecutionDeps<TTransaction> {
   resolveModelProviderStore: (c: Context, runAsAgent?: AgentRecord) => IModelProviderStore<TTransaction>;
   resolveMcpServerStore: (c: Context, runAsAgent?: AgentRecord) => IMcpServerWithAuthStore<TTransaction>;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
+  sandboxIntegration: SandboxIntegration | undefined;
   /** Persistence agent store (schedule agent binding is not caller-scoped). */
   agentStore: IAgentStore<TTransaction>;
   turnSkillsResolverStore: Pick<ISkillStore, 'resolveTurnSkills'>;
@@ -115,6 +117,7 @@ export async function startScheduleRunOnRequest<TTransaction>(params: {
       modelProviderStore: deps.resolveModelProviderStore(c, prepared.agent),
       mcpServerStore: deps.resolveMcpServerStore(c, prepared.agent),
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+      sandboxIntegration: deps.sandboxIntegration,
       skillStore: deps.turnSkillsResolverStore,
       logger: deps.logger,
     },

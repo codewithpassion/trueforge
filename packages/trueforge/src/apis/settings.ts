@@ -12,6 +12,7 @@ import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { WithTransaction } from '../db/transaction';
 import type { IOAuthTokenStore } from '../mcp/auth/types';
+import type { SandboxIntegration } from '../sandbox/integration';
 import { createSettingsMcpServersRouter } from './mcpServers';
 import { createModelProvidersRouter } from './modelProviders';
 import { createSandboxProvidersRouter } from './sandboxProviders';
@@ -23,6 +24,7 @@ export interface SettingsRouterDeps<TTransaction> {
   tokenStore: IOAuthTokenStore<TTransaction>;
   resolveSkillStore: ResolveSkillStore<TTransaction>;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
+  sandboxIntegration: SandboxIntegration | undefined;
   withTransaction: WithTransaction<TTransaction>;
   logger: Logger;
   resolveRequestContext: ResolveRequestContext;
@@ -60,6 +62,7 @@ export function createSettingsRouter<TTransaction>(deps: SettingsRouterDeps<TTra
     '/sandbox-providers',
     createSandboxProvidersRouter({
       resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+      sandboxIntegration: deps.sandboxIntegration,
       withTransaction: deps.withTransaction,
       logger: deps.logger,
       resolveRequestContext: deps.resolveRequestContext,

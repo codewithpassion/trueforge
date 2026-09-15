@@ -17,6 +17,7 @@ import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkill
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription/index.js';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 
 async function postTurnRejectingWith(error: AgentHarnessError): Promise<Response> {
   const db = createSqliteDb(':memory:');
@@ -79,6 +80,7 @@ async function postTurnRejectingWith(error: AgentHarnessError): Promise<Response
       resolveAgentStore: () => new SqliteAgentStore(db),
       eventSubscriptions: new EventSubscriptionRegistry(undefined),
       resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+      sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
       logger: createLogger({ silent: true }),
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
       authorizer: new TrueForgeAuthorizer(),

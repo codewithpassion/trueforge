@@ -19,6 +19,7 @@ import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkill
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription/index.js';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import { ListSessionsResponseSchema } from '../../../src/schemas/session';
 
 describe('public CRUD after session deletion', () => {
@@ -51,6 +52,7 @@ describe('public CRUD after session deletion', () => {
         resolveSkillStore: () => skillStore,
         resolveAgentStore: () => agentStore,
         resolveSandboxProviderStore: () => sandboxProviderStore,
+        sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
         redis: createClient(),
         requestReplyRouter: new RequestReplyRouter(),
         resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
@@ -70,6 +72,7 @@ describe('public CRUD after session deletion', () => {
         resolveAgentStore: () => agentStore,
         eventSubscriptions: new EventSubscriptionRegistry(undefined),
         resolveSandboxProviderStore: () => sandboxProviderStore,
+        sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
         logger: createLogger({ silent: true }),
         resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
         authorizer: new TrueForgeAuthorizer(),
