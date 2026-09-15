@@ -3,6 +3,7 @@ import { sql, type Kysely } from 'kysely';
 
 import { D1AtomicRunner } from '../../../src/db/d1/atomic';
 import {
+  assertStatementFitsD1,
   createD1Db,
   D1_MAX_VALUE_BYTES,
   D1ValueTooLargeError,
@@ -54,6 +55,34 @@ function stubQueryable(metas: readonly { changes?: unknown; last_row_id?: unknow
     batch: statements => Promise.resolve(statements.map((_, index) => ({ results: [], meta: metas[index] ?? {} }))),
   };
 }
+
+describe('assertStatementFitsD1', () => {
+  it('passes values whose UTF-16 upper bound is over the limit but whose UTF-8 size is not', () => {
+    const third = 'a'.repeat(D1_MAX_VALUE_BYTES / 2);
+    expect(() => {
+      assertStatementFitsD1([third, 42, null]);
+    }).not.toThrow();
+  });
+
+  it('rejects one value over the limit as a value', () => {
+    expect(() => {
+      assertStatementFitsD1([new Uint8Array(D1_MAX_VALUE_BYTES + 1)]);
+    }).toThrow(expect.objectContaining({ scope: 'value', byteLength: D1_MAX_VALUE_BYTES + 1 }));
+  });
+
+  it('rejects values that fit alone but not together as a statement', () => {
+    const almostHalf = 'é'.repeat(D1_MAX_VALUE_BYTES / 4);
+    expect(() => {
+      assertStatementFitsD1([almostHalf, almostHalf, new Uint8Array(1), 7]);
+    }).toThrow(expect.objectContaining({ scope: 'statement', byteLength: D1_MAX_VALUE_BYTES + 1 + 8 }));
+  });
+
+  it('accepts values that sum to exactly the limit', () => {
+    expect(() => {
+      assertStatementFitsD1(['a'.repeat(D1_MAX_VALUE_BYTES - 8), 1]);
+    }).not.toThrow();
+  });
+});
 
 describe('D1 value size guard and statement counter', () => {
   function recordingQueryable(): { queryable: D1Queryable; sent: string[] } {
@@ -112,6 +141,19 @@ describe('D1 value size guard and statement counter', () => {
 
     await expect(runner.batchWrite({ executor: db, queries })).rejects.toBeInstanceOf(D1ValueTooLargeError);
     expect(batched).toBe(0);
+  });
+
+  it('rejects a statement whose bound values together exceed the row limit before sending it', async () => {
+    const { queryable, sent } = recordingQueryable();
+    const db = createD1Db({ queryable });
+    const half = 'a'.repeat(D1_MAX_VALUE_BYTES / 2);
+
+    await expect(sql`INSERT INTO parent (id, doc) VALUES (${half}, ${`${half}b`})`.execute(db)).rejects.toMatchObject({
+      name: 'D1ValueTooLargeError',
+      scope: 'statement',
+      byteLength: D1_MAX_VALUE_BYTES + 1,
+    });
+    expect(sent).toEqual([]);
   });
 
   it('counts single statements and every member of a batch', async () => {

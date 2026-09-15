@@ -50,33 +50,67 @@ export class D1WriteOutcomeUnknownError extends Error {
 export const D1_MAX_VALUE_BYTES = 2_000_000;
 
 /**
- * A bound value is over D1's per-value limit. Thrown before the statement is sent, so callers get a
- * named error instead of D1's raw rejection (local D1 does not enforce the limit at all).
+ * A statement is over D1's size limit: one bound value, or all bound values together (a row). Thrown
+ * before the statement is sent, so callers get a named error instead of D1's raw rejection (local D1
+ * does not enforce the limit at all).
  */
 export class D1ValueTooLargeError extends Error {
-  constructor(readonly byteLength: number) {
+  readonly byteLength: number;
+  readonly scope: 'value' | 'statement';
+
+  constructor({ byteLength, scope }: { byteLength: number; scope: 'value' | 'statement' }) {
     super(
-      `A ${String(byteLength)}-byte value exceeds the ${String(D1_MAX_VALUE_BYTES)}-byte limit D1 applies to one stored value`,
+      scope === 'value'
+        ? `A ${String(byteLength)}-byte value exceeds the ${String(D1_MAX_VALUE_BYTES)}-byte limit D1 applies to one stored value`
+        : `Bound values totalling ${String(byteLength)} bytes exceed the ${String(D1_MAX_VALUE_BYTES)}-byte limit D1 applies to one row`,
     );
     this.name = 'D1ValueTooLargeError';
+    this.byteLength = byteLength;
+    this.scope = scope;
   }
 }
 
 /** Receives how many statements were sent to D1, for per-invocation query budgeting. */
 export type D1StatementCounter = (statements: number) => void;
 
-function assertValuesFitD1(parameters: readonly unknown[]): void {
+const utf8 = new TextEncoder();
+
+/** Numbers, booleans, and null are fixed-size; 8 bytes covers the widest. */
+const SCALAR_BYTES = 8;
+
+function boundByteLength(value: unknown, { exact }: { exact: boolean }): number {
+  if (typeof value === 'string') {
+    // UTF-8 needs at most 3 bytes per UTF-16 unit, so the upper bound skips the encode.
+    return exact ? utf8.encode(value).byteLength : value.length * 3;
+  }
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    return value.byteLength;
+  }
+  return SCALAR_BYTES;
+}
+
+/**
+ * Rejects a statement D1 would refuse for size. The sum of all bound values is an upper bound for the
+ * row an INSERT writes, so it errs toward rejecting a statement whose values span several rows.
+ */
+export function assertStatementFitsD1(parameters: readonly unknown[]): void {
+  let upperBound = 0;
   for (const value of parameters) {
-    let byteLength = 0;
-    if (typeof value === 'string') {
-      // UTF-8 needs at most 3 bytes per UTF-16 unit, so short strings skip the encode.
-      byteLength = value.length * 3 > D1_MAX_VALUE_BYTES ? new TextEncoder().encode(value).byteLength : 0;
-    } else if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-      byteLength = value.byteLength;
-    }
+    upperBound += boundByteLength(value, { exact: false });
+  }
+  if (upperBound <= D1_MAX_VALUE_BYTES) {
+    return;
+  }
+  let total = 0;
+  for (const value of parameters) {
+    const byteLength = boundByteLength(value, { exact: true });
     if (byteLength > D1_MAX_VALUE_BYTES) {
-      throw new D1ValueTooLargeError(byteLength);
+      throw new D1ValueTooLargeError({ byteLength, scope: 'value' });
     }
+    total += byteLength;
+  }
+  if (total > D1_MAX_VALUE_BYTES) {
+    throw new D1ValueTooLargeError({ byteLength: total, scope: 'statement' });
   }
 }
 
@@ -105,7 +139,7 @@ export class D1Connection implements DatabaseConnection {
   }
 
   async executeQuery<R>(query: CompiledQuery): Promise<QueryResult<R>> {
-    assertValuesFitD1(query.parameters);
+    assertStatementFitsD1(query.parameters);
     this.#onStatements?.(1);
     const { results, meta } = await this.#target
       .prepare(query.sql)
@@ -131,7 +165,7 @@ export class D1Connection implements DatabaseConnection {
       return [];
     }
     for (const query of queries) {
-      assertValuesFitD1(query.parameters);
+      assertStatementFitsD1(query.parameters);
     }
     // D1 counts every statement in a batch against the invocation's query limit.
     this.#onStatements?.(queries.length);
