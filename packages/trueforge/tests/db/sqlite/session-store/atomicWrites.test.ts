@@ -1,5 +1,6 @@
 import { MAIN_THREAD_ID } from '@truefoundry/trueforge-core/agent-session/models/TurnRecord';
 import { EventType } from '@truefoundry/trueforge-core/agent-session/schemas/events';
+import type { AddThreadsInput } from '@truefoundry/trueforge-core/agent-session/store/ISessionStore';
 import {
   PreviousTurnRunningError,
   SessionNotFoundError,
@@ -326,6 +327,116 @@ describe('SqliteSessionStore conditional-chain writes', () => {
       expect(statement.parameters.length).toBeLessThanOrEqual(100);
       expect(statement.sql.length).toBeLessThan(100_000);
     }
+  });
+
+  // 600 KB each: two rows never share a 1 MiB chunk, so N rows give N statements.
+  function bigText(prefix: string): string {
+    return `${prefix}:${'é'.repeat(300_000)}`;
+  }
+
+  function insertStatementsSince({ start, table }: { start: number; table: string }): number {
+    return runner.statements.slice(start).filter(statement => statement.sql.startsWith(`insert into "${table}" (`))
+      .length;
+  }
+
+  const childIds = ['child-0', 'child-1', 'child-2'];
+
+  function largeThreads(): AddThreadsInput['threads'] {
+    return childIds.map(thread_id => ({
+      thread_id,
+      context: largeMessages(`${thread_id}-`, 2),
+      current_context_usage: getEmptyCurrentContextUsage(),
+      parent: { thread_id: MAIN_THREAD_ID, tool_call_id: thread_id },
+      agent_info: { type: 'dynamic', name: thread_id, input: bigText(thread_id) },
+      completion: null,
+      capability_state: { probe: bigText(thread_id) },
+    }));
+  }
+
+  async function threadContextPositions(threadId: string): Promise<number[]> {
+    const result = await sql<{ pos: number }>`
+      SELECT pos FROM turn_thread_context WHERE turn_id = 'turn-1' AND thread_id = ${threadId} ORDER BY pos
+    `.execute(env.db);
+    return result.rows.map(row => row.pos);
+  }
+
+  it('addThreads with every row source over the cap writes all chunks in order', async () => {
+    await store.createTurn(makeCreateTurnInput({ sessionId: SESSION, turnId: 'turn-1' }));
+    const threads = largeThreads();
+    const start = runner.statements.length;
+
+    await store.addThreads({ session_id: SESSION, turn_id: 'turn-1', threads });
+
+    expect(insertStatementsSince({ start, table: 'turn_thread' })).toBe(3);
+    expect(insertStatementsSince({ start, table: 'thread_context_log' })).toBe(6);
+    expect(insertStatementsSince({ start, table: 'turn_thread_context' })).toBe(6);
+    expect(insertStatementsSince({ start, table: 'thread_capability_state' })).toBe(3);
+
+    const turn = await store.getTurn({ session_id: SESSION, turn_id: 'turn-1' });
+    for (const thread of threads) {
+      const snapshot = turn?.snapshot.threads[thread.thread_id];
+      expect(contents(snapshot?.context ?? [])).toEqual(contents(thread.context));
+      expect(snapshot?.agent_info).toEqual(thread.agent_info);
+      expect(snapshot?.capability_state).toEqual(thread.capability_state);
+      expect(await threadContextPositions(thread.thread_id)).toEqual([1, 2]);
+    }
+  });
+
+  it('addThreads over the cap on a turn that stopped running: TurnNotRunningError and no rows', async () => {
+    await store.createTurn(makeCreateTurnInput({ sessionId: SESSION, turnId: 'turn-1' }));
+    const before = await rowCounts('turn-1');
+    runner.beforeNextBatch(async executor => {
+      await sql`UPDATE turn SET state = jsonb_set(state, '$.status', 'error') WHERE turn_id = 'turn-1'`.execute(
+        executor,
+      );
+    });
+    const start = runner.statements.length;
+
+    await expect(
+      store.addThreads({ session_id: SESSION, turn_id: 'turn-1', threads: largeThreads() }),
+    ).rejects.toBeInstanceOf(TurnNotRunningError);
+
+    expect(insertStatementsSince({ start, table: 'turn_thread' })).toBe(3);
+    expect(await rowCounts('turn-1')).toEqual(before);
+  });
+
+  function largeEvents() {
+    return Array.from({ length: 3 }, (_, i) => ({ ...makeModelMessageEvent(), content: bigText(`e${String(i)}`) }));
+  }
+
+  async function storedEventIds(): Promise<string[]> {
+    const result = await sql<{ event_id: string }>`
+      SELECT event_id FROM session_event WHERE turn_id = 'turn-1' ORDER BY rowid
+    `.execute(env.db);
+    return result.rows.map(row => row.event_id);
+  }
+
+  it('appendToEvents over the cap writes one chunk per event in input order', async () => {
+    await store.createTurn(makeCreateTurnInput({ sessionId: SESSION, turnId: 'turn-1' }));
+    const events = largeEvents();
+    const start = runner.statements.length;
+
+    await store.appendToEvents({ session_id: SESSION, turn_id: 'turn-1', events });
+
+    expect(insertStatementsSince({ start, table: 'session_event' })).toBe(3);
+    expect(await storedEventIds()).toEqual(events.map(event => event.id));
+  });
+
+  it('appendToEvents over the cap on a turn that stopped running: TurnNotRunningError and no rows', async () => {
+    await store.createTurn(makeCreateTurnInput({ sessionId: SESSION, turnId: 'turn-1' }));
+    runner.beforeNextBatch(async executor => {
+      await sql`UPDATE turn SET state = jsonb_set(state, '$.status', 'error') WHERE turn_id = 'turn-1'`.execute(
+        executor,
+      );
+    });
+    const start = runner.statements.length;
+
+    await expect(
+      store.appendToEvents({ session_id: SESSION, turn_id: 'turn-1', events: largeEvents() }),
+    ).rejects.toBeInstanceOf(TurnNotRunningError);
+
+    expect(insertStatementsSince({ start, table: 'session_event' })).toBe(3);
+    expect(await storedEventIds()).toEqual([]);
   });
 });
 

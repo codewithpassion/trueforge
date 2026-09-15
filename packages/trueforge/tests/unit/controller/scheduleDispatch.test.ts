@@ -8,7 +8,7 @@ import {
   ScheduleRunNotFoundError,
   startScheduleRun,
 } from '../../../src/controller/scheduleDispatch';
-import type { ScheduleDispatchItem } from '../../../src/db/scheduleStore';
+import { ScheduleConcurrentUpdateError, type ScheduleDispatchItem } from '../../../src/db/scheduleStore';
 import { ScheduleManifestSchema } from '../../../src/schemas/schedule';
 
 describe('scheduleRunFailureReason', () => {
@@ -71,9 +71,10 @@ function fakeStore(dispatchItem: ScheduleDispatchItem) {
   };
 }
 
-async function tickDispatch() {
-  const dispatchItem = item();
-  const store = fakeStore(dispatchItem);
+async function tickDispatch({
+  store = fakeStore(item()),
+  signal = new AbortController().signal,
+}: { store?: ReturnType<typeof fakeStore>; signal?: AbortSignal } = {}) {
   const logger = fakeLogger();
   const loop = scheduleDispatchLoop({
     scheduleStore: store as never,
@@ -81,7 +82,7 @@ async function tickDispatch() {
     withTransaction: async callback => callback({} as never),
     executeRun: createHttpScheduleRunExecutor({ baseUrl: configuration.SERVER_URL, fetch: undefined }),
   });
-  await loop.tick(new AbortController().signal);
+  await loop.tick(signal);
   return { store, logger };
 }
 
@@ -128,6 +129,35 @@ describe('scheduleDispatchLoop', () => {
 
     expect(logger.error).toHaveBeenCalledWith(
       'Failed to hand off triggered run',
+      expect.objectContaining({ run_id: 'run-1' }),
+    );
+  });
+
+  it('retries a finish that lost to a concurrent schedule write', async () => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    const store = fakeStore(item());
+    store.finishRun.mockRejectedValueOnce(new ScheduleConcurrentUpdateError('sched-1'));
+
+    const { logger } = await tickDispatch({ store });
+
+    expect(store.finishRun).toHaveBeenCalledTimes(2);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('stops retrying a contended finish once aborted', async () => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    const controller = new AbortController();
+    const store = fakeStore(item());
+    store.finishRun.mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new ScheduleConcurrentUpdateError('sched-1'));
+    });
+
+    const { logger } = await tickDispatch({ store, signal: controller.signal });
+
+    expect(store.finishRun).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Failed to process scheduled run',
       expect.objectContaining({ run_id: 'run-1' }),
     );
   });

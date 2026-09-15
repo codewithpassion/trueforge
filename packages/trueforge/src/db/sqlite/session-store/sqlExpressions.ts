@@ -27,6 +27,7 @@ const utf8 = new TextEncoder();
 /**
  * Splits rows so each `JSON.stringify(chunk)` stays within `maxBytes`, preserving order.
  * A row larger than the cap is its own chunk; it is never split.
+ * Known limit: a single row over D1's 2,000,000-byte value cap cannot be bound on D1.
  */
 export function chunkJsonRows<T>(rows: readonly T[], maxBytes: number = MAX_BOUND_JSON_BYTES): T[][] {
   const chunks: T[][] = [];

@@ -180,10 +180,12 @@ async function finishScheduledRun<TTransaction>(params: {
   status: ScheduleRunStatus;
   reason?: string | null;
   withTransaction: WithTransaction<TTransaction>;
+  signal: AbortSignal | undefined;
 }): Promise<void> {
-  const { store, withTransaction, run, status, reason, now } = params;
+  const { store, withTransaction, run, status, reason, now, signal } = params;
   // The run was already handed off, so a concurrent schedule edit must not fail the finish:
-  // re-read and retry. Each loss means another write committed, so the loop converges.
+  // re-read and retry after a jittered pause. Each loss means another write committed, so the
+  // loop converges. Abort stops retrying; the next tick sees the run again.
   for (;;) {
     try {
       await withTransaction(async txn => {
@@ -201,10 +203,11 @@ async function finishScheduledRun<TTransaction>(params: {
       });
       return;
     } catch (error) {
-      if (!(error instanceof ScheduleConcurrentUpdateError)) {
+      if (!(error instanceof ScheduleConcurrentUpdateError) || signal?.aborted === true) {
         throw error;
       }
     }
+    await new Promise(resolve => setTimeout(resolve, 10 + Math.random() * 40));
   }
 }
 
@@ -269,7 +272,7 @@ export async function dispatchScheduledRuns<TTransaction>(params: {
   onTriggered: (item: ScheduleDispatchItem) => void | Promise<void>;
   logger: Logger;
   withTransaction: WithTransaction<TTransaction>;
-  /** When aborted, stop before the next run; the current run still finishes. */
+  /** When aborted, stop before the next run and stop retrying a contended finish. */
   signal?: AbortSignal;
 }): Promise<{ dispatched: number; failed: number }> {
   const { store, withTransaction, onTriggered, logger, signal } = params;
@@ -312,6 +315,7 @@ export async function dispatchScheduledRuns<TTransaction>(params: {
           status: 'failed',
           reason: scheduleRunFailureReason(error),
           withTransaction,
+          signal,
         });
         failed += 1;
         continue;
@@ -323,6 +327,7 @@ export async function dispatchScheduledRuns<TTransaction>(params: {
         now,
         status: 'triggered',
         withTransaction,
+        signal,
       });
       dispatched += 1;
     } catch (error) {

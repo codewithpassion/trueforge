@@ -130,8 +130,10 @@ function scheduleAt(schedule: { id: string; updated_at: string }): RawBuilder<bo
 
 /**
  * Chain predicate after an optimistic schedule UPDATE. Two writers that read the same row can
- * pick the same `updated_at`, so the marker also carries the content written; a loser only
- * matches when the winner wrote identical content, which leaves the same pending run.
+ * pick the same `updated_at`, so the marker also carries the content written. A loser that lands
+ * in the same millisecond with identical name, status, and manifest still matches: its DELETE and
+ * INSERT replace the pending run with an equivalent one scheduled from the loser's own `runFrom`
+ * (which can cross a cron boundary), and the loser still gets 409.
  */
 function scheduleWritten(schedule: {
   id: string;
