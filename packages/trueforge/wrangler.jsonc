@@ -2,14 +2,16 @@
 // (docs/deploy/cloudflare.mdx); run `pnpm workers:types` after changing vars or bindings.
 {
   "name": "trueforge",
+  "account_id": "a12823016aa16d0a8dd2678b258bd751",
   "main": "src/workers/index.ts",
+  "routes": [{ "pattern": "trueforge.rockyshoreslabs.io", "custom_domain": true }],
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "trueforge",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "trueforge-rockyshoreslabs",
+      "database_id": "e6f6c044-e2fa-41ff-ba9f-ec45d6a5bbf5",
       "migrations_dir": "migrations/d1",
     },
   ],
@@ -36,13 +38,17 @@
   },
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },
-  // OIDC values are placeholders. Add PUBLIC_BASE_URL (an origin, no path) per deployment; with no
-  // placeholder, a missing value fails startup instead of sending OIDC callbacks to a foreign domain.
+  // Deployment values for trueforge.rockyshoreslabs.io. PUBLIC_BASE_URL must be an origin with no path.
   // Secrets such as OIDC_CLIENT_SECRET go through `wrangler secret put`, or packages/trueforge/.env
   // locally. Keep *_CATALOG_PATH unset.
   "vars": {
     "TRUEFORGE_RUNTIME": "workers",
-    "OIDC_ISSUER_URL": "https://issuer.example.com/",
-    "OIDC_CLIENT_ID": "trueforge-workers-local",
+    "OIDC_ISSUER_URL": "https://inviting-ray-7546.clerk.accounts.dev",
+    "OIDC_CLIENT_ID": "w7xxkUI0NdWF8GP8",
+    "PUBLIC_BASE_URL": "https://trueforge.rockyshoreslabs.io",
+    // Clerk ID tokens carry no groups claim, so the admin is matched by email.
+    "OIDC_USER_ROLE_CLAIM": "email",
+    "OIDC_ADMIN_ROLE_VALUE": "dominik.fretz@harbouredgeintelligence.com",
+    "OIDC_ALLOWED_EMAILS": "dominik.fretz@harbouredgeintelligence.com",
   },
 }
