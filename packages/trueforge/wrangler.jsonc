@@ -1,4 +1,5 @@
-// Local development and checks only; deploy settings (assets, limits, observability) land later.
+// Cloudflare Workers deploy config. Per deployment, set d1_databases[].database_id and the vars below
+// (docs/deploy/cloudflare.mdx); run `pnpm workers:types` after changing vars or bindings.
 {
   "name": "trueforge",
   "main": "src/workers/index.ts",
@@ -35,12 +36,13 @@
   },
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },
-  // Placeholders: set real values per deployment. Secrets such as OIDC_CLIENT_SECRET go through
-  // `wrangler secret put`, or packages/trueforge/.env locally. Keep *_CATALOG_PATH unset.
+  // OIDC values are placeholders. Add PUBLIC_BASE_URL (an origin, no path) per deployment; with no
+  // placeholder, a missing value fails loudly instead of sending OIDC callbacks to a foreign domain.
+  // Secrets such as OIDC_CLIENT_SECRET go through `wrangler secret put`, or packages/trueforge/.env
+  // locally. Keep *_CATALOG_PATH unset.
   "vars": {
     "TRUEFORGE_RUNTIME": "workers",
     "OIDC_ISSUER_URL": "https://issuer.example.com/",
     "OIDC_CLIENT_ID": "trueforge-workers-local",
-    "PUBLIC_BASE_URL": "https://trueforge.example.com",
   },
 }

@@ -11,6 +11,7 @@ const MANAGED_KEYS = [
   'DATABASE_URL',
   'TRUEFORGE_API_KEY',
   'TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL',
+  'PUBLIC_BASE_URL',
 ] as const;
 
 type ManagedEnv = Partial<Record<(typeof MANAGED_KEYS)[number], string>>;
@@ -121,6 +122,21 @@ describe('parseServerConfiguration', () => {
       expect(() => parseWithEnv({ TRUEFORGE_RUNTIME: 'workers', STANDALONE: 'true', ...OIDC_ENV })).toThrow(
         /TRUEFORGE_RUNTIME=workers contradicts STANDALONE=true/,
       );
+    });
+
+    it('accepts a PUBLIC_BASE_URL origin', () => {
+      const config = parseWithEnv({
+        TRUEFORGE_RUNTIME: 'workers',
+        ...OIDC_ENV,
+        PUBLIC_BASE_URL: 'https://trueforge.example.com/',
+      });
+      expect(config.PUBLIC_BASE_URL).toBe('https://trueforge.example.com');
+    });
+
+    it('rejects a PUBLIC_BASE_URL with a path prefix', () => {
+      expect(() =>
+        parseWithEnv({ TRUEFORGE_RUNTIME: 'workers', ...OIDC_ENV, PUBLIC_BASE_URL: 'https://example.com/trueforge' }),
+      ).toThrow(/PUBLIC_BASE_URL must not include a path when TRUEFORGE_RUNTIME=workers/);
     });
 
     it('rejects TrueFoundry mode', () => {

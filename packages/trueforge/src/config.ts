@@ -714,6 +714,12 @@ export function parseServerConfiguration(): ServerConfiguration {
           'standalone auth is not available on Workers.',
       );
     }
+    // Workers static assets always serve the UI from `/`, so a proxy prefix cannot work there.
+    if (shared.PUBLIC_BASE_URL !== '' && new URL(shared.PUBLIC_BASE_URL).pathname !== '/') {
+      throw new Error(
+        'PUBLIC_BASE_URL must not include a path when TRUEFORGE_RUNTIME=workers; the UI is served from /.',
+      );
+    }
     return { ...shared, RUNTIME: 'workers', STANDALONE: false, OIDC: oidc };
   }
 
