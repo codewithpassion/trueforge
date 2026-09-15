@@ -29,7 +29,8 @@
     "directory": "./dist-workers-assets",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/healthz"],
+    // Must cover SERVER_PATH_PREFIXES in src/frontendShell.ts (checked by a unit test).
+    "run_worker_first": ["/api", "/api/*", "/healthz", "/healthz/*"],
   },
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },

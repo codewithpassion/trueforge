@@ -11,15 +11,9 @@ import {
   applyShellTokens,
   HASHED_ASSET_PREFIX,
   IMMUTABLE_CACHE_CONTROL,
+  isServerPath,
   REVALIDATE_CACHE_CONTROL,
 } from './frontendShell';
-
-/** Routes the server answers itself; never served from the build. /api covers every version below it. */
-const SERVER_PATH_PREFIXES = ['/api', '/healthz'];
-
-function isServerPath(pathname: string): boolean {
-  return SERVER_PATH_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
-}
 
 function isAppShellPath(pathname: string): boolean {
   return pathname === '/' || pathname === '/index.html';

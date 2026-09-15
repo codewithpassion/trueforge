@@ -1,4 +1,5 @@
 import configuration from '../config';
+import { isServerPath } from '../frontendShell';
 import type { Env } from './env';
 import { createWorkersServerRuntime } from './runtime';
 import { assertWorkersRuntime } from './runtimeGuard';
@@ -9,13 +10,9 @@ export { SessionDO } from './SessionDO';
 
 let app: ReturnType<typeof createWorkersServerRuntime> | undefined;
 
-function isApiPath(pathname: string): boolean {
-  return pathname === '/healthz' || pathname.startsWith('/api/');
-}
-
 export default {
   async fetch(request, env, ctx) {
-    if (!isApiPath(new URL(request.url).pathname)) {
+    if (!isServerPath(new URL(request.url).pathname)) {
       return env.ASSETS.fetch(request);
     }
     try {

@@ -3,6 +3,13 @@
 /** Vite writes this into the production shell. Must not appear in JS identifiers. */
 export const SHELL_BASE_TOKEN = '%%TRUEFORGE_BASE_PATH%%';
 
+/** Routes the server answers itself; never served from the build. /api covers every version below it. */
+export const SERVER_PATH_PREFIXES = ['/api', '/healthz'];
+
+export function isServerPath(pathname: string): boolean {
+  return SERVER_PATH_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 /** Only Vite's hashed asset names can be cached forever. */
 export const HASHED_ASSET_PREFIX = '/assets/';
 export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
