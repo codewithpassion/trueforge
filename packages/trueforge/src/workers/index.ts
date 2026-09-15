@@ -2,7 +2,9 @@ import configuration from '../config';
 import type { Env } from './env';
 import { createWorkersServerRuntime } from './runtime';
 import { assertWorkersRuntime } from './runtimeGuard';
+import { SCHEDULER_INSTANCE_NAME } from './SchedulerDO';
 
+export { SchedulerDO } from './SchedulerDO';
 export { SessionDO } from './SessionDO';
 
 let app: ReturnType<typeof createWorkersServerRuntime> | undefined;
@@ -28,5 +30,10 @@ export default {
       throw error;
     });
     return (await app).fetch(request, env, ctx);
+  },
+
+  /** Dispatch runs from the scheduler's own alarm; the cron only re-arms it, for example after a deploy. */
+  async scheduled(_controller, env) {
+    await env.SCHEDULER_DO.get(env.SCHEDULER_DO.idFromName(SCHEDULER_INSTANCE_NAME)).ensureAlarm();
   },
 } satisfies ExportedHandler<Env>;

@@ -41,7 +41,7 @@ export function scheduleRunFailureReason(error: unknown): string {
  * `scheduled_for` passing, and cheap: an idle pass is one indexed query against
  * `schedule_run_scheduled_for_idx`.
  */
-const SCHEDULE_DISPATCH_INTERVAL_MS = 60_000;
+export const SCHEDULE_DISPATCH_INTERVAL_MS = 60_000;
 
 /** The loop's name. */
 const SCHEDULE_DISPATCH_LOOP_NAME = 'schedule-dispatch';

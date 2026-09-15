@@ -13,9 +13,17 @@
     },
   ],
   "durable_objects": {
-    "bindings": [{ "name": "SESSION_DO", "class_name": "SessionDO" }],
+    "bindings": [
+      { "name": "SESSION_DO", "class_name": "SessionDO" },
+      { "name": "SCHEDULER_DO", "class_name": "SchedulerDO" },
+    ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionDO"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["SchedulerDO"] },
+  ],
+  // Only re-arms the scheduler's alarm; dispatch itself runs from that alarm.
+  "triggers": { "crons": ["*/5 * * * *"] },
   "assets": {
     "directory": "../frontend/dist",
     "binding": "ASSETS",

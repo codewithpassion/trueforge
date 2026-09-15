@@ -17,9 +17,14 @@ export function d1Persistence(onStatements?: D1StatementCounter) {
   return createD1Persistence({ database: env.DB, mcpClientName: 'trueforge-workers-tests', onStatements });
 }
 
-/** A session whose inline agent talks to the mock model scenario named in its base URL. */
-export async function createMockSession({ sessionId, scenario }: { sessionId: string; scenario: string }) {
-  const stores = d1Persistence();
+/** A model provider for the mock model scenario named in its base URL; returns the provider name. */
+export async function upsertMockProvider({
+  stores,
+  scenario,
+}: {
+  stores: ReturnType<typeof d1Persistence>;
+  scenario: string;
+}): Promise<string> {
   const providerName = `mock-${scenario}`;
   await stores.modelProviderStore.upsertProvider({
     tenant_id: TENANT_ID,
@@ -38,6 +43,13 @@ export async function createMockSession({ sessionId, scenario }: { sessionId: st
       ],
     },
   });
+  return providerName;
+}
+
+/** A session whose inline agent talks to the mock model scenario named in its base URL. */
+export async function createMockSession({ sessionId, scenario }: { sessionId: string; scenario: string }) {
+  const stores = d1Persistence();
+  const providerName = await upsertMockProvider({ stores, scenario });
   await stores.sessionStore.createSession({
     tenant_id: TENANT_ID,
     session_id: sessionId,
