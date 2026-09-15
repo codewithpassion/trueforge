@@ -4,6 +4,27 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 14 — Phase 7 sandbox plan written (2026-09-16)
+
+**Goal:** List what the Workers deploy lacks compared with Docker, and plan code execution on Workers, starting with Cloudflare Computer.
+
+**What we did:**
+
+- Gap list for Workers compared with Docker: code execution (sandbox, exec tool, skills, Code Mode), non-inline uploads, turn file downloads, large tool result offload, session import, TrueFoundry mode, no-login mode, file catalogs, path-prefix serving. Also D1 limits, and turns hand over every 14 minutes.
+- Researched `@cloudflare/computer` (preview 0.3.0, MIT) from its READMEs, `docs/05_runtime_interface.md`, docs 07 and 11, the container example and its Dockerfile, and Cloudflare's Computer and Sandbox SDK docs. Computer keeps a SQLite VFS in a Durable Object and runs commands through backends: container (computerd with a FUSE mount, capnweb sync), worker-shell and worker-javascript. The Worker backends need the experimental flag and a Worker Loader binding. The README says it is not for production; computerd runs as root by default; the container VFS lives in memory, and DO SQLite is the source of truth.
+- Fit with TrueForge: `SandboxProvider` maps well (exec to `runtime.exec`, uploads and downloads to `workspace.fs`, path getters under `/workspace`, `buildImage` to `ready`). Skills need python3 in the container. Code Mode's NATS-over-WebSocket transport can't work here, so it needs a new transport. The Workers runtime passes `sandboxIntegration` as undefined today.
+- Wrote `docs/cloudflare-workers-sandbox-plan.md` and linked it from the status list in `docs/cloudflare-workers-port-plan.md`. It compares four options (A Computer, B Sandbox SDK stable, C Sandbox SDK 1.0 preview, D Daytona from Workers) and picks a spike on A with B as fallback. Architecture: a separate container-enabled `ComputerDO` keyed `tenant:session`, and a `CloudflareComputerProvider` in `src/workers/sandbox` that SessionDO calls over RPC. The backend is chosen at deploy time via `TRUEFORGE_SANDBOX_BACKEND` and wired through `WorkersSandboxIntegration`. The image is `computer.Dockerfile`, built FROM the pinned sandbox image plus computerd and fuse3.
+- Phases: 7a spike on exec and files (3-day time box, live acceptance tests, go/no-go); 7b skills; 7c Code Mode transport; 7d hardening (egress allowlist, non-root, lifetime and cost, container restart, guide, changesets, CI). The plan also lists rules, go/no-go criteria and risks.
+- Nothing implemented yet.
+
+**Lessons learned:**
+
+- Vendor examples can break repo rules. The Computer container example casts `ctx.storage` and the DO stub, which AGENTS.md forbids.
+
+**Avoid next time:**
+
+- Don't copy vendor examples verbatim. Plan a typed adapter up front.
+
 ## Cycle 13 — Alarm-held turns landed, deployed and verified live (2026-09-15)
 
 **Goal:** Review, land and deploy the Cycle 12 fix, then prove it on the live deploy with the turns that failed in Cycle 11.
