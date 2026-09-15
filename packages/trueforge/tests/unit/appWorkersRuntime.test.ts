@@ -10,10 +10,10 @@ import { McpCatalog } from '../../src/catalog/McpCatalog';
 import { ModelCatalog } from '../../src/catalog/ModelCatalog';
 import { SandboxCatalog } from '../../src/catalog/SandboxCatalog';
 import { SkillCatalog } from '../../src/catalog/SkillCatalog';
-import configuration from '../../src/config';
+import configuration, { parseServerConfiguration } from '../../src/config';
 import { McpServerWithAuthStore } from '../../src/db/McpServerWithAuthStore';
 import { SqliteAgentStore } from '../../src/db/sqlite/agent-store/SqliteAgentStore';
-import { createSqliteDb } from '../../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
@@ -54,7 +54,7 @@ jest.mock('../../src/auth/middleware', () => {
   return { ...actual, createApiKeyAuthMiddleware: jest.fn(actual.createApiKeyAuthMiddleware) };
 });
 
-function createWorkersApp() {
+function createApp() {
   const sessionStore = new InMemorySessionStore();
   const db = createSqliteDb(':memory:');
   const tokenStore = new SqliteOAuthTokenStore(db);
@@ -69,7 +69,7 @@ function createWorkersApp() {
     resolveModelProviderStore: () => new SqliteModelProviderStore(db),
     resolveMcpServerStore: () =>
       new McpServerWithAuthStore({
-        store: new SqliteMcpServerStore(db),
+        store: new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
         tokenStore,
         clientName: configuration.MCP_DCR_OAUTH_CLIENT_NAME,
       }),
@@ -83,7 +83,7 @@ function createWorkersApp() {
     agentStore,
     turnSkillsResolverStore: skillStore,
     withTransaction: callback => db.transaction().execute(callback),
-    scheduleStore: new SqliteScheduleStore(db),
+    scheduleStore: new SqliteScheduleStore(db, new BetterSqliteAtomicRunner(db)),
     tokenStore,
     sessionStore,
     sessionMetricsStore: new SqliteSessionMetricsStore(db),
@@ -104,7 +104,7 @@ describe('createServerApp on the workers runtime', () => {
   });
 
   it('does not mount the internal schedule execution route', async () => {
-    const app = createWorkersApp();
+    const app = createApp();
 
     const response = await app.request(EXECUTE_RUN_PATH, {
       method: 'POST',
@@ -117,9 +117,29 @@ describe('createServerApp on the workers runtime', () => {
   });
 
   it('does not construct the service API-key middleware', () => {
-    createWorkersApp();
+    jest.mocked(createApiKeyAuthMiddleware).mockClear();
+    createApp();
 
     expect(jest.isMockFunction(createApiKeyAuthMiddleware)).toBe(true);
     expect(createApiKeyAuthMiddleware).not.toHaveBeenCalled();
+  });
+
+  // Control: proves the middleware mock intercepts app.ts, so the workers assertion above is meaningful.
+  it('constructs the service API-key middleware on a standalone configuration', () => {
+    const standaloneConfiguration = parseServerConfiguration();
+    expect(standaloneConfiguration.RUNTIME).toBe('standalone');
+    const replaced = jest.replaceProperty(
+      jest.requireMock<typeof import('../../src/config')>('../../src/config'),
+      'default',
+      standaloneConfiguration,
+    );
+    jest.mocked(createApiKeyAuthMiddleware).mockClear();
+    try {
+      createApp();
+    } finally {
+      replaced.restore();
+    }
+
+    expect(createApiKeyAuthMiddleware).toHaveBeenCalledTimes(1);
   });
 });
