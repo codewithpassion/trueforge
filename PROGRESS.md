@@ -4,6 +4,33 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 5 — Phase 1c landed, Phase 1d and 2a follow-ups landed; Phase 1 complete (2026-09-15)
+
+**Goal:** Land the remaining Phase 1 slices (1c workers config, 1d deep imports) and the Phase 2a review follow-ups, then verify Phase 1 end to end on `feat/cloudflare-workers-port`.
+
+**What we did:**
+
+- Landed Phase 1d as `759e9fa5` and `295a8b5b` with no conflicts. Landed the Phase 2a follow-ups as `a429f9e6`: multi-chunk `addThreads`/`appendToEvents` tests with 600 KB rows, a corrected schedule guard comment, and a 10-50 ms jittered retry in `finishScheduledRun` that stops when the dispatch abort signal fires. An agent committed `a429f9e6` without running the progress step, so this entry covers it.
+- The second Opus review of the 2a fixes found no blockers. It confirmed the B1 guard's JSONB equality byte for byte (SQLite 3.53 STRICT BLOB), the chunk mapping, and that the retry loop always awaits I/O. It also found nine SQLite store reads that build `IN (...)` lists from input and exceed D1's 100-parameter limit: `getOwnedIds` for sessions/agents/schedules (the permissions route fails at 99-100 ids), agent `getExternalIdsByIds`, `listSchedules` agent_names, `whereCreatedByOrAgentIds`, `listAgents` external_ids, `listServers` names, and token `getTokens`, plus a latent one in `listSkills` names. These went to Phase 2b with the `json_each` fix pattern.
+- Phase 1c landed as `b48a6e32` plus reconcile commit `be033e7e`. It adds a `RUNTIME` discriminant (`standalone | distributed | workers`) set by `TRUEFORGE_RUNTIME`, which falls back to standalone. It also exports `parseServerConfiguration()`. The workers member requires OIDC and rejects TrueFoundry. PORT/HOST/SERVER_URL/TRUEFORGE_API_KEY/mTLS moved to `NodeSharedServerConfiguration`. Node path values moved to `nodeConfig.ts`, so `config.ts` imports only `node:path`. `packageVersion.ts` became a gitignored `packageVersion.gen.ts` generated in `build:gen`. `app.ts` mounts `/api/internal/schedules` and the API-key middleware only outside workers, and `main.ts`/`controller-main.ts` reject workers. EXECUTOR_ID and REDIS_REQUEST_REPLY_* stay on workers until the Phase 3 TurnExecutor port. `wrangler dev` returned 200 with runtime `workers` and the version.
+- Dead end: the Node path module was first named `config.node.ts`. Node treats a `.node` specifier as a native addon, which gave `ERR_MODULE_NOT_FOUND` under tsx/tsup. Neither typecheck nor jest caught it.
+- The 1c review found one blocker, and it only appeared at cherry-pick time. A new 1c test built `SqliteMcpServerStore`/`SqliteScheduleStore` with one argument, but Phase 2a had changed the constructors to `(db, atomic)`. Git merged cleanly and typecheck failed. `be033e7e` fixed it and added a positive control test for the API-key middleware mock. Should-fix S1 goes to Phase 3: with `TRUEFORGE_RUNTIME` unset, config falls back to standalone auth (everyone is admin), so the Workers entry must assert `RUNTIME === 'workers'`. Nits: `TRUEFORGE_RUNTIME` is undocumented (queued for Phase 5), env validation order changed when several vars are invalid (message text unchanged), and `build:gen:watch` does not watch `package.json`.
+- Phase 1 checks: typecheck green, `test:trueforge` 561, `test:trueforge-core` 440 (1 skipped), `test:store:sqlite` 187 (1 skipped), Postgres store suite via Docker passed, eslint 0 errors. The `app.ts` esbuild graph contains no `node:fs`, `node:os`, `node:url`, env-paths, better-sqlite3, pg, undici, Postgres stores, local sandbox, http/tls, core barrels or `nodeConfig.ts`. The only Node built-ins left are crypto, events, path and timers/promises. The landing agent skipped `pnpm smoke` because `packages/trueforge/.env` is missing in the main checkout. The orchestrator then ran it with a temporary `.env` copied from `.env.example` (deleted afterwards): the from-source Docker image built, `/healthz` and the UI shell check passed ("healthz and UI OK"), and `pnpm smoke:down` removed the stack.
+- Phase 2b (D1 dialect, `D1AtomicRunner`, schema dump migration, vitest-pool-workers harness, IN-list fixes) is still running in a worktree. Prompts for Phases 3, 4 and 5 are drafted.
+
+**Lessons learned:**
+
+- A clean git merge does not mean a clean integration. Tests that parallel slices add against old constructor signatures only fail at typecheck.
+- Don't give a module a `.node` suffix. Node resolves it as a native addon, and typecheck and jest won't catch the problem.
+- A config fallback that is safe on Node (default standalone) can be unsafe on a new public runtime.
+
+**Avoid next time:**
+
+- Don't skip typecheck and tests after a cherry-pick, even when the merge is clean.
+- Don't let subagents commit without the progress step when the user asked for one before every commit.
+- Don't run parallel slices that both add tests constructing classes whose constructors another slice changes.
+- Don't let a new runtime entry rely on the config default. Have it assert its runtime explicitly.
+
 ## Cycle 4 — Phase 2a: AtomicRunner and conditional-chain SQLite writes; Phase 1d built (2026-09-15)
 
 **Goal:** Replace interactive SQLite store transactions with batch-shaped conditional writes that D1 can run, and cut the core barrel out of the server's Worker graph.
