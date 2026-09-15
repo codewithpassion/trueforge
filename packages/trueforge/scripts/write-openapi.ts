@@ -33,6 +33,7 @@ import { SqliteSkillStore } from '../src/db/sqlite/skill-store/SqliteSkillStore'
 import { SqliteOAuthTokenStore } from '../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import { ActiveTurnRegistry } from '../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../src/runtime/event-subscription';
+import { NodeTurnExecutor } from '../src/runtime/nodeTurnExecutor';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -91,9 +92,17 @@ const app = createServerApp({
   sessionStore,
   sessionMetricsStore: new SqliteSessionMetricsStore(db),
   sessions: new Sessions({ sessionStore }),
-  activeTurns: new ActiveTurnRegistry(),
-  requestReplyRouter: new RequestReplyRouter(),
-  eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
+  turnExecutor: new NodeTurnExecutor({
+    activeTurns: new ActiveTurnRegistry(),
+    eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
+    sessionStore,
+    redis: undefined,
+    requestReplyRouter: new RequestReplyRouter(),
+    sandboxIntegration: undefined,
+    logger: winston.createLogger({ silent: true }),
+    executorId: 'local',
+    requestReply: { replyTimeoutMs: 60_000, pollIntervalMs: 500 },
+  }),
   logger: winston.createLogger({ silent: true }),
   oidcClient: undefined,
   authenticator: new StandaloneAuthenticator(),

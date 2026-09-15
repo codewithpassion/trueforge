@@ -385,8 +385,6 @@ export interface SharedServerConfiguration {
   ACCESS_LOGS: boolean;
   /** Node environment. Env: `NODE_ENV`. */
   NODE_ENV: string | undefined;
-  /** Peering identity embedded in the turn ids this process mints; `local` outside distributed mode. */
-  EXECUTOR_ID: string;
   /**
    * Optional override for the model catalog YAML (discovery presets for
    * GET /catalogs/model-providers). When unset, the catalog inlined at build
@@ -431,11 +429,6 @@ export interface SharedServerConfiguration {
    */
   MAX_REQUEST_BODY_BYTES: number;
   /**
-   * Max seconds to wait for turn cancellation + connection drain on SIGTERM/SIGINT.
-   * Env: `GRACEFUL_TIMEOUT_SECONDS`. Default 30.
-   */
-  GRACEFUL_TIMEOUT_SECONDS: number;
-  /**
    * Max seconds a single turn may execute before it is cancelled with
    * `server-execution-timeout`. Env: `SERVER_EXECUTION_TIMEOUT_SECONDS`. Default 600 (10 minutes).
    */
@@ -455,30 +448,6 @@ export interface SharedServerConfiguration {
    * Env: `TURN_SUBSCRIBE_TIMEOUT_MS`. Default 600000.
    */
   TURN_SUBSCRIBE_TIMEOUT_MS: number;
-  /**
-   * Max ms to wait for a peer executor's reply before failing with 424.
-   * Env: `REDIS_REQUEST_REPLY_TIMEOUT_MS`. Default 60000.
-   * Only used when a Redis client is wired (distributed mode).
-   */
-  REDIS_REQUEST_REPLY_TIMEOUT_MS: number;
-  /**
-   * How often this process refreshes its peering heartbeat key.
-   * Env: `REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS`. Default 5000.
-   * Only used when a Redis client is wired (distributed mode).
-   */
-  REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS: number;
-  /**
-   * TTL for reply values so abandoned reply keys are reclaimed.
-   * Env: `REDIS_REQUEST_REPLY_REPLY_TTL_MS`. Default 120000.
-   * Only used when a Redis client is wired (distributed mode).
-   */
-  REDIS_REQUEST_REPLY_REPLY_TTL_MS: number;
-  /**
-   * Sleep between reply poll attempts while waiting on a peer.
-   * Env: `REDIS_REQUEST_REPLY_POLL_INTERVAL_MS`. Default 500.
-   * Only used when a Redis client is wired (distributed mode).
-   */
-  REDIS_REQUEST_REPLY_POLL_INTERVAL_MS: number;
   /**
    * Public application URL (origin plus optional pathname). Used as the origin of
    * MCP OAuth and OIDC callbacks; the pathname is the UI/API public prefix when
@@ -520,6 +489,37 @@ export interface NodeSharedServerConfiguration {
    * `TRUEFORGE_MTLS_ENABLED` is true. Env: `TRUEFORGE_MTLS_CERTS_DIR`. Default `/etc/tls`.
    */
   TRUEFORGE_MTLS_CERTS_DIR: string;
+  /** Peering identity embedded in the turn ids this process mints; `local` outside distributed mode. */
+  EXECUTOR_ID: string;
+  /**
+   * Max seconds to wait for turn cancellation + connection drain on SIGTERM/SIGINT.
+   * Env: `GRACEFUL_TIMEOUT_SECONDS`. Default 30.
+   */
+  GRACEFUL_TIMEOUT_SECONDS: number;
+  /**
+   * Max ms to wait for a peer executor's reply before failing with 424.
+   * Env: `REDIS_REQUEST_REPLY_TIMEOUT_MS`. Default 60000.
+   * Only used when a Redis client is wired (distributed mode).
+   */
+  REDIS_REQUEST_REPLY_TIMEOUT_MS: number;
+  /**
+   * How often this process refreshes its peering heartbeat key.
+   * Env: `REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS`. Default 5000.
+   * Only used when a Redis client is wired (distributed mode).
+   */
+  REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS: number;
+  /**
+   * TTL for reply values so abandoned reply keys are reclaimed.
+   * Env: `REDIS_REQUEST_REPLY_REPLY_TTL_MS`. Default 120000.
+   * Only used when a Redis client is wired (distributed mode).
+   */
+  REDIS_REQUEST_REPLY_REPLY_TTL_MS: number;
+  /**
+   * Sleep between reply poll attempts while waiting on a peer.
+   * Env: `REDIS_REQUEST_REPLY_POLL_INTERVAL_MS`. Default 500.
+   * Only used when a Redis client is wired (distributed mode).
+   */
+  REDIS_REQUEST_REPLY_POLL_INTERVAL_MS: number;
 }
 
 export type StandaloneServerConfiguration = SharedServerConfiguration &
@@ -654,7 +654,6 @@ export function parseServerConfiguration(): ServerConfiguration {
     LOG_LEVEL: getEnv('LOG_LEVEL', { defaultValue: 'info' }) ?? 'info',
     ACCESS_LOGS: parseBoolean({ envKey: 'ACCESS_LOGS', raw: getEnv('ACCESS_LOGS'), defaultValue: true }),
     NODE_ENV: getEnv('NODE_ENV'),
-    EXECUTOR_ID: runtime === 'distributed' ? randomAlphanumeric(6) : LOCAL_EXECUTOR_ID,
     MODEL_CATALOG_PATH: resolveOptionalPathEnv('MODEL_CATALOG_PATH'),
     MCP_CATALOG_PATH: resolveOptionalPathEnv('MCP_CATALOG_PATH'),
     SKILL_CATALOG_PATH: resolveOptionalPathEnv('SKILL_CATALOG_PATH'),
@@ -682,11 +681,6 @@ export function parseServerConfiguration(): ServerConfiguration {
       raw: getEnv('MAX_REQUEST_BODY_BYTES'),
       defaultValue: DEFAULT_MAX_REQUEST_BODY_BYTES,
     }),
-    GRACEFUL_TIMEOUT_SECONDS: parsePositiveInt({
-      envKey: 'GRACEFUL_TIMEOUT_SECONDS',
-      raw: getEnv('GRACEFUL_TIMEOUT_SECONDS'),
-      defaultValue: 30,
-    }),
     SERVER_EXECUTION_TIMEOUT_SECONDS: serverExecutionTimeoutSeconds,
     TURN_STREAM_TTL_SECONDS: parsePositiveInt({
       envKey: 'TURN_STREAM_TTL_SECONDS',
@@ -702,26 +696,6 @@ export function parseServerConfiguration(): ServerConfiguration {
       envKey: 'TURN_SUBSCRIBE_TIMEOUT_MS',
       raw: getEnv('TURN_SUBSCRIBE_TIMEOUT_MS'),
       defaultValue: 600_000,
-    }),
-    REDIS_REQUEST_REPLY_TIMEOUT_MS: parsePositiveInt({
-      envKey: 'REDIS_REQUEST_REPLY_TIMEOUT_MS',
-      raw: getEnv('REDIS_REQUEST_REPLY_TIMEOUT_MS'),
-      defaultValue: 60_000,
-    }),
-    REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS: parsePositiveInt({
-      envKey: 'REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS',
-      raw: getEnv('REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS'),
-      defaultValue: 5_000,
-    }),
-    REDIS_REQUEST_REPLY_REPLY_TTL_MS: parsePositiveInt({
-      envKey: 'REDIS_REQUEST_REPLY_REPLY_TTL_MS',
-      raw: getEnv('REDIS_REQUEST_REPLY_REPLY_TTL_MS'),
-      defaultValue: 120_000,
-    }),
-    REDIS_REQUEST_REPLY_POLL_INTERVAL_MS: parsePositiveInt({
-      envKey: 'REDIS_REQUEST_REPLY_POLL_INTERVAL_MS',
-      raw: getEnv('REDIS_REQUEST_REPLY_POLL_INTERVAL_MS'),
-      defaultValue: 500,
     }),
     PUBLIC_BASE_URL: parsePublicBaseUrl(getEnv('PUBLIC_BASE_URL', { defaultValue: '' })),
   };
@@ -759,6 +733,32 @@ export function parseServerConfiguration(): ServerConfiguration {
       defaultValue: false,
     }),
     TRUEFORGE_MTLS_CERTS_DIR: getEnv('TRUEFORGE_MTLS_CERTS_DIR', { defaultValue: '/etc/tls' }) ?? '/etc/tls',
+    EXECUTOR_ID: runtime === 'distributed' ? randomAlphanumeric(6) : LOCAL_EXECUTOR_ID,
+    GRACEFUL_TIMEOUT_SECONDS: parsePositiveInt({
+      envKey: 'GRACEFUL_TIMEOUT_SECONDS',
+      raw: getEnv('GRACEFUL_TIMEOUT_SECONDS'),
+      defaultValue: 30,
+    }),
+    REDIS_REQUEST_REPLY_TIMEOUT_MS: parsePositiveInt({
+      envKey: 'REDIS_REQUEST_REPLY_TIMEOUT_MS',
+      raw: getEnv('REDIS_REQUEST_REPLY_TIMEOUT_MS'),
+      defaultValue: 60_000,
+    }),
+    REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS: parsePositiveInt({
+      envKey: 'REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS',
+      raw: getEnv('REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS'),
+      defaultValue: 5_000,
+    }),
+    REDIS_REQUEST_REPLY_REPLY_TTL_MS: parsePositiveInt({
+      envKey: 'REDIS_REQUEST_REPLY_REPLY_TTL_MS',
+      raw: getEnv('REDIS_REQUEST_REPLY_REPLY_TTL_MS'),
+      defaultValue: 120_000,
+    }),
+    REDIS_REQUEST_REPLY_POLL_INTERVAL_MS: parsePositiveInt({
+      envKey: 'REDIS_REQUEST_REPLY_POLL_INTERVAL_MS',
+      raw: getEnv('REDIS_REQUEST_REPLY_POLL_INTERVAL_MS'),
+      defaultValue: 500,
+    }),
   };
 
   if (runtime === 'standalone') {

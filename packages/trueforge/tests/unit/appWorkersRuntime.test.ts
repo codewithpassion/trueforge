@@ -1,6 +1,4 @@
-import type { TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
 import { InMemorySessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
-import { RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import winston from 'winston';
 import { buildOpenApiDocument, createServerApp } from '../../src/app';
 import { TrueForgeAuthorizer } from '../../src/auth/authorizer';
@@ -21,8 +19,7 @@ import { SqliteScheduleStore } from '../../src/db/sqlite/schedule-store/SqliteSc
 import { SqliteSessionMetricsStore } from '../../src/db/sqlite/session-metrics/SqliteSessionMetricsStore';
 import { SqliteSkillStore } from '../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
-import { ActiveTurnRegistry } from '../../src/runtime/activeTurns';
-import { EventSubscriptionRegistry } from '../../src/runtime/event-subscription';
+import { testNodeTurnExecutor } from './runtime/testNodeTurnExecutor';
 
 const EXECUTE_RUN_PATH = '/api/internal/schedules/runs/execute';
 
@@ -88,9 +85,7 @@ function createApp() {
     sessionStore,
     sessionMetricsStore: new SqliteSessionMetricsStore(db),
     sessions: new Sessions({ sessionStore }),
-    activeTurns: new ActiveTurnRegistry(),
-    requestReplyRouter: new RequestReplyRouter(),
-    eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
+    turnExecutor: testNodeTurnExecutor({ sandboxIntegration: undefined }),
     logger: winston.createLogger({ silent: true }),
     oidcClient: undefined,
     authenticator: new StandaloneAuthenticator(),

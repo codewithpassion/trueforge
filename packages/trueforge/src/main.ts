@@ -10,7 +10,6 @@
  * Postgres store modules stay dynamic so only the active engine is loaded.
  */
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
-import type { Context } from 'hono';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -20,7 +19,6 @@ import {
 } from './sandbox/localLifecycle';
 
 let configuration: NodeServerConfiguration;
-let isOidcConfigured: typeof import('./config').isOidcConfigured;
 let isTrueFoundryModeEnabled: typeof import('./config').isTrueFoundryModeEnabled;
 let getTrueForgeAuthMode: typeof import('./config').getTrueForgeAuthMode;
 let getPublicUiBasePath: typeof import('./config').getPublicUiBasePath;
@@ -33,8 +31,7 @@ try {
     throw new Error('TRUEFORGE_RUNTIME=workers runs only in the Workers entry, not the Node server.');
   }
   configuration = loadedConfiguration;
-  ({ isOidcConfigured, isTrueFoundryModeEnabled, getTrueForgeAuthMode, getPublicUiBasePath, TrueForgeAuthMode } =
-    loaded);
+  ({ isTrueFoundryModeEnabled, getTrueForgeAuthMode, getPublicUiBasePath, TrueForgeAuthMode } = loaded);
 } catch (error) {
   console.error(
     'Failed to start server: Failed to load configuration:',
@@ -44,26 +41,15 @@ try {
 }
 
 import { serve } from '@hono/node-server';
-import {
-  CancellationReason,
-  Sessions,
-  type ISessionStore,
-  type TurnStreamingEvent,
-} from '@truefoundry/trueforge-core/agent-session';
+import { CancellationReason, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { RequestReplyExecutor, RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import type { Kysely, Transaction } from 'kysely';
 import type { RedisClientType } from 'redis';
 
-import { createServerApp } from './app';
 import { TrueForgeAuthorizer, type Authorizer } from './auth/authorizer';
 import { createAuthenticator } from './auth/createAuthenticator';
-import { resolveRequestContext, type RequestContext } from './auth/identity';
-import { initOidc } from './auth/oidc';
-import { McpCatalog } from './catalog/McpCatalog';
-import { ModelCatalog } from './catalog/ModelCatalog';
-import { SandboxCatalog } from './catalog/SandboxCatalog';
-import { SkillCatalog } from './catalog/SkillCatalog';
+import type { RequestContext } from './auth/identity';
 import { type DistributedServerConfiguration, type NodeServerConfiguration } from './config';
 import { createController } from './controller';
 import type { AgentRecord, IAgentStore } from './db/agentStore';
@@ -73,12 +59,8 @@ import type { IModelProviderStore } from './db/modelProviderStore';
 import type { PostgresAgentStore } from './db/postgres/agent-store/PostgresAgentStore';
 import type { Database as PostgresDatabase } from './db/postgres/types';
 import type { ISandboxProviderStore } from './db/sandboxProviderStore';
-import type { IScheduleStore } from './db/scheduleStore';
-import type { SessionImport } from './db/sessionImport';
-import type { ISessionMetricsStore } from './db/sessionMetricsStore';
 import type { ISkillStore } from './db/skillStore';
 import type { Database as SqliteDatabase } from './db/sqlite/types';
-import type { WithTransaction } from './db/transaction';
 import { mountFrontend } from './frontend';
 import { createClientCertificateMiddleware, serverTlsServeOptions } from './http/tls';
 import { createServerLogger, shouldColorize } from './logger';
@@ -86,16 +68,14 @@ import type { IOAuthTokenStore } from './mcp/auth/types';
 import { CODE_MODE_SOCKET_PARENT, FRONTEND_DIR, LOCAL_SANDBOX_ROOT_PARENT, SQLITE_PATH } from './nodeConfig';
 import { PACKAGE_VERSION } from './packageVersion.gen';
 import { ActiveTurnRegistry } from './runtime/activeTurns';
+import { createServerRuntime, type ServerPersistence } from './runtime/createServerRuntime';
 import { EventSubscriptionRegistry } from './runtime/event-subscription';
+import { NodeTurnExecutor } from './runtime/nodeTurnExecutor';
 import type { SandboxIntegration } from './sandbox/integration';
 import type { LocalSandboxSupportResult } from './sandbox/local/provider/LocalSandboxProvider';
 import { createNodeSandboxIntegration } from './sandbox/nodeSandboxIntegration';
 import { printStandaloneStartupBanner } from './startupBanner';
-import {
-  parsePerServerMcpHeaders,
-  X_TFG_MCP_HEADERS,
-  type PerServerMcpHeaders,
-} from './truefoundry/perServerMcpHeaders';
+import type { PerServerMcpHeaders } from './truefoundry/perServerMcpHeaders';
 import { TrueFoundryAgentStore } from './truefoundry/TrueFoundryAgentStore';
 import { TrueFoundryAuthorizer } from './truefoundry/TrueFoundryAuthorizer';
 import { TrueFoundryMcpServerStore } from './truefoundry/TrueFoundryMcpServerStore';
@@ -104,31 +84,8 @@ import { TrueFoundrySandboxProviderStore } from './truefoundry/TrueFoundrySandbo
 import { TrueFoundryServiceFoundryServerClient } from './truefoundry/TrueFoundryServiceFoundryServerClient';
 import { TrueFoundryAdminSkillStore, TrueFoundrySkillStore } from './truefoundry/TrueFoundrySkillStore';
 
-/** Persistence + optional Redis wired for the selected topology. */
-interface ServerPersistence<TTransaction> {
-  withTransaction: WithTransaction<TTransaction>;
-  sessionStore: ISessionStore;
-  /** Postgres only; undefined disables the session import routes. */
-  sessionImport: SessionImport | undefined;
-  sessionMetricsStore: ISessionMetricsStore;
-  tokenStore: IOAuthTokenStore<TTransaction>;
-  scheduleStore: IScheduleStore<TTransaction>;
-  mcpOAuthStore: IMcpServerWithAuthStore<TTransaction>;
-  resolveModelProviderStore: (rc: RequestContext, runAsAgent?: AgentRecord) => IModelProviderStore<TTransaction>;
-  resolveMcpServerStore: (
-    rc: RequestContext,
-    runAsAgent?: AgentRecord,
-    perServerHeaders?: PerServerMcpHeaders,
-  ) => IMcpServerWithAuthStore<TTransaction>;
-  resolveSandboxProviderStore: (rc: RequestContext) => ISandboxProviderStore<TTransaction>;
-  /** Per-request store: DB git skills, or TrueFoundry registry catalog in TrueFoundry mode. */
-  resolveSkillStore: (rc: RequestContext) => ISkillStore<TTransaction>;
-  resolveAgentStore: (rc: RequestContext) => IAgentStore<TTransaction>;
-  /** Import agents: SF assume-user headers on the client; DB store when TrueFoundry mode is off. */
-  resolveImportAgentStore: (serviceFoundryServerHeaders: Record<string, string>) => IAgentStore<TTransaction>;
-  /** extra pre-resolved stores for scheduled runs */
-  agentStore: IAgentStore<TTransaction>;
-  turnSkillsResolverStore: Pick<ISkillStore<TTransaction>, 'resolveTurnSkills'>;
+/** Shared persistence plus the resources this Node process owns. */
+interface NodeServerPersistence<TTransaction> extends ServerPersistence<TTransaction> {
   destroyDb: () => Promise<void>;
   redis: RedisClientType | undefined;
   /** One shared client for TrueFoundry store resolvers + auth; undefined when TrueFoundry mode is off. */
@@ -281,7 +238,7 @@ function buildResolveSandboxProviderStore<TTransaction>(options: {
 async function createStandalonePersistence(options: {
   sqlitePath: string;
   logger: Logger;
-}): Promise<ServerPersistence<Kysely<SqliteDatabase>>> {
+}): Promise<NodeServerPersistence<Kysely<SqliteDatabase>>> {
   const { sqlitePath, logger } = options;
   await mkdir(path.dirname(sqlitePath), { recursive: true });
   const [{ BetterSqliteAtomicRunner, createSqliteDb }, { migrateSqliteToLatest }, { createSqliteStores }] =
@@ -333,7 +290,7 @@ async function createStandalonePersistence(options: {
 async function createDistributedPersistence(options: {
   configuration: DistributedServerConfiguration;
   logger: Logger;
-}): Promise<ServerPersistence<Transaction<PostgresDatabase>>> {
+}): Promise<NodeServerPersistence<Transaction<PostgresDatabase>>> {
   const { configuration, logger } = options;
   const {
     DATABASE_URL: databaseUrl,
@@ -463,38 +420,30 @@ async function createDistributedPersistence(options: {
 }
 
 /** Keeps `TTransaction` concrete when wiring a single persistence topology into the app. */
-async function createServerRuntime<TTransaction>(
-  persistence: ServerPersistence<TTransaction>,
-  logger: Logger,
-  sandboxIntegration: SandboxIntegration,
-) {
-  const {
-    withTransaction,
-    sessionStore,
-    sessionMetricsStore,
-    tokenStore,
-    scheduleStore,
-    mcpOAuthStore,
-    resolveImportAgentStore,
-    agentStore,
-    turnSkillsResolverStore,
-    destroyDb,
-    redis,
-    serviceFoundryClient,
-  } = persistence;
+async function createNodeServerRuntime<TTransaction>(options: {
+  persistence: NodeServerPersistence<TTransaction>;
+  logger: Logger;
+  sandboxIntegration: SandboxIntegration;
+}) {
+  const { persistence, logger, sandboxIntegration } = options;
+  const { withTransaction, scheduleStore, destroyDb, redis, serviceFoundryClient } = persistence;
 
   const activeTurns = new ActiveTurnRegistry();
   const requestReplyRouter = new RequestReplyRouter();
-  const eventSubscriptions = new EventSubscriptionRegistry<TurnStreamingEvent>(redis);
-  const sessions = new Sessions({ sessionStore });
-
-  const oidc = isOidcConfigured(configuration) ? configuration.OIDC : undefined;
-  if (oidc) {
-    logger.info('Auth is enabled', { issuer: oidc.OIDC_ISSUER_URL });
-  } else {
-    logger.warn('Auth is disabled; browser login is off');
-  }
-  const oidcClient = await initOidc(oidc);
+  const turnExecutor = new NodeTurnExecutor({
+    activeTurns,
+    eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(redis),
+    sessionStore: persistence.sessionStore,
+    redis,
+    requestReplyRouter,
+    sandboxIntegration,
+    logger,
+    executorId: configuration.EXECUTOR_ID,
+    requestReply: {
+      replyTimeoutMs: configuration.REDIS_REQUEST_REPLY_TIMEOUT_MS,
+      pollIntervalMs: configuration.REDIS_REQUEST_REPLY_POLL_INTERVAL_MS,
+    },
+  });
 
   let authenticator;
   let authorizer: Authorizer;
@@ -529,56 +478,17 @@ async function createServerRuntime<TTransaction>(
       })
     : undefined;
 
-  // Hono handlers get Context; persistence resolvers take RequestContext.
-  const resolveModelProviderStore = (c: Context, runAsAgent?: AgentRecord) =>
-    persistence.resolveModelProviderStore(resolveRequestContext(c), runAsAgent);
-  const resolveMcpServerStore = (c?: Context, runAsAgent?: AgentRecord) => {
-    if (c === undefined) {
-      return mcpOAuthStore;
-    }
-    const rawPerServerHeaders = c.req.header(X_TFG_MCP_HEADERS);
-    return persistence.resolveMcpServerStore(
-      resolveRequestContext(c),
-      runAsAgent,
-      rawPerServerHeaders === undefined ? undefined : parsePerServerMcpHeaders(rawPerServerHeaders),
-    );
-  };
-  const resolveAgentStore = (c: Context) => persistence.resolveAgentStore(resolveRequestContext(c));
-  const resolveSandboxProviderStore = (c: Context) => persistence.resolveSandboxProviderStore(resolveRequestContext(c));
-  const resolveSkillStore = (c: Context) => persistence.resolveSkillStore(resolveRequestContext(c));
-  const app = createServerApp({
-    modelCatalog: ModelCatalog.load(),
-    mcpCatalog: McpCatalog.load(),
-    skillCatalog: SkillCatalog.load(),
-    sandboxCatalog: SandboxCatalog.load(),
-    resolveModelProviderStore,
-    resolveMcpServerStore,
-    resolveAgentStore,
-    resolveImportAgentStore,
-    resolveSandboxProviderStore,
+  const app = await createServerRuntime({
+    persistence,
+    logger,
     sandboxIntegration,
     clientCertificateMiddleware:
       !configuration.STANDALONE && configuration.TRUEFORGE_MTLS_ENABLED
         ? createClientCertificateMiddleware(logger)
         : undefined,
-    resolveSkillStore,
-    withTransaction,
-    tokenStore,
-    scheduleStore,
-    agentStore,
-    turnSkillsResolverStore,
-    sessionStore,
-    sessionImport: persistence.sessionImport,
-    sessionMetricsStore,
-    sessions,
-    activeTurns,
-    redis,
-    requestReplyRouter,
-    eventSubscriptions,
-    logger,
-    oidcClient,
     authenticator,
     authorizer,
+    turnExecutor,
   });
 
   return { activeTurns, app, controller, destroyDb, redis, requestReplyRouter };
@@ -620,16 +530,16 @@ try {
 
   const sandboxIntegration = createNodeSandboxIntegration({ localSupport: localSandboxSupport });
   const { activeTurns, app, controller, destroyDb, redis, requestReplyRouter } = configuration.STANDALONE
-    ? await createServerRuntime(
-        await createStandalonePersistence({ sqlitePath: SQLITE_PATH, logger }),
+    ? await createNodeServerRuntime({
+        persistence: await createStandalonePersistence({ sqlitePath: SQLITE_PATH, logger }),
         logger,
         sandboxIntegration,
-      )
-    : await createServerRuntime(
-        await createDistributedPersistence({ configuration, logger }),
+      })
+    : await createNodeServerRuntime({
+        persistence: await createDistributedPersistence({ configuration, logger }),
         logger,
         sandboxIntegration,
-      );
+      });
 
   if (
     mountFrontend(app, {

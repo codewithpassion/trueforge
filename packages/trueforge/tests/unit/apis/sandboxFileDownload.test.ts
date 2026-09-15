@@ -17,10 +17,9 @@ import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteS
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
-import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
-import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
 import type { SandboxIntegration } from '../../../src/sandbox/integration';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
+import { testNodeTurnExecutor } from '../runtime/testNodeTurnExecutor';
 
 /** Parsed rather than built literally, so config defaults match what the create route stores. */
 function agentSpec(): AgentSpec {
@@ -41,7 +40,6 @@ function turnsRouter(input: {
   return createTurnsRouter({
     sessions,
     sessionStore,
-    activeTurns: new ActiveTurnRegistry(),
     resolveModelProviderStore: () => new SqliteModelProviderStore(db),
     resolveMcpServerStore: () =>
       new McpServerWithAuthStore({
@@ -51,7 +49,7 @@ function turnsRouter(input: {
       }),
     resolveSkillStore: () => new SqliteSkillStore(db),
     resolveAgentStore: () => new SqliteAgentStore(db),
-    eventSubscriptions: new EventSubscriptionRegistry(undefined),
+    turnExecutor: testNodeTurnExecutor({ sandboxIntegration }),
     resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
     sandboxIntegration,
     logger: createLogger({ silent: true }),

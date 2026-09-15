@@ -2,10 +2,11 @@ import type { ISessionStore, SessionHandle, TurnRecord, TurnState } from '@truef
 import { CancellationReason, TurnNotFoundError } from '@truefoundry/trueforge-core/agent-session';
 import { NoResponderError, redisRequest, RequestTimeoutError } from '@truefoundry/trueforge-core/request-reply';
 import type { RedisClientType } from 'redis';
-import { cancelSessionTurn } from '../../../src/apis/sessions';
-import configuration from '../../../src/config';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
+import { cancelSessionTurn, type CancelTurnDeps } from '../../../src/runtime/nodeTurnExecutor';
 import { mintPeeredTurnId } from '../../../src/runtime/peeringIds';
+
+const EXECUTOR_ID = 'local';
 
 jest.mock('@truefoundry/trueforge-core/request-reply', () => {
   const actual = jest.requireActual<typeof import('@truefoundry/trueforge-core/request-reply')>(
@@ -59,19 +60,15 @@ function cancelDeps(input: {
   session?: Pick<SessionHandle, 'session_id' | 'freezeTurn'>;
   redis?: RedisClientType;
   logger?: { warn: jest.Mock };
-}): {
-  activeTurns: ActiveTurnRegistry;
-  session: Pick<SessionHandle, 'session_id' | 'freezeTurn'>;
-  sessionStore: Pick<ISessionStore, 'getTurn'>;
-  redis?: RedisClientType;
-  logger: { warn: jest.Mock };
-} {
+}): CancelTurnDeps {
   return {
     activeTurns: input.activeTurns,
     session: input.session ?? sessionHandle(),
     sessionStore: storeReturning(input.turn),
     ...(input.redis === undefined ? {} : { redis: input.redis }),
     logger: input.logger ?? silentLogger(),
+    executorId: EXECUTOR_ID,
+    requestReply: { replyTimeoutMs: 60_000, pollIntervalMs: 500 },
   };
 }
 
@@ -97,7 +94,7 @@ describe('cancelSessionTurn', () => {
 
   it('aborts a turn running in this process without freezing', async () => {
     const activeTurns = new ActiveTurnRegistry();
-    const turnId = mintPeeredTurnId(configuration.EXECUTOR_ID);
+    const turnId = mintPeeredTurnId(EXECUTOR_ID);
     const abortController = trackRun(activeTurns, turnId);
     const session = sessionHandle();
 
@@ -112,7 +109,7 @@ describe('cancelSessionTurn', () => {
 
   it('freezes when this executor owns the turn id but the run is gone', async () => {
     const activeTurns = new ActiveTurnRegistry();
-    const turnId = mintPeeredTurnId(configuration.EXECUTOR_ID);
+    const turnId = mintPeeredTurnId(EXECUTOR_ID);
     const session = sessionHandle();
 
     await cancelSessionTurn(cancelDeps({ activeTurns, turn: turnRecord(turnId, { status: 'running' }), session }), {
@@ -231,7 +228,7 @@ describe('cancelSessionTurn', () => {
 
   it('treats a missing turn as a successful cancel', async () => {
     const activeTurns = new ActiveTurnRegistry();
-    const turnId = mintPeeredTurnId(configuration.EXECUTOR_ID);
+    const turnId = mintPeeredTurnId(EXECUTOR_ID);
     const session = sessionHandle();
     session.freezeTurn = jest.fn().mockRejectedValue(new TurnNotFoundError(turnId));
 

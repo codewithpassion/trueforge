@@ -24,8 +24,15 @@ import type { ControlLoop } from './Controller';
 export const DISPATCH_BATCH_LIMIT = 20;
 
 /** Human-readable failure detail for a `failed` schedule run. */
+/** Accepts thrown errors and turn-executor failures; both carry a `message`. */
 export function scheduleRunFailureReason(error: unknown): string {
-  return error instanceof Error && error.message.trim() !== '' ? error.message : 'Schedule run failed';
+  return typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof error.message === 'string' &&
+    error.message.trim() !== ''
+    ? error.message
+    : 'Schedule run failed';
 }
 
 /**

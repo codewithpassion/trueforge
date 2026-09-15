@@ -7,7 +7,7 @@ import {
 } from '@truefoundry/trueforge-core/agent-session';
 import type { Kysely } from 'kysely';
 import { createLogger } from 'winston';
-import { createTurnsRouter, turnStreamId } from '../../../src/apis/turns';
+import { createTurnsRouter } from '../../../src/apis/turns';
 import { TrueForgeAuthorizer, type Authorizer } from '../../../src/auth/authorizer';
 import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
@@ -21,9 +21,10 @@ import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteS
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
-import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription/index.js';
+import { turnStreamId } from '../../../src/runtime/turnRunner';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
+import { testNodeTurnExecutor } from '../runtime/testNodeTurnExecutor';
 
 function mcpServerStoreWithAuth(db: Kysely<Database>, tokenStore: SqliteOAuthTokenStore) {
   return new McpServerWithAuthStore({
@@ -69,12 +70,11 @@ describe('turns', () => {
         createTurnsRouter({
           sessions,
           sessionStore,
-          activeTurns: new ActiveTurnRegistry(),
           resolveModelProviderStore: () => new SqliteModelProviderStore(db),
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
           resolveSkillStore: () => new SqliteSkillStore(db),
           resolveAgentStore: () => new SqliteAgentStore(db),
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          turnExecutor: testNodeTurnExecutor(),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
           sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger: createLogger({ silent: true }),
@@ -147,12 +147,11 @@ describe('turns', () => {
         createTurnsRouter({
           sessions: new Sessions({ sessionStore }),
           sessionStore,
-          activeTurns: new ActiveTurnRegistry(),
           resolveModelProviderStore: () => new SqliteModelProviderStore(db),
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, new SqliteOAuthTokenStore(db)),
           resolveSkillStore: () => new SqliteSkillStore(db),
           resolveAgentStore: () => agentStore,
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          turnExecutor: testNodeTurnExecutor(),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
           sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger: createLogger({ silent: true }),
@@ -276,12 +275,11 @@ describe('turns', () => {
         createTurnsRouter({
           sessions,
           sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
-          activeTurns: new ActiveTurnRegistry(),
           resolveModelProviderStore: () => modelProviderStore,
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
           resolveAgentStore: () => new SqliteAgentStore(db),
           resolveSkillStore: () => new SqliteSkillStore(db),
-          eventSubscriptions,
+          turnExecutor: testNodeTurnExecutor({ eventSubscriptions, logger }),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
           sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger,
@@ -384,12 +382,11 @@ describe('turns', () => {
         createTurnsRouter({
           sessions,
           sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
-          activeTurns: new ActiveTurnRegistry(),
           resolveModelProviderStore: () => modelProviderStore,
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
           resolveSkillStore: () => new SqliteSkillStore(db),
           resolveAgentStore: () => new SqliteAgentStore(db),
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          turnExecutor: testNodeTurnExecutor({ logger }),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
           sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger,
@@ -467,12 +464,11 @@ describe('turns', () => {
         createTurnsRouter({
           sessions,
           sessionStore,
-          activeTurns: new ActiveTurnRegistry(),
           resolveModelProviderStore: () => new SqliteModelProviderStore(db),
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
           resolveSkillStore: () => new SqliteSkillStore(db),
           resolveAgentStore: () => agentStore,
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          turnExecutor: testNodeTurnExecutor(),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
           sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger: createLogger({ silent: true }),
@@ -561,12 +557,11 @@ describe('turns', () => {
         createTurnsRouter({
           sessions,
           sessionStore,
-          activeTurns: new ActiveTurnRegistry(),
           resolveModelProviderStore: () => modelProviderStore,
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
           resolveSkillStore: () => new SqliteSkillStore(db),
           resolveAgentStore: () => new SqliteAgentStore(db),
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          turnExecutor: testNodeTurnExecutor({ sandboxIntegration: undefined }),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
           sandboxIntegration: undefined,
           logger: createLogger({ silent: true }),

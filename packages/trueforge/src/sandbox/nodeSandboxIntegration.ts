@@ -1,3 +1,5 @@
+import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
+import { SkillMounter } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { join } from 'node:path';
 import configuration from '../config';
 import { CODE_MODE_SOCKET_PARENT, LOCAL_SANDBOX_ROOT_PARENT } from '../nodeConfig';
@@ -51,5 +53,18 @@ export function createNodeSandboxIntegration({
     createDaytonaProvider: toDaytonaSandboxProvider,
     isDaytonaAuthError,
     isDaytonaPermissionError,
+    buildTurnSandbox: input =>
+      // Empty mounter still uploads requested-skills file so existing skills are cleaned up.
+      new Sandbox({
+        provider: input.provider,
+        existingSandboxId: input.existingSandboxId,
+        fileDownloadEnabled: input.fileDownloadEnabled,
+        blockDestructiveToolsInCodeMode: true,
+        mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,
+        mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
+        skillMounter: new SkillMounter({ skills: input.skills }),
+        tracing: input.tracing,
+        logger: input.logger,
+      }),
   };
 }

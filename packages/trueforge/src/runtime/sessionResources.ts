@@ -2,13 +2,7 @@ import type { AgentSpec, SessionHandle } from '@truefoundry/trueforge-core/agent
 import type { VercelAIProviderConfig } from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
 import type { RemoteMcpHeaders } from '@truefoundry/trueforge-core/core/mcp/RemoteMCP';
 import type { AgentDefinition, ModelParams } from '@truefoundry/trueforge-core/core/runtime/AgentDefinition';
-import type { SandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
-import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
-import { SkillMounter, type Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
-import type { AgentTracing } from '@truefoundry/trueforge-core/core/tracing/AgentTracing';
-import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
-import configuration from '../config';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
@@ -169,31 +163,6 @@ export async function getMcpConnection({
     url: record.manifest.url,
     headers: store.resolveInvokeHeaders({ record, userRef }),
   };
-}
-
-/**
- * Builds a Sandbox for one turn from a resolved provider and skill mounts.
- */
-export function buildTurnSandbox(input: {
-  provider: SandboxProvider;
-  logger: Logger;
-  skills?: readonly Skill[];
-  fileDownloadEnabled: boolean;
-  existingSandboxId?: string | undefined;
-  tracing: AgentTracing;
-}): Sandbox {
-  // Empty mounter still uploads requested-skills file so existing skills are cleaned up.
-  return new Sandbox({
-    provider: input.provider,
-    existingSandboxId: input.existingSandboxId,
-    fileDownloadEnabled: input.fileDownloadEnabled,
-    blockDestructiveToolsInCodeMode: true,
-    mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,
-    mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
-    skillMounter: new SkillMounter({ skills: input.skills ?? [] }),
-    tracing: input.tracing,
-    logger: input.logger,
-  });
 }
 
 /**

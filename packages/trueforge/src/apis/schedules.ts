@@ -2,13 +2,9 @@
  * Schedules API (mounted at /api/v1/schedules).
  */
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import {
-  InvalidPageTokenError,
-  type Sessions,
-  type TurnStreamingEvent,
-} from '@truefoundry/trueforge-core/agent-session';
-import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
+import { InvalidPageTokenError, type Sessions } from '@truefoundry/trueforge-core/agent-session';
 import type { Context } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import type { Authorizer } from '../auth/authorizer';
 import {
   createdBySubjectFromRequestContext,
@@ -50,10 +46,8 @@ import {
   listSchedulesRoute,
   putScheduleRoute,
 } from '../routes/scheduleRoutes';
-import type { ActiveTurnRegistry } from '../runtime/activeTurns';
 import { minIntervalSeconds, nextTriggerAfter } from '../runtime/cron';
-import type { EventSubscriptionRegistry } from '../runtime/event-subscription';
-import type { SandboxIntegration } from '../sandbox/integration';
+import type { TurnExecutor, TurnExecutorFailure } from '../runtime/turnExecutor';
 import {
   InvalidCronError,
   SCHEDULE_MIN_INTERVAL_SECONDS,
@@ -62,19 +56,15 @@ import {
   type ScheduleRun,
 } from '../schemas/schedule';
 import { agentIfAccessible, canReadAgentBoundResource, resolveManagedAgentIds } from './agentAccess';
-import { getTurnExecutionError, startTurnInProcess } from './turns';
 
 /** Runtime + Context store resolvers needed to start a schedule turn. */
 export interface ScheduleTurnExecutionDeps<TTransaction> {
   scheduleStore: IScheduleStore<TTransaction>;
   sessions: Sessions;
-  activeTurns: ActiveTurnRegistry;
-  eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
-  logger: Logger;
+  turnExecutor: TurnExecutor;
   resolveModelProviderStore: (c: Context, runAsAgent?: AgentRecord) => IModelProviderStore<TTransaction>;
   resolveMcpServerStore: (c: Context, runAsAgent?: AgentRecord) => IMcpServerWithAuthStore<TTransaction>;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
-  sandboxIntegration: SandboxIntegration | undefined;
   /** Persistence agent store (schedule agent binding is not caller-scoped). */
   agentStore: IAgentStore<TTransaction>;
   turnSkillsResolverStore: Pick<ISkillStore, 'resolveTurnSkills'>;
@@ -90,13 +80,13 @@ export interface SchedulesRouterDeps<TTransaction> extends ScheduleTurnExecution
 /**
  * Prepare and start a schedule run using Context-based store resolvers. Caller must set
  * `request_context` (typically via {@link requestContextFromCreatedBySubject})
- * before calling.
+ * before calling. Returns the executor's failure when the turn could not start.
  */
 export async function startScheduleRunOnRequest<TTransaction>(params: {
   c: Context;
   item: ScheduleDispatchItem;
   deps: ScheduleTurnExecutionDeps<TTransaction>;
-}): Promise<void> {
+}): Promise<TurnExecutorFailure | undefined> {
   const { c, item, deps } = params;
   const prepared = await startScheduleRun({
     item,
@@ -104,25 +94,22 @@ export async function startScheduleRunOnRequest<TTransaction>(params: {
     agentStore: deps.agentStore,
   });
   if (prepared === undefined) {
-    return;
+    return undefined;
   }
-  await startTurnInProcess({
+  const started = await deps.turnExecutor.start({
     session: prepared.session,
     input: prepared.input,
     previous_turn_id: prepared.previous_turn_id,
     userRef: prepared.userRef,
-    deps: {
-      activeTurns: deps.activeTurns,
-      eventSubscriptions: deps.eventSubscriptions,
+    stores: {
       agentStore: deps.agentStore,
       modelProviderStore: deps.resolveModelProviderStore(c, prepared.agent),
       mcpServerStore: deps.resolveMcpServerStore(c, prepared.agent),
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
-      sandboxIntegration: deps.sandboxIntegration,
       skillStore: deps.turnSkillsResolverStore,
-      logger: deps.logger,
     },
   });
+  return started.ok ? undefined : started;
 }
 
 function toWireSchedule(record: ScheduleRecord): Schedule {
@@ -204,7 +191,10 @@ export function createScheduleExecutionRouter<TTransaction>(deps: ScheduleTurnEx
           created_by_subject: item.schedule.created_by_subject,
         }),
       );
-      await startScheduleRunOnRequest({ c, item, deps });
+      const failure = await startScheduleRunOnRequest({ c, item, deps });
+      if (failure !== undefined) {
+        throw new HTTPException(failure.status, { message: failure.message });
+      }
     } catch (error) {
       if (
         error instanceof ScheduleRunNotFoundError ||
@@ -340,8 +330,9 @@ export function createSchedulesRouter<TTransaction>(deps: SchedulesRouterDeps<TT
       throw error;
     }
 
+    let failure: TurnExecutorFailure | undefined;
     try {
-      await startScheduleRunOnRequest({ c, item: { run, schedule }, deps });
+      failure = await startScheduleRunOnRequest({ c, item: { run, schedule }, deps });
     } catch (error) {
       await deps.scheduleStore.updateRunStatus({
         tenant_id: requestContext.tenant_id,
@@ -357,11 +348,19 @@ export function createSchedulesRouter<TTransaction>(deps: SchedulesRouterDeps<TT
       ) {
         return c.json({ error: { message: error.message } }, 404);
       }
-      const turnError = getTurnExecutionError(error);
-      if (turnError) {
-        return c.json({ error: { message: turnError.message } }, turnError.status);
-      }
       throw error;
+    }
+    if (failure !== undefined) {
+      await deps.scheduleStore.updateRunStatus({
+        tenant_id: requestContext.tenant_id,
+        id: run.id,
+        status: 'failed',
+        reason: scheduleRunFailureReason(failure),
+      });
+      if (failure.status === 400 || failure.status === 404 || failure.status === 422) {
+        return c.json({ error: { message: failure.message } }, failure.status);
+      }
+      throw new HTTPException(failure.status, { message: failure.message });
     }
 
     const latest = await deps.scheduleStore.getRun({

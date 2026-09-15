@@ -15,9 +15,8 @@ import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provi
 import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteSessionStore';
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
-import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
-import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription/index.js';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
+import { testNodeTurnExecutor } from '../runtime/testNodeTurnExecutor';
 
 async function postTurnRejectingWith(error: AgentHarnessError): Promise<Response> {
   const db = createSqliteDb(':memory:');
@@ -68,7 +67,6 @@ async function postTurnRejectingWith(error: AgentHarnessError): Promise<Response
     createTurnsRouter({
       sessions,
       sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
-      activeTurns: new ActiveTurnRegistry(),
       resolveModelProviderStore: () => modelProviderStore,
       resolveMcpServerStore: () =>
         new McpServerWithAuthStore({
@@ -78,7 +76,7 @@ async function postTurnRejectingWith(error: AgentHarnessError): Promise<Response
         }),
       resolveSkillStore: () => new SqliteSkillStore(db),
       resolveAgentStore: () => new SqliteAgentStore(db),
-      eventSubscriptions: new EventSubscriptionRegistry(undefined),
+      turnExecutor: testNodeTurnExecutor(),
       resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
       sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
       logger: createLogger({ silent: true }),

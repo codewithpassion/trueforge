@@ -1,15 +1,13 @@
 /** The API: resource routers, the OpenAPI document and Swagger UI, all under /api/v1. */
 import { swaggerUI } from '@hono/swagger-ui';
 import { OpenAPIHono, z } from '@hono/zod-openapi';
-import type { ISessionStore, Sessions, TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import type { ISessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import type { RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { HTTPException } from 'hono/http-exception';
 import type { Configuration } from 'openid-client';
-import type { RedisClientType } from 'redis';
 import { createAgentImportRouter } from './apis/agentImport';
 import { createAgentsRouter } from './apis/agents';
 import { createAuthRouter } from './apis/auth';
@@ -51,8 +49,7 @@ import type { WithTransaction } from './db/transaction';
 import type { IOAuthTokenStore } from './mcp/auth/types';
 import { PACKAGE_VERSION } from './packageVersion.gen';
 import { OPENAPI_DOCUMENT_TAGS } from './routes/openapiTags';
-import type { ActiveTurnRegistry } from './runtime/activeTurns';
-import type { EventSubscriptionRegistry } from './runtime/event-subscription';
+import type { TurnExecutor } from './runtime/turnExecutor';
 import type { SandboxIntegration } from './sandbox/integration';
 import { InvalidCronError } from './schemas/schedule';
 import { zodErrorResponse, zodValidationHook } from './zodErrorResponse';
@@ -211,13 +208,8 @@ export interface ServerDeps<TTransaction> {
   /** Resolve turn skills - persistence store or TrueFoundry resolve with Service API key (schedule runs do have any caller token). */
   turnSkillsResolverStore: Pick<ISkillStore<TTransaction>, 'resolveTurnSkills'>;
   sessions: Sessions;
-  activeTurns: ActiveTurnRegistry;
-  /** Primary Redis client (server-owned); undefined in standalone mode. */
-  redis?: RedisClientType | undefined;
-  /** Request-reply dispatch table served by this replica's executor. */
-  requestReplyRouter: RequestReplyRouter;
-  /** Hands out each turn's resumable event stream to the create and subscribe handlers. */
-  eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
+  /** Runs, streams, resumes, and cancels turns. */
+  turnExecutor: TurnExecutor;
   logger: Logger;
   /** Discovered openid-client configuration; undefined when browser login is disabled. */
   oidcClient: Configuration | undefined;
@@ -236,13 +228,10 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
     scheduleStore: deps.scheduleStore,
     sessions: deps.sessions,
     agentStore: deps.agentStore,
-    eventSubscriptions: deps.eventSubscriptions,
-    logger: deps.logger,
+    turnExecutor: deps.turnExecutor,
     resolveModelProviderStore: deps.resolveModelProviderStore,
     resolveMcpServerStore: deps.resolveMcpServerStore,
     resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
-    sandboxIntegration: deps.sandboxIntegration,
-    activeTurns: deps.activeTurns,
     turnSkillsResolverStore: deps.turnSkillsResolverStore,
   };
 
@@ -447,17 +436,14 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       createSessionsRouter({
         sessions: deps.sessions,
         sessionStore: deps.sessionStore,
-        activeTurns: deps.activeTurns,
         resolveModelProviderStore: deps.resolveModelProviderStore,
         resolveMcpServerStore: deps.resolveMcpServerStore,
         resolveSkillStore: deps.resolveSkillStore,
         resolveAgentStore: deps.resolveAgentStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
         sandboxIntegration: deps.sandboxIntegration,
-        redis: deps.redis,
-        requestReplyRouter: deps.requestReplyRouter,
+        turnExecutor: deps.turnExecutor,
         resolveRequestContext,
-        logger: deps.logger,
         authorizer: deps.authorizer,
       }),
       authMiddleware,
@@ -469,12 +455,11 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       createTurnsRouter({
         sessions: deps.sessions,
         sessionStore: deps.sessionStore,
-        activeTurns: deps.activeTurns,
         resolveModelProviderStore: deps.resolveModelProviderStore,
         resolveMcpServerStore: deps.resolveMcpServerStore,
         resolveSkillStore: deps.resolveSkillStore,
         resolveAgentStore: deps.resolveAgentStore,
-        eventSubscriptions: deps.eventSubscriptions,
+        turnExecutor: deps.turnExecutor,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
         sandboxIntegration: deps.sandboxIntegration,
         logger: deps.logger,

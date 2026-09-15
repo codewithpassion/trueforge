@@ -79,7 +79,6 @@ describe('parseServerConfiguration', () => {
       }
       expect(config.STANDALONE).toBe(false);
       expect(config.OIDC.OIDC_CLIENT_ID).toBe('workers-client');
-      expect(config.EXECUTOR_ID).toBe('local');
     });
 
     it('accepts an agreeing STANDALONE=false', () => {
@@ -94,7 +93,20 @@ describe('parseServerConfiguration', () => {
         DATABASE_URL: 'postgres://user:pass@db:5432/trueforge',
         TRUEFORGE_API_KEY: 'service-key',
       });
-      for (const key of ['REDIS_URL', 'DATABASE_URL', 'TRUEFORGE_API_KEY', 'SERVER_URL', 'PORT', 'HOST']) {
+      for (const key of [
+        'REDIS_URL',
+        'DATABASE_URL',
+        'TRUEFORGE_API_KEY',
+        'SERVER_URL',
+        'PORT',
+        'HOST',
+        'EXECUTOR_ID',
+        'GRACEFUL_TIMEOUT_SECONDS',
+        'REDIS_REQUEST_REPLY_TIMEOUT_MS',
+        'REDIS_REQUEST_REPLY_HEARTBEAT_INTERVAL_MS',
+        'REDIS_REQUEST_REPLY_REPLY_TTL_MS',
+        'REDIS_REQUEST_REPLY_POLL_INTERVAL_MS',
+      ]) {
         expect(config).not.toHaveProperty(key);
       }
     });

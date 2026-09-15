@@ -1,8 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { AgentSpecSchema, Sessions } from '@truefoundry/trueforge-core/agent-session';
-import { RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
-import { createClient } from 'redis';
-import { createLogger } from 'winston';
 import { createInternalMetricsRouter } from '../../../src/apis/sessionMetrics';
 import {
   createInternalSessionsRouter,
@@ -20,7 +17,6 @@ import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provi
 import { SqliteSessionMetricsStore } from '../../../src/db/sqlite/session-metrics/SqliteSessionMetricsStore';
 import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteSessionStore';
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
-import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import { ListSessionsResponseSchema } from '../../../src/schemas/session';
 import {
@@ -28,6 +24,7 @@ import {
   GetSessionMetricsChartResponseSchema,
   GetSessionMetricsMeterResponseSchema,
 } from '../../../src/schemas/sessionMetrics';
+import { testNodeTurnExecutor } from '../runtime/testNodeTurnExecutor';
 
 const inlineSpec = AgentSpecSchema.parse({
   model: { name: 'anthropic/claude-sonnet-4-6' },
@@ -88,17 +85,14 @@ describe('sessions HTTP agent binding', () => {
     const deps: SessionsRouterDeps = {
       sessions,
       sessionStore,
-      activeTurns: new ActiveTurnRegistry(),
       resolveModelProviderStore: () => modelProviderStore,
       resolveMcpServerStore: () => mcpServerStore,
       resolveSkillStore: () => skillStore,
       resolveAgentStore: () => agentStore,
       resolveSandboxProviderStore: () => sandboxProviderStore,
       sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
-      redis: createClient(),
-      requestReplyRouter: new RequestReplyRouter(),
+      turnExecutor: testNodeTurnExecutor({ sessionStore }),
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-      logger: createLogger({ silent: true }),
       authorizer: new TrueForgeAuthorizer(),
     };
     sessionDeps = deps;
@@ -274,7 +268,6 @@ describe('sessions HTTP agent binding', () => {
     };
     const managerDeps = {
       ...sessionDeps,
-      requestReplyRouter: new RequestReplyRouter(),
       authorizer: managerAuthorizer,
     };
     const managerApp = new OpenAPIHono();
@@ -619,7 +612,6 @@ describe('sessions HTTP agent binding', () => {
     const denyApp = new OpenAPIHono();
     const deniedDeps = {
       ...sessionDeps,
-      requestReplyRouter: new RequestReplyRouter(),
       authorizer: denyAllAuthorizer,
     };
     denyApp.route('/', createSessionsRouter(deniedDeps));

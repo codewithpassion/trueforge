@@ -1,11 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import {
-  AgentSpecSchema,
-  InMemorySessionStore,
-  Sessions,
-  type TurnStreamingEvent,
-} from '@truefoundry/trueforge-core/agent-session';
-import winston from 'winston';
+import { AgentSpecSchema, InMemorySessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import { createScheduleExecutionRouter, createSchedulesRouter } from '../../../src/apis/schedules';
 import { TrueForgeAuthorizer, type Authorizer } from '../../../src/auth/authorizer';
 import type { RequestContext } from '../../../src/auth/identity';
@@ -14,14 +8,12 @@ import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
 import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteScheduleStore } from '../../../src/db/sqlite/schedule-store/SqliteScheduleStore';
-import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
-import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
-import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import {
   CreateScheduleRunResponseSchema,
   ListScheduleRunsResponseSchema,
   ListSchedulesResponseSchema,
 } from '../../../src/schemas/schedule';
+import { testNodeTurnExecutor } from '../runtime/testNodeTurnExecutor';
 
 jest.mock('../../../src/controller/scheduleDispatch', () => {
   const actual = jest.requireActual<typeof import('../../../src/controller/scheduleDispatch')>(
@@ -66,14 +58,11 @@ function stubTurnExecutionDeps(agentStore: SqliteAgentStore, scheduleStore: Sqli
     scheduleStore,
     sessions: new Sessions({ sessionStore }),
     agentStore,
-    activeTurns: new ActiveTurnRegistry(),
-    eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
-    logger: winston.createLogger({ silent: true }),
+    turnExecutor: testNodeTurnExecutor(),
     resolveModelProviderStore: () => ({}) as never,
     resolveMcpServerStore: () => ({}) as never,
     turnSkillsResolverStore: { resolveTurnSkills: async () => [] },
     resolveSandboxProviderStore: () => ({}) as never,
-    sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
   };
 }
 

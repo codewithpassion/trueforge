@@ -2,24 +2,10 @@
  * DB-backed turns API (mounted at /api/v1/sessions).
  */
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import type { ISessionStore, Sessions, Turn, TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
-import {
-  CancellationReason,
-  EventType,
-  SessionStoreConflictError,
-  SessionStoreNotFoundError,
-  TurnResourceResolver,
-  type SessionHandle,
-  type TurnHandle,
-  type TurnInputItem,
-  type TurnRecordWithoutSnapshot,
-} from '@truefoundry/trueforge-core/agent-session';
-import { AgentHarnessError, McpConnectionError } from '@truefoundry/trueforge-core/core/errors';
-import { VercelAILLM } from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
-import { redisKey } from '@truefoundry/trueforge-core/core/redisKeys';
-import { isAgentInputUserMessage, isFileContentPart } from '@truefoundry/trueforge-core/core/runtime/UserInputMessage';
+import type { ISessionStore, Sessions, TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import { EventType, SessionStoreConflictError } from '@truefoundry/trueforge-core/agent-session';
 import { SandboxError } from '@truefoundry/trueforge-core/core/sandbox/SandboxErrors';
-import { existingSandboxIdForProvider, rawSandboxId } from '@truefoundry/trueforge-core/core/sandbox/sandboxRef';
+import { rawSandboxId } from '@truefoundry/trueforge-core/core/sandbox/sandboxRef';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
@@ -27,7 +13,7 @@ import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
 import type { Authorizer } from '../auth/authorizer';
 import type { ResolveRequestContext } from '../auth/identity';
-import configuration, { isTrueFoundryModeEnabled } from '../config';
+import configuration from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
@@ -41,31 +27,11 @@ import {
   listTurnsRoute,
   subscribeTurnRoute,
 } from '../routes/turnRoutes';
-import type { ActiveTurnRegistry } from '../runtime/activeTurns';
-import { StreamGoneError, type EventSubscription, type EventSubscriptionRegistry } from '../runtime/event-subscription';
-import { mintPeeredTurnId } from '../runtime/peeringIds';
 import { validateSandboxFilePath } from '../runtime/sandboxFilePath';
-import {
-  buildGatewayMetadata,
-  buildTurnSandbox,
-  gatewayMetadataHeaders,
-  getMcpConnection,
-  getModelDetails,
-  withGatewayMetadataHeaders,
-} from '../runtime/sessionResources';
+import type { TurnExecutor } from '../runtime/turnExecutor';
+import { toWireTurn } from '../runtime/turnRunner';
 import type { SandboxIntegration } from '../sandbox/integration';
 import { canReadAgentBoundResource } from './agentAccess';
-
-export function toWireTurn(record: TurnRecordWithoutSnapshot): Turn {
-  return {
-    id: record.turn_id,
-    session_id: record.session_id,
-    previous_turn_id: record.previous_turn_id,
-    input: record.input,
-    state: record.state,
-    created_at: record.created_at.toISOString(),
-  };
-}
 
 /**
  * Copies into a standalone ArrayBuffer for the response body: a pooled Buffer's
@@ -101,199 +67,17 @@ export function toContentDisposition(path: string): string {
 export interface TurnsRouterDeps {
   sessions: Sessions;
   sessionStore: ISessionStore;
-  activeTurns: ActiveTurnRegistry;
   resolveModelProviderStore: (c: Context, runAsAgent?: AgentRecord) => IModelProviderStore;
   resolveMcpServerStore: (c: Context, runAsAgent?: AgentRecord) => IMcpServerWithAuthStore;
   resolveSkillStore: (c: Context) => ISkillStore;
   resolveAgentStore: (c: Context) => IAgentStore;
-  /** Resumable live turn-event transport: create-turn writes, subscribe polls. */
-  eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
+  /** Runs, streams, and resumes turns. */
+  turnExecutor: TurnExecutor;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore;
   sandboxIntegration: SandboxIntegration | undefined;
   logger: Logger;
   resolveRequestContext: ResolveRequestContext;
   authorizer: Authorizer;
-}
-
-/**
- * Deps needed to create a turn and drain events in-process (no HTTP). Carries already-resolved
- * stores; callers must resolve them from the request context (e.g. schedule `resolveTurnDeps(c, agent)`)
- * so TrueFoundry mode stays token-bound for models, MCP, and skills.
- */
-export type BeginTurnExecutionDeps = Pick<
-  TurnsRouterDeps,
-  'activeTurns' | 'eventSubscriptions' | 'logger' | 'sandboxIntegration'
-> & {
-  agentStore: IAgentStore;
-  modelProviderStore: IModelProviderStore;
-  mcpServerStore: IMcpServerWithAuthStore;
-  sandboxProviderStore: ISandboxProviderStore;
-  skillStore: Pick<ISkillStore, 'resolveTurnSkills'>;
-};
-
-/**
- * Builds the per-turn resolver. Agent / MCP / sandbox / LLM lookups are wired
- * the same way: async factories over the corresponding stores.
- */
-function createTurnResolver(deps: {
-  mcpServerStore: IMcpServerWithAuthStore;
-  skillStore: Pick<ISkillStore, 'resolveTurnSkills'>;
-  sandboxProviderStore: ISandboxProviderStore;
-  agentStore: IAgentStore;
-  modelProviderStore: IModelProviderStore;
-  sandboxIntegration: SandboxIntegration | undefined;
-  logger: Logger;
-  signal: AbortSignal;
-  userRef: string;
-  session: SessionHandle;
-  turnId: string;
-}): TurnResourceResolver {
-  const {
-    mcpServerStore,
-    skillStore,
-    sandboxProviderStore,
-    agentStore,
-    modelProviderStore,
-    sandboxIntegration,
-    logger,
-    signal,
-    userRef,
-    session,
-    turnId,
-  } = deps;
-  const tenant_id = session.tenant_id;
-  const sessionId = session.session_id;
-  const metadataHeaders = isTrueFoundryModeEnabled()
-    ? gatewayMetadataHeaders(buildGatewayMetadata({ session, turnId }))
-    : {};
-
-  return new TurnResourceResolver({
-    llm: async name => {
-      const resolved = await getModelDetails({
-        tenant_id,
-        name,
-        store: modelProviderStore,
-      });
-      return {
-        modelClient: new VercelAILLM({
-          providerConfig: {
-            ...resolved.providerConfig,
-            headers: { ...resolved.providerConfig.headers, ...metadataHeaders },
-          },
-          logger,
-          signal,
-        }),
-        defaultModelParams: resolved.defaultModelParams,
-        modelProperties: resolved.modelProperties,
-      };
-    },
-    mcp: async name => {
-      const connection = await getMcpConnection({
-        tenant_id,
-        name,
-        store: mcpServerStore,
-        userRef,
-      });
-      if (connection === undefined) {
-        throw new HTTPException(422, {
-          message: `Unknown MCP server "${name}" — not configured`,
-        });
-      }
-      return {
-        url: connection.url,
-        headers: withGatewayMetadataHeaders({
-          headers: connection.headers,
-          metadataHeaders,
-        }),
-      };
-    },
-    mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,
-    mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
-    // Stays wired without an integration so sandbox-enabled specs get the 422 below instead of running sandbox-less.
-    sandboxProvider: async ({ spec, existingSandboxId, tracing }) => {
-      const provider = await sandboxIntegration?.resolveProvider({
-        tenant_id,
-        store: sandboxProviderStore,
-        logger,
-        sessionId,
-      });
-      if (sandboxIntegration === undefined || provider === undefined) {
-        throw new HTTPException(422, {
-          message: 'no sandbox provider configured — PUT /settings/sandbox-providers',
-        });
-      }
-      const carriedSandboxId = existingSandboxIdForProvider({
-        existingSandboxId,
-        currentProviderType: provider.type,
-      });
-      // A fresh Daytona sandbox is cloned from the release snapshot, so the build must be ready first.
-      // Restoring an existing sandbox goes through daytona.get and never touches the snapshot.
-      // Local fallback has no image build.
-      if (carriedSandboxId === undefined && provider.type !== 'local') {
-        const status = await sandboxIntegration.checkSnapshotStatus({ store: sandboxProviderStore, tenant_id, logger });
-        if (status?.status !== 'ready') {
-          throw new HTTPException(422, {
-            message:
-              status?.status === 'failed'
-                ? `sandbox image build failed (${status.status_reason ?? 'unknown error'})`
-                : 'sandbox image is activating — retry shortly',
-          });
-        }
-      }
-      const skills = spec.skills ?? [];
-      const mountSkills =
-        skills.length === 0
-          ? []
-          : await skillStore.resolveTurnSkills({
-              tenant_id,
-              skills,
-            });
-      return buildTurnSandbox({
-        provider,
-        logger,
-        skills: mountSkills,
-        fileDownloadEnabled: spec.config.sandbox.file_downloads,
-        existingSandboxId: carriedSandboxId,
-        tracing,
-      });
-    },
-    agent: async agentId => {
-      const record = await agentStore.getAgent({ tenant_id, id: agentId });
-      if (record === undefined) {
-        throw new HTTPException(422, { message: `Agent not found: ${agentId}` });
-      }
-      return record.manifest;
-    },
-    logger,
-  });
-}
-
-const MAX_SESSION_TITLE_LENGTH = 50;
-
-/**
- * Derives a session title from the first user message of the first turn. Returns the
- * trimmed text (capped at {@link MAX_SESSION_TITLE_LENGTH}) or `undefined` when no usable
- * text is present (e.g. file-only or tool-approval input).
- */
-export function deriveSessionTitle(input: TurnInputItem[] | undefined): string | undefined {
-  const firstUserMessage = input?.find(isAgentInputUserMessage);
-  if (!firstUserMessage) {
-    return undefined;
-  }
-
-  const text =
-    typeof firstUserMessage.content === 'string'
-      ? firstUserMessage.content
-      : firstUserMessage.content
-          .filter(part => !isFileContentPart(part))
-          .map(part => part.text)
-          .join(' ');
-
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  return trimmed.slice(0, MAX_SESSION_TITLE_LENGTH);
 }
 
 /**
@@ -306,215 +90,6 @@ export function turnEventSsePayload(event: TurnStreamingEvent, sequenceNumber: n
     id: String(sequenceNumber),
     data: JSON.stringify(event),
   };
-}
-
-/**
- * turn.created arms the active-run TTL, turn.done shortens it to the
- * post-completion drain window; mid-run events leave the TTL untouched.
- */
-export function streamTTLSecondsFor(event: TurnStreamingEvent): number | undefined {
-  if (event.type === EventType.TURN_CREATED) {
-    return configuration.TURN_STREAM_TTL_SECONDS;
-  }
-  if (event.type === EventType.TURN_DONE) {
-    return configuration.TURN_STREAM_POST_COMPLETION_TTL_SECONDS;
-  }
-  return undefined;
-}
-
-/** Redis/in-memory key for one turn's resumable event stream. */
-export function turnStreamId(tenantId: string, sessionId: string, turnId: string): string {
-  return redisKey('agent', 'turn', tenantId, sessionId, turnId, 'stream');
-}
-
-/**
- * Dual-write turn events to the resumable subscription registry, then optionally
- * forward each sequenced event (SSE path). Shared by streaming and non-streaming
- * create-turn; the HTTP response lifecycle does not own execution.
- */
-export async function drainTurnEvents(input: {
-  trackedStream: AsyncIterable<TurnStreamingEvent>;
-  turnEventStream: EventSubscription<TurnStreamingEvent>;
-  sessionId: string;
-  turnId: string;
-  maxExecutionTimer: NodeJS.Timeout;
-  logger: Logger;
-  onEvent?: (event: TurnStreamingEvent, sequenceNumber: number) => Promise<void>;
-}): Promise<void> {
-  const { trackedStream, turnEventStream, sessionId, turnId, maxExecutionTimer, logger, onEvent } = input;
-  try {
-    for await (const event of trackedStream) {
-      // Dual-write before any client sink so subscribers can resume after disconnect.
-      const sequenceNumber = await turnEventStream.put(event, {
-        streamTTLSeconds: streamTTLSecondsFor(event),
-      });
-      await onEvent?.(event, sequenceNumber);
-    }
-  } catch (error) {
-    if (error instanceof SessionStoreNotFoundError) {
-      logger.warn('Turn stream ended after session/turn was removed', {
-        sessionId,
-        turnId,
-        ...extractErrorLogFields(error),
-      });
-    } else {
-      logger.error('Unexpected error in turn event drain', {
-        sessionId,
-        turnId,
-        ...extractErrorLogFields(error),
-      });
-    }
-  } finally {
-    clearTimeout(maxExecutionTimer);
-  }
-}
-
-/** Inputs for {@link drainTurnEvents} produced by {@link beginTurnExecution}. */
-export interface TurnEventDrainInput {
-  trackedStream: AsyncIterable<TurnStreamingEvent>;
-  turnEventStream: EventSubscription<TurnStreamingEvent>;
-  sessionId: string;
-  turnId: string;
-  maxExecutionTimer: NodeJS.Timeout;
-  logger: Logger;
-}
-
-/**
- * Shared create-turn engine: persist the turn, start execution, and return the
- * drain inputs. Does not wait for events and does not write HTTP/SSE.
- */
-export async function beginTurnExecution(params: {
-  session: SessionHandle;
-  input: TurnInputItem[] | undefined;
-  previous_turn_id: string | undefined;
-  userRef: string;
-  deps: BeginTurnExecutionDeps;
-}): Promise<{ turn: TurnHandle; drainInput: TurnEventDrainInput }> {
-  const { session, input, previous_turn_id: previousTurnId, userRef, deps } = params;
-  const sessionId = session.session_id;
-  const turnId = mintPeeredTurnId(configuration.EXECUTOR_ID);
-
-  const abortController = new AbortController();
-  const tenant_id = session.tenant_id;
-  const resolver = createTurnResolver({
-    mcpServerStore: deps.mcpServerStore,
-    skillStore: deps.skillStore,
-    sandboxProviderStore: deps.sandboxProviderStore,
-    agentStore: deps.agentStore,
-    modelProviderStore: deps.modelProviderStore,
-    sandboxIntegration: deps.sandboxIntegration,
-    logger: deps.logger,
-    signal: abortController.signal,
-    userRef,
-    session,
-    turnId,
-  });
-
-  // First turn only: derive the title from the first user message. The store
-  // never overwrites an existing title.
-  const title = session.record.last_turn_id ? undefined : deriveSessionTitle(input);
-
-  const turn = await session.createTurn({
-    turn_id: turnId,
-    input,
-    previous_turn_id: previousTurnId,
-    signal: abortController.signal,
-    resolver,
-    update_session_title_if_not_exist: title,
-  });
-
-  const maxExecutionTimer = setTimeout(() => {
-    if (!abortController.signal.aborted) {
-      abortController.abort(CancellationReason.ServerExecutionTimeout);
-    }
-  }, configuration.SERVER_EXECUTION_TIMEOUT_SECONDS * 1000);
-  maxExecutionTimer.unref();
-
-  const trackedStream = deps.activeTurns.track({
-    sessionId,
-    turnId: turn.id,
-    abortController,
-    stream: turn.stream(),
-  });
-
-  // Held for the whole turn; the stream's sequence counter dies with it.
-  const turnEventStream = deps.eventSubscriptions.get(turnStreamId(tenant_id, sessionId, turn.id));
-
-  return {
-    turn,
-    drainInput: {
-      trackedStream,
-      turnEventStream,
-      sessionId,
-      turnId: turn.id,
-      maxExecutionTimer,
-      logger: deps.logger,
-    },
-  };
-}
-
-/**
- * Non-stream create-turn: begin execution and resolve once the first event is
- * dual-written so immediate subscribe cannot 412. Same as `stream: false`.
- */
-export async function startTurnInProcess(params: {
-  session: SessionHandle;
-  input: TurnInputItem[] | undefined;
-  previous_turn_id: string | undefined;
-  userRef: string;
-  deps: BeginTurnExecutionDeps;
-}): Promise<TurnHandle> {
-  const { turn, drainInput } = await beginTurnExecution(params);
-
-  // Same unawaited drain scheduling as Hono streamSSE's run(cb).
-  const { promise: firstEventDualWritten, resolve: markFirstEventDualWritten } = Promise.withResolvers<undefined>();
-  void drainTurnEvents({
-    ...drainInput,
-    onEvent: () => {
-      markFirstEventDualWritten(undefined);
-      return Promise.resolve();
-    },
-  }).finally(() => {
-    markFirstEventDualWritten(undefined);
-  });
-  await firstEventDualWritten;
-  return turn;
-}
-
-/** Mapped client error from turn execution; undefined means rethrow. */
-export interface TurnExecutionError {
-  status: 400 | 404 | 422;
-  message: string;
-}
-
-/**
- * Resolve turn-start failures to HTTP status + message.
- * Returns undefined when the caller should rethrow (unexpected / 5xx).
- */
-export function getTurnExecutionError(error: unknown): TurnExecutionError | undefined {
-  if (error instanceof HTTPException) {
-    if (error.status === 400 || error.status === 404 || error.status === 422) {
-      return { status: error.status, message: error.message };
-    }
-    return undefined;
-  }
-  if (error instanceof SessionStoreNotFoundError) {
-    return { status: 404, message: error.message };
-  }
-  if (error instanceof AgentHarnessError && !(error instanceof McpConnectionError)) {
-    switch (error.code) {
-      case 'invalid_file_input':
-        return { status: 400, message: error.message };
-      case 'invalid_send_input':
-      case 'agent_sandbox_required':
-      case 'tool_name_collision':
-        return { status: 422, message: error.message };
-      case 'capability_state_error':
-      case 'mcp_connection_failed':
-        return undefined;
-    }
-  }
-  return undefined;
 }
 
 /**
@@ -769,13 +344,12 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       referencedAgent = agent;
     }
 
-    const turnParams = {
+    const startInput = {
       session,
       input: body.input,
       previous_turn_id: body.previous_turn_id,
       userRef: requestContext.subject.id,
-      deps: {
-        ...deps,
+      stores: {
         modelProviderStore: deps.resolveModelProviderStore(c, referencedAgent),
         mcpServerStore: deps.resolveMcpServerStore(c, referencedAgent),
         skillStore: deps.resolveSkillStore(c),
@@ -784,42 +358,44 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       },
     };
 
-    try {
-      // Non-stream: wait for first dual-write, return JSON (also used by schedule run-now).
-      if (!body.stream) {
-        const turn = await startTurnInProcess(turnParams);
-        return c.json({ data: toWireTurn(turn.record) }, 200);
+    // Non-stream: wait for first dual-write, return JSON (also used by schedule run-now).
+    const started = body.stream
+      ? await deps.turnExecutor.startStreaming(startInput)
+      : await deps.turnExecutor.start(startInput);
+    if (!started.ok) {
+      if (
+        started.status === 400 ||
+        started.status === 404 ||
+        started.status === 412 ||
+        started.status === 413 ||
+        started.status === 422
+      ) {
+        return c.json({ error: { message: started.message } }, started.status);
       }
-
-      // Stream: same engine; HTTP handler owns writing each event to SSE.
-      const { drainInput } = await beginTurnExecution(turnParams);
-      let shouldWriteToSSEStream = true;
-      return streamSSE(c, async stream => {
-        stream.onAbort(() => {
-          shouldWriteToSSEStream = false;
-        });
-        await drainTurnEvents({
-          ...drainInput,
-          onEvent: async (event, sequenceNumber) => {
-            if (!stream.closed && !stream.aborted && shouldWriteToSSEStream) {
-              try {
-                await stream.writeSSE(turnEventSsePayload(event, sequenceNumber));
-              } catch (error) {
-                deps.logger.error('SSE stream write error', extractErrorLogFields(error));
-                shouldWriteToSSEStream = false;
-              }
-            }
-          },
-        });
-        await stream.close();
-      });
-    } catch (error) {
-      const turnError = getTurnExecutionError(error);
-      if (turnError) {
-        return c.json({ error: { message: turnError.message } }, turnError.status);
-      }
-      throw error;
+      throw new HTTPException(started.status, { message: started.message });
     }
+    if ('turn' in started) {
+      return c.json({ data: started.turn }, 200);
+    }
+
+    // Stream: the executor owns execution; this handler only writes each event to SSE.
+    let shouldWriteToSSEStream = true;
+    return streamSSE(c, async stream => {
+      stream.onAbort(() => {
+        shouldWriteToSSEStream = false;
+      });
+      for await (const { sequence_number: sequenceNumber, ...event } of started.events) {
+        if (!stream.closed && !stream.aborted && shouldWriteToSSEStream) {
+          try {
+            await stream.writeSSE(turnEventSsePayload(event, sequenceNumber));
+          } catch (error) {
+            deps.logger.error('SSE stream write error', extractErrorLogFields(error));
+            shouldWriteToSSEStream = false;
+          }
+        }
+      }
+      await stream.close();
+    });
   };
 
   const subscribeTurnHandler: RouteHandler<typeof subscribeTurnRoute> = async c => {
@@ -851,22 +427,23 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       return c.json({ error: { message: `Turn not found: ${turnId}` } }, 404);
     }
 
-    const turnEventStream = deps.eventSubscriptions.get(turnStreamId(requestContext.tenant_id, sessionId, turnId));
-
-    // Admission check before SSE headers are sent, so it can still map to HTTP 412.
-    try {
-      await turnEventStream.assertSubscribable();
-    } catch (error) {
-      if (error instanceof StreamGoneError) {
-        throw new HTTPException(412, { message: error.message, cause: error });
-      }
-      throw error;
-    }
-
     // One lifecycle controller: server-side timeout, client disconnect, and
     // normal teardown all abort it, which ends poll even while it is parked
     // waiting for events.
     const subscribeAbort = new AbortController();
+
+    // Admission check before SSE headers are sent, so it can still map to HTTP 412.
+    const subscribed = await deps.turnExecutor.subscribe({
+      tenant_id: requestContext.tenant_id,
+      session_id: sessionId,
+      turn_id: turnId,
+      after_sequence_number: afterSequenceNumber,
+      signal: subscribeAbort.signal,
+    });
+    if (!subscribed.ok) {
+      throw new HTTPException(subscribed.status, { message: subscribed.message });
+    }
+
     const timeoutMs = configuration.TURN_SUBSCRIBE_TIMEOUT_MS;
     const timeoutHandler = setTimeout(() => {
       deps.logger.info('Subscribe turn stream server-side timeout reached, closing stream', {
@@ -883,7 +460,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
         subscribeAbort.abort(new Error('client-disconnected'));
       });
 
-      const generator = turnEventStream.poll(afterSequenceNumber, { signal: subscribeAbort.signal });
+      const generator = subscribed.events;
       try {
         for await (const { sequence_number: sequenceNumber, ...event } of generator) {
           await stream.writeSSE(turnEventSsePayload(event, sequenceNumber));

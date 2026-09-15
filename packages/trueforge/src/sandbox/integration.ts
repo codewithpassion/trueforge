@@ -1,4 +1,7 @@
 import type { SandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
+import type { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
+import type { Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
+import type { AgentTracing } from '@truefoundry/trueforge-core/core/tracing/AgentTracing';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { SandboxBuildMetadata, SandboxProviderManifest, SandboxStatus } from '../schemas/sandboxProvider';
@@ -34,4 +37,13 @@ export interface SandboxIntegration {
   isDaytonaAuthError(error: unknown): boolean;
   /** Daytona credentials lack a required permission. */
   isDaytonaPermissionError(error: unknown): boolean;
+  /** Sandbox for one turn from a resolved provider and skill mounts. */
+  buildTurnSandbox(input: {
+    provider: SandboxProvider;
+    logger: Logger;
+    skills: readonly Skill[];
+    fileDownloadEnabled: boolean;
+    existingSandboxId: string | undefined;
+    tracing: AgentTracing;
+  }): Sandbox;
 }

@@ -1,7 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { AgentSpecSchema, Sessions } from '@truefoundry/trueforge-core/agent-session';
-import { RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
-import { createClient } from 'redis';
 import { createLogger } from 'winston';
 import { createSessionsRouter } from '../../../src/apis/sessions';
 import { createTurnsRouter } from '../../../src/apis/turns';
@@ -17,10 +15,9 @@ import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provi
 import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteSessionStore';
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
-import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
-import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription/index.js';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import { ListSessionsResponseSchema } from '../../../src/schemas/session';
+import { testNodeTurnExecutor } from '../runtime/testNodeTurnExecutor';
 
 describe('public CRUD after session deletion', () => {
   it('returns not found for session and turn operations', async () => {
@@ -28,7 +25,6 @@ describe('public CRUD after session deletion', () => {
     await migrateSqliteToLatest(db);
     const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
     const sessions = new Sessions({ sessionStore });
-    const activeTurns = new ActiveTurnRegistry();
     const modelProviderStore = new SqliteModelProviderStore(db);
     const tokenStore = new SqliteOAuthTokenStore(db);
     const mcpServerStore = new McpServerWithAuthStore({
@@ -46,17 +42,14 @@ describe('public CRUD after session deletion', () => {
       createSessionsRouter({
         sessions,
         sessionStore,
-        activeTurns,
         resolveModelProviderStore: () => modelProviderStore,
         resolveMcpServerStore: () => mcpServerStore,
         resolveSkillStore: () => skillStore,
         resolveAgentStore: () => agentStore,
         resolveSandboxProviderStore: () => sandboxProviderStore,
         sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
-        redis: createClient(),
-        requestReplyRouter: new RequestReplyRouter(),
+        turnExecutor: testNodeTurnExecutor({ sessionStore }),
         resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-        logger: createLogger({ silent: true }),
         authorizer: new TrueForgeAuthorizer(),
       }),
     );
@@ -65,12 +58,11 @@ describe('public CRUD after session deletion', () => {
       createTurnsRouter({
         sessions,
         sessionStore,
-        activeTurns,
         resolveModelProviderStore: () => modelProviderStore,
         resolveMcpServerStore: () => mcpServerStore,
         resolveSkillStore: () => skillStore,
         resolveAgentStore: () => agentStore,
-        eventSubscriptions: new EventSubscriptionRegistry(undefined),
+        turnExecutor: testNodeTurnExecutor(),
         resolveSandboxProviderStore: () => sandboxProviderStore,
         sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
         logger: createLogger({ silent: true }),
