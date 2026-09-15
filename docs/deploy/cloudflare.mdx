@@ -120,7 +120,7 @@ Local development uses `wrangler dev` with a local D1 database.
    PUBLIC_BASE_URL=http://localhost:8787
    ```
 
-   Wrangler passes every key in this file to the Worker. Leave `STANDALONE` and the `*_CATALOG_PATH` variables out of it.
+   Wrangler passes every key in this file to the Worker. Leave `STANDALONE` and the `*_CATALOG_PATH` variables out of it. Register `http://localhost:8787/api/v1/auth/callback` as a redirect URI on the test app. `pnpm workers:dev` listens on port 8787 unless you pass `--port`; if you do, use that port in the redirect URI and in `PUBLIC_BASE_URL`.
 
 2. Apply migrations to the local database and start the Worker:
 
@@ -155,7 +155,7 @@ There is no code execution on Workers. The server reports sandbox and skills as 
 ## Known limits
 
 - **Turns do not survive restarts.** A turn runs inside its `SessionDO`. If Cloudflare evicts the Durable Object or you deploy while a turn runs, the turn stops. A watchdog alarm later marks it as abandoned. Start a new turn to continue the session.
-- **D1 query budget per turn.** D1 allows 1000 queries per Worker invocation on the Paid plan, and a turn runs within one invocation. A measured turn used about 8.2 D1 statements per tool iteration: 99 tool iterations used 814 statements. The server logs a warning at 800. Turns with more than about 120 tool iterations can reach the limit and fail.
-- **Closing a stream does not stop the server-side poll.** When a client disconnects from a `subscribe` stream or a `stream: true` turn, the Durable Object keeps waiting until the next turn event or the end of the turn. The turn itself keeps running. This was observed in local `wrangler dev`; behavior on Cloudflare has not been verified.
+- **D1 query budget per turn.** D1 allows 1000 queries per Worker invocation on the Paid plan, and a turn runs within one invocation. On local D1, a single-thread turn with small tool results used about 8.2 D1 statements per tool iteration: 99 tool iterations used 814 statements. The server logs a warning at 800. The default limit of 100 tool iterations ends such a turn at about 818 statements, so the risk comes from sub-agents, compaction, larger tool results, or a raised iteration limit.
+- **Closing a stream does not cancel the server-side poll.** In local workerd, closing the HTTP stream of a `subscribe` request or a `stream: true` turn does not cancel the Durable Object's event poll over RPC. The poll ends at the turn's next event or when the turn finishes. Behavior on Cloudflare has not been verified.
 - **The UI is served from `/`.** A Workers deployment cannot serve TrueForge under a path prefix, so `PUBLIC_BASE_URL` must be an origin without a path.
 - **Schedules run at most once per hour.** The minimum interval between runs of a schedule is 3600 seconds.
