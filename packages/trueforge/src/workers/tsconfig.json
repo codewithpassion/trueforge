@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  // Runtime types from `pnpm workers:types`; unlike @cloudflare/workers-types they coexist with @types/node.
+  "include": ["./**/*", "../../worker-configuration.d.ts"],
+  "exclude": []
+}

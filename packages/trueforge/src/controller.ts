@@ -1,9 +1,37 @@
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
+import { fetch as undiciFetch } from 'undici';
 import { Controller } from './controller/Controller';
 import { createHttpScheduleRunExecutor, scheduleDispatchLoop } from './controller/scheduleDispatch';
 import type { IScheduleStore } from './db/scheduleStore';
 import type { WithTransaction } from './db/transaction';
-import { createTlsFetch, normalizeTlsUrl } from './http/tls';
+import { createTlsDispatcher, normalizeTlsUrl, type TlsOptions } from './http/tls';
+
+/** Resolves `fetch`'s first argument (`string | URL | Request`) to a URL string. */
+function requestUrlFromFetchInput(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === 'string') {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
+  return input.url;
+}
+
+/**
+ * `fetch` for the schedule controller SDK client. Undefined when mTLS is off. Kept out of
+ * `http/tls.ts`, which the Workers type graph reaches, because undici's Response is not the Workers one.
+ */
+function createTlsFetch(options: TlsOptions): typeof fetch | undefined {
+  const dispatcher = createTlsDispatcher({
+    ...options,
+    enabledEnvKey: 'TRUEFORGE_MTLS_ENABLED',
+  });
+  if (dispatcher === undefined) {
+    return undefined;
+  }
+  // Casts bridge undici ↔ DOM fetch types (Fern only needs string URL + init + dispatcher).
+  return (input, init) => undiciFetch(requestUrlFromFetchInput(input), { ...(init as object), dispatcher });
+}
 
 /** Where and how the controller reaches the server's HTTP API. */
 export interface ControllerServerTarget {

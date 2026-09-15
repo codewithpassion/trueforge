@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { rootCertificates, TLSSocket } from 'node:tls';
 
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
+import { Agent, type Dispatcher } from 'undici';
 
 const TLS_CERT_FILE = 'tls.crt';
 const TLS_KEY_FILE = 'tls.key';
@@ -75,30 +75,6 @@ export function createTlsDispatcher(options: TlsOptions & { enabledEnvKey: strin
       key: read(TLS_KEY_FILE),
     },
   });
-}
-
-/** Resolves `fetch`'s first argument (`string | URL | Request`) to a URL string. */
-function requestUrlFromFetchInput(input: Parameters<typeof fetch>[0]): string {
-  if (typeof input === 'string') {
-    return input;
-  }
-  if (input instanceof URL) {
-    return input.href;
-  }
-  return input.url;
-}
-
-/** `fetch` for the schedule controller SDK client. Undefined when mTLS is off. */
-export function createTlsFetch(options: TlsOptions): typeof fetch | undefined {
-  const dispatcher = createTlsDispatcher({
-    ...options,
-    enabledEnvKey: 'TRUEFORGE_MTLS_ENABLED',
-  });
-  if (dispatcher === undefined) {
-    return undefined;
-  }
-  // Casts bridge undici ↔ DOM fetch types (Fern only needs string URL + init + dispatcher).
-  return (input, init) => undiciFetch(requestUrlFromFetchInput(input), { ...(init as object), dispatcher });
 }
 
 /** HTTPS `serve` options when mTLS is on; undefined → plain HTTP. */

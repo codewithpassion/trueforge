@@ -1,0 +1,30 @@
+// Local development and checks only; deploy settings (assets, limits, observability) land later.
+{
+  "name": "trueforge",
+  "main": "src/workers/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "trueforge",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations/d1",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "SESSION_DO", "class_name": "SessionDO" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionDO"] }],
+  "assets": {
+    "directory": "../frontend/dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/healthz"],
+  },
+  // Secrets such as OIDC_CLIENT_SECRET come from packages/trueforge/.env locally. Keep *_CATALOG_PATH unset.
+  "vars": {
+    "TRUEFORGE_RUNTIME": "workers",
+    "OIDC_ISSUER_URL": "https://issuer.example.com/",
+    "OIDC_CLIENT_ID": "trueforge-workers-local",
+  },
+}

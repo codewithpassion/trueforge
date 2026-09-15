@@ -1,0 +1,32 @@
+import configuration from '../config';
+import type { Env } from './env';
+import { createWorkersServerRuntime } from './runtime';
+import { assertWorkersRuntime } from './runtimeGuard';
+
+export { SessionDO } from './SessionDO';
+
+let app: ReturnType<typeof createWorkersServerRuntime> | undefined;
+
+function isApiPath(pathname: string): boolean {
+  return pathname === '/healthz' || pathname.startsWith('/api/');
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    if (!isApiPath(new URL(request.url).pathname)) {
+      return env.ASSETS.fetch(request);
+    }
+    try {
+      assertWorkersRuntime(configuration);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : error);
+      return Response.json({ error: { message: 'Server is misconfigured' } }, { status: 500 });
+    }
+    // A failed build (for example OIDC discovery) is retried on the next request.
+    app ??= createWorkersServerRuntime(env).catch((error: unknown) => {
+      app = undefined;
+      throw error;
+    });
+    return (await app).fetch(request, env, ctx);
+  },
+} satisfies ExportedHandler<Env>;

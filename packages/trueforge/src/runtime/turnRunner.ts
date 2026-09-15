@@ -365,6 +365,7 @@ export async function beginTurnExecution(params: {
 /**
  * Non-stream create-turn: begin execution and resolve once the first event is
  * dual-written so immediate subscribe cannot 412. Same as `stream: false`.
+ * `drained` settles when the turn's event drain ends.
  */
 export async function startTurnInProcess(params: {
   session: SessionHandle;
@@ -373,12 +374,12 @@ export async function startTurnInProcess(params: {
   previous_turn_id: string | undefined;
   userRef: string;
   deps: BeginTurnExecutionDeps;
-}): Promise<TurnHandle> {
+}): Promise<{ turn: TurnHandle; drained: Promise<void> }> {
   const { turn, drainInput } = await beginTurnExecution(params);
 
   // Same unawaited drain scheduling as Hono streamSSE's run(cb).
   const { promise: firstEventDualWritten, resolve: markFirstEventDualWritten } = Promise.withResolvers<undefined>();
-  void drainTurnEvents({
+  const drained = drainTurnEvents({
     ...drainInput,
     onEvent: () => {
       markFirstEventDualWritten(undefined);
@@ -388,5 +389,5 @@ export async function startTurnInProcess(params: {
     markFirstEventDualWritten(undefined);
   });
   await firstEventDualWritten;
-  return turn;
+  return { turn, drained };
 }

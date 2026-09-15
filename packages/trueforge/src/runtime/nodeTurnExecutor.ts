@@ -237,7 +237,7 @@ export class NodeTurnExecutor implements TurnExecutor {
 
   async start(input: TurnStartInput): Promise<TurnStartResult> {
     try {
-      const turn = await startTurnInProcess(this.#executionParams(input));
+      const { turn } = await startTurnInProcess(this.#executionParams(input));
       return { ok: true, turn: toWireTurn(turn.record) };
     } catch (error) {
       const failure = turnStartFailure(error);

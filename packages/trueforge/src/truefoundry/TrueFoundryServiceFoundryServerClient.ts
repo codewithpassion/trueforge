@@ -604,7 +604,7 @@ export class TrueFoundryServiceFoundryServerClient {
     }
     let response: Awaited<ReturnType<typeof undiciFetch>>;
     try {
-      response = await undiciFetch(input.url, {
+      response = await undiciFetch(input.url.href, {
         method: input.method,
         headers,
         ...(body !== undefined ? { body } : {}),

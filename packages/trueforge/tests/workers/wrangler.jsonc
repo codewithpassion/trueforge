@@ -1,0 +1,26 @@
+{
+  "name": "trueforge-workers-tests",
+  "main": "../../src/workers/index.ts",
+  // The newest date the pool's bundled workerd supports; the deployed Worker may use a later one.
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "trueforge-workers-tests",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../migrations/d1",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "SESSION_DO", "class_name": "SessionDO" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionDO"] }],
+  "vars": {
+    "TRUEFORGE_RUNTIME": "workers",
+    "OIDC_ISSUER_URL": "https://issuer.test/",
+    "OIDC_CLIENT_ID": "trueforge-workers-tests",
+    "OIDC_CLIENT_SECRET": "workers-tests-secret",
+    "LOG_LEVEL": "warn",
+  },
+}
