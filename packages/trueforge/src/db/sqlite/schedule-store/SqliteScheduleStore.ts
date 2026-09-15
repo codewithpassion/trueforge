@@ -129,12 +129,36 @@ function scheduleAt(schedule: { id: string; updated_at: string }): RawBuilder<bo
 }
 
 /**
- * Pending run copied from the schedule row, written only while the schedule carries
- * `schedule_updated_at` (and, when finishing a run, that run still exists).
+ * Chain predicate after an optimistic schedule UPDATE. Two writers that read the same row can
+ * pick the same `updated_at`, so the marker also carries the content written; a loser only
+ * matches when the winner wrote identical content, which leaves the same pending run.
+ */
+function scheduleWritten(schedule: {
+  id: string;
+  updated_at: string;
+  name: string;
+  status: ScheduleStatus;
+  manifest: ScheduleManifest;
+}): RawBuilder<boolean> {
+  return sql<boolean>`EXISTS (
+    SELECT 1 FROM schedule
+    WHERE id = ${schedule.id} AND updated_at = ${schedule.updated_at} AND name = ${schedule.name}
+      AND status = ${schedule.status} AND manifest = ${jsonbBind(schedule.manifest)}
+  )`;
+}
+
+/**
+ * Pending run copied from the schedule row, written only while `guard` holds (and, when
+ * finishing a run, that run still exists).
  */
 function pendingRunQuery(
   db: Kysely<Database>,
-  args: { schedule_id: string; schedule_updated_at: string; scheduled_for: Date; finished_run_id: string | null },
+  args: {
+    schedule_id: string;
+    guard: RawBuilder<boolean>;
+    scheduled_for: Date;
+    finished_run_id: string | null;
+  },
 ): CompiledQuery {
   const timestamp = nowIso();
   const finishedRunExists =
@@ -160,7 +184,7 @@ function pendingRunQuery(
       sql`SELECT ${newId()}, tenant_id, id, ${cronRunName(args.scheduled_for)}, ${args.scheduled_for.toISOString()},
           'scheduled', created_by_subject, NULL, NULL, ${timestamp}, ${timestamp}
         FROM schedule
-        WHERE id = ${args.schedule_id} AND updated_at = ${args.schedule_updated_at}${finishedRunExists}`,
+        WHERE id = ${args.schedule_id} AND ${args.guard}${finishedRunExists}`,
     )
     .compile();
 }
@@ -228,7 +252,8 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
         pendingRunQuery(db, {
           schedule_id: id,
           finished_run_id: null,
-          schedule_updated_at: timestamp,
+          // Freshly minted id: statement 1 either inserts this row or the batch errors.
+          guard: scheduleAt({ id, updated_at: timestamp }),
           scheduled_for: nextTriggerAfter({
             cron: input.manifest.cron,
             timezone: input.manifest.timezone,
@@ -247,7 +272,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
 
   /**
    * Conditional chain keyed on `updated_at`: the schedule UPDATE requires the value read here,
-   * and the pending-run delete/insert require the new value, which only that UPDATE writes.
+   * and the pending-run delete/insert require the row this UPDATE wrote (`scheduleWritten`).
    */
   async updateScheduleAndRun(
     input: UpdateScheduleInput,
@@ -276,13 +301,20 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
         .compile(),
     ];
     if (shouldSyncPendingRun(previous, { status: input.manifest.status, manifest: input.manifest })) {
+      const written = scheduleWritten({
+        id: input.id,
+        updated_at: timestamp,
+        name: input.name,
+        status: input.manifest.status,
+        manifest: input.manifest,
+      });
       queries.push(
         db
           .deleteFrom('schedule_run')
           .where('tenant_id', '=', input.tenant_id)
           .where('schedule_id', '=', input.id)
           .where('status', '=', 'scheduled')
-          .where(scheduleAt({ id: input.id, updated_at: timestamp }))
+          .where(written)
           .compile(),
       );
       if (input.manifest.status === 'active') {
@@ -290,7 +322,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
           pendingRunQuery(db, {
             schedule_id: input.id,
             finished_run_id: null,
-            schedule_updated_at: timestamp,
+            guard: written,
             scheduled_for: nextTriggerAfter({
               cron: input.manifest.cron,
               timezone: input.manifest.timezone,
@@ -520,7 +552,8 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
       queries.push(
         pendingRunQuery(db, {
           schedule_id: schedule.id,
-          schedule_updated_at: schedule.updated_at,
+          // The read value: statement 1 writes the run, never this schedule row.
+          guard: scheduleAt(schedule),
           scheduled_for: input.next_scheduled_for,
           finished_run_id: run.id,
         }),

@@ -3,7 +3,7 @@
  * Runs under jest against a fresh store per test (see backend test files).
  */
 import { McpServerNameConflictError, type IMcpServerStore } from '../../src/db/mcpServerStore';
-import type { OAuthClientRecord } from '../../src/mcp/auth/types';
+import type { IOAuthTokenStore, OAuthClientRecord, OAuthToken } from '../../src/mcp/auth/types';
 import type { RemoteMcpServerManifest } from '../../src/schemas/mcpServer';
 
 const TENANT = 'default';
@@ -33,7 +33,20 @@ const sampleOAuthClient: OAuthClientRecord = {
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
-export function runMcpServerStoreContractSuite(getStore: () => IMcpServerStore): void {
+const sampleToken: OAuthToken = {
+  accessToken: 'access-1',
+  refreshToken: null,
+  expiresAt: '2099-01-01T00:00:00.000Z',
+  scope: null,
+};
+
+export function runMcpServerStoreContractSuite(deps: {
+  getStore: () => IMcpServerStore;
+  /** Same database as `getStore`, to observe authorization resets. */
+  getTokenStore: () => IOAuthTokenStore;
+}): void {
+  const { getStore } = deps;
+
   it('upsert creates a server and round-trips the manifest', async () => {
     const store = getStore();
     const created = await store.upsertServer({
@@ -186,6 +199,38 @@ export function runMcpServerStoreContractSuite(getStore: () => IMcpServerStore):
     expect(updated.id).toBe(created.id);
     expect(updated.manifest).toEqual(manifest({ url: 'https://mcp.linear.app/mcp/v2' }));
     expect(await store.getClient({ id: created.id })).toEqual(rotated);
+  });
+
+  it('upsert with reset_authorizations deletes every token and pending authorization; without it keeps them', async () => {
+    const store = getStore();
+    const tokenStore = deps.getTokenStore();
+    const created = await store.upsertServer({ tenant_id: TENANT, name: 'linear', manifest: manifest() });
+    const seedAuthorizations = async (): Promise<void> => {
+      await tokenStore.saveToken({ id: created.id, userRef: 'user-a', token: sampleToken });
+      await tokenStore.saveToken({ id: created.id, userRef: 'user-b', token: sampleToken });
+      await tokenStore.savePendingAuthorization({
+        state: 'pending-state',
+        id: created.id,
+        userRef: 'user-a',
+        mcpServerUrl: manifest().url,
+        codeVerifier: 'verifier',
+        returnTo: null,
+      });
+    };
+
+    await seedAuthorizations();
+    await store.upsertServer({ tenant_id: TENANT, name: 'linear', manifest: manifest({ description: 'Kept.' }) });
+    expect(await tokenStore.getToken({ id: created.id, userRef: 'user-a' })).toEqual(sampleToken);
+
+    await store.upsertServer({
+      tenant_id: TENANT,
+      name: 'linear',
+      manifest: manifest({ url: 'https://mcp.linear.app/mcp/v2' }),
+      reset_authorizations: true,
+    });
+    expect(await tokenStore.getToken({ id: created.id, userRef: 'user-a' })).toBeUndefined();
+    expect(await tokenStore.getToken({ id: created.id, userRef: 'user-b' })).toBeUndefined();
+    expect(await tokenStore.consumePendingAuthorization({ state: 'pending-state' })).toBeUndefined();
   });
 
   it('save/get/delete OAuth client round-trips and clears registration', async () => {

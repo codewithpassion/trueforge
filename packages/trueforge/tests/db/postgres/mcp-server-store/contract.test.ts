@@ -1,6 +1,7 @@
 import { sql } from 'kysely';
 
 import { PostgresMcpServerStore } from '../../../../src/db/postgres/mcp-server-store/PostgresMcpServerStore';
+import { PostgresOAuthTokenStore } from '../../../../src/db/postgres/token-store/PostgresOAuthTokenStore';
 import { runMcpServerStoreContractSuite } from '../../mcpServerStoreContractSuite';
 import { createPostgresTestDatabase, type PostgresTestDatabase } from '../testDatabase';
 
@@ -26,10 +27,15 @@ describePg('PostgresMcpServerStore (IMcpServerStore contract)', () => {
     }
   });
 
-  runMcpServerStoreContractSuite(() => {
+  function requireEnv(): PostgresTestDatabase {
     if (env === undefined) {
       throw new Error('Postgres test environment not initialized');
     }
-    return new PostgresMcpServerStore(env.db);
+    return env;
+  }
+
+  runMcpServerStoreContractSuite({
+    getStore: () => new PostgresMcpServerStore(requireEnv().db),
+    getTokenStore: () => new PostgresOAuthTokenStore(requireEnv().db),
   });
 });

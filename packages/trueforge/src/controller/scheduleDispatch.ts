@@ -167,11 +167,11 @@ export async function loadScheduleDispatchItem<TTransaction>(params: {
  * Mark the current run with `status`, then add the schedule's next scheduled run
  * if the schedule is still active and its cron still has a later trigger time.
  *
- * ## LOCK ORDERING
- * The schedule row is locked FIRST, before the run row is touched. `updateScheduleAndRun`
- * (the PUT path) does the same: it locks the schedule, then deletes and inserts runs.
- * Both transactions therefore take schedule-then-run, and serialize cleanly.
- *
+ * ## CONCURRENCY WITH SCHEDULE WRITES
+ * Postgres: the schedule row is locked (`FOR UPDATE`) before the run row is touched, and
+ * `updateScheduleAndRun` locks it the same way, so both serialize schedule-then-run.
+ * SQLite dialect (better-sqlite3, D1): no row lock. Both writes guard on the schedule's
+ * `updated_at`; the loser writes nothing and throws `ScheduleConcurrentUpdateError`.
  */
 async function finishScheduledRun<TTransaction>(params: {
   store: IScheduleStore<TTransaction>;
@@ -183,8 +183,8 @@ async function finishScheduledRun<TTransaction>(params: {
 }): Promise<void> {
   const { store, withTransaction, run, status, reason, now } = params;
   // The run was already handed off, so a concurrent schedule edit must not fail the finish:
-  // re-read and retry instead (nothing was written by the losing attempt).
-  for (let attempt = 1; ; attempt += 1) {
+  // re-read and retry. Each loss means another write committed, so the loop converges.
+  for (;;) {
     try {
       await withTransaction(async txn => {
         const latest = await store.getScheduleForUpdate({ tenant_id: run.tenant_id, id: run.schedule_id }, txn);
@@ -201,14 +201,12 @@ async function finishScheduledRun<TTransaction>(params: {
       });
       return;
     } catch (error) {
-      if (!(error instanceof ScheduleConcurrentUpdateError) || attempt >= FINISH_RUN_ATTEMPTS) {
+      if (!(error instanceof ScheduleConcurrentUpdateError)) {
         throw error;
       }
     }
   }
 }
-
-const FINISH_RUN_ATTEMPTS = 3;
 
 function nextRunAfter(params: { schedule: ScheduleRecord; run: ScheduleRunRecord; now: Date }): Date | undefined {
   const { schedule, run, now } = params;

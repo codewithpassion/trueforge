@@ -32,9 +32,8 @@ import { jsonbBind, jsonText, nowIso } from '../../sqlExpressions';
 import type { Database, TurnCheckpoint, TurnThreadCheckpoint } from '../../types';
 import {
   appendContextQueries,
-  insertCapabilityStatesQuery,
-  insertTurnThreadsQuery,
-  turnExists,
+  insertCapabilityStatesQueries,
+  insertTurnThreadsQueries,
   turnRunning,
   type CapabilityStateRow,
   type ContextAppendRow,
@@ -474,7 +473,12 @@ export async function createTurn(
   const now = nowIso();
   const turnCustom = input.turn.custom ?? null;
   const keys: TurnKeys = { session_id: input.session_id, turn_id: input.turn.turn_id };
-  const created = turnExists(keys);
+  // Matches only the row statement 1 writes: it errors instead when the turn id already exists.
+  const created = sql<boolean>`EXISTS (
+    SELECT 1 FROM turn
+    WHERE session_id = ${keys.session_id} AND turn_id = ${keys.turn_id}
+      AND created_at = ${now} AND previous_turn_id IS ${prevTurnId ?? null}
+  )`;
 
   const previousNotRunning =
     prevTurnId == null
@@ -543,7 +547,7 @@ export async function createTurn(
     });
   }
   if (turnThreadRows.length > 0) {
-    queries.push(insertTurnThreadsQuery(db, { keys, rows: turnThreadRows, guard: created, updated_at: now }));
+    queries.push(...insertTurnThreadsQueries(db, { keys, rows: turnThreadRows, guard: created, updated_at: now }));
   }
 
   // Carried-forward mapping first, so appended rows number after the parent's max pos.
@@ -579,7 +583,7 @@ export async function createTurn(
     }
   }
   if (capabilityRows.length > 0) {
-    queries.push(insertCapabilityStatesQuery(db, { keys, rows: capabilityRows, guard: created, updated_at: now }));
+    queries.push(...insertCapabilityStatesQueries(db, { keys, rows: capabilityRows, guard: created, updated_at: now }));
   }
 
   let results: readonly BatchStatementResult[];

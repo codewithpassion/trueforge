@@ -1,14 +1,16 @@
-import type { Kysely } from 'kysely';
+import type { CompiledQuery, Kysely } from 'kysely';
 
 import type { AtomicRunner, BatchStatementResult, BatchWriteInput } from '../../../src/db/sqlite/atomic';
 
 /**
  * Runs a one-shot write just before the next batch, on the batch's own executor, to stand in
- * for a concurrent writer landing between a store's reads and its batch.
+ * for a concurrent writer landing between a store's reads and its batch. Records every batch
+ * statement so tests can check per-statement D1 limits.
  */
 export class InterleavingAtomicRunner<DB> implements AtomicRunner<DB> {
   readonly #inner: AtomicRunner<DB>;
   #pending: ((executor: Kysely<DB>) => Promise<void>) | undefined;
+  readonly statements: CompiledQuery[] = [];
 
   constructor(inner: AtomicRunner<DB>) {
     this.#inner = inner;
@@ -23,6 +25,7 @@ export class InterleavingAtomicRunner<DB> implements AtomicRunner<DB> {
   }
 
   async batchWrite(input: BatchWriteInput<DB>): Promise<readonly BatchStatementResult[]> {
+    this.statements.push(...input.queries);
     const interleave = this.#pending;
     this.#pending = undefined;
     if (interleave !== undefined) {

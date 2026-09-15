@@ -19,13 +19,18 @@ import {
   TurnNotFoundError,
 } from '@truefoundry/trueforge-core/agent-session/store/SessionStoreErrors';
 import { sql, type Kysely } from 'kysely';
+import type { AtomicRunner } from '../../atomic';
 import { jsonText } from '../../sqlExpressions';
 import type { Database } from '../../types';
-import { jsonRowSource, rowJsonb, rowText, turnRunning, type TurnKeys } from '../sqlExpressions';
+import { chunkJsonRows, jsonRowSource, rowJsonb, rowText, turnRunning, type TurnKeys } from '../sqlExpressions';
 import { classifyTurnFenceWriteFailure } from './turns';
 
-/** appendToEvents — one INSERT ... SELECT fenced on the turn still running. */
-export async function appendToEvents(db: Kysely<Database>, input: AppendToEventsInput): Promise<void> {
+/** appendToEvents — guarded INSERT ... SELECT per row chunk, fenced on the turn still running. */
+export async function appendToEvents(
+  db: Kysely<Database>,
+  atomic: AtomicRunner<Database>,
+  input: AppendToEventsInput,
+): Promise<void> {
   if (input.events.length === 0) {
     return;
   }
@@ -36,17 +41,20 @@ export async function appendToEvents(db: Kysely<Database>, input: AppendToEvents
   };
 
   const rows = input.events.map(event => ({ id: event.id, created_at: event.created_at, event }));
-  const result = await db
-    .insertInto('session_event')
-    .columns(['session_id', 'turn_id', 'event_id', 'event', 'created_at'])
-    .expression(
-      sql`SELECT ${keys.session_id}, ${keys.turn_id}, ${rowText('id')}, ${rowJsonb('event')}, ${rowText('created_at')}
-        FROM ${jsonRowSource(rows)}
-        WHERE ${turnRunning(keys)}`,
-    )
-    .executeTakeFirst();
+  const queries = chunkJsonRows(rows).map(chunk =>
+    db
+      .insertInto('session_event')
+      .columns(['session_id', 'turn_id', 'event_id', 'event', 'created_at'])
+      .expression(
+        sql`SELECT ${keys.session_id}, ${keys.turn_id}, ${rowText('id')}, ${rowJsonb('event')}, ${rowText('created_at')}
+          FROM ${jsonRowSource(chunk)}
+          WHERE ${turnRunning(keys)}`,
+      )
+      .compile(),
+  );
 
-  if (Number(result.numInsertedOrUpdatedRows ?? 0n) === 0) {
+  const [firstChunk] = await atomic.batchWrite({ executor: db, queries });
+  if ((firstChunk?.changes ?? 0) === 0) {
     await classifyTurnFenceWriteFailure(db, keys);
   }
 }

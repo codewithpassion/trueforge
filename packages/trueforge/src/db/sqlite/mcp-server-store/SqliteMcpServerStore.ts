@@ -64,8 +64,8 @@ export class SqliteMcpServerStore implements IMcpServerStore<Transaction<Databas
   }
 
   /**
-   * SQLite has no row-level FOR UPDATE; the required write transaction (BEGIN IMMEDIATE)
-   * serializes concurrent writers so RMW of header secrets stays consistent.
+   * No row lock in the SQLite dialect. better-sqlite3's single connection serializes route
+   * transactions, so RMW of header secrets stays consistent there; D1 gives no such guarantee.
    */
   async getServerForUpdate(
     input: GetMcpServerInput,

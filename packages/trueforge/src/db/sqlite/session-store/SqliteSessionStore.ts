@@ -192,7 +192,7 @@ export class SqliteSessionStore implements ISessionStore<SessionCustom, TurnCust
   }
 
   appendToEvents(input: AppendToEventsInput): Promise<void> {
-    return appendToEventsQuery(this.db, input);
+    return appendToEventsQuery(this.db, this.atomic, input);
   }
 
   addThreads(input: AddThreadsInput): Promise<void> {

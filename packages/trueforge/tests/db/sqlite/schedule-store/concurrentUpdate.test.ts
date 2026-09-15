@@ -8,6 +8,7 @@ import { SqliteAgentStore } from '../../../../src/db/sqlite/agent-store/SqliteAg
 import { BetterSqliteAtomicRunner } from '../../../../src/db/sqlite/client';
 import { SqliteScheduleStore } from '../../../../src/db/sqlite/schedule-store/SqliteScheduleStore';
 import type { Database } from '../../../../src/db/sqlite/types';
+import { nextTriggerAfter } from '../../../../src/runtime/cron';
 import { ScheduleManifestSchema, type ScheduleManifest } from '../../../../src/schemas/schedule';
 import { InterleavingAtomicRunner } from '../interleavingAtomicRunner';
 import { createSqliteTestDatabase, type SqliteTestDatabase } from '../testDatabase';
@@ -43,6 +44,7 @@ describe('SqliteScheduleStore updated_at guard', () => {
   }, 120_000);
 
   afterEach(async () => {
+    jest.restoreAllMocks();
     await env?.teardown();
   });
 
@@ -84,6 +86,44 @@ describe('SqliteScheduleStore updated_at guard', () => {
     expect(current?.name).toBe('daily');
     expect(current?.manifest.cron).toBe('0 13 * * *');
     expect(await store.getScheduledRunFor({ tenant_id: TENANT, schedule_id: schedule.id })).toEqual(pendingRun);
+  });
+
+  it('two writers that pick the same updated_at: the loser neither deletes nor replaces the winner pending run', async () => {
+    const runFrom = new Date('2026-08-27T10:00:00.000Z');
+    const { schedule } = await seedSchedule(runFrom);
+    // A clock behind the stored value makes both writers choose previous + 1 ms.
+    jest.spyOn(Date, 'now').mockReturnValue(0);
+    const winner = new SqliteScheduleStore(env.db, new BetterSqliteAtomicRunner(env.db));
+    runner.beforeNextBatch(async () => {
+      await winner.updateScheduleAndRun({
+        tenant_id: TENANT,
+        id: schedule.id,
+        name: 'daily',
+        manifest: manifest({ cron: '0 14 * * *' }),
+        runFrom,
+      });
+    });
+
+    await expect(
+      store.updateScheduleAndRun({
+        tenant_id: TENANT,
+        id: schedule.id,
+        name: 'daily',
+        manifest: manifest({ cron: '0 15 * * *' }),
+        runFrom,
+      }),
+    ).rejects.toBeInstanceOf(ScheduleConcurrentUpdateError);
+
+    const current = await store.getSchedule({ tenant_id: TENANT, id: schedule.id });
+    expect(current?.updated_at).toBe(new Date(Date.parse(schedule.updated_at) + 1).toISOString());
+    expect(current?.manifest.cron).toBe('0 14 * * *');
+    const pending = await store.getScheduledRunFor({ tenant_id: TENANT, schedule_id: schedule.id });
+    expect(pending?.scheduled_for).toBe(
+      nextTriggerAfter({ cron: '0 14 * * *', timezone: 'UTC', from: runFrom }).toISOString(),
+    );
+    for (const statement of runner.statements) {
+      expect(statement.parameters.length).toBeLessThanOrEqual(100);
+    }
   });
 
   it('finishRun throws ScheduleConcurrentUpdateError on a stale schedule and leaves the run pending', async () => {

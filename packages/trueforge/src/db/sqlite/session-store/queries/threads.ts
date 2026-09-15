@@ -17,8 +17,9 @@ import { jsonbBind, jsonbSet, nowIso } from '../../sqlExpressions';
 import type { Database } from '../../types';
 import {
   appendContextQueries,
-  insertCapabilityStatesQuery,
-  insertTurnThreadsQuery,
+  chunkJsonRows,
+  insertCapabilityStatesQueries,
+  insertTurnThreadsQueries,
   turnRunning,
   type CapabilityStateRow,
   type ContextAppendRow,
@@ -75,12 +76,10 @@ export async function addThreads(
   }
 
   const queries: CompiledQuery[] = [
-    insertTurnThreadsQuery(db, { keys, rows: threadRows, guard, updated_at: now }),
+    ...insertTurnThreadsQueries(db, { keys, rows: threadRows, guard, updated_at: now }),
     ...appendContextQueries(db, { keys, rows: appendRows, guard, created_at: now }),
+    ...insertCapabilityStatesQueries(db, { keys, rows: capabilityRows, guard, updated_at: now }),
   ];
-  if (capabilityRows.length > 0) {
-    queries.push(insertCapabilityStatesQuery(db, { keys, rows: capabilityRows, guard, updated_at: now }));
-  }
 
   const [threadInsert] = await atomic.batchWrite({ executor: db, queries });
   if ((threadInsert?.changes ?? 0) === 0) {
@@ -105,32 +104,20 @@ export async function removeThreads(
 
   const keys: TurnKeys = { session_id: input.session_id, turn_id: input.turn_id };
   const guard = turnRunning(keys);
-  const [threadDelete] = await atomic.batchWrite({
-    executor: db,
-    queries: [
+  // Ids bound as one JSON value per chunk, so the parameter count does not grow with the list.
+  const queries = chunkJsonRows(input.thread_ids).flatMap(threadIds => {
+    const listed = sql<boolean>`thread_id IN (SELECT value FROM json_each(${JSON.stringify(threadIds)}))`;
+    return (['turn_thread', 'turn_thread_context', 'thread_capability_state'] as const).map(table =>
       db
-        .deleteFrom('turn_thread')
+        .deleteFrom(table)
         .where('session_id', '=', keys.session_id)
         .where('turn_id', '=', keys.turn_id)
-        .where('thread_id', 'in', input.thread_ids)
+        .where(listed)
         .where(guard)
         .compile(),
-      db
-        .deleteFrom('turn_thread_context')
-        .where('session_id', '=', keys.session_id)
-        .where('turn_id', '=', keys.turn_id)
-        .where('thread_id', 'in', input.thread_ids)
-        .where(guard)
-        .compile(),
-      db
-        .deleteFrom('thread_capability_state')
-        .where('session_id', '=', keys.session_id)
-        .where('turn_id', '=', keys.turn_id)
-        .where('thread_id', 'in', input.thread_ids)
-        .where(guard)
-        .compile(),
-    ],
+    );
   });
+  const [threadDelete] = await atomic.batchWrite({ executor: db, queries });
   // Unknown thread ids delete nothing on a running turn; only a non-running turn is an error.
   if ((threadDelete?.changes ?? 0) === 0) {
     await assertTurnRunning(db, keys);
