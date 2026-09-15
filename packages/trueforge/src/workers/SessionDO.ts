@@ -188,7 +188,12 @@ export class SessionDO extends DurableObject {
     if (!started.ok) {
       return started;
     }
-    const subscription = this.#events.get(turnStreamId(request.tenant_id, request.session_id, started.turn.id));
+    const streamId = turnStreamId(request.tenant_id, request.session_id, started.turn.id);
+    const subscription = this.#events.get(streamId);
+    // A stream that is already gone would end the response early, with a 200 and no turn.done.
+    if (!subscription.hasLiveTip()) {
+      return { ok: false, status: 412, code: 'stream_gone', message: new StreamGoneError(streamId).message };
+    }
     return { ok: true, stream: encodeTurnEvents(signal => subscription.poll(undefined, { signal })) };
   }
 

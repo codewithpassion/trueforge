@@ -175,12 +175,18 @@ describe('WorkersTurnExecutor', () => {
       sessionStore: d1Persistence().sessionStore,
     });
     const input = await startInput('executor-too-large', 'a'.repeat(D1_MAX_VALUE_BYTES));
-    const tooLarge = { ok: false, status: 413, code: 'turn_input_too_large' };
+    const tooLarge = {
+      ok: false,
+      status: 413,
+      code: 'turn_input_too_large',
+      // The serialized input adds 38 bytes of JSON around the message content.
+      message: 'Turn input is 2000038 bytes; the limit is 2000000 bytes',
+    };
 
-    await expect(turnExecutor.start(input)).resolves.toMatchObject(tooLarge);
-    await expect(
-      turnExecutor.startStreaming({ ...input, signal: new AbortController().signal }),
-    ).resolves.toMatchObject(tooLarge);
+    await expect(turnExecutor.start(input)).resolves.toEqual(tooLarge);
+    await expect(turnExecutor.startStreaming({ ...input, signal: new AbortController().signal })).resolves.toEqual(
+      tooLarge,
+    );
   });
 
   it('answers subscribe with 412 over HTTP when the turn is in D1 but its stream expired', async () => {

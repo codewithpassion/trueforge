@@ -2,6 +2,8 @@ import { CancellationReason, EventType } from '@truefoundry/trueforge-core/agent
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { D1_MAX_VALUE_BYTES } from '../../src/db/d1/client';
+import { StreamGoneError } from '../../src/runtime/event-subscription';
+import { turnStreamId } from '../../src/runtime/turnRunner';
 import {
   collectEvents,
   createMockSession,
@@ -94,6 +96,34 @@ describe('SessionDO', () => {
     expect(events.map(event => event.sequence_number)).toEqual(events.map((_, index) => index + 1));
     expect(events[0]?.type).toBe(EventType.TURN_CREATED);
     expect(events.at(-1)?.type).toBe(EventType.TURN_DONE);
+  });
+
+  it('answers a streaming start whose stream is already gone with 412 instead of an empty stream', async () => {
+    await createMockSession({ sessionId: 'start-streaming-gone', scenario: 'text' });
+    const stub = sessionStub('start-streaming-gone');
+    const started = await stub.startTurn(startRequest('start-streaming-gone'));
+    if (!started.ok) {
+      throw new Error(`startTurn failed: ${started.code} ${started.message}`);
+    }
+    await subscribeEvents({
+      sessionId: 'start-streaming-gone',
+      turnId: started.turn.id,
+      afterSequenceNumber: undefined,
+    });
+
+    const result = await runInDurableObject(stub, (instance, state) => {
+      // The stream expires between the turn's first event and the streaming read.
+      state.storage.sql.exec('DELETE FROM turn_events');
+      instance.startTurn = () => Promise.resolve(started);
+      return instance.startTurnStreaming(startRequest('start-streaming-gone'));
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 412,
+      code: 'stream_gone',
+      message: new StreamGoneError(turnStreamId(TENANT_ID, 'start-streaming-gone', started.turn.id)).message,
+    });
   });
 
   it('resumes a subscription strictly after the given sequence number', async () => {

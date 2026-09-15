@@ -102,6 +102,11 @@ class DurableObjectEventSubscription<T extends object> implements EventSubscript
     return Promise.resolve(sequenceNumber);
   }
 
+  /** Whether the stream has an event and has not expired, without subscribe's admission threshold. */
+  hasLiveTip(): boolean {
+    return this.#liveTip(Date.now()) !== undefined;
+  }
+
   assertSubscribable(): Promise<void> {
     const now = Date.now();
     const tip = this.#liveTip(now);
@@ -195,7 +200,7 @@ export class DurableObjectEventSubscriptions<T extends object> {
     );
   }
 
-  get(streamId: string): EventSubscription<T> {
+  get(streamId: string): DurableObjectEventSubscription<T> {
     return new DurableObjectEventSubscription({
       sql: this.#sql,
       streamId,
