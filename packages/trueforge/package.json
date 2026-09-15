@@ -33,6 +33,7 @@
     "build:gen:watch": "node --watch-path=catalog/model-catalog.yaml --watch-path=catalog/mcp-catalog.yaml --watch-path=catalog/skill-catalog.yaml --watch-path=catalog/sandbox-catalog.yaml --watch-path=src/sandbox/local/scripts scripts/generate-dev.mjs",
     "build:gen": "pnpm run build:gen:local-sandbox && node scripts/generate-catalog.mjs && node scripts/generate-package-version.mjs",
     "build:clean": "node ../../scripts/rm-path.mjs dist",
+    "d1:schema:dump": "cross-env NODE_OPTIONS=--conditions=trueforge-dev tsx scripts/dump-sqlite-schema.mjs",
     "build": "pnpm run build:gen && tsc --noEmit && pnpm run build:clean && tsup && node ../../scripts/chmod-path.mjs dist/cli.js 755 && pnpm run build:frontend-assets",
     "dev:serve": "cross-env NODE_OPTIONS=--conditions=trueforge-dev NODE_ENV=development tsx watch --env-file=.env src/main.ts",
     "dev": "pnpm run \"/^(build:gen:watch|dev:serve|dev:controller)$/\"",
@@ -52,12 +53,13 @@
     "test:eventsub": "jest --config jest.eventsub.config.cjs",
     "test:store:postgres": "jest --config jest.store.postgres.config.cjs",
     "test:store:sqlite": "jest --config jest.store.sqlite.config.cjs",
+    "test:store:d1": "vitest run --config tests/db/d1/vitest.config.ts",
     "test": "pnpm run build:gen && cross-env NODE_OPTIONS=--conditions=trueforge-dev node --env-file=.env.test ./node_modules/jest/bin/jest.js --config jest.unit.config.cjs",
     "test:local-sandbox:contract": "pnpm run build:gen && cross-env NODE_OPTIONS=--conditions=trueforge-dev node --env-file=.env.test ./node_modules/jest/bin/jest.js --config jest.local-sandbox.contract.config.cjs",
     "smoke:local-sandbox": "pnpm run build:gen && cross-env NODE_OPTIONS=--conditions=trueforge-dev jest --config jest.local-sandbox.smoke.config.cjs --runInBand --forceExit tests/sandbox/local/smoke.test.ts",
     "smoke:local-sandbox:lima": "bash scripts/local-sandbox/smoke-lima.sh",
     "probe:loopback": "pnpm exec tsx scripts/local-sandbox/probe-loopback.ts",
-    "typecheck": "pnpm run build:gen && tsc --noEmit && tsc --noEmit -p tests/db/tsconfig.json && tsc --noEmit -p tests/unit/tsconfig.json"
+    "typecheck": "pnpm run build:gen && tsc --noEmit && tsc --noEmit -p tests/db/tsconfig.json && tsc --noEmit -p tests/unit/tsconfig.json && tsc --noEmit -p tests/db/d1/tsconfig.json"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.71",
@@ -84,6 +86,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "5.20260915.1",
     "@swc/core": "^1.16.1",
     "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^7.6.13",
@@ -94,6 +98,7 @@
     "jest": "^29.7.0",
     "tsup": "^8.5.1",
     "tsx": "^4.23.12",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.9"
   }
 }

@@ -1,5 +1,5 @@
 import type { Skill as SkillMount } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
-import type { ExpressionBuilder, Kysely, Transaction } from 'kysely';
+import type { ExpressionBuilder, Kysely } from 'kysely';
 import type { SkillManifest, SkillVersion } from '../../../schemas/skill';
 import { resolveGitTurnSkills, validateGitAgentSkills } from '../../gitSkillMounts';
 import {
@@ -11,8 +11,8 @@ import {
   type SkillRecord,
   type UpsertSkillInput,
 } from '../../skillStore';
-import { isUniqueViolation } from '../client';
-import { jsonbBind, jsonText, nowIso } from '../sqlExpressions';
+import { isUniqueViolation } from '../errors';
+import { jsonbBind, jsonListValues, jsonText, nowIso } from '../sqlExpressions';
 import type { Database } from '../types';
 
 /** Column list projecting the JSONB manifest as parsed JSON (see JSON_RESULT_COLUMNS). */
@@ -26,26 +26,26 @@ function recordColumns(eb: ExpressionBuilder<Database, 'skill'>) {
   ];
 }
 
-export class SqliteSkillStore implements ISkillStore<Transaction<Database>> {
+export class SqliteSkillStore implements ISkillStore<Kysely<Database>> {
   readonly #db: Kysely<Database>;
 
   constructor(db: Kysely<Database>) {
     this.#db = db;
   }
 
-  async listSkills(input: ListSkillsInput, transaction?: Transaction<Database>): Promise<SkillRecord[]> {
+  async listSkills(input: ListSkillsInput, transaction?: Kysely<Database>): Promise<SkillRecord[]> {
     if (input.names?.length === 0) {
       return [];
     }
     const db = transaction ?? this.#db;
     let query = db.selectFrom('skill').select(recordColumns).where('tenant_id', '=', input.tenant_id);
     if (input.names !== undefined) {
-      query = query.where('name', 'in', [...input.names]);
+      query = query.where('name', 'in', jsonListValues(input.names));
     }
     return await query.orderBy('name').execute();
   }
 
-  async createSkill(input: CreateSkillInput, transaction?: Transaction<Database>): Promise<SkillRecord> {
+  async createSkill(input: CreateSkillInput, transaction?: Kysely<Database>): Promise<SkillRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
     try {
@@ -68,7 +68,7 @@ export class SqliteSkillStore implements ISkillStore<Transaction<Database>> {
     }
   }
 
-  async upsertSkill(input: UpsertSkillInput, transaction?: Transaction<Database>): Promise<SkillRecord> {
+  async upsertSkill(input: UpsertSkillInput, transaction?: Kysely<Database>): Promise<SkillRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
     return await db
@@ -95,7 +95,7 @@ export class SqliteSkillStore implements ISkillStore<Transaction<Database>> {
     return Promise.resolve([]);
   }
 
-  validateAgentSkills(input: AgentSkillsInput, transaction?: Transaction<Database>): Promise<void> {
+  validateAgentSkills(input: AgentSkillsInput, transaction?: Kysely<Database>): Promise<void> {
     void transaction;
     return validateGitAgentSkills(this, input);
   }

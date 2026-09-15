@@ -8,7 +8,7 @@ import {
   decodeOffsetPageToken,
   paginateOffsetRows,
 } from '@truefoundry/trueforge-core/agent-session/store/OffsetPageToken';
-import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely } from 'kysely';
 import { newId } from '../../../utils/id';
 import {
   AgentExternalIdConflictError,
@@ -25,8 +25,8 @@ import {
   type ListAgentsInput,
   type UpdateAgentInput,
 } from '../../agentStore';
-import { isUniqueViolation } from '../client';
-import { jsonbBind, jsonText, nowIso } from '../sqlExpressions';
+import { isUniqueViolation } from '../errors';
+import { jsonbBind, jsonListValues, jsonText, nowIso } from '../sqlExpressions';
 import type { Database } from '../types';
 
 /** Column list projecting JSONB columns as parsed JSON (see JSON_RESULT_COLUMNS). */
@@ -62,7 +62,7 @@ function toRecord(row: {
   };
 }
 
-export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
+export class SqliteAgentStore implements IAgentStore<Kysely<Database>> {
   readonly #db: Kysely<Database>;
 
   constructor(db: Kysely<Database>) {
@@ -71,7 +71,7 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
 
   async listAgents(
     input: ListAgentsInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<{ data: AgentRecord[]; pagination: TokenPagination }> {
     if (input.external_ids?.length === 0) {
       return { data: [], pagination: { limit: input.limit ?? 0 } };
@@ -79,7 +79,7 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
     const db = transaction ?? this.#db;
     let query = db.selectFrom('agent').select(recordColumns).where('tenant_id', '=', input.tenant_id);
     if (input.external_ids !== undefined) {
-      query = query.where('external_id', 'in', [...input.external_ids]);
+      query = query.where('external_id', 'in', jsonListValues(input.external_ids));
     }
     if (input.agent_name !== undefined) {
       query = query.where(sql<boolean>`instr(lower(name), lower(${input.agent_name})) > 0`);
@@ -99,7 +99,7 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
     return { data: data.map(toRecord), pagination };
   }
 
-  async getOwnedIds(input: GetOwnedIdsInput, transaction?: Transaction<Database>): Promise<readonly string[]> {
+  async getOwnedIds(input: GetOwnedIdsInput, transaction?: Kysely<Database>): Promise<readonly string[]> {
     if (input.ids.length === 0) {
       return [];
     }
@@ -108,7 +108,7 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
       .selectFrom('agent')
       .select('id')
       .where('tenant_id', '=', input.tenant_id)
-      .where('id', 'in', [...input.ids])
+      .where('id', 'in', jsonListValues(input.ids))
       .where(sql`json_extract(created_by_subject, '$.subject_id')`, '=', input.subject_id)
       .execute();
     return rows.map(row => row.id);
@@ -116,7 +116,7 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
 
   async getExternalIdsByIds(
     input: GetExternalIdsByIdsInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<readonly AgentExternalIdRow[]> {
     if (input.ids.length === 0) {
       return [];
@@ -126,13 +126,13 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
       .selectFrom('agent')
       .select(['id', 'external_id'])
       .where('tenant_id', '=', input.tenant_id)
-      .where('id', 'in', [...input.ids])
+      .where('id', 'in', jsonListValues(input.ids))
       .where('external_id', 'is not', null)
       .execute();
     return rows.flatMap(row => (row.external_id ? [{ id: row.id, external_id: row.external_id }] : []));
   }
 
-  async getAgent(input: GetAgentInput, transaction?: Transaction<Database>): Promise<AgentRecord | undefined> {
+  async getAgent(input: GetAgentInput, transaction?: Kysely<Database>): Promise<AgentRecord | undefined> {
     const db = transaction ?? this.#db;
     let query = db.selectFrom('agent').select(recordColumns).where('tenant_id', '=', input.tenant_id);
     if ('id' in input) {
@@ -144,7 +144,7 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
     return row === undefined ? undefined : toRecord(row);
   }
 
-  async createAgent(input: CreateAgentInput, transaction?: Transaction<Database>): Promise<AgentRecord> {
+  async createAgent(input: CreateAgentInput, transaction?: Kysely<Database>): Promise<AgentRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
     try {
@@ -178,7 +178,7 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
     }
   }
 
-  async updateAgent(input: UpdateAgentInput, transaction?: Transaction<Database>): Promise<AgentRecord | undefined> {
+  async updateAgent(input: UpdateAgentInput, transaction?: Kysely<Database>): Promise<AgentRecord | undefined> {
     if (input.manifest === undefined && input.description === undefined && input.external_id === undefined) {
       throw new Error('updateAgent requires manifest, description, and/or external_id');
     }
@@ -208,7 +208,7 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
     }
   }
 
-  async deleteAgent(input: DeleteAgentInput, transaction?: Transaction<Database>): Promise<void> {
+  async deleteAgent(input: DeleteAgentInput, transaction?: Kysely<Database>): Promise<void> {
     const db = transaction ?? this.#db;
     await db.deleteFrom('agent').where('tenant_id', '=', input.tenant_id).where('id', '=', input.id).execute();
   }
@@ -225,7 +225,7 @@ export class SqliteAgentStore implements IAgentStore<Transaction<Database>> {
     tenant_id: string;
     name: string;
     external_id: string | null;
-    transaction?: Transaction<Database>;
+    transaction?: Kysely<Database>;
   }): Promise<never> {
     if (external_id !== null) {
       const db = transaction ?? this.#db;

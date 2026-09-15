@@ -1,6 +1,6 @@
 import type { CompiledQuery, Kysely } from 'kysely';
 
-import type { AtomicRunner, BatchStatementResult, BatchWriteInput } from '../../../src/db/sqlite/atomic';
+import type { AtomicRunner, BatchStatementResult, BatchWriteInput } from '../../src/db/sqlite/atomic';
 
 /**
  * Runs a one-shot write just before the next batch, on the batch's own executor, to stand in

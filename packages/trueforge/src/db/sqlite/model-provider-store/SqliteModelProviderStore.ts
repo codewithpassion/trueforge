@@ -1,4 +1,4 @@
-import type { ExpressionBuilder, Kysely, Transaction } from 'kysely';
+import type { ExpressionBuilder, Kysely } from 'kysely';
 import type { AvailableModel, ModelProviderManifest } from '../../../schemas/modelProvider';
 import {
   flattenProviderModels,
@@ -11,7 +11,7 @@ import {
   type ModelProviderRecord,
   type UpsertModelProviderInput,
 } from '../../modelProviderStore';
-import { isUniqueViolation } from '../client';
+import { isUniqueViolation } from '../errors';
 import { jsonbBind, jsonText, nowIso } from '../sqlExpressions';
 import type { Database } from '../types';
 
@@ -26,17 +26,14 @@ function recordColumns(eb: ExpressionBuilder<Database, 'model_provider'>) {
   ];
 }
 
-export class SqliteModelProviderStore implements IModelProviderStore<Transaction<Database>> {
+export class SqliteModelProviderStore implements IModelProviderStore<Kysely<Database>> {
   readonly #db: Kysely<Database>;
 
   constructor(db: Kysely<Database>) {
     this.#db = db;
   }
 
-  async listProviders(
-    input: ListModelProvidersInput,
-    transaction?: Transaction<Database>,
-  ): Promise<ModelProviderRecord[]> {
+  async listProviders(input: ListModelProvidersInput, transaction?: Kysely<Database>): Promise<ModelProviderRecord[]> {
     const db = transaction ?? this.#db;
     return await db
       .selectFrom('model_provider')
@@ -48,7 +45,7 @@ export class SqliteModelProviderStore implements IModelProviderStore<Transaction
 
   async getProvider(
     input: GetModelProviderInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<ModelProviderRecord | undefined> {
     void input.model_name;
     const db = transaction ?? this.#db;
@@ -66,7 +63,7 @@ export class SqliteModelProviderStore implements IModelProviderStore<Transaction
    */
   async getProviderForUpdate(
     input: GetModelProviderForUpdateInput,
-    transaction: Transaction<Database>,
+    transaction: Kysely<Database>,
   ): Promise<ModelProviderRecord | undefined> {
     return await transaction
       .selectFrom('model_provider')
@@ -76,10 +73,7 @@ export class SqliteModelProviderStore implements IModelProviderStore<Transaction
       .executeTakeFirst();
   }
 
-  async createProvider(
-    input: CreateModelProviderInput,
-    transaction?: Transaction<Database>,
-  ): Promise<ModelProviderRecord> {
+  async createProvider(input: CreateModelProviderInput, transaction?: Kysely<Database>): Promise<ModelProviderRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
     try {
@@ -102,10 +96,7 @@ export class SqliteModelProviderStore implements IModelProviderStore<Transaction
     }
   }
 
-  async upsertProvider(
-    input: UpsertModelProviderInput,
-    transaction?: Transaction<Database>,
-  ): Promise<ModelProviderRecord> {
+  async upsertProvider(input: UpsertModelProviderInput, transaction?: Kysely<Database>): Promise<ModelProviderRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
     return await db
@@ -127,7 +118,7 @@ export class SqliteModelProviderStore implements IModelProviderStore<Transaction
       .executeTakeFirstOrThrow();
   }
 
-  async listModels(input: ListModelProvidersInput, transaction?: Transaction<Database>): Promise<AvailableModel[]> {
+  async listModels(input: ListModelProvidersInput, transaction?: Kysely<Database>): Promise<AvailableModel[]> {
     return flattenProviderModels(await this.listProviders(input, transaction));
   }
 }

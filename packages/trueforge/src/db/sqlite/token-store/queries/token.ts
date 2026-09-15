@@ -1,6 +1,6 @@
 import { sql, type Kysely } from 'kysely';
 import type { OAuthToken } from '../../../mcpServerStore';
-import { jsonbBind, jsonText, nowIso } from '../../sqlExpressions';
+import { jsonbBind, jsonListValues, jsonText, nowIso } from '../../sqlExpressions';
 import type { Database } from '../../types';
 
 export async function saveToken(
@@ -48,7 +48,7 @@ export async function getTokens(
   const rows = await db
     .selectFrom('oauth_token')
     .select(['oauth_server_id', jsonText<OAuthToken>(sql.ref('token')).as('token')])
-    .where('oauth_server_id', 'in', params.ids)
+    .where('oauth_server_id', 'in', jsonListValues(params.ids))
     .where('user_id', '=', params.userRef)
     .execute();
 

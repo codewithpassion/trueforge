@@ -1,0 +1,8 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    // Shared suites are typed against Jest globals; vitest provides compatible globals at runtime.
+    "types": ["node", "jest", "@cloudflare/vitest-pool-workers/types"]
+  },
+  "include": ["**/*", "../*.ts", "../session-metrics/*.ts"]
+}

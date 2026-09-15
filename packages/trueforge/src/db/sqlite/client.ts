@@ -15,6 +15,7 @@ import {
 } from 'kysely';
 
 import type { AtomicRunner, BatchStatementResult, BatchWriteInput } from './atomic';
+import { shouldParseJsonResultColumn } from './jsonColumns';
 import type { Database as Schema } from './types';
 
 /**
@@ -118,45 +119,6 @@ function applyPragmas(database: Database.Database): void {
   database.pragma('cache_size = -10240');
 }
 
-/**
- * Result aliases that are `json(...)` projections of JSONB columns.
- * Plain TEXT (title, ids, timestamps) must not be parsed even when they look like JSON.
- */
-const JSON_RESULT_COLUMNS = new Set([
-  'agent_spec',
-  'custom',
-  'metadata',
-  'metrics',
-  'ancestor_ids',
-  'input',
-  'state',
-  'checkpoint',
-  'agent_info',
-  'current_context_usage',
-  'body',
-  'capability_state',
-  'turn_checkpoint',
-  'turn_state',
-  'thread_checkpoint',
-  'event',
-  'manifest',
-  'metadata',
-  'build_metadata',
-  'oauth_server',
-  'oauth_client',
-  'token',
-  'auth_data',
-  'created_by_subject',
-  'source',
-]);
-
-/** Top-level row field only — `$[0]."body"`, not `$[0]."body"."content"`. */
-function shouldParseJsonResultColumn(_value: string, jsonPath: string): boolean {
-  const match = /^\$\[\d+\]\."([^"]+)"$/.exec(jsonPath);
-  const column = match?.[1];
-  return column !== undefined && JSON_RESULT_COLUMNS.has(column);
-}
-
 export function createSqliteDb(filename: string): Kysely<Schema> {
   const database = new Database(filename);
   applyPragmas(database);
@@ -194,15 +156,4 @@ export class BetterSqliteAtomicRunner<DB> implements AtomicRunner<DB> {
     }
     return executor.transaction().setAccessMode('read write').execute(run);
   }
-}
-
-/**
- * Match better-sqlite3 unique constraint errors without brittle instanceof checks.
- */
-export function isUniqueViolation(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null || !('code' in err)) {
-    return false;
-  }
-  const code = err.code;
-  return code === 'SQLITE_CONSTRAINT_UNIQUE' || code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
 }

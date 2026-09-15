@@ -1,5 +1,4 @@
 import { AgentSpecSchema, type CreatedBySubject } from '@truefoundry/trueforge-core/agent-session';
-import { createLogger } from 'winston';
 
 import { dispatchScheduledRuns } from '../../src/controller/scheduleDispatch';
 import type { IAgentStore } from '../../src/db/agentStore';
@@ -12,6 +11,7 @@ import {
 import type { WithTransaction } from '../../src/db/transaction';
 import { nextTriggerAfter } from '../../src/runtime/cron';
 import { ScheduleManifestSchema, type ScheduleManifest } from '../../src/schemas/schedule';
+import { silentLogger } from './silentLogger';
 
 const TENANT = 'default';
 /** Schedule creator. Every advanced run must be attributed to this identity. */
@@ -62,7 +62,7 @@ export function runScheduleDispatchContractSuite<TTransaction>(deps: {
   getScheduleStore: () => IScheduleStore<TTransaction>;
   withTransaction: WithTransaction<TTransaction>;
 }): void {
-  const logger = createLogger({ silent: true });
+  const logger = silentLogger;
   let seq = 0;
 
   async function seedAgent(): Promise<{ id: string; name: string }> {

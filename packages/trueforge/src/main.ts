@@ -281,59 +281,40 @@ function buildResolveSandboxProviderStore<TTransaction>(options: {
 async function createStandalonePersistence(options: {
   sqlitePath: string;
   logger: Logger;
-}): Promise<ServerPersistence<Transaction<SqliteDatabase>>> {
+}): Promise<ServerPersistence<Kysely<SqliteDatabase>>> {
   const { sqlitePath, logger } = options;
   await mkdir(path.dirname(sqlitePath), { recursive: true });
-  const [{ BetterSqliteAtomicRunner, createSqliteDb }, { migrateSqliteToLatest }, sqliteStores] = await Promise.all([
-    import('./db/sqlite/client'),
-    import('./db/migrateSqlite'),
-    Promise.all([
-      import('./db/sqlite/session-store/SqliteSessionStore'),
-      import('./db/sqlite/session-metrics/SqliteSessionMetricsStore'),
-      import('./db/sqlite/model-provider-store/SqliteModelProviderStore'),
-      import('./db/sqlite/mcp-server-store/SqliteMcpServerStore'),
-      import('./db/sqlite/token-store/SqliteOAuthTokenStore'),
-      import('./db/sqlite/skill-store/SqliteSkillStore'),
-      import('./db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore'),
-      import('./db/sqlite/agent-store/SqliteAgentStore'),
-      import('./db/sqlite/schedule-store/SqliteScheduleStore'),
-    ]),
-  ]);
-  const [
-    { SqliteSessionStore },
-    { SqliteSessionMetricsStore },
-    { SqliteModelProviderStore },
-    { SqliteMcpServerStore },
-    { SqliteOAuthTokenStore },
-    { SqliteSkillStore },
-    { SqliteSandboxProviderStore },
-    { SqliteAgentStore },
-    { SqliteScheduleStore },
-  ] = sqliteStores;
+  const [{ BetterSqliteAtomicRunner, createSqliteDb }, { migrateSqliteToLatest }, { createSqliteStores }] =
+    await Promise.all([import('./db/sqlite/client'), import('./db/migrateSqlite'), import('./db/sqlite/stores')]);
 
   const db = createSqliteDb(sqlitePath);
   await migrateSqliteToLatest(db);
   logger.info(`Standalone mode: sqlite at ${sqlitePath}`);
   logger.info('Standalone mode: executor peering disabled and Redis unused');
 
-  const tokenStore = new SqliteOAuthTokenStore(db);
-  const agentStore = new SqliteAgentStore(db);
-  const modelProviderStore = new SqliteModelProviderStore(db);
-  const mcpServerStore = new McpServerWithAuthStore({
-    store: new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
+  const {
+    sessionStore,
+    sessionMetricsStore,
     tokenStore,
-    clientName: configuration.MCP_DCR_OAUTH_CLIENT_NAME,
+    mcpServerStore,
+    scheduleStore,
+    agentStore,
+    modelProviderStore,
+    sandboxProviderStore,
+    skillStore,
+  } = createSqliteStores({
+    db,
+    atomic: new BetterSqliteAtomicRunner(db),
+    mcpClientName: configuration.MCP_DCR_OAUTH_CLIENT_NAME,
   });
-  const sandboxProviderStore = new SqliteSandboxProviderStore(db);
-  const skillStore = new SqliteSkillStore(db);
   return {
     withTransaction: callback => db.transaction().execute(callback),
-    sessionStore: new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db)),
+    sessionStore,
     sessionImport: undefined,
-    sessionMetricsStore: new SqliteSessionMetricsStore(db),
+    sessionMetricsStore,
     mcpOAuthStore: mcpServerStore,
     tokenStore,
-    scheduleStore: new SqliteScheduleStore(db, new BetterSqliteAtomicRunner(db)),
+    scheduleStore,
     resolveModelProviderStore: () => modelProviderStore,
     resolveMcpServerStore: () => mcpServerStore,
     resolveSandboxProviderStore: () => sandboxProviderStore,

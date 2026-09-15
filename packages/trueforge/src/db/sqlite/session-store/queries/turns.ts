@@ -27,7 +27,7 @@ import { getEmptyCurrentContextUsage } from '@truefoundry/trueforge-core/core/ru
 import type { SandboxInfo } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import { sql, type CompiledQuery, type Kysely } from 'kysely';
 import type { AtomicRunner, BatchStatementResult } from '../../atomic';
-import { isUniqueViolation } from '../../client';
+import { isUniqueViolation } from '../../errors';
 import { jsonbBind, jsonText, nowIso } from '../../sqlExpressions';
 import type { Database, TurnCheckpoint, TurnThreadCheckpoint } from '../../types';
 import {

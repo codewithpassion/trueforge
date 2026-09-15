@@ -36,6 +36,14 @@ export function isoMsAgo(ms: number): string {
   return new Date(Date.now() - ms).toISOString();
 }
 
+/**
+ * `(SELECT value FROM json_each(?))` for `where(col, 'in', …)`: the list is one bound JSON
+ * parameter, so the statement stays under D1's 100-parameter cap for any list length.
+ */
+export function jsonListValues(values: readonly string[]): RawBuilder<string> {
+  return sql<string>`(SELECT value FROM json_each(${JSON.stringify(values)}))`;
+}
+
 /** Creator match, or creator OR `agent_id IN agent_ids` when the list is non-empty. */
 export function whereCreatedByOrAgentIds<TB extends 'session' | 'schedule', O>(
   query: SelectQueryBuilder<Database, TB, O>,
@@ -55,7 +63,7 @@ export function whereCreatedByOrAgentIds<TB extends 'session' | 'schedule', O>(
   return query.where(eb =>
     eb.or([
       eb(sql<string>`json_extract(created_by_subject, '$.subject_id')`, '=', filter.created_by_subject_id),
-      eb(sql<string>`agent_id`, 'in', [...filter.agent_ids]),
+      eb(sql<string>`agent_id`, 'in', jsonListValues(filter.agent_ids)),
     ]),
   );
 }

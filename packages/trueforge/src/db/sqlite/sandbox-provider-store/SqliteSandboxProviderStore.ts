@@ -1,4 +1,4 @@
-import type { ExpressionBuilder, Kysely, Transaction } from 'kysely';
+import type { ExpressionBuilder, Kysely } from 'kysely';
 import type { SandboxBuildMetadata, StoredSandboxProviderManifest } from '../../../schemas/sandboxProvider';
 import {
   type ISandboxProviderStore,
@@ -22,7 +22,7 @@ function recordColumns(eb: ExpressionBuilder<Database, 'sandbox_provider'>) {
   ];
 }
 
-export class SqliteSandboxProviderStore implements ISandboxProviderStore<Transaction<Database>> {
+export class SqliteSandboxProviderStore implements ISandboxProviderStore<Kysely<Database>> {
   readonly #db: Kysely<Database>;
 
   constructor(db: Kysely<Database>) {
@@ -31,7 +31,7 @@ export class SqliteSandboxProviderStore implements ISandboxProviderStore<Transac
 
   async getSandboxProvider(
     tenantId: string,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<SandboxProviderRecord | undefined> {
     const db = transaction ?? this.#db;
     return await db
@@ -47,7 +47,7 @@ export class SqliteSandboxProviderStore implements ISandboxProviderStore<Transac
    */
   async getSandboxProviderForUpdate(
     tenantId: string,
-    transaction: Transaction<Database>,
+    transaction: Kysely<Database>,
   ): Promise<SandboxProviderRecord | undefined> {
     return await transaction
       .selectFrom('sandbox_provider')
@@ -58,7 +58,7 @@ export class SqliteSandboxProviderStore implements ISandboxProviderStore<Transac
 
   async upsertSandboxProvider(
     input: UpsertSandboxProviderInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<SandboxProviderRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
@@ -88,7 +88,7 @@ export class SqliteSandboxProviderStore implements ISandboxProviderStore<Transac
 
   async updateSandboxStatus(
     input: UpdateSandboxStatusInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<SandboxProviderRecord | undefined> {
     const db = transaction ?? this.#db;
     return await db

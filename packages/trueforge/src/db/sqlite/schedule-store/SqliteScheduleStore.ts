@@ -7,14 +7,7 @@ import {
   decodeOffsetPageToken,
   paginateOffsetRows,
 } from '@truefoundry/trueforge-core/agent-session/store/OffsetPageToken';
-import {
-  sql,
-  type CompiledQuery,
-  type ExpressionBuilder,
-  type Kysely,
-  type RawBuilder,
-  type Transaction,
-} from 'kysely';
+import { sql, type CompiledQuery, type ExpressionBuilder, type Kysely, type RawBuilder } from 'kysely';
 import { nextTriggerAfter } from '../../../runtime/cron';
 import type { ScheduleManifest, ScheduleRunStatus, ScheduleStatus } from '../../../schemas/schedule';
 import { newId } from '../../../utils/id';
@@ -45,8 +38,8 @@ import {
   type UpdateScheduleRunStatusInput,
 } from '../../scheduleStore';
 import type { AtomicRunner, BatchStatementResult } from '../atomic';
-import { isUniqueViolation } from '../client';
-import { jsonbBind, jsonText, nowIso, whereCreatedByOrAgentIds } from '../sqlExpressions';
+import { isUniqueViolation } from '../errors';
+import { jsonbBind, jsonListValues, jsonText, nowIso, whereCreatedByOrAgentIds } from '../sqlExpressions';
 import type { Database } from '../types';
 
 /** Column list projecting the JSONB manifest as parsed JSON (see JSON_RESULT_COLUMNS). */
@@ -196,7 +189,7 @@ function isScheduleRunUniqueViolation(error: unknown): boolean {
   return error instanceof Error && error.message.includes('schedule_run.');
 }
 
-export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>> {
+export class SqliteScheduleStore implements IScheduleStore<Kysely<Database>> {
   readonly #db: Kysely<Database>;
   readonly #atomic: AtomicRunner<Database>;
 
@@ -205,7 +198,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
     this.#atomic = atomic;
   }
 
-  async getSchedule(input: GetScheduleInput, transaction?: Transaction<Database>): Promise<ScheduleRecord | undefined> {
+  async getSchedule(input: GetScheduleInput, transaction?: Kysely<Database>): Promise<ScheduleRecord | undefined> {
     const db = transaction ?? this.#db;
     const row = await db
       .selectFrom('schedule')
@@ -219,15 +212,12 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
   /** No row lock in the SQLite dialect; writes guard on the `updated_at` read here instead. */
   async getScheduleForUpdate(
     input: GetScheduleInput,
-    transaction: Transaction<Database>,
+    transaction: Kysely<Database>,
   ): Promise<ScheduleRecord | undefined> {
     return this.getSchedule(input, transaction);
   }
 
-  async createScheduleAndRun(
-    input: CreateScheduleInput,
-    transaction?: Transaction<Database>,
-  ): Promise<ScheduleWriteResult> {
+  async createScheduleAndRun(input: CreateScheduleInput, transaction?: Kysely<Database>): Promise<ScheduleWriteResult> {
     const db = transaction ?? this.#db;
     const id = newId();
     const timestamp = nowIso();
@@ -278,7 +268,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
    */
   async updateScheduleAndRun(
     input: UpdateScheduleInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<ScheduleWriteResult | undefined> {
     const db = transaction ?? this.#db;
     const previous = await this.getSchedule({ tenant_id: input.tenant_id, id: input.id }, transaction);
@@ -349,7 +339,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
     return this.#readWriteResult({ tenant_id: input.tenant_id, id: input.id }, transaction);
   }
 
-  async #readWriteResult(input: GetScheduleInput, transaction?: Transaction<Database>): Promise<ScheduleWriteResult> {
+  async #readWriteResult(input: GetScheduleInput, transaction?: Kysely<Database>): Promise<ScheduleWriteResult> {
     const schedule = await this.getSchedule(input, transaction);
     if (schedule === undefined) {
       throw new Error(`Schedule disappeared after write: ${input.id}`);
@@ -383,20 +373,20 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
     }
   }
 
-  async deleteSchedule(input: DeleteScheduleInput, transaction?: Transaction<Database>): Promise<void> {
+  async deleteSchedule(input: DeleteScheduleInput, transaction?: Kysely<Database>): Promise<void> {
     const db = transaction ?? this.#db;
     await db.deleteFrom('schedule').where('tenant_id', '=', input.tenant_id).where('id', '=', input.id).execute();
   }
 
   async listSchedules(
     input: ListSchedulesInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<{ data: ScheduleRecord[]; pagination: TokenPagination }> {
     const offset = decodeOffsetPageToken(input.page_token);
     const db = transaction ?? this.#db;
     let query = db.selectFrom('schedule').select(scheduleColumns).where('tenant_id', '=', input.tenant_id);
     if (input.agent_names !== undefined) {
-      query = query.where('agent_name', 'in', [...input.agent_names]);
+      query = query.where('agent_name', 'in', jsonListValues(input.agent_names));
     }
     query = whereCreatedByOrAgentIds(query, input.created_by_or_agent_ids);
     const rows = await query
@@ -409,7 +399,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
     return { data: data.map(toScheduleRecord), pagination };
   }
 
-  async getOwnedIds(input: GetOwnedIdsInput, transaction?: Transaction<Database>): Promise<readonly string[]> {
+  async getOwnedIds(input: GetOwnedIdsInput, transaction?: Kysely<Database>): Promise<readonly string[]> {
     if (input.ids.length === 0) {
       return [];
     }
@@ -418,7 +408,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
       .selectFrom('schedule')
       .select('id')
       .where('tenant_id', '=', input.tenant_id)
-      .where('id', 'in', [...input.ids])
+      .where('id', 'in', jsonListValues(input.ids))
       .where(sql`json_extract(created_by_subject, '$.subject_id')`, '=', input.subject_id)
       .execute();
     return rows.map(row => row.id);
@@ -426,7 +416,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
 
   async listRuns(
     input: ListRunsInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<{ data: ScheduleRunRecord[]; pagination: TokenPagination }> {
     const offset = decodeOffsetPageToken(input.page_token);
     const db = transaction ?? this.#db;
@@ -444,7 +434,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
     return { data: data.map(toRunRecord), pagination };
   }
 
-  async getRun(input: GetRunInput, transaction?: Transaction<Database>): Promise<ScheduleRunRecord | undefined> {
+  async getRun(input: GetRunInput, transaction?: Kysely<Database>): Promise<ScheduleRunRecord | undefined> {
     const db = transaction ?? this.#db;
     const row = await db
       .selectFrom('schedule_run')
@@ -455,10 +445,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
     return row === undefined ? undefined : toRunRecord(row);
   }
 
-  async getRunById(
-    input: GetRunByIdInput,
-    transaction?: Transaction<Database>,
-  ): Promise<ScheduleRunRecord | undefined> {
+  async getRunById(input: GetRunByIdInput, transaction?: Kysely<Database>): Promise<ScheduleRunRecord | undefined> {
     const db = transaction ?? this.#db;
     const row = await db.selectFrom('schedule_run').select(runColumns).where('id', '=', input.id).executeTakeFirst();
     return row === undefined ? undefined : toRunRecord(row);
@@ -466,7 +453,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
 
   async getScheduledRunFor(
     input: GetScheduledRunForInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<ScheduleRunRecord | undefined> {
     const db = transaction ?? this.#db;
     const row = await db
@@ -479,7 +466,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
     return row === undefined ? undefined : toRunRecord(row);
   }
 
-  async createRun(input: CreateScheduleRunInput, transaction?: Transaction<Database>): Promise<ScheduleRunRecord> {
+  async createRun(input: CreateScheduleRunInput, transaction?: Kysely<Database>): Promise<ScheduleRunRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
     try {
@@ -511,7 +498,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
 
   async updateRunStatus(
     input: UpdateScheduleRunStatusInput,
-    transaction?: Transaction<Database>,
+    transaction?: Kysely<Database>,
   ): Promise<ScheduleRunRecord | undefined> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
@@ -531,7 +518,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
   }
 
   /** Same `updated_at` chain as updateScheduleAndRun, keyed on the schedule the caller read. */
-  async finishRun(input: FinishScheduleRunInput, transaction?: Transaction<Database>): Promise<void> {
+  async finishRun(input: FinishScheduleRunInput, transaction?: Kysely<Database>): Promise<void> {
     const db = transaction ?? this.#db;
     const { run, schedule } = input;
     const timestamp = nowIso();
@@ -571,10 +558,7 @@ export class SqliteScheduleStore implements IScheduleStore<Transaction<Database>
     }
   }
 
-  async listScheduledRuns(
-    input: ListScheduledRunsInput,
-    transaction?: Transaction<Database>,
-  ): Promise<ScheduleRunRecord[]> {
+  async listScheduledRuns(input: ListScheduledRunsInput, transaction?: Kysely<Database>): Promise<ScheduleRunRecord[]> {
     const db = transaction ?? this.#db;
     const rows = await db
       .selectFrom('schedule_run')

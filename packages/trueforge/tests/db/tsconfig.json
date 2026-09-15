@@ -1,4 +1,6 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["**/*"]
+  "include": ["**/*"],
+  // D1 tests run under vitest-pool-workers with their own globals and types.
+  "exclude": ["d1/**"]
 }

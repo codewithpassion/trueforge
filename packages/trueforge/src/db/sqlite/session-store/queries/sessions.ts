@@ -30,8 +30,8 @@ import {
 } from '@truefoundry/trueforge-core/agent-session/store/SessionStoreErrors';
 import { sql, type Kysely } from 'kysely';
 import { sessionAgentFromColumns, sessionAgentToColumns } from '../../../sessionAgentColumns';
-import { isUniqueViolation } from '../../client';
-import { jsonbBind, jsonText, nowIso, whereCreatedByOrAgentIds } from '../../sqlExpressions';
+import { isUniqueViolation } from '../../errors';
+import { jsonbBind, jsonListValues, jsonText, nowIso, whereCreatedByOrAgentIds } from '../../sqlExpressions';
 import type { Database } from '../../types';
 
 type SessionCustom = Record<string, never>;
@@ -200,7 +200,7 @@ export async function getOwnedIds(db: Kysely<Database>, input: GetOwnedIdsInput)
     .selectFrom('session')
     .select('session_id')
     .where('tenant_id', '=', input.tenant_id)
-    .where('session_id', 'in', [...input.ids])
+    .where('session_id', 'in', jsonListValues(input.ids))
     .where(sql`json_extract(created_by_subject, '$.subject_id')`, '=', input.subject_id)
     .execute();
   return rows.map(row => row.session_id);
