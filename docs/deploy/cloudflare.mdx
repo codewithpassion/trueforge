@@ -13,7 +13,7 @@ The Workers setup is deployed from a clone of this repository. Commands below ru
 | Part | Role |
 | --- | --- |
 | Worker | Serves the HTTP API and checks login on every request. |
-| Static assets | Serve the chat UI from `/`. Paths that are not files get the UI shell. |
+| Static assets | Serve the chat UI from `/`. A browser navigation to any other page gets the UI. Requests for files that do not exist get `404`. |
 | `SessionDO` (Durable Object) | Runs turns, one object per session. Holds the event log of running turns, serves `subscribe` streams, and handles cancel. |
 | `SchedulerDO` (Durable Object) | One instance. Its alarm checks for due scheduled runs every 60 seconds and starts them in `SessionDO`. A cron trigger every 5 minutes re-arms the alarm, for example after a deploy. |
 | D1 | Stores sessions, turns, agents, schedules, and settings. |
@@ -157,6 +157,5 @@ There is no code execution on Workers. The server reports sandbox and skills as 
 - **Turns do not survive restarts.** A turn runs inside its `SessionDO`. If Cloudflare evicts the Durable Object or you deploy while a turn runs, the turn stops. A watchdog alarm later marks it as abandoned. Start a new turn to continue the session.
 - **D1 query budget per turn.** D1 allows 1000 queries per Worker invocation on the Paid plan, and a turn runs within one invocation. A measured turn used about 8.2 D1 statements per tool iteration: 99 tool iterations used 814 statements. The server logs a warning at 800. Turns with more than about 120 tool iterations can reach the limit and fail.
 - **Closing a stream does not stop the server-side poll.** When a client disconnects from a `subscribe` stream or a `stream: true` turn, the Durable Object keeps waiting until the next turn event or the end of the turn. The turn itself keeps running. This was observed in local `wrangler dev`; behavior on Cloudflare has not been verified.
-- **Missing UI files return the UI shell.** A request for a file that does not exist, such as an old `/assets/` chunk after a deploy, gets the UI page with status `200` instead of `404`.
 - **The UI is served from `/`.** A Workers deployment cannot serve TrueForge under a path prefix, so `PUBLIC_BASE_URL` must be an origin without a path.
 - **Schedules run at most once per hour.** The minimum interval between runs of a schedule is 3600 seconds.

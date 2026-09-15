@@ -24,11 +24,12 @@
   ],
   // Only re-arms the scheduler's alarm; dispatch itself runs from that alarm.
   "triggers": { "crons": ["*/5 * * * *"] },
-  // Built by `pnpm build:workers-assets`; unmatched paths get the UI shell.
+  // Built by `pnpm build:workers-assets`. Files are served without running the Worker; misses reach the
+  // Worker, which answers navigations with the UI shell and everything else with 404.
   "assets": {
     "directory": "./dist-workers-assets",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
+    "not_found_handling": "none",
     // Must cover SERVER_PATH_PREFIXES in src/frontendShell.ts (checked by a unit test).
     "run_worker_first": ["/api", "/api/*", "/healthz", "/healthz/*"],
   },
