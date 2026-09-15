@@ -21,6 +21,7 @@ packages/trueforge/src/packageVersion.gen.ts
 .wrangler/
 worker-startup.cpuprofile
 worker-configuration.check.d.ts
+worker-configuration.d.ts.bak
 data/
 # Helm subchart deps are fetched via `helm dependency build` (pinned by the
 # committed Chart.lock); the downloaded .tgz/dirs are not committed.
