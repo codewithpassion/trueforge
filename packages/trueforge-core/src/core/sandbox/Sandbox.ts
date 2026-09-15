@@ -1,6 +1,5 @@
 import { context, propagation } from '@opentelemetry/api';
 import dedent from 'dedent';
-import type { Logger } from 'winston';
 import { z } from 'zod';
 import { InstructionBuilder } from '../InstructionBuilder';
 import { estimateTokensForString } from '../llm/usage';
@@ -15,8 +14,10 @@ import {
 } from '../runtime/DeferredTool';
 import type { AgentTracing } from '../tracing/AgentTracing';
 import { extractErrorLogFields } from '../util/errorLogFields';
+import type { Logger } from '../util/logger';
 import { CodeModeDispatcher } from './codeMode/CodeModeDispatcher';
 import { type CodeModeClientInstall, type CodeModeTransport } from './codeMode/CodeModeTransport';
+import { SANDBOX_MCP_REMINDER_TAG, SANDBOX_SCHEMA_INFER_TAG } from './largeToolResponseGuidance';
 import { ensureExecSuccess, shellEscape, type SandboxProvider } from './provider/Provider';
 import { SandboxNotAvailableError, validateNoPathTraversal } from './SandboxErrors';
 import { formatSandboxId, rawSandboxId } from './sandboxRef';
@@ -104,9 +105,7 @@ export interface SandboxOptions {
 }
 
 export const SANDBOX_EXEC_TOOL_NAME = 'exec';
-const SANDBOX_MCP_REMINDER_TAG = 'sandbox-mcp-code-mode';
 const SANDBOX_FILE_OUTPUT_TAG = 'sandbox-file-output';
-export const SANDBOX_SCHEMA_INFER_TAG = 'sandbox-schema-infer';
 const SANDBOX_FILE_UPLOADS_TAG = 'sandbox-file-uploads';
 
 // Per-server config sent to mcp_client.py via TFY_MCP_SERVERS.
@@ -183,10 +182,6 @@ Pre-installed: Python 3.13, pydantic, git, curl, helm, jq, ripgrep, genson.
 IMPORTANT: The Agent must never list, print, or expose environment variables as they contain sensitive credentials.
 IMPORTANT: Never read or expose any git credential files or ~/.git-credentials.
 `;
-
-export function createSandboxLargeToolResponseGuidance(): string {
-  return `For use cases where the Agent needs a subset of fields from the MCP response or needs deterministic processing, write code with the provided MCP client and use <${SANDBOX_MCP_REMINDER_TAG}>.`;
-}
 
 export const SANDBOX_MCP_SERVER_ID = 'sandbox';
 type SandboxExecInput = z.infer<typeof sandboxExecSchema>;

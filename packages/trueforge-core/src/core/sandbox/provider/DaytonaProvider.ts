@@ -4,8 +4,8 @@ import { context } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path/posix';
-import type { Logger } from 'winston';
 import { extractErrorLogFields } from '../../util/errorLogFields';
+import type { Logger } from '../../util/logger';
 import {
   SandboxFileNotFoundError,
   SandboxFileTooLargeError,

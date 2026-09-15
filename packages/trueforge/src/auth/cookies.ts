@@ -1,6 +1,6 @@
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import type { Logger } from 'winston';
 import { z } from 'zod';
 import { getPublicBaseUrl } from '../config';
 

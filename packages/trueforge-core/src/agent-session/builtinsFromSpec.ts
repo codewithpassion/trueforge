@@ -2,7 +2,6 @@
  * Maps AgentSpec runtime config flags to public harness builtin capabilities.
  * Plan / ask-user-secret stay gateway-side (extraCapabilities on the resolver).
  */
-import type { Logger } from 'winston';
 import type { AgentCapability } from '../core/capabilities/AgentCapability';
 import { askUserQuestion } from '../core/capabilities/builtins/AskUserQuestion';
 import { contextCompaction } from '../core/capabilities/builtins/ContextCompaction';
@@ -12,6 +11,7 @@ import { largeToolResponse } from '../core/capabilities/builtins/LargeToolRespon
 import { openUI } from '../core/capabilities/builtins/OpenUI';
 import type { AgentDefinition } from '../core/runtime/AgentDefinition';
 import type { AgentTracing } from '../core/tracing/AgentTracing';
+import type { Logger } from '../core/util/logger';
 import type { AgentSpec } from './schemas/agentSpec';
 
 export function builtinsFromSpec(input: {

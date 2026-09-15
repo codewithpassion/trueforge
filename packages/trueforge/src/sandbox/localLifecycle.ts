@@ -1,6 +1,6 @@
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { existsSync } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
-import type { Logger } from 'winston';
 
 const SOCKET_PARENT_MODE = 0o700;
 

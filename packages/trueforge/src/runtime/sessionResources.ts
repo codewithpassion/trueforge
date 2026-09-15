@@ -10,9 +10,9 @@ import {
   type Skill,
   type VercelAIProviderConfig,
 } from '@truefoundry/trueforge-core/core';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
 import { join } from 'node:path';
-import type { Logger } from 'winston';
 import configuration from '../config';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';

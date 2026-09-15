@@ -26,10 +26,10 @@ import {
   SandboxError,
   VercelAILLM,
 } from '@truefoundry/trueforge-core/core';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
-import type { Logger } from 'winston';
 import type { Authorizer } from '../auth/authorizer';
 import type { ResolveRequestContext } from '../auth/identity';
 import configuration, { isTrueFoundryModeEnabled } from '../config';

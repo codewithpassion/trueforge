@@ -4,6 +4,30 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 2 — Phase 1a: portable Logger type and sandbox guidance leaf (2026-09-15)
+
+**Goal:** Remove winston and the sandbox module graph from core's type-level and import-level dependencies so core code can bundle for Workers.
+
+**What we did:**
+
+- Added a core `Logger` interface in `packages/trueforge-core/src/core/util/logger.ts` (`debug`/`info`/`warn`/`error` taking `meta?: unknown`, plus `child`). Replaced every winston `Logger` type import in core and `packages/trueforge` src and tests.
+- Merged `CodeModeLogger` into `Logger` and removed it from the barrel. Moved `winston` to core `devDependencies`.
+- Moved `createSandboxLargeToolResponseGuidance`, `SANDBOX_SCHEMA_INFER_TAG` and `SANDBOX_MCP_REMINDER_TAG` into the import-free leaf `core/sandbox/largeToolResponseGuidance.ts`, so `LargeToolResponse` no longer pulls in `Sandbox.ts`. An esbuild metafile check shows 7 modules and nothing from `sandbox/provider` or `codeMode`.
+- An Opus adversarial review found no blockers. Fixes applied: the changeset now documents the deep-path symbol moves and the `CodeModeLogger` removal, and the plan doc bullet is updated.
+- Checks green: `pnpm typecheck`, `test:trueforge-core` (439 passed), `test:trueforge` (536 passed), `lint:ci`, `format:check`.
+
+**Lessons learned:**
+
+- `meta` has to be `unknown`, not `Record<string, unknown>`. `ErrorLogFields` is an interface with no index signature, so it isn't assignable to a record.
+- Core's deep-path exports (published `./*`) are public API. Moving a symbol is a breaking change for deep importers and needs a changeset note.
+- `packages/trueforge/tests/sandbox/local/smoke.test.ts` isn't covered by any typecheck script and already had 5 type errors before this change.
+
+**Avoid next time:**
+
+- Don't add re-export shims to keep old deep paths working. AGENTS.md forbids them, so document the move in the changeset.
+- Don't type logger metadata as a record. Interface-typed fields won't fit it.
+- Don't count on `pnpm typecheck` to catch errors in `tests/sandbox/local/`.
+
 ## Cycle 1 — Cloudflare Workers port plan (2026-09-15)
 
 **Goal:** Plan how to run the TrueForge server on Cloudflare Workers (D1 as the database, Durable Objects for turn events and coordination, sandbox off) with the least rewrite and no copied store logic.

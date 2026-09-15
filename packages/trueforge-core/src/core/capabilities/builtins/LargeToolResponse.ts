@@ -1,10 +1,13 @@
 import dedent from 'dedent';
-import type { Logger } from 'winston';
 import { estimateTokensForString } from '../../llm/usage';
 import type { ToolCallResult } from '../../mcp/executeToolCalls';
 import type { Sandbox, SandboxInfo } from '../../sandbox/Sandbox';
-import { createSandboxLargeToolResponseGuidance, SANDBOX_SCHEMA_INFER_TAG } from '../../sandbox/Sandbox';
+import {
+  createSandboxLargeToolResponseGuidance,
+  SANDBOX_SCHEMA_INFER_TAG,
+} from '../../sandbox/largeToolResponseGuidance';
 import { extractErrorLogFields } from '../../util/errorLogFields';
+import type { Logger } from '../../util/logger';
 import type { AgentCapability } from '../AgentCapability';
 import type { AgentThreadExecutionContext } from '../AgentContextProcessor';
 import type { ToolResponseProcessor, ToolResponseProcessorResult } from '../ToolResponseProcessor';

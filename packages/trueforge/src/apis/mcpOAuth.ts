@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
 import { extractErrorLogFields, McpConnectionError } from '@truefoundry/trueforge-core/core';
-import type { Logger } from 'winston';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { completeMcpAuthorization } from '../mcp/auth/mcpDcr';
 import type { IOAuthClientStore, IOAuthTokenStore, OAuthPendingAuthorization } from '../mcp/auth/types';
 import { mcpOAuthCallbackRoute } from '../routes/mcpOAuthRoutes';

@@ -1,5 +1,4 @@
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat';
-import type { Logger } from 'winston';
 import type { AgentCapability, CapabilityState } from '../capabilities/AgentCapability';
 import type {
   AgentContextProcessorOutput,
@@ -55,6 +54,7 @@ import type { IToolSet, MCPAuthRequired } from '../mcp/IMCPServer';
 import type { Sandbox, SandboxInfo } from '../sandbox/Sandbox';
 import type { AgentTracing } from '../tracing/AgentTracing';
 import { describeUnknownError, extractErrorLogFields } from '../util/errorLogFields';
+import type { Logger } from '../util/logger';
 import type { AgentDefinition } from './AgentDefinition';
 import type {
   AgentThreadConstructorInput,

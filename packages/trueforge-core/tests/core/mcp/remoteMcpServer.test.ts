@@ -1,4 +1,3 @@
-import type { Logger } from 'winston';
 import { McpConnectionError, RemoteMCP, ToolSet } from '../../../src/core';
 import {
   isApprovalRequiredResponse,
@@ -10,6 +9,7 @@ import type { RemoteMcpHeaders } from '../../../src/core/mcp/RemoteMCP';
 import { connectRemoteMcp } from '../../../src/core/mcp/remoteMcpClient';
 import type { ToolSelectorConfig } from '../../../src/core/mcp/ToolSelectorPolicy';
 import { NOOP_AGENT_TRACING } from '../../../src/core/tracing/NoopAgentTracing';
+import type { Logger } from '../../../src/core/util/logger';
 
 // RemoteMCP connects itself via connectRemoteMcp; mock it so the split RemoteMCP (connection) +
 // ToolSet (policy) can be exercised without real networking. isSessionExpiredError stays real.

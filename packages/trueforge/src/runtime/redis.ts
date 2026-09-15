@@ -4,8 +4,8 @@
  * transport (which duplicates it only for its subscriber).
  */
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { createClient, type RedisClientType } from 'redis';
-import type { Logger } from 'winston';
 
 export async function connectRedis(input: { url: string; logger: Logger }): Promise<RedisClientType> {
   const client: RedisClientType = createClient({ url: input.url });

@@ -8,7 +8,7 @@
  * the server itself; when `STANDALONE=false` it is the dedicated single-replica
  * process. Loops are written assuming this.
  */
-import type { Logger } from 'winston';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 
 /** Reason passed to {@link AbortController.abort} when {@link Controller.stop} runs. */
 export const CONTROLLER_STOPPED = 'controller-stopped';

@@ -1,5 +1,5 @@
-import type { Logger } from 'winston';
 import { extractErrorLogFields } from './errorLogFields';
+import type { Logger } from './logger';
 
 export class PromiseTimeoutError extends Error {
   constructor(message: string) {

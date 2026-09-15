@@ -1,4 +1,4 @@
-import type { Logger } from 'winston';
+import type { Logger } from '../util/logger';
 
 /**
  * Walk an MCP cursor-paginated list to completion, guarding against servers that return a

@@ -33,8 +33,8 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat';
-import type { Logger } from 'winston';
 import { describeUnknownError, extractErrorLogFields } from '../util/errorLogFields';
+import type { Logger } from '../util/logger';
 import type { ILLM, LLMCreateParams, LLMCreateParamsStreaming } from './ILLM';
 import {
   type CompletionUsage,

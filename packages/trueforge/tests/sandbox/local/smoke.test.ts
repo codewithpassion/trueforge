@@ -165,14 +165,6 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-function makeSilentCodeModeLogger() {
-  const logger = {
-    error: () => undefined,
-    child: () => logger,
-  };
-  return logger;
-}
-
 function makeDemoToolSet(params: { onRequest?: () => void }): IToolSet {
   return {
     name: 'demo',
@@ -229,7 +221,7 @@ async function withCodeModeTransport(params: {
   });
   const dispatcher = new CodeModeDispatcher({
     toolSets: [makeDemoToolSet({ onRequest: params.onRequest })],
-    logger: makeSilentCodeModeLogger(),
+    logger: createLogger({ silent: true }),
   });
   const install = transport.getClientInstall({ sandboxId: params.sandboxRootPath });
   try {

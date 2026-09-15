@@ -8,13 +8,8 @@ import {
   type IToolSet,
 } from '../../mcp/IMCPServer';
 import { extractErrorLogFields } from '../../util/errorLogFields';
+import type { Logger } from '../../util/logger';
 import type { CodeModeErrorSource, CodeModeReply, CodeModeRequest } from './types';
-
-/** Minimal logger surface used by Code Mode (avoids a hard winston dep for PoC binders). */
-export interface CodeModeLogger {
-  child(bindings: Record<string, unknown>): CodeModeLogger;
-  error(message: string, meta?: unknown): void;
-}
 
 // Caller-caused failure: retrying won't help.
 class InvalidMCPUsageError extends Error {
@@ -52,10 +47,10 @@ const _w3cExtractor = new W3CTraceContextPropagator();
  */
 export class CodeModeDispatcher {
   private readonly toolSets: Map<string, IToolSet>;
-  private readonly logger: CodeModeLogger;
+  private readonly logger: Logger;
   private closed = false;
 
-  constructor(params: { toolSets: readonly IToolSet[]; logger: CodeModeLogger }) {
+  constructor(params: { toolSets: readonly IToolSet[]; logger: Logger }) {
     this.toolSets = new Map();
     for (const server of params.toolSets) {
       this.toolSets.set(server.name, server);

@@ -17,13 +17,13 @@ import {
   shellEscape,
   validateNoPathTraversal,
 } from '@truefoundry/trueforge-core/core';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import type { Logger } from 'winston';
 import { newId } from '../../../utils/id';
 import {
   assertCodeModeSocketParentPath,

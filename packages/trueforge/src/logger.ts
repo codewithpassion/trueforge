@@ -4,7 +4,8 @@
  * so hosted aggregators can tell the two processes apart; both are omitted from the
  * human-readable standalone format to keep local logs terse.
  */
-import winston, { type Logger } from 'winston';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
+import winston from 'winston';
 
 const STANDALONE_META_SKIP = new Set(['level', 'message', 'timestamp', 'version', 'component', 'stack', 'splat']);
 

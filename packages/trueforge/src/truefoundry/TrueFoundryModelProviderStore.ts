@@ -1,4 +1,4 @@
-import type { Logger } from 'winston';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { RequestContext } from '../auth/identity';
 import type { AgentRecord } from '../db/agentStore';
 import {

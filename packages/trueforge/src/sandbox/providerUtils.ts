@@ -8,7 +8,7 @@ import {
   type SandboxBuild,
   type SandboxProvider,
 } from '@truefoundry/trueforge-core/core';
-import type { Logger } from 'winston';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import configuration from '../config';
 import type { ISandboxProviderStore, SandboxProviderRecord } from '../db/sandboxProviderStore';
 import {

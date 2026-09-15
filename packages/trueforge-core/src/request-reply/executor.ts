@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { RedisClientType } from 'redis';
-import type { Logger } from 'winston';
 import z from 'zod';
 import { extractErrorLogFields } from '../core/util/errorLogFields';
+import type { Logger } from '../core/util/logger';
 import { ReplyError } from './errors';
 import type { JSONReply, RequestHandler } from './types';
 import { publishedRequestSchema } from './types';

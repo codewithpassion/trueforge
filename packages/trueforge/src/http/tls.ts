@@ -11,8 +11,8 @@ import { createServer as createHttpsServer, type ServerOptions as HttpsServerOpt
 import { join } from 'node:path';
 import { rootCertificates, TLSSocket } from 'node:tls';
 
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
-import type { Logger } from 'winston';
 
 const TLS_CERT_FILE = 'tls.crt';
 const TLS_KEY_FILE = 'tls.key';

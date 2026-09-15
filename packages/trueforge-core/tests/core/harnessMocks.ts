@@ -1,10 +1,10 @@
-import type { Logger } from 'winston';
 import winston from 'winston';
 import type { ILLM } from '../../src/core/llm/ILLM';
 import type { AgentToolSchema, IToolSet, ListToolsResponse } from '../../src/core/mcp/IMCPServer';
 import type { SandboxProvider } from '../../src/core/sandbox/provider/Provider';
 import { Sandbox } from '../../src/core/sandbox/Sandbox';
 import { NOOP_AGENT_TRACING } from '../../src/core/tracing/NoopAgentTracing';
+import type { Logger } from '../../src/core/util/logger';
 
 export const OBJECT_INPUT_SCHEMA = { type: 'object' as const, properties: {} };
 

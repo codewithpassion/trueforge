@@ -1,4 +1,4 @@
-import type { Logger } from 'winston';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { Controller } from './controller/Controller';
 import { scheduleDispatchLoop } from './controller/scheduleDispatch';
 import type { IScheduleStore } from './db/scheduleStore';

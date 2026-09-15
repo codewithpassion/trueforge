@@ -1,4 +1,3 @@
-import type { Logger } from 'winston';
 import { AgentHarnessError, InvalidAgentSendInputError } from '../errors';
 import {
   EventType,
@@ -11,6 +10,7 @@ import {
 } from '../events/schema';
 import type { AgentExecutionTrace, AgentTracing } from '../tracing/AgentTracing';
 import { onSignalAbort } from '../util/abort';
+import type { Logger } from '../util/logger';
 import { mergeAsyncGenerators } from '../util/promiseUtils';
 import { AgentThread } from './AgentThread';
 import type { AgentThreadRuntimeSendBatch } from './AgentThread.types';

@@ -1,7 +1,7 @@
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
 import { fetch as undiciFetch, type Dispatcher } from 'undici';
-import type { Logger } from 'winston';
 import { z } from 'zod';
 
 import type { McpAuthStatus } from '../schemas/mcpServer';

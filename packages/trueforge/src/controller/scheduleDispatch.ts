@@ -1,6 +1,6 @@
 import type { SessionHandle, Sessions, TurnInputItem } from '@truefoundry/trueforge-core/agent-session';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { TrueForge } from '@truefoundry/trueforge-sdk';
-import type { Logger } from 'winston';
 import configuration from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import {

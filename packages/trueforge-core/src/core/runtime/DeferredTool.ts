@@ -1,6 +1,5 @@
 import type { CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
 import dedent from 'dedent';
-import type { Logger } from 'winston';
 import { z } from 'zod';
 import type { ApprovalDecision } from '../events/schema';
 import { InstructionBuilder } from '../InstructionBuilder';
@@ -18,6 +17,7 @@ import {
 import { defineTool, LocalToolMCP, type ToolDefinition } from '../mcp/LocalToolMCP';
 import type { AgentTracing } from '../tracing/AgentTracing';
 import { extractErrorLogFields } from '../util/errorLogFields';
+import type { Logger } from '../util/logger';
 
 export const DEFERRED_TOOLS_SERVER_ID = 'deferred-tools';
 const DEFERRED_TOOLS_INSTRUCTION = 'deferred-tools-instructions';
