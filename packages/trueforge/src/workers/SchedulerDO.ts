@@ -6,14 +6,12 @@ import configuration from '../config';
 import { dispatchScheduledRuns, SCHEDULE_DISPATCH_INTERVAL_MS } from '../controller/scheduleDispatch';
 import { executeScheduleRun } from '../controller/scheduleRunExecution';
 import type { ScheduleDispatchItem } from '../db/scheduleStore';
+import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { createConsoleLogger } from './logger';
 import { createWorkersRuntimeDeps, type WorkersRuntimeDeps } from './runtime';
 
 /** The one scheduler instance: `idFromName(SCHEDULER_INSTANCE_NAME)`. */
 export const SCHEDULER_INSTANCE_NAME = 'singleton';
-
-/** Alarm handlers get 15 minutes of wall time; a pass stops starting runs before that. */
-const DISPATCH_PASS_BUDGET_MS = 14 * 60_000;
 
 /**
  * Schedule dispatch on Workers. Dispatch requires exactly one controller per database; a single named
@@ -34,7 +32,7 @@ export class SchedulerDO extends DurableObject {
     const abort = new AbortController();
     const budget = setTimeout(() => {
       abort.abort();
-    }, DISPATCH_PASS_BUDGET_MS);
+    }, ALARM_PASS_BUDGET_MS);
     try {
       const result = await dispatchScheduledRuns({
         store: this.#runtimeDeps().persistence.scheduleStore,

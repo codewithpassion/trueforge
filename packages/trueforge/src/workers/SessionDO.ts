@@ -19,15 +19,14 @@ import {
 } from '../runtime/turnExecutor';
 import { startTurnInProcess, toWireTurn, turnStreamId } from '../runtime/turnRunner';
 import { newId } from '../utils/id';
+import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { DurableObjectEventSubscriptions } from './durableObjectEventSubscriptions';
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
 import { encodeTurnEvents, isSequencedTurnStreamingEvent } from './turnEventWire';
 import { turnInputTooLarge } from './turnInputLimit';
 
-/** A pending timer blocks hibernation while a turn runs. */
-const KEEPALIVE_INTERVAL_MS = 20_000;
-/** The watchdog alarm fires this long after the last keepalive tick. */
+/** The watchdog runs again this long after a pass that left orphans or was lost mid-turn. */
 const WATCHDOG_DELAY_MS = 60_000;
 /** D1 allows 1000 queries per invocation; a turn past this many statements is close to failing. */
 export const D1_TURN_STATEMENT_WARNING = 800;
@@ -95,10 +94,9 @@ function startFailure(error: unknown): TurnExecutorFailure | undefined {
 export class SessionDO extends DurableObject {
   readonly #activeTurns = new ActiveTurnRegistry();
   readonly #events: DurableObjectEventSubscriptions<TurnStreamingEvent>;
-  /** Turns between their start request and the end of their drain in this instance. */
-  readonly #running = new Set<string>();
+  /** Turns between their start request and the end of their drain in this instance, each to its settled drain. */
+  readonly #running = new Map<string, Promise<undefined>>();
   readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'SessionDO' } });
-  #keepalive: ReturnType<typeof setInterval> | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -137,8 +135,10 @@ export class SessionDO extends DurableObject {
       request.tenant_id,
       request.session_id,
     );
-    this.#running.add(turnId);
-    await this.ctx.storage.setAlarm(Date.now() + WATCHDOG_DELAY_MS);
+    const { promise: settled, resolve: settle } = Promise.withResolvers<undefined>();
+    this.#running.set(turnId, settled);
+    // Work after an RPC invocation ends is not kept alive, so an alarm invocation holds the turn until it settles.
+    await this.ctx.storage.setAlarm(Date.now());
 
     let started: Awaited<ReturnType<typeof startTurnInProcess>>;
     try {
@@ -162,6 +162,7 @@ export class SessionDO extends DurableObject {
       });
     } catch (error) {
       this.#running.delete(turnId);
+      settle(undefined);
       const failure = startFailure(error);
       if (failure === undefined) {
         throw error;
@@ -172,7 +173,12 @@ export class SessionDO extends DurableObject {
       return failure;
     }
 
-    this.#keepAliveUntil(turnId, started.drained);
+    const finish = (): void => {
+      this.#running.delete(turnId);
+      settle(undefined);
+    };
+    // Settles either way, so a failed drain never rejects out of the alarm that awaits it.
+    void started.drained.then(finish, finish);
     return { ok: true, turn: toWireTurn(started.turn.record) };
   }
 
@@ -247,16 +253,30 @@ export class SessionDO extends DurableObject {
     };
   }
 
-  /** Watchdog: freezes turns D1 still reports running that no longer run here, then prunes expired streams. */
+  /**
+   * Freezes turns D1 still reports running that no longer run here, holds the invocation while this
+   * instance's turns run, then prunes expired streams.
+   */
   override async alarm(): Promise<void> {
     // Stays true if settling orphans throws outright, so the next alarm retries them.
     let orphansRemain = true;
     try {
+      if (this.#running.size > 0) {
+        // An invocation lost with its instance leaves no pending alarm; this fallback freezes the turns it held.
+        await this.ctx.storage.setAlarm(Date.now() + WATCHDOG_DELAY_MS);
+      }
       orphansRemain = await this.#freezeOrphans();
+      if (await this.#awaitRunningTurns()) {
+        // Clears the rows of the turns that just settled, and any whose start failed meanwhile.
+        orphansRemain = await this.#freezeOrphans();
+      }
     } finally {
       const now = Date.now();
       this.#events.deleteExpired(now);
-      if (this.#running.size > 0 || orphansRemain) {
+      if (this.#running.size > 0) {
+        // The pass budget ran out; the next invocation keeps holding the turns.
+        await this.ctx.storage.setAlarm(now);
+      } else if (orphansRemain) {
         await this.ctx.storage.setAlarm(now + WATCHDOG_DELAY_MS);
       } else {
         const nextExpiry = this.#events.nextExpiry(now);
@@ -341,21 +361,31 @@ export class SessionDO extends DurableObject {
     return true;
   }
 
-  #keepAliveUntil(turnId: string, drained: Promise<void>): void {
-    this.#keepalive ??= setInterval(() => {
-      void this.ctx.storage.setAlarm(Date.now() + WATCHDOG_DELAY_MS);
-    }, KEEPALIVE_INTERVAL_MS);
-    const settled = drained.finally(() => {
-      this.#running.delete(turnId);
-      if (this.#running.size === 0) {
-        clearInterval(this.#keepalive);
-        this.#keepalive = undefined;
+  /**
+   * Waits until no turn runs in this instance, including turns started while waiting, or until the pass
+   * budget is spent. Returns whether any turn was running.
+   */
+  async #awaitRunningTurns(): Promise<boolean> {
+    if (this.#running.size === 0) {
+      return false;
+    }
+    const { promise: budgetSpent, resolve: spend } = Promise.withResolvers<boolean>();
+    const budget = setTimeout(() => {
+      spend(true);
+    }, ALARM_PASS_BUDGET_MS);
+    try {
+      let spent = false;
+      while (this.#running.size > 0 && !spent) {
+        // Settling the current set only re-checks the map, which may hold turns started meanwhile.
+        spent = await Promise.race([Promise.all(this.#running.values()).then(() => false), budgetSpent]);
       }
-    });
-    this.ctx.waitUntil(settled);
+    } finally {
+      clearTimeout(budget);
+    }
+    return true;
   }
 
-  /** Fresh stores per turn or watchdog pass, so the statement count covers exactly one invocation. */
+  /** Fresh stores per turn or watchdog pass, so the statement count covers one turn or one pass. */
   #persistence(logFields: Record<string, unknown>) {
     let statements = 0;
     return createD1Persistence({

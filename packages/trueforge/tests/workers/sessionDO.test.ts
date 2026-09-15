@@ -15,6 +15,26 @@ import {
 } from './harness';
 import { GAP_MS } from './mockLlm';
 
+/** Set to shorten the alarm pass budget; unset keeps the production value. */
+const alarmBudget = vi.hoisted((): { ms: number | undefined } => ({ ms: undefined }));
+
+vi.mock('../../src/workers/alarmBudget', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../src/workers/alarmBudget')>();
+  return {
+    get ALARM_PASS_BUDGET_MS() {
+      return alarmBudget.ms ?? actual.ALARM_PASS_BUDGET_MS;
+    },
+  };
+});
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function turnStatus(input: { sessionId: string; turnId: string }) {
+  return (await d1Persistence().sessionStore.getTurn({ session_id: input.sessionId, turn_id: input.turnId }))?.state;
+}
+
 function startRequest(sessionId: string, extraText: string[] = []) {
   return {
     tenant_id: TENANT_ID,
@@ -32,6 +52,20 @@ async function startedTurnId(sessionId: string): Promise<string> {
   }
   expect(started.turn.state).toEqual({ status: 'running' });
   return started.turn.id;
+}
+
+/**
+ * Starts a turn and waits until an alarm invocation holds it, which arms the fallback watchdog. Aborting
+ * before that would leave the immediate alarm to fire on its own in the next instance and race the test.
+ */
+async function heldTurnId(sessionId: string): Promise<string> {
+  const turnId = await startedTurnId(sessionId);
+  await expect
+    .poll(() => runInDurableObject(sessionStub(sessionId), (_instance, state) => state.storage.getAlarm()), {
+      timeout: 10_000,
+    })
+    .toBeGreaterThan(Date.now() + 30_000);
+  return turnId;
 }
 
 async function subscribeEvents(input: { sessionId: string; turnId: string; afterSequenceNumber: number | undefined }) {
@@ -333,9 +367,90 @@ describe('SessionDO', () => {
     expect(stored?.state.status).toBe('error');
   });
 
+  // Alarms also fire on their own here, so these tests call alarm() directly instead of racing runDurableObjectAlarm.
+  it('an alarm invocation holds a non-streaming turn until turn.done', async () => {
+    const sessionId = 'alarm-holds-turn';
+    await createMockSession({ sessionId, scenario: 'delay-3000' });
+    const stub = sessionStub(sessionId);
+    const turnId = await startedTurnId(sessionId);
+
+    await runInDurableObject(stub, instance => instance.alarm());
+
+    expect(await turnStatus({ sessionId, turnId })).toMatchObject({ status: 'done' });
+    expect(await startedTurnRows(stub)).toEqual([]);
+  });
+
+  it('an alarm whose pass budget runs out re-arms, and a later alarm holds the turn to turn.done', async () => {
+    const sessionId = 'alarm-budget';
+    await createMockSession({ sessionId, scenario: 'delay-4000' });
+    const stub = sessionStub(sessionId);
+    const turnId = await startedTurnId(sessionId);
+    alarmBudget.ms = 500;
+    try {
+      await runInDurableObject(stub, async (instance, state) => {
+        await instance.alarm();
+
+        expect(await state.storage.getAlarm()).not.toBeNull();
+      });
+      expect((await turnStatus({ sessionId, turnId }))?.status).toBe('running');
+    } finally {
+      alarmBudget.ms = undefined;
+    }
+
+    await runInDurableObject(stub, instance => instance.alarm());
+
+    expect(await turnStatus({ sessionId, turnId })).toMatchObject({ status: 'done' });
+  });
+
+  it('an alarm already awaiting a turn also awaits a turn started after it', async () => {
+    const sessionId = 'alarm-late-turn';
+    await createMockSession({ sessionId, scenario: 'delay-2000' });
+    const stub = sessionStub(sessionId);
+    const firstTurnId = await startedTurnId(sessionId);
+    const alarmDone = runInDurableObject(stub, instance => instance.alarm());
+    await sleep(1_000);
+
+    // The next turn cancels the first, so the alarm's first wait ends while the second turn still runs.
+    const secondTurnId = await startedTurnId(sessionId);
+    await alarmDone;
+
+    expect(await turnStatus({ sessionId, turnId: firstTurnId })).toMatchObject({
+      status: 'cancelled',
+      reason: 'cancelled-for-next-turn',
+    });
+    expect(await turnStatus({ sessionId, turnId: secondTurnId })).toMatchObject({ status: 'done' });
+  });
+
+  it('an alarm freezes an orphan but never a turn its own instance runs', async () => {
+    await createMockSession({ sessionId: 'alarm-orphan', scenario: 'slow' });
+    const orphanTurnId = await heldTurnId('alarm-orphan');
+    await abortAllDurableObjects();
+    const sessionId = 'alarm-running';
+    await createMockSession({ sessionId, scenario: 'delay-2000' });
+    const stub = sessionStub(sessionId);
+    const runningTurnId = await startedTurnId(sessionId);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(
+        'INSERT INTO started_turns (turn_id, tenant_id, session_id) VALUES (?, ?, ?)',
+        orphanTurnId,
+        TENANT_ID,
+        'alarm-orphan',
+      );
+      await instance.alarm();
+    });
+
+    expect(await turnStatus({ sessionId: 'alarm-orphan', turnId: orphanTurnId })).toMatchObject({
+      status: 'cancelled',
+      reason: CancellationReason.Abandoned,
+    });
+    expect(await turnStatus({ sessionId, turnId: runningTurnId })).toMatchObject({ status: 'done' });
+    expect(await startedTurnRows(stub)).toEqual([]);
+  });
+
   it('watchdog alarm freezes a running turn whose Durable Object instance was lost', async () => {
     const stores = await createMockSession({ sessionId: 'watchdog-orphan', scenario: 'slow' });
-    const turnId = await startedTurnId('watchdog-orphan');
+    const turnId = await heldTurnId('watchdog-orphan');
 
     // Drops in-memory state (the running task) but keeps storage, like an eviction mid-turn.
     await abortAllDurableObjects();
@@ -352,8 +467,8 @@ describe('SessionDO', () => {
   it('watchdog alarm settles the other orphans and drops one whose freeze D1 can never accept', async () => {
     await createMockSession({ sessionId: 'watchdog-partial', scenario: 'slow' });
     await createMockSession({ sessionId: 'watchdog-unsettled', scenario: 'slow' });
-    const orphanTurnId = await startedTurnId('watchdog-partial');
-    const unsettledTurnId = await startedTurnId('watchdog-unsettled');
+    const orphanTurnId = await heldTurnId('watchdog-partial');
+    const unsettledTurnId = await heldTurnId('watchdog-unsettled');
     await abortAllDurableObjects();
     const stub = sessionStub('watchdog-partial');
     // A running turn whose tenant id D1 refuses to bind, so settling that orphan throws.
@@ -389,8 +504,8 @@ describe('SessionDO', () => {
   it('watchdog alarm opens its D1 stores once for all orphans in one pass', async () => {
     await createMockSession({ sessionId: 'watchdog-shared-a', scenario: 'slow' });
     await createMockSession({ sessionId: 'watchdog-shared-b', scenario: 'slow' });
-    const firstTurnId = await startedTurnId('watchdog-shared-a');
-    const secondTurnId = await startedTurnId('watchdog-shared-b');
+    const firstTurnId = await heldTurnId('watchdog-shared-a');
+    const secondTurnId = await heldTurnId('watchdog-shared-b');
     await abortAllDurableObjects();
     const stub = sessionStub('watchdog-shared-a');
 
@@ -431,7 +546,7 @@ describe('SessionDO', () => {
 
   it('watchdog alarm retries a failing orphan, then drops it an hour after its first failure', async () => {
     await createMockSession({ sessionId: 'watchdog-bounded', scenario: 'slow' });
-    const turnId = await startedTurnId('watchdog-bounded');
+    const turnId = await heldTurnId('watchdog-bounded');
     await abortAllDurableObjects();
     // Not valid JSONB, so reading the turn back fails the same way on every alarm.
     await env.DB.prepare('UPDATE turn SET state = ? WHERE turn_id = ?')
@@ -482,7 +597,7 @@ describe('SessionDO', () => {
 
   it('watchdog alarm records a retry for an orphan when it cannot open its D1 stores', async () => {
     const stores = await createMockSession({ sessionId: 'watchdog-no-stores', scenario: 'slow' });
-    const turnId = await startedTurnId('watchdog-no-stores');
+    const turnId = await heldTurnId('watchdog-no-stores');
     await abortAllDurableObjects();
     const stub = sessionStub('watchdog-no-stores');
     const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

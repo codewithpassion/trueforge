@@ -2,7 +2,8 @@
  * OpenAI-compatible chat completions served to the Worker through miniflare's outbound service.
  * The base URL picks the behavior: https://llm.test/<scenario>/v1, where scenario is `text`,
  * `tools-<K>` (K datetime tool calls, then text), `slow` (one delta, then a stalled stream), `gap` (one
- * delta, a second after `GAP_MS`, then a stalled stream), or `huge` (one reply larger than D1 stores per value).
+ * delta, a second after `GAP_MS`, then a stalled stream), `delay-<ms>` (a text reply after ms), or `huge` (one
+ * reply larger than D1 stores per value).
  */
 export const HUGE_REPLY_BYTES = 2_100_000;
 
@@ -106,6 +107,11 @@ export async function handleMockLlmRequest(request: Request): Promise<Response> 
   }
   if (scenario === 'gap') {
     return stalledReply({ signal: request.signal, secondDeltaAfterMs: GAP_MS });
+  }
+  const delayed = /^delay-(\d+)$/.exec(scenario);
+  if (delayed?.[1] !== undefined) {
+    await new Promise(resolve => setTimeout(resolve, Number(delayed[1])));
+    return textReply('Hello after a delay.');
   }
   const toolCalls = /^tools-(\d+)$/.exec(scenario);
   if (toolCalls?.[1] !== undefined) {
