@@ -1,4 +1,3 @@
-import type { SqlStorage } from '@cloudflare/workers-types';
 import {
   StreamGoneError,
   SUBSCRIBE_STREAM_THRESHOLD_MS,
@@ -6,7 +5,7 @@ import {
   type EventSubscriptionPollOptions,
   type EventSubscriptionPutOptions,
   type SequencedEvent,
-} from '.';
+} from '../runtime/event-subscription';
 
 const POLL_BATCH_SIZE = 100;
 

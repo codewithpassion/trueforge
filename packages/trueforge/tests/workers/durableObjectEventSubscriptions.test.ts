@@ -1,7 +1,7 @@
 import { runInDurableObject } from 'cloudflare:test';
-import { StreamGoneError, type EventSubscription, type SequencedEvent } from '../../../src/runtime/event-subscription';
-import { DurableObjectEventSubscriptions } from '../../../src/runtime/event-subscription/durableObject';
-import { sessionStub } from '../harness';
+import { StreamGoneError, type EventSubscription, type SequencedEvent } from '../../src/runtime/event-subscription';
+import { DurableObjectEventSubscriptions } from '../../src/workers/durableObjectEventSubscriptions';
+import { sessionStub } from './harness';
 
 interface TestEvent {
   type: string;

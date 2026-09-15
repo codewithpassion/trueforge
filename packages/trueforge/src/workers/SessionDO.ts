@@ -10,7 +10,6 @@ import { D1_MAX_VALUE_BYTES, D1ValueTooLargeError, D1WriteOutcomeUnknownError } 
 import { createD1Persistence } from '../db/d1/persistence';
 import { ActiveTurnRegistry } from '../runtime/activeTurns';
 import { StreamGoneError } from '../runtime/event-subscription';
-import { DurableObjectEventSubscriptions } from '../runtime/event-subscription/durableObject';
 import {
   freezeTurnIgnoringMissing,
   turnStartFailure,
@@ -19,6 +18,7 @@ import {
 } from '../runtime/turnExecutor';
 import { startTurnInProcess, toWireTurn, turnStreamId } from '../runtime/turnRunner';
 import { newId } from '../utils/id';
+import { DurableObjectEventSubscriptions } from './durableObjectEventSubscriptions';
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
 import { encodeTurnEvents, isSequencedTurnStreamingEvent } from './turnEventWire';
