@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { sql, type Kysely } from 'kysely';
 
 import { D1AtomicRunner } from '../../../src/db/d1/atomic';
-import { createD1Db, type D1Queryable, type D1Statement } from '../../../src/db/d1/client';
+import { createD1Db, D1WriteOutcomeUnknownError, type D1Queryable, type D1Statement } from '../../../src/db/d1/client';
 import { isUniqueViolation } from '../../../src/db/sqlite/errors';
 import type { Database } from '../../../src/db/sqlite/types';
 
@@ -37,14 +37,14 @@ async function bound(db: Kysely<Database>, value: unknown): Promise<{ value: unk
   return result.rows[0];
 }
 
-/** A D1 stand-in whose statements report `meta` exactly as given. */
-function stubQueryable(meta: { changes?: unknown; last_row_id?: unknown }): D1Queryable {
+/** A D1 stand-in whose statements report `metas[i]` exactly as given (a single statement uses `metas[0]`). */
+function stubQueryable(metas: readonly { changes?: unknown; last_row_id?: unknown }[]): D1Queryable {
   const statement: D1Statement = {
-    all: <R>() => Promise.resolve({ results: new Array<R>(), meta }),
+    all: <R>() => Promise.resolve({ results: new Array<R>(), meta: metas[0] ?? {} }),
   };
   return {
     prepare: () => ({ bind: () => statement }),
-    batch: statements => Promise.resolve(statements.map(() => ({ results: [], meta }))),
+    batch: statements => Promise.resolve(statements.map((_, index) => ({ results: [], meta: metas[index] ?? {} }))),
   };
 }
 
@@ -106,26 +106,45 @@ describe('D1AtomicRunner.batchWrite', () => {
     await expect(db.transaction().execute(() => Promise.resolve())).rejects.toThrow(/no interactive transactions/);
   });
 
-  it('throws when a batch statement result has no numeric meta.changes instead of reporting zero', async () => {
+  it('throws D1WriteOutcomeUnknownError when statement 0 has no numeric meta.changes instead of reporting zero', async () => {
     const runner = new D1AtomicRunner(env.DB);
-    const executor = createD1Db({ queryable: stubQueryable({}) });
+    const executor = createD1Db({ queryable: stubQueryable([{}, { changes: 1 }]) });
+    const queries = [sql`UPDATE parent SET version = 2`.compile(executor), sql`DELETE FROM child`.compile(executor)];
 
-    await expect(runner.batchWrite({ executor, queries: [sql`SELECT 1`.compile(executor)] })).rejects.toThrow(
-      /no numeric meta\.changes/,
-    );
+    const failure = runner.batchWrite({ executor, queries });
+    await expect(failure).rejects.toBeInstanceOf(D1WriteOutcomeUnknownError);
+    await expect(failure).rejects.toThrow(/the write committed/);
+  });
+
+  it('accepts a committed batch whose later statement has no numeric meta.changes', async () => {
+    const runner = new D1AtomicRunner(env.DB);
+    const executor = createD1Db({ queryable: stubQueryable([{ changes: 1 }, {}]) });
+    const queries = [sql`UPDATE parent SET version = 2`.compile(executor), sql`DELETE FROM child`.compile(executor)];
+
+    await expect(runner.batchWrite({ executor, queries })).resolves.toEqual([{ changes: 1 }, { changes: 0 }]);
   });
 });
 
 describe('D1 dialect result metadata', () => {
-  it('leaves numAffectedRows and insertId unset when D1 omits changes and last_row_id', async () => {
-    const db = createD1Db({ queryable: stubQueryable({}) });
-    const result = await sql`UPDATE parent SET version = 3`.execute(db);
+  it('throws D1WriteOutcomeUnknownError for a write without numeric meta.changes', async () => {
+    const db = createD1Db({ queryable: stubQueryable([{}]) });
+    await expect(sql`UPDATE parent SET version = 3`.execute(db)).rejects.toBeInstanceOf(D1WriteOutcomeUnknownError);
+    await expect(
+      db.updateTable('turn').set({ updated_at: 'now' }).where('turn_id', '=', 't1').executeTakeFirst(),
+    ).rejects.toBeInstanceOf(D1WriteOutcomeUnknownError);
+  });
+
+  it('leaves numAffectedRows and insertId unset for reads when D1 omits changes and last_row_id', async () => {
+    const db = createD1Db({ queryable: stubQueryable([{}]) });
+    const result = await sql`SELECT version FROM parent`.execute(db);
     expect(result.numAffectedRows).toBeUndefined();
     expect(result.insertId).toBeUndefined();
+    const returning = await db.deleteFrom('turn').where('turn_id', '=', 't1').returning('turn_id').execute();
+    expect(returning).toEqual([]);
   });
 
   it('converts numeric changes and last_row_id', async () => {
-    const db = createD1Db({ queryable: stubQueryable({ changes: 2, last_row_id: 5 }) });
+    const db = createD1Db({ queryable: stubQueryable([{ changes: 2, last_row_id: 5 }]) });
     const result = await sql`UPDATE parent SET version = 3`.execute(db);
     expect(result.numAffectedRows).toBe(2n);
     expect(result.insertId).toBe(5n);

@@ -235,9 +235,15 @@ export function runSessionStoreAtomicWritesSuite(
     }));
   }
 
+  function insertStatementsSince({ start, table }: { start: number; table: string }): number {
+    return runner.statements.slice(start).filter(statement => statement.sql.startsWith(`insert into "${table}" (`))
+      .length;
+  }
+
   it('context rows crossing the bound-value cap are chunked with input order and contiguous positions', async () => {
     const created = largeMessages('c', 4);
     expect(chunkJsonRows(created.map(body => ({ thread_id: MAIN_THREAD_ID, body })))).toHaveLength(4);
+    const createStart = runner.statements.length;
 
     await store.createTurn(
       makeCreateTurnInput({
@@ -248,7 +254,9 @@ export function runSessionStoreAtomicWritesSuite(
         ],
       }),
     );
+    expect(insertStatementsSince({ start: createStart, table: 'thread_context_log' })).toBe(4);
     const appended = largeMessages('a', 3);
+    const appendStart = runner.statements.length;
     await store.appendToThreadContext({
       session_id: SESSION,
       turn_id: 'turn-1',
@@ -258,6 +266,7 @@ export function runSessionStoreAtomicWritesSuite(
       completion: null,
     });
 
+    expect(insertStatementsSince({ start: appendStart, table: 'thread_context_log' })).toBe(3);
     expect(await mainContext('turn-1')).toEqual(contents([...created, ...appended]));
     expect(await contextPositions('turn-1')).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
@@ -340,6 +349,7 @@ export function runSessionStoreAtomicWritesSuite(
 
     const counts = await rowCounts('turn-1');
     expect(counts['session_event']).toBe(many);
+    expect(counts['turn_thread_context']).toBe(many);
     expect(counts['turn_thread']).toBe(1);
     expect(runner.statements.length).toBeGreaterThan(0);
     for (const statement of runner.statements) {
@@ -351,11 +361,6 @@ export function runSessionStoreAtomicWritesSuite(
   // 600 KB each: two rows never share a 1 MiB chunk, so N rows give N statements.
   function bigText(prefix: string): string {
     return `${prefix}:${'é'.repeat(300_000)}`;
-  }
-
-  function insertStatementsSince({ start, table }: { start: number; table: string }): number {
-    return runner.statements.slice(start).filter(statement => statement.sql.startsWith(`insert into "${table}" (`))
-      .length;
   }
 
   const childIds = ['child-0', 'child-1', 'child-2'];

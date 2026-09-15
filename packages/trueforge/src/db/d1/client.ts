@@ -32,6 +32,35 @@ export interface D1Queryable {
 
 const NO_TRANSACTIONS = 'D1 has no interactive transactions; write through AtomicRunner.batchWrite';
 
+/**
+ * A write committed but D1 reported no change count. Callers read zero changes as a failed guard,
+ * so the dialect throws instead of guessing.
+ */
+export class D1WriteOutcomeUnknownError extends Error {
+  constructor(statement: string, options?: { cause?: unknown }) {
+    super(
+      `D1 ${statement} returned no numeric meta.changes; the write committed but its row count is unknown`,
+      options,
+    );
+    this.name = 'D1WriteOutcomeUnknownError';
+  }
+}
+
+/** Statements that return rows (SELECT or RETURNING) do not need a change count. */
+function returnsRows(query: CompiledQuery): boolean {
+  const node = query.query;
+  switch (node.kind) {
+    case 'SelectQueryNode':
+      return true;
+    case 'InsertQueryNode':
+    case 'UpdateQueryNode':
+    case 'DeleteQueryNode':
+      return node.returning !== undefined;
+    default:
+      return /^\s*(select|with|pragma|explain|values)\b/i.test(query.sql) || /\breturning\b/i.test(query.sql);
+  }
+}
+
 export class D1Connection implements DatabaseConnection {
   readonly #target: D1Queryable;
 
@@ -44,6 +73,9 @@ export class D1Connection implements DatabaseConnection {
       .prepare(query.sql)
       .bind(...query.parameters)
       .all<R>();
+    if (typeof meta.changes !== 'number' && !returnsRows(query)) {
+      throw new D1WriteOutcomeUnknownError('statement');
+    }
     return {
       rows: results,
       ...(typeof meta.changes === 'number' ? { numAffectedRows: BigInt(meta.changes) } : {}),
@@ -53,7 +85,8 @@ export class D1Connection implements DatabaseConnection {
 
   /**
    * One D1 batch: a single implicit transaction that rolls back only when a statement errors.
-   * Throws when a statement reports no change count, since callers read zero as a failed guard.
+   * Only statement 0's change count decides a conditional chain, so only it must be present;
+   * stores never read later counts.
    */
   async batch(queries: readonly CompiledQuery[]): Promise<BatchStatementResult[]> {
     if (queries.length === 0) {
@@ -63,10 +96,13 @@ export class D1Connection implements DatabaseConnection {
       queries.map(query => this.#target.prepare(query.sql).bind(...query.parameters)),
     );
     return results.map(({ meta }, index) => {
-      if (typeof meta.changes !== 'number') {
-        throw new Error(`D1 batch statement ${String(index)} returned no numeric meta.changes; the batch committed`);
+      if (typeof meta.changes === 'number') {
+        return { changes: meta.changes };
       }
-      return { changes: meta.changes };
+      if (index === 0) {
+        throw new D1WriteOutcomeUnknownError('batch statement 0');
+      }
+      return { changes: 0 };
     });
   }
 
