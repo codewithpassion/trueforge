@@ -261,6 +261,13 @@ Review rulings (Phase 5, no blockers; fixes in progress on the worktree branch):
 - The `PUBLIC_BASE_URL` placeholder is removed from `wrangler.jsonc` vars, so a missing value fails with the existing clear error instead of building redirect URIs to a foreign domain; the workers config rejects a `PUBLIC_BASE_URL` with a path prefix, since only `/` is supported.
 - Accepted: the frontend package keeps its own copy of the shell token in `publicPath.ts` and `vite.config.ts`, because the browser bundle cannot import server source and the server consumes the frontend build (three copies already existed before Phase 5). Backlog item if the two ever diverge.
 - Open, unverified: whether `limits.cpu_ms` in `wrangler.jsonc` also raises the CPU limit for `SessionDO`, where turns run. A failed Workers runtime build returns wrangler's `text/plain` 500 rather than the JSON error envelope (pre-existing since Phase 3). On Workers `/index.html` redirects to `/`, while Node serves the shell directly (harmless).
+- Fix-round review (no blockers, no should-fix). The landing commit folds in four nits:
+  - The workers config rejects an empty `PUBLIC_BASE_URL` at startup; otherwise `/healthz` works and sign-in returns 500.
+  - The routing sync test asserts that `run_worker_first` equals the shared prefixes with their `/*` variants, in both directions.
+  - That assertion moves into `tests/unit/frontendShell.test.ts` so tests mirror `src`.
+  - The Worker `HEAD` test checks that `Cache-Control` is replaced.
+- Deliberate difference, not in the guide: a missing `/assets/...` file requested with HTML `Accept` gets 404 on Workers, while Node serves the shell.
+- The first Node Docker smoke failure was a BuildKit snapshot race. `server` and `controller` in `docker-compose.yml` build the same `truefoundry-server:latest` tag concurrently. This is outside Phase 5; if it recurs, give `controller` its own tag or reuse the server image.
 
 Verify: `pnpm workers:check` under 64 MiB with zero banned modules; `pnpm workers:dev` serves the UI at `/`, `/api/v1/docs`, and a streamed turn; `wrangler deploy` to a preview environment, then OIDC login and one turn end to end.
 
