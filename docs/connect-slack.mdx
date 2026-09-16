@@ -1,0 +1,156 @@
+---
+title: 'Connect Slack'
+sidebarTitle: 'Slack'
+description: 'Let a Slack workspace talk to a TrueForge agent: mention the bot in a channel or send it a direct message, and the reply lands in the thread.'
+---
+
+<Note>
+  Draft. This page is not in the navigation yet — it is added once the Slack channel has passed a live
+  workspace test.
+</Note>
+
+A Slack integration binds one Slack workspace to one TrueForge agent. People mention the bot in an
+allowed channel or send it a direct message; TrueForge runs a turn and posts the answer back in the
+same thread.
+
+Each thread is its own session. The first mention opens it, and later messages in that thread
+continue the same conversation with its history intact.
+
+## Before you start
+
+You need:
+
+- Permission to create and install a Slack app in the workspace.
+- A TrueForge deployment reachable from Slack over HTTPS, and its public base URL.
+- An agent to answer with. Its name goes in the integration.
+
+## 1. Create the Slack app
+
+In the [Slack API dashboard](https://api.slack.com/apps), choose **Create New App → From scratch**,
+name it, and pick the workspace.
+
+### Bot token scopes
+
+Under **OAuth & Permissions → Scopes → Bot Token Scopes**, add:
+
+| Scope              | Why                                                      |
+| ------------------ | -------------------------------------------------------- |
+| `app_mentions:read` | Read the mentions that start and continue a thread.      |
+| `chat:write`        | Post the agent's reply in the thread.                    |
+| `im:history`        | Read direct messages sent to the bot.                    |
+
+Leave the rest off. Sender display names come from what Slack puts in the event, so `users:read` is
+not needed; without it a name may show as the raw Slack user id.
+
+### Event subscriptions
+
+Under **Event Subscriptions**, turn events on and subscribe the bot to:
+
+- `app_mention` — mentions in channels.
+- `message.im` — direct messages to the bot.
+
+The **Request URL** is your deployment's ingress for this integration:
+
+```
+<PUBLIC_BASE_URL>/api/v1/integrations/<integration_id>/events
+```
+
+You do not have the `integration_id` yet, so create the integration in TrueForge first (step 3),
+then come back and paste the URL. Slack verifies it by posting a challenge, which the endpoint
+answers directly.
+
+### Install
+
+Install the app to the workspace, then copy two values:
+
+- the **Bot User OAuth Token** (`xoxb-…`) from **OAuth & Permissions**,
+- the **Signing Secret** from **Basic Information → App Credentials**.
+
+You also need the workspace's **team id** (`T…`) and the **bot user id** (`U…`). Both appear in the
+`Bot User ID` field and the install URL; the team id is also the `T…` segment of any Slack message
+link.
+
+## 2. Invite the bot
+
+In each channel the bot should answer in, run `/invite @your-bot`. A channel the bot is not in never
+delivers events, whatever the allowlist says.
+
+## 3. Connect it in TrueForge
+
+Create the integration through the API:
+
+```bash
+curl -X POST "$PUBLIC_BASE_URL/api/v1/settings/integrations" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "manifest": {
+      "type": "slack",
+      "team_id": "T0EXAMPLE",
+      "bot_user_id": "U0EXAMPLEBOT",
+      "default_agent_name": "support-bot",
+      "allowed_channel_ids": ["C0EXAMPLE"],
+      "allow_direct_messages": true,
+      "reply_mode": "thread",
+      "auth": {
+        "bot_token": "xoxb-…",
+        "signing_secret": "…"
+      }
+    }
+  }'
+```
+
+The response carries the `id` for the request URL in step 1. Both credentials are redacted whenever
+the integration is read back; sending a redacted value on an update keeps the stored secret, and
+sending a real one rotates it.
+
+`allowed_channel_ids` is an allowlist, not a filter: an empty list allows no channel. Set
+`allow_direct_messages` to `false` to answer only in channels.
+
+Deleting the integration stops ingress at once. Sessions it opened stay.
+
+## 4. Try it
+
+In an allowed channel, mention the bot:
+
+```
+@your-bot what changed in the release notes this week?
+```
+
+The agent answers in a thread under your message. Reply in that thread — mentioning the bot again —
+and the same session continues.
+
+## What to expect
+
+- **Threads are sessions.** Anything posted in the thread that mentions the bot continues the
+  conversation. A reply that does not mention it is not delivered to TrueForge, because only
+  `app_mention` is subscribed in channels.
+- **One turn at a time per thread.** A message that arrives while the previous one is still running
+  gets a short "still working" reply rather than starting a second turn.
+- **Long answers arrive in pieces.** Replies over roughly 3,500 characters are posted as several
+  messages. A split can land inside a code block, which Slack then renders across the two messages.
+- **Formatting is approximate.** Markdown becomes Slack mrkdwn: headings become bold, links and
+  lists survive, tables lose their layout.
+- **A run that does not answer still says so.** A cancelled or failed turn posts a short status
+  line in the thread.
+- **Slack retries are safe.** Slack re-sends an event when an acknowledgement is slow; the same
+  event never starts a second turn.
+- **Mentioning the bot in a DM is fine.** Slack delivers that twice, and only one copy runs.
+
+## Who the bot acts as
+
+Turns run as the admin who connected the integration, with that person's agent access — the same
+model schedules use. Anyone who can post in an allowed channel can therefore use that agent, so keep
+`allowed_channel_ids` tight. Per-sender identity is not available yet; the Slack sender's id and
+display name are recorded on the session for provenance only.
+
+## Troubleshooting
+
+| Symptom                                    | Cause                                                                                    |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Slack cannot verify the request URL        | The URL is wrong, or the deployment is not reachable from Slack over HTTPS.               |
+| Mentions do nothing                        | The bot is not in the channel, or the channel is not in `allowed_channel_ids`.            |
+| Direct messages do nothing                 | `allow_direct_messages` is `false`, or `message.im` is not subscribed.                    |
+|  Slack reports `401` from the request URL  | The signing secret in the integration is not the app's current one.                       |
+| Replies stop after the app is reinstalled  | Reinstalling rotates the bot token; update the integration with the new one.              |
+| Nothing happens and no error appears       | The `team_id` in the integration is not the workspace's; events from another one are refused. |
