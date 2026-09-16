@@ -87,7 +87,7 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND unset',
   });
 
   it('offers no sandbox without a stored record, so a sandbox-enabled spec is rejected', async () => {
-    expect(build(undefined).isLocalFallbackEnabled()).toBe(false);
+    expect(build(undefined).isSandboxUsableWithoutStoredRecord()).toBe(false);
     await expect(validateSandboxSpec(build(undefined))).rejects.toThrow(/no sandbox provider is configured/);
   });
 });
@@ -98,7 +98,7 @@ describe('createWorkersRuntimeDeps', () => {
     const { sandboxIntegration } = createWorkersRuntimeDeps(env);
     await expect(sandboxIntegration.resolveProvider(storeInput())).resolves.toBeUndefined();
     await expect(sandboxIntegration.checkSnapshotStatus(storeInput())).resolves.toBeUndefined();
-    expect(sandboxIntegration.isLocalFallbackEnabled()).toBe(false);
+    expect(sandboxIntegration.isSandboxUsableWithoutStoredRecord()).toBe(false);
   });
 });
 
@@ -118,7 +118,7 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
   });
 
   it('accepts a sandbox-enabled spec with nothing in the sandbox-provider table', async () => {
-    expect(build('cloudflare-computer').isLocalFallbackEnabled()).toBe(true);
+    expect(build('cloudflare-computer').isSandboxUsableWithoutStoredRecord()).toBe(true);
     await expect(validateSandboxSpec(build('cloudflare-computer'))).resolves.toBeUndefined();
   });
 });

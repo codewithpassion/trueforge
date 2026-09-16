@@ -54,7 +54,7 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
     },
     // The workspace comes from the deploy var, not from a stored settings record, so a
     // sandbox-enabled agent is valid with nothing in the sandbox-provider table.
-    isLocalFallbackEnabled: () => options.backend !== undefined,
+    isSandboxUsableWithoutStoredRecord: () => options.backend !== undefined,
     // Phase 7b turns skills on once the image is confirmed to carry the downloader's dependencies.
     isSkillMountingSupported: () => false,
     isDaytonaSettingsSupported: () => false,

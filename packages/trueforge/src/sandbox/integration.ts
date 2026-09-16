@@ -19,7 +19,7 @@ export interface SandboxIntegration {
     sessionId: string;
   }): Promise<SandboxProvider | undefined>;
   /** Whether a sandbox is usable without a stored provider record. */
-  isLocalFallbackEnabled(): boolean;
+  isSandboxUsableWithoutStoredRecord(): boolean;
   /** Whether skills can be mounted into a sandbox on this runtime. */
   isSkillMountingSupported(): boolean;
   /** Whether the settings-managed Daytona provider exists on this runtime. */

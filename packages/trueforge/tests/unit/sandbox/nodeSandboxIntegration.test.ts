@@ -13,16 +13,16 @@ describe('localSandboxSessionSegment', () => {
 
 describe('createNodeSandboxIntegration', () => {
   it('enables the local fallback only for a supported standalone probe', () => {
-    expect(createNodeSandboxIntegration({ localSupport: undefined }).isLocalFallbackEnabled()).toBe(false);
+    expect(createNodeSandboxIntegration({ localSupport: undefined }).isSandboxUsableWithoutStoredRecord()).toBe(false);
     expect(
       createNodeSandboxIntegration({
         localSupport: { supported: false, reason: 'no bubblewrap' },
-      }).isLocalFallbackEnabled(),
+      }).isSandboxUsableWithoutStoredRecord(),
     ).toBe(false);
     expect(
       createNodeSandboxIntegration({
         localSupport: { supported: true, platform: 'darwin', shell: '/bin/bash', python: '/usr/bin/python3' },
-      }).isLocalFallbackEnabled(),
+      }).isSandboxUsableWithoutStoredRecord(),
     ).toBe(true);
   });
 });

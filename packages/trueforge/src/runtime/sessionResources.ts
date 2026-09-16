@@ -235,7 +235,7 @@ export async function validateAgentSpec({
     const configured =
       sandboxIntegration !== undefined &&
       ((await sandboxProviderStore.getSandboxProvider(tenant_id)) !== undefined ||
-        sandboxIntegration.isLocalFallbackEnabled());
+        sandboxIntegration.isSandboxUsableWithoutStoredRecord());
     if (!configured) {
       throw new HTTPException(422, {
         message: hasSkills

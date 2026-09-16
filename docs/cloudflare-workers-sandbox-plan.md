@@ -108,7 +108,7 @@ Worker (HTTP) ──RPC──► SessionDO (tenant:session)          turn loop, 
   - `TRUEFORGE_SANDBOX_BACKEND=cloudflare-computer` in `wrangler.jsonc` vars enables it.
   - `WorkersSandboxIntegration` implements `SandboxIntegration`:
     - `resolveProvider` returns the Computer provider when enabled and `undefined` otherwise.
-    - `isLocalFallbackEnabled` returns `false`.
+    - `isSandboxUsableWithoutStoredRecord` returns `true` when enabled: the workspace comes from the deploy var and never has a stored record. (Written here as `isLocalFallbackEnabled` returning `false`; Section 9 found that rejects every sandbox-enabled agent, and the flag was renamed in 7b to say what it means.)
     - `checkSnapshotStatus` returns `ready`.
     - The Daytona helpers throw a typed "not supported on Workers" error. The existing settings routes already return `404` and `422` on Workers.
   - If a stored record type is needed, add `cloudflare-computer` to `StoredSandboxProviderManifestSchema` only (store and runtime, not OpenAPI), the same way `truefoundry` is handled.
