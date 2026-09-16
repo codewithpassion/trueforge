@@ -136,10 +136,12 @@ describe('exec output cap', () => {
     expect(new TextEncoder().encode(capped.output).byteLength).toBeLessThan(COMPUTER_EXEC_OUTPUT_MAX_BYTES + 512);
   });
 
-  it('cuts on a byte boundary without corrupting the surrounding text', () => {
-    // Multi-byte characters put the cut inside a code point; the decoder must not throw.
-    const capped = capOutput('\u00e9'.repeat(COMPUTER_EXEC_OUTPUT_MAX_BYTES));
+  it('cuts inside a character without corrupting the text before it', () => {
+    // 3-byte characters and a limit that is not a multiple of 3 put the cut inside a code point.
+    expect(COMPUTER_EXEC_OUTPUT_MAX_BYTES % 3).not.toBe(0);
+    const capped = capOutput('\u20ac'.repeat(COMPUTER_EXEC_OUTPUT_MAX_BYTES));
     expect(capped.outputTruncated).toBe(true);
-    expect(capped.output.startsWith('\u00e9\u00e9')).toBe(true);
+    expect(capped.output.startsWith('\u20ac\u20ac')).toBe(true);
+    expect(capped.output).toContain('[output truncated at');
   });
 });
