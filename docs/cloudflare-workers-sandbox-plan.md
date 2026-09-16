@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. It follows `docs/cloudflare-workers-port-plan.md`, which shipped Phases 0 to 5 with code execution disabled.
 
-Status: proposed on 2026-09-16. Phase 7a is complete and the verdict is go: continue to 7b with Cloudflare Computer. Section 8 records what steps 1 to 8 found, Section 9 the live acceptance test, and Section 10 the Section 6 verdict.
+Status: proposed on 2026-09-16. Phases 7a and 7b are complete; 7c (Code Mode) is next. Section 8 records what 7a steps 1 to 8 found, Section 9 the 7a live acceptance test, Section 10 the Section 6 verdict, and Section 11 Phase 7b: skills, plus the two must-fixes 7a left behind.
 
 Goal: restore code execution on the Workers deploy with a Cloudflare-native sandbox provider, starting with a time-boxed spike on Cloudflare Computer (`@cloudflare/computer`). The spike decides whether Computer, or the Cloudflare Sandbox SDK as the fallback, backs a new `SandboxProvider`.
 
@@ -264,7 +264,7 @@ Environment: Docker 29.2.1, overlayfs, cgroup v2, not rootless.
 
 **Code Mode is off by capability, not by exception.** `SandboxProvider` gained `supportsCodeMode`; `Sandbox.configureCodeMode` returns early when it is false, so `createCodeModeTransport` is never called and the `mcp_client` instructions stay out of the prompt. MCP tools remain available to the model directly. Node providers set it to `true` and behave exactly as before. A Workers test runs a whole turn with `sandbox.enabled` and one MCP server; flipping the flag back to `true` fails it.
 
-**Still open from the review.** The no-capacity failure past `max_instances` is not mapped to a message that names the limit; Section 9 records the error shape observed live, so 7d can match on it. The container inactivity timeout is set once per Durable Object instance, so a container that restarts under a live instance keeps the platform default until that instance is evicted.
+**Still open from the review.** The no-capacity failure past `max_instances` is not mapped to a message that names the limit; Section 9 records the error shape observed live. (7b closed this — see Section 11.) The container inactivity timeout is set once per Durable Object instance, so a container that restarts under a live instance keeps the platform default until that instance is evicted.
 
 ## 9. Phase 7a step 9: the live acceptance test
 
@@ -341,3 +341,53 @@ Two must-fix items carry into 7b, neither of which changes the verdict:
 
 1. Map a non-zero exit to `{ success: true, exitCode }` instead of a failure.
 2. Map the instance-limit failure to a message that names the limit.
+
+Both landed as the first two commits of 7b; Section 11 records how.
+
+## 11. Phase 7b: skills
+
+Built on a worktree branch off `feat/cloudflare-workers-port`, and run live on `trueforge.rockyshoreslabs.io` on 2026-09-16 against Worker version `fd7c5f89-41cc-41a2-a0aa-d1792efa89c5`. `wrangler tail --format json` ran from before the deploy until after the last test, and again for the exit-code check: 173 invocations, zero exceptions. The only three non-`ok` outcomes are the `canceled` halves of one client-cancelled stream, described below.
+
+**The two must-fixes from Section 10 landed first.**
+
+- **A non-zero exit is a result, not a broken sandbox.** Computer derives `status` from `exitCode` alone — `0` is `completed`, a signal code (129, 130, 137, 143) is `cancelled`, everything else is `failed` — and leaves `exitCode` at `-1` when no exit event ever arrived. So a negative exit code, not `failed`, is what says the command never launched. `CloudflareComputerProvider.exec` now returns `{ success: true, response: { exitCode, result } }` for any command that ran, matching the Node providers, and keeps `{ success: false }` for a command that never launched, one that was cancelled, and one whose writes never reached the workspace store. Section 8's claim that `status` separates the two is corrected there. Re-checked live with the two commands Section 9 used to find it: `sh -c 'echo OUTLINE; echo ERRLINE 1>&2; exit 3'` now returns `{"success":true,"response":{"exitCode":3,"result":"OUTLINE\nERRLINE\n"}}`, and `ls /nope` returns `exitCode: 2` with its stderr in `result`.
+- **The instance limit names itself.** The provider matches `Maximum number of running container instances exceeded` in a transport failure and raises a `SandboxNotAvailableError` whose message names `max_instances` and asks the caller to retry, instead of surfacing a connect trace that opens with a health-check timeout. The test uses the string captured live in Section 9.
+
+**The flag that Section 9 found misnamed is renamed.** `SandboxIntegration.isLocalFallbackEnabled` is now `isSandboxUsableWithoutStoredRecord`, which is what its doc comment already said and what both runtimes actually decide. No behaviour changed.
+
+**The image needs nothing added (7b.1).** `workers/computer.Dockerfile` builds on the release sandbox image, which already carries everything `skill_downloader.py` uses: Python 3.13.15, pydantic 2.12.5, git 2.39.5, a CA bundle, and the stdlib `tarfile`/`urllib`. Checked by running the real downloader inside the built image rather than by reading the Dockerfile: it installed a git skill in 2.2 s and removed it again in 0.1 s on overlayfs. No Dockerfile change, so no image-pin fixture to regenerate.
+
+**Skills follow the workspace (7b.2).** `isSkillMountingSupported` now returns whether the sandbox backend is set, so `GET /api/v1/capabilities` reports `skill.enabled` exactly when `sandbox.enabled`. `buildTurnSandbox` no longer throws 422 on skills and always carries a `SkillMounter`, empty or not — which is what makes a dropped skill get cleaned up on the next init, the same as on Node.
+
+**Live test (7b.3).** Agent `smoke-skills`, sandbox enabled, one catalog skill (`algorithmic-art`, a git skill: 4 files, 59 KB, sparse-cloned from `github.com/anthropics/skills`).
+
+| Item                                                           | Result                                                                                                                          |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| A turn on an agent with a skill and `sandbox.enabled`          | pass — pre-7b this turn, not the agent create, is where `buildTurnSandbox` answered 422                                         |
+| Mount under `/workspace/.trueforge/skills`, non-streaming turn | pass: `algorithmic-art/` plus a 213-byte state file; `SKILL.md` read back from the FUSE mount                                   |
+| Same, streaming turn                                           | pass, identical listing; the prompt carried a 185-token skills section                                                          |
+| A turn that actually uses the skill                            | pass: the agent read `SKILL.md`, wrote a 68-line p5.js sketch to `/workspace`, and named the seeded-randomness rule it followed |
+| Removing the skill cleans up on the next init                  | pass: after `PUT /agents/{id}` with no skills, the next turn's listing is the state file alone, shrunk to 69 bytes              |
+| Re-adding the skill reinstalls it                              | pass, back to `algorithmic-art/` and 213 bytes                                                                                  |
+
+**Measurements (7b.4).** The skill download runs inside the first `exec` of a turn, so it is charged to the alarm pass holding that turn.
+
+| What                                                          | Value                                        |
+| ------------------------------------------------------------- | -------------------------------------------- |
+| Skill-downloader exec, cold container, one skill installed    | 4373 ms and 3703 ms                          |
+| Skill-downloader exec, warm container, one skill installed    | 3428 ms                                      |
+| Skill-downloader exec, warm container, skill unchanged        | 1103 ms                                      |
+| Skill-downloader exec, warm container, one skill removed      | 431 ms                                       |
+| Whole sandbox init, cold (first exec through git credentials) | 9.8 s, of which 5.3 s is the container start |
+| Whole sandbox init, warm                                      | 0.7 s to 3.6 s                               |
+| `SessionDO` alarm holding a turn                              | wall 12.0 to 167.0 s, CPU 263 to 3546 ms     |
+| `ComputerDO` RPC invocation                                   | CPU 0 to 97 ms; wall up to 96.9 s            |
+
+The download fits the 14-minute alarm window with room to spare: the worst observed was 4.4 s, about 0.5 % of the 840 s pass, and `SKILL_DOWNLOAD_TIMEOUT_SECONDS` caps it at 180 s, 21 % of the pass. A skill an order of magnitude larger still cannot exhaust it, because the downloader's own per-clone timeout stops first.
+
+**Notes.**
+
+- A git skill installs a sparse, blob-filtered clone, so its cost tracks the skill subdirectory rather than the repository. FUSE did not show up in the numbers: a warm reinstall of the same skill took 3.4 s against 2.2 s on overlayfs outside the container.
+- A turn whose skill pin has not moved still pays about 1.1 s, because the downloader runs on every init to reconcile state. That is the price of cleanup being automatic.
+- Streaming a turn through a browser tab is limited by the tool driving it, not by the server: one streaming turn here was cut off client-side after 45 s and finished as `cancelled` with `reason: client-cancelled`. The server behaved correctly; re-run long turns non-streaming when the client has a short ceiling.
+- Test data removed afterwards: agent `smoke-skills` and its sessions; the tenant ends with zero agents and zero sessions. The tenant skill `algorithmic-art` stays configured, because the settings skills API has no delete.
