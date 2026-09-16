@@ -12,8 +12,9 @@ import { sql, type Kysely } from 'kysely';
  *   sweep, which `integration_event_received_at_idx` drives.
  * - `integration_delivery`: the outbox. `integration_delivery_turn_uq` enforces AT MOST
  *   ONE delivery per turn, so a re-run of the completion hook cannot double-post.
- *   `integration_delivery_pending_idx` is PARTIAL on `status = 'pending'` because the
- *   table is overwhelmingly settled rows.
+ *   `integration_delivery_pending_idx` is PARTIAL on the unsettled statuses because the
+ *   table is overwhelmingly settled rows. It covers `sending` as well as `pending`, so a row
+ *   stranded between its claim and its post is still reachable by the retry sweep.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`SET LOCAL lock_timeout = '5s'`.execute(db);
@@ -95,7 +96,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`
     CREATE INDEX integration_delivery_pending_idx
       ON integration_delivery (updated_at)
-      WHERE status = 'pending'
+      WHERE status IN ('pending', 'sending')
   `.execute(db);
 }
 

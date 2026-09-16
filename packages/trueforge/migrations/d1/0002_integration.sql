@@ -54,4 +54,4 @@ CREATE UNIQUE INDEX integration_delivery_turn_uq
 
 CREATE INDEX integration_delivery_pending_idx
   ON integration_delivery (updated_at)
-  WHERE status = 'pending';
+  WHERE status IN ('pending', 'sending');

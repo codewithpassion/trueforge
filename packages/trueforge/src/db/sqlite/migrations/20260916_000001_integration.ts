@@ -82,11 +82,12 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         ON integration_delivery (turn_id)
     `.execute(trx);
 
-    // Partial: the table is overwhelmingly terminal rows once a delivery settles.
+    // Partial: the table is overwhelmingly terminal rows once a delivery settles. It covers
+    // `sending` too, so a row stranded mid-post is still reachable by the retry sweep.
     await sql`
       CREATE INDEX integration_delivery_pending_idx
         ON integration_delivery (updated_at)
-        WHERE status = 'pending'
+        WHERE status IN ('pending', 'sending')
     `.execute(trx);
   });
 }

@@ -143,6 +143,7 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
         const manifest = resolveManifestForWrite({ incoming: body.manifest, existing: existing.manifest });
         // Moving to another channel account with a redacted credential would silently copy the
         // old account's secret onto the new one, which would never authenticate.
+        // TODO: compare (type, external_account_id) once a second channel type exists.
         if (
           integrationExternalAccountId(manifest) !== existing.external_account_id &&
           (isRedactedSecretValue(body.manifest.auth.bot_token) ||

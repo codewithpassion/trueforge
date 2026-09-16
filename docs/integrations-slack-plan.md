@@ -80,7 +80,8 @@ New tables, with the migration paired across Kysely SQLite and Postgres and D1 `
 - **`integration_delivery`,** the outbox: `id`, `integration_id`, `conversation_key`, `turn_id`, `status` (`pending` | `sending` | `sent` | `failed`), `attempts`, `last_error`, `created_at`, `updated_at`.
   - Unique on `turn_id`, so a turn delivers at most once per conversation.
   - `pending` to `sending` is one guarded write and is the exactly-once gate: several callers can read the same owed row, but only the one that changes it posts to the channel.
-  - `attempts` and the partial `status = 'pending'` index exist for the I2 retry sweep; I1 counts the one attempt and settles the row.
+  - `attempts` and the partial index on the unsettled statuses exist for the I2 retry sweep; I1 counts the one attempt and settles the row.
+  - The index covers `sending` as well as `pending`, because a process that stops between the claim and the post strands a row there; I2 reclaims a `sending` row whose `updated_at` is older than its delivery timeout and retries it.
 
 Writes that go together use the conditional-chain rule on D1 (port plan Section 4.2). Examples: the dedupe insert plus the session get-or-create, and the outbox row plus turn start.
 
@@ -96,7 +97,7 @@ Admin settings routes, following the repo's OpenAPI naming convention:
 - `GET /api/v1/settings/integrations` returns `ListIntegrationsResponse`.
 - `POST /api/v1/settings/integrations` takes `CreateIntegrationRequest { manifest }` and returns `201` `GetIntegrationResponse`.
 - `GET`, `PUT`, and `DELETE /api/v1/settings/integrations/{integration_id}`.
-- Credentials are redacted on read. On `PUT`, a redacted value keeps the stored secret, the same pattern as the Daytona `api_key`.
+- Credentials are redacted on read. On `PUT`, a redacted value keeps the stored secret, the same pattern as the Daytona `api_key`. A `PUT` that moves the integration to another channel account while sending a redacted credential is rejected, since the stored secret belongs to the old account. That check compares `external_account_id` alone; once a second channel type exists it must compare `(type, external_account_id)`, and `type` has to become updatable.
 
 Ingress for channels, with no user auth middleware:
 
@@ -227,5 +228,6 @@ Each phase follows the port process:
 - **D1 query budget.** Each inbound event adds a few statements (dedupe, session, outbox) outside the turn. The turn budget is unchanged.
 - **Formatting.** Markdown-to-mrkdwn conversion loses tables and some formatting. Generative UI blocks are replaced with a text fallback.
 - **Multiple workspaces per tenant.** Supported by the unique key, but the settings UI in I2 shows one Slack integration.
+- **Dropped event on a failed start.** A start failure deletes the event's dedupe row so the channel's retry runs it, but a retry that arrives between the dedupe write and that delete reads as a replay and is dropped. Slack retries three times over roughly 20 minutes, so a later attempt still runs; the message is only lost if every retry lands inside that window.
 - **Ingress probing.** The ingress looks the integration up by the id in the URL before the adapter checks the signature, so an unauthenticated caller can tell a live integration id from a dead one. Acceptable while the id grants nothing on its own — the credentials live in the record and every event is signature-checked — but worth closing if ids ever become guessable.
 - **Code execution.** Sandbox features depend on Phase 7 (`docs/cloudflare-workers-sandbox-plan.md`). Slack turns follow the agent's sandbox settings on each runtime.
