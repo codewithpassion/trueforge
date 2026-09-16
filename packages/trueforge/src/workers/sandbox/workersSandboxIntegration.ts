@@ -3,6 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import configuration from '../../config';
 import type { SandboxIntegration } from '../../sandbox/integration';
 import type { SandboxStatus } from '../../schemas/sandboxProvider';
+import type { Env } from '../env';
 import { sessionDurableObjectName } from '../sessionScope';
 import { CloudflareComputerProvider } from './CloudflareComputerProvider';
 import type { ComputerDO } from './ComputerDO';
@@ -18,6 +19,16 @@ export interface WorkersSandboxIntegrationOptions {
   namespace: Pick<DurableObjectNamespace<ComputerDO>, 'get' | 'idFromName'>;
   defaultExecTimeoutSeconds: number;
   fileMaxBytesForDownload: number;
+}
+
+/** The deploy-configured integration, shared by the HTTP app and the session Durable Object. */
+export function workersSandboxIntegrationFromEnv(env: Pick<Env, 'COMPUTER_DO'>): SandboxIntegration {
+  return createWorkersSandboxIntegration({
+    backend: configuration.TRUEFORGE_SANDBOX_BACKEND,
+    namespace: env.COMPUTER_DO,
+    defaultExecTimeoutSeconds: configuration.SANDBOX_EXEC_TIMEOUT_SECONDS,
+    fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
+  });
 }
 
 /** Sandbox support for the Workers runtime: one Cloudflare Computer workspace per session. */

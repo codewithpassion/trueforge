@@ -9,7 +9,7 @@ import type { SandboxIntegration } from '../sandbox/integration';
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
 import { assertWorkersRuntime } from './runtimeGuard';
-import { createWorkersSandboxIntegration } from './sandbox/workersSandboxIntegration';
+import { workersSandboxIntegrationFromEnv } from './sandbox/workersSandboxIntegration';
 import { WorkersTurnExecutor } from './workersTurnExecutor';
 
 export interface WorkersRuntimeDeps {
@@ -42,12 +42,7 @@ export function createWorkersRuntimeDeps(env: Env): WorkersRuntimeDeps {
       turnSkillsResolverStore: d1.skillStore,
     },
     turnExecutor: new WorkersTurnExecutor({ namespace: env.SESSION_DO, sessionStore: d1.sessionStore }),
-    sandboxIntegration: createWorkersSandboxIntegration({
-      backend: configuration.TRUEFORGE_SANDBOX_BACKEND,
-      namespace: env.COMPUTER_DO,
-      defaultExecTimeoutSeconds: configuration.SANDBOX_EXEC_TIMEOUT_SECONDS,
-      fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
-    }),
+    sandboxIntegration: workersSandboxIntegrationFromEnv(env),
   };
 }
 

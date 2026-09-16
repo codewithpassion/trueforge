@@ -1,3 +1,5 @@
+import type { Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
+import { NOOP_AGENT_TRACING } from '@truefoundry/trueforge-core/core/tracing/NoopAgentTracing';
 import { env } from 'cloudflare:workers';
 import configuration from '../../src/config';
 import type { SandboxProviderManifest } from '../../src/schemas/sandboxProvider';
@@ -16,6 +18,15 @@ const DAYTONA_MANIFEST: SandboxProviderManifest = {
   auto_stop_interval_in_minutes: 15,
   auto_archive_interval_in_minutes: 60,
   auto_delete_interval_in_minutes: 0,
+};
+
+const SKILL: Skill = {
+  type: 'git',
+  name: 'demo',
+  description: 'a skill',
+  url: 'https://github.com/example/skills.git',
+  path: 'demo',
+  ref: 'main',
 };
 
 function storeInput() {
@@ -83,6 +94,30 @@ describe.each([undefined, 'cloudflare-computer' as const])(
       expect(() =>
         build(backend).createDaytonaProvider({ manifest: DAYTONA_MANIFEST, tenant_id: TENANT_ID, logger }),
       ).toThrow(/not supported on the Cloudflare Workers runtime/);
+    });
+
+    it('refuses a turn sandbox that mounts skills, rather than dropping them silently', async () => {
+      const integration = build(backend);
+      const provider = await createWorkersSandboxIntegration({
+        backend: 'cloudflare-computer',
+        namespace: env.COMPUTER_DO,
+        defaultExecTimeoutSeconds: 30,
+        fileMaxBytesForDownload: 1024,
+      }).resolveProvider(storeInput());
+      if (provider === undefined) {
+        throw new Error('expected a provider for the cloudflare-computer backend');
+      }
+      const turnSandbox = {
+        provider,
+        logger,
+        fileDownloadEnabled: false,
+        existingSandboxId: undefined,
+        tracing: NOOP_AGENT_TRACING,
+      };
+      expect(() => integration.buildTurnSandbox({ ...turnSandbox, skills: [SKILL] })).toThrow(
+        /skills are not available/,
+      );
+      expect(integration.buildTurnSandbox({ ...turnSandbox, skills: [] })).toBeDefined();
     });
   },
 );

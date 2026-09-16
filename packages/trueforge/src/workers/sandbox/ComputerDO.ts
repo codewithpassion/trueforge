@@ -34,6 +34,11 @@ export type ComputerReadOutcome =
   | { ok: false; reason: 'is_directory' }
   | { ok: false; reason: 'too_large'; size: number };
 
+/** Workspace filesystem errors carry a POSIX `code`; every other failure must keep propagating. */
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
 /** What `CloudflareComputerProvider` calls; everything crossing it is serializable over Workers RPC. */
 export interface ComputerWorkspace {
   execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome>;
@@ -90,7 +95,12 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
   }
 
   async readFile(request: { path: string; maxBytes: number }): Promise<ComputerReadOutcome> {
-    const stat = await this.#workspace.fs.lstat(request.path).catch(() => undefined);
+    const stat = await this.#workspace.fs.lstat(request.path).catch((error: unknown) => {
+      if (isMissingPathError(error)) {
+        return undefined;
+      }
+      throw error;
+    });
     if (stat === undefined) {
       return { ok: false, reason: 'not_found' };
     }

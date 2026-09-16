@@ -26,7 +26,7 @@ import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { DurableObjectEventSubscriptions } from './durableObjectEventSubscriptions';
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
-import { createWorkersSandboxIntegration } from './sandbox/workersSandboxIntegration';
+import { workersSandboxIntegrationFromEnv } from './sandbox/workersSandboxIntegration';
 import { encodeTurnEvents, isSequencedTurnStreamingEvent } from './turnEventWire';
 import { turnInputTooLarge } from './turnInputLimit';
 
@@ -105,12 +105,7 @@ export class SessionDO extends DurableObject {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.#sandboxIntegration = createWorkersSandboxIntegration({
-      backend: configuration.TRUEFORGE_SANDBOX_BACKEND,
-      namespace: env.COMPUTER_DO,
-      defaultExecTimeoutSeconds: configuration.SANDBOX_EXEC_TIMEOUT_SECONDS,
-      fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
-    });
+    this.#sandboxIntegration = workersSandboxIntegrationFromEnv(env);
     this.#events = new DurableObjectEventSubscriptions({
       sql: ctx.storage.sql,
       isEvent: isSequencedTurnStreamingEvent,
