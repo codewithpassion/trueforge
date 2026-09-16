@@ -4,6 +4,45 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 20 — Phase I2: the Slack channel adapter (2026-09-17)
+
+**Goal:** Ship the Slack adapter from Phase I2 of `docs/integrations-slack-plan.md` so a Slack workspace can talk to an agent on both runtimes, up to but not including the live workspace test.
+
+**What we did:**
+
+- Registered a Slack adapter, so ingress stops answering `501` for `type: "slack"`. Inbound: v0 signature verification over Web Crypto with a five-minute replay window, the `url_verification` challenge, and parsing that drops bot, self and subtyped messages, refuses a payload whose `team_id` is not the manifest's, and applies the allowed-channel and direct-message policy.
+- The thread is the session. `slack:<team>:<channel>:<thread_ts ?? ts>` is both the `integration` source's conversation key and the session external id. `IntegrationRouter.route` reads `session.record.last_turn_id`, fetches it, and answers with a "still working" notice when it is `running`, because `createTurn` with `previous_turn_id: 'auto'` would have frozen the first turn as `CancelledForNextTurn`. `ChannelAdapter` gained `notice` for that line, and `receive` now gets the integration id the route resolved.
+- Outbound: Markdown becomes mrkdwn, long answers are chunked at 3500 characters on line and then word boundaries, and `chat.postMessage` goes over plain `fetch` with no Slack SDK. A short `Retry-After` is waited out in place, capped at 10 s and two retries; anything longer is reported as a failure and the outbox takes it, backing off from 30 s and doubling to a 15-minute cap over five attempts.
+- A new retry sweep on both runtimes: a Node control loop and a `SchedulerDO` alarm pass rate-limited by a `last_delivery_retry_at` key in Durable Object storage. It retries rows past their backoff and reclaims `sending` rows a stopped process stranded. `IntegrationDeliveryRecord` carries no `session_id`, so the sweep recovers the session with `getByExternalId` on the conversation key and reads the turn state from there.
+- `markDeliverySent`, `markDeliveryFailed` and `releaseDelivery` now match the attempt count the caller claimed, not just `status = 'sending'` (46f6ee82), with contract cases on all three backends proving a reclaimed row settles for nobody but the reclaimer.
+- Widened `sourceType` in the trueforge-ui session list to the session source's own union, so a session a Slack thread opened shows a plug badge beside the scheduled-run calendar instead of looking interactive.
+- Drafted `docs/connect-slack.mdx` covering the manifest scopes, the two event subscriptions, the request URL, threads as sessions, the busy reply, chunking, and the formatting that does not survive mrkdwn. Left out of `docs.json` on purpose. `0d0f7857` also brought the plan's status line and its `ChannelAdapter` snippet in line with what shipped, and `2e0e3ae1` dropped two Slack exports nothing read.
+- Green everywhere: `test:trueforge` 715, `test:workers` 106, `test:store:d1` 250, `test:store:sqlite` 226, `test:trueforge-core` 445, `test:trueforge-ui` 1416, `test:frontend` 18. Typecheck, lint, `format:check` and `workers:check` all pass. `openapi:write` produced no diff, since `receive` and `notice` are internal ports, so no SDK regeneration. `test:store:postgres` skipped all 203 for want of a `DATABASE_URL` in this worktree; CI runs it. Two changesets, six commits.
+- Two limitations shipped knowingly: the Workers sweep runs inside the `SchedulerDO` alarm without that pass's abort signal, so a slow Slack call eats alarm budget, and a chunk boundary can fall inside a fenced code block. Neither is a lesson; both are open.
+- **Three of the five I2 items are still open**, so the plan's status line now reads landed apart from them: the live workspace test (I2.4) has not run, the guide stays out of `docs.json` until it does, and the settings UI section is blocked upstream.
+
+**Lessons learned:**
+
+- **The settings UI cannot be built where the plan says it goes.** `packages/frontend` is a fifteen-file auth shell that renders `<TrueForgeUI>`; every settings section actually lives in `packages/trueforge-ui/src/containers/SettingsBuilder/` and is gated on a member of `CatalogServer`, which `@truefoundry/assistant-ui-runtime` owns and which has exactly four slots. The newest published version, 0.1.40, still has four, and `AgentUIServerPort` has no extension point or index signature. Root AGENTS forbids a hand-written parallel port, so the section waits on an `integrationCatalog` port upstream. The generated SDK methods it would call already exist from I1.
+- **Claiming a row is not the same as still holding it once a sweep can take it back.** Review found this; no test would have. Holder A claims (`attempts` 0 to 1, `sending`) and stalls past the five-minute timeout without dying. The sweep reclaims on `attempts = 1`, bumps to 2, and starts posting. A then finishes its original post and calls `markDeliverySent({ id })`, which matched on status alone and succeeded mid-post, so Slack sees the answer twice. The attempt count is the version stamp; an earlier design that guarded on `updated_at` equality was dropped as too fragile across Postgres timestamp precision.
+- **Registering the adapter quietly rearmed two "no adapter" tests.** `notifier.test.ts` and `apis/integrations.test.ts` both leaned on `createIntegrationAdapters()` returning an empty map. The moment Slack was in it, a unit test made a real network call to slack.com and asserted on the resulting `invalid_auth`. Both now pass an explicit `new Map()`.
+- **A control character in a string literal is invisible to every check in the repo.** The code-span sentinel in `mrkdwn.ts` was meant to be the two-character escape but landed as a raw 0x00 byte. Tests, typecheck, lint and prettier were all happy; the only symptom was version control classifying the file as binary and reporting `Bin 0 -> 2656 bytes` in the diffstat, where it would not diff, blame or merge as text. Fixed in `0d0f7857`, and the file now reports as UTF-8 source.
+- **mrkdwn conversion is an ordering problem, not a substitution problem.** Slack's `*bold*` is Markdown's italic, so the obvious order is wrong. What works: lift code spans out first, escape `& < >`, restore leading `>`, convert list markers before any emphasis rule (or `* item` reads as an italic opener), rewrite links, then single `*` to `_` with lookarounds excluding `**`, then `**` and `__` to `*`, then `~~` to `~`, and headings dead last. An earlier cut converted headings first and the italic rule turned `*Title*` into `_Title_`.
+- **Slack delivers a mention inside a DM twice**, once as `app_mention` and once as `message`, with different `event_id`s, so dedupe does not save you and two turns would start. The adapter ignores the `app_mention` copy when `channel_type === 'im'`.
+- **A thread reply only continues the session if it mentions the bot.** With only `app_mention` subscribed in channels, an unmentioned reply never reaches TrueForge at all, so the plan's "replies in the thread continue it" really means "replies that mention the bot". Subscribing `message.channels` is outside I2.
+- **A Workers test that drives `worker.fetch` cannot build the app.** `createWorkersServerRuntime` does OIDC discovery on the first request against `OIDC_ISSUER_URL: https://issuer.test/`, and the pool's `outboundService` 599s anything that is not the mock LLM path, so it fails with `ClientError: unexpected HTTP response status code` inside `initOidc`. `index.test.ts` only escapes it because asset misses return earlier. Building the ingress router on `createWorkersRuntimeDeps(env)` and mounting it on a bare `OpenAPIHono` keeps the test end-to-end with real D1 stores, a real `SessionDO` turn and the real drain hook.
+- **Smaller traps that each cost a round.** The Workers D1 database is shared across a test file, so creating the agent per test threw `AgentNameConflictError` from the second case on; it belongs in `beforeAll`. A shared signing helper at `tests/integrations/` is covered by no tsconfig and eslint reports `was not found by the project service`. `RequestInfo` does not exist in this package's lib, and typing the fake as `const fetchImpl: typeof fetch = …` fixes it without the cast AGENTS forbids. My own backoff test asserted the wrong arithmetic: a row released at `attempts = 1` is due after the 30 s base, not 60 s.
+
+**Avoid next time:**
+
+- Don't call a phase landed because the suites are green. I2's acceptance is a real Slack workspace, and nothing has spoken to Slack yet.
+- Don't write a "no adapter registered" test that depends on the registry being empty. Pass an explicit empty map so the branch survives the next adapter.
+- Don't let a status column stand in for ownership. Carry the attempt count, or some lease, through every terminal write once a sweep can reclaim.
+- Don't put a control character straight into source. A `.ts` file reported as binary in a diffstat has one.
+- Don't drive `worker.fetch` in a Workers test that needs a built app; build the router on `createWorkersRuntimeDeps(env)` and leave OIDC alone.
+- Don't put a shared test helper outside `tests/unit`, `tests/db` or `tests/workers`; nothing type-checks or lints it there.
+- Don't assume a review covered the phase you are writing up. review-i1 only ever saw I1, and its one deferred finding, the outbox partial index that could not see a stranded `sending` row, had already been closed in `487a5a5e`.
+
 ## Cycle 19 — Phase 7b: skills in the Computer sandbox, plus the two 7a must-fixes (2026-09-17)
 
 **Goal:** Close the two must-fixes Phase 7a left behind, rename the flag Section 9 found lying, and turn skills on for the Cloudflare Computer sandbox — image check, wiring, live test, measurements.
@@ -35,6 +74,7 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 - Don't read a derived status field as independent of the value it was derived from.
 - Don't sweep the plan doc into the progress commit — `docs/cloudflare-workers-sandbox-plan.md` Section 11 is its own change and lands first.
 - Test data left behind: tenant skill `algorithmic-art` stays configured, because the settings skills API has no delete. Agent `smoke-skills` and its sessions were removed and the tenant ends with zero agents and zero sessions — cycle 18's `smoke-sandbox` was cleaned up in parallel by another agent.
+
 
 ## Cycle 18 — Phase 7a steps 9 and 10: the live deploy, the acceptance test and the verdict (2026-09-16)
 
