@@ -14,14 +14,9 @@ import {
   CLOUDFLARE_COMPUTER_PROVIDER_TYPE,
   CloudflareComputerProvider,
 } from '../../src/workers/sandbox/CloudflareComputerProvider';
-import type {
-  ComputerExecOutcome,
-  ComputerExecRequest,
-  ComputerReadOutcome,
-  ComputerWorkspace,
-} from '../../src/workers/sandbox/ComputerDO';
+import type { ComputerWorkspace } from '../../src/workers/sandbox/ComputerDO';
 import { createWorkersSandboxIntegration } from '../../src/workers/sandbox/workersSandboxIntegration';
-import { d1Persistence, migrateDatabase, TENANT_ID, upsertMockProvider } from './harness';
+import { d1Persistence, FakeComputer, migrateDatabase, TENANT_ID, upsertMockProvider } from './harness';
 
 const logger = createConsoleLogger({ level: 'error', bindings: {} });
 
@@ -54,31 +49,15 @@ const SKILL: Skill = {
   ref: 'main',
 };
 
-/** Records what a turn's sandbox init asks of the workspace, without needing a container. */
-class RecordingComputer implements ComputerWorkspace {
-  readonly execCalls: ComputerExecRequest[] = [];
-  readonly writes: { path: string; content: Uint8Array }[] = [];
+const SANDBOX_ID = `${TENANT_ID}:session-1`;
 
-  execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome> {
-    this.execCalls.push(request);
-    return Promise.resolve({
-      status: 'completed',
-      exitCode: 0,
-      output: '',
-      outputTruncated: false,
-      syncPending: false,
-      syncError: undefined,
-    });
-  }
-
-  writeFile(request: { path: string; content: Uint8Array }): Promise<void> {
-    this.writes.push(request);
-    return Promise.resolve();
-  }
-
-  readFile(): Promise<ComputerReadOutcome> {
-    return Promise.resolve({ ok: false, reason: 'not_found' });
-  }
+function computerProvider(computer: ComputerWorkspace): CloudflareComputerProvider {
+  return new CloudflareComputerProvider({
+    computer,
+    sandboxId: SANDBOX_ID,
+    defaultExecTimeoutSeconds: 30,
+    fileMaxBytesForDownload: 1024,
+  });
 }
 
 function storeInput() {
@@ -158,14 +137,9 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
     ['one skill', [SKILL], '[{"type":"git","name":"demo"'],
     ['no skills', [], '{"skills":[]}'],
   ])('runs the skill downloader on init with %s', async (_label, skills, requested) => {
-    const computer = new RecordingComputer();
+    const computer = new FakeComputer();
     const sandbox = build('cloudflare-computer').buildTurnSandbox({
-      provider: new CloudflareComputerProvider({
-        computer,
-        sandboxId: `${TENANT_ID}:session-1`,
-        defaultExecTimeoutSeconds: 30,
-        fileMaxBytesForDownload: 1024,
-      }),
+      provider: computerProvider(computer),
       logger,
       skills,
       fileDownloadEnabled: false,
@@ -182,6 +156,43 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
       write => write.path === '/workspace/.trueforge/skills/.tfy-requested-skills.json',
     );
     expect(Buffer.from(upload?.content ?? new Uint8Array()).toString()).toContain(requested);
+  });
+
+  // Reattaching is the path that retries a failed init, so a capacity failure must not look like a
+  // gone sandbox: recreating spends the container health-check budget again before anyone sees why.
+  it('gives up after one init attempt when the deploy is at its container limit', async () => {
+    const computer = new FakeComputer();
+    computer.exec = new Error(
+      'connect failed at stage=health port=8080 attempt=2/2 timeoutMs=30000 lastError=container exited: ' +
+        'Maximum number of running container instances exceeded. Try again later.',
+    );
+    const sandbox = build('cloudflare-computer').buildTurnSandbox({
+      provider: computerProvider(computer),
+      logger,
+      skills: [],
+      fileDownloadEnabled: false,
+      existingSandboxId: `v1:${CLOUDFLARE_COMPUTER_PROVIDER_TYPE}:${SANDBOX_ID}`,
+      tracing: NOOP_AGENT_TRACING,
+    });
+
+    await expect(
+      sandbox.uploadFile({ targetDir: '/workspace/uploads', fileName: 'a.txt', content: Buffer.from('x') }),
+    ).rejects.toThrow(/max_instances/);
+    expect(computer.execCalls).toHaveLength(1);
+  });
+
+  it('mounts a requested skill into the workspace skills directory', () => {
+    const sandbox = build('cloudflare-computer').buildTurnSandbox({
+      provider: computerProvider(new FakeComputer()),
+      logger,
+      skills: [SKILL],
+      fileDownloadEnabled: false,
+      existingSandboxId: undefined,
+      tracing: NOOP_AGENT_TRACING,
+    });
+    const builder = new InstructionBuilder('root');
+    sandbox.buildInstruction(builder);
+    expect(builder.build()).toContain('/workspace/.trueforge/skills/demo');
   });
 
   it('accepts a sandbox-enabled spec with nothing in the sandbox-provider table', async () => {
@@ -205,30 +216,6 @@ describe.each([undefined, 'cloudflare-computer' as const])(
       expect(() =>
         build(backend).createDaytonaProvider({ manifest: DAYTONA_MANIFEST, tenant_id: TENANT_ID, logger }),
       ).toThrow(/not supported on the Cloudflare Workers runtime/);
-    });
-
-    it('mounts a requested skill into the workspace skills directory', async () => {
-      const integration = build(backend);
-      const provider = await createWorkersSandboxIntegration({
-        backend: 'cloudflare-computer',
-        namespace: env.COMPUTER_DO,
-        defaultExecTimeoutSeconds: 30,
-        fileMaxBytesForDownload: 1024,
-      }).resolveProvider(storeInput());
-      if (provider === undefined) {
-        throw new Error('expected a provider for the cloudflare-computer backend');
-      }
-      const sandbox = integration.buildTurnSandbox({
-        provider,
-        logger,
-        skills: [SKILL],
-        fileDownloadEnabled: false,
-        existingSandboxId: undefined,
-        tracing: NOOP_AGENT_TRACING,
-      });
-      const builder = new InstructionBuilder('root');
-      sandbox.buildInstruction(builder);
-      expect(builder.build()).toContain('/workspace/.trueforge/skills/demo');
     });
 
     it('builds a turn sandbox that carries MCP servers without asking for a Code Mode transport', async () => {

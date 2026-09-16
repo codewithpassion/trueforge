@@ -29,15 +29,8 @@ export const CLOUDFLARE_COMPUTER_PROVIDER_TYPE = 'cloudflare-computer';
  */
 const INSTANCE_LIMIT_MARKER = 'Maximum number of running container instances exceeded';
 
-/** No container starts once the deploy is at `max_instances`, so this session has no workspace. */
-class SandboxInstanceLimitError extends SandboxNotAvailableError {
-  constructor(sandboxId: string, options: ErrorOptions) {
-    super(sandboxId, options);
-    this.name = 'SandboxInstanceLimitError';
-    this.message =
-      'No sandbox could start: the deploy is already running its max_instances limit of containers. Retry in a few minutes.';
-  }
-}
+const INSTANCE_LIMIT_MESSAGE =
+  'No sandbox could start: the deploy is already running its max_instances limit of containers. Retry in a few minutes.';
 
 /** `wrangler deploy` builds and rolls the container image, so there is no runtime build. */
 const READY_BUILD: SandboxBuild = { status: 'ready', reason: null, metadata: null };
@@ -112,8 +105,11 @@ export class CloudflareComputerProvider implements SandboxProvider {
       });
     } catch (error) {
       const message = errorMessage(error);
+      // A refused container is not a gone sandbox: the workspace is intact in Durable Object
+      // storage, and recreating it would only spend the container health-check budget a second
+      // time before the caller ever sees why. So this stays a failed command.
       if (message.includes(INSTANCE_LIMIT_MARKER)) {
-        throw new SandboxInstanceLimitError(params.sandboxId, { cause: error });
+        return { success: false, error: INSTANCE_LIMIT_MESSAGE };
       }
       return { success: false, error: `Sandbox exec failed: ${message}` };
     }

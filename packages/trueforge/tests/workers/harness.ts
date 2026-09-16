@@ -4,10 +4,52 @@ import { env } from 'cloudflare:workers';
 import type { D1StatementCounter } from '../../src/db/d1/client';
 import { createD1Persistence } from '../../src/db/d1/persistence';
 import type { SequencedEvent } from '../../src/runtime/event-subscription';
+import type {
+  ComputerExecOutcome,
+  ComputerExecRequest,
+  ComputerReadOutcome,
+  ComputerWorkspace,
+} from '../../src/workers/sandbox/ComputerDO';
 import { decodeTurnEvents } from '../../src/workers/turnEventWire';
 
 export const TENANT_ID = 'default';
 export const USER_REF = 'workers-test-user';
+
+export const COMPLETED_EXEC: ComputerExecOutcome = {
+  status: 'completed',
+  exitCode: 0,
+  output: '',
+  outputTruncated: false,
+  syncPending: false,
+  syncError: undefined,
+};
+
+/** Stands in for `ComputerDO` so provider and sandbox tests need no container. */
+export class FakeComputer implements ComputerWorkspace {
+  readonly execCalls: ComputerExecRequest[] = [];
+  readonly writes: { path: string; content: Uint8Array }[] = [];
+  /** An `Error` makes the RPC itself fail, which is how a transport failure reaches the provider. */
+  exec: ComputerExecOutcome | Error = COMPLETED_EXEC;
+  read: ComputerReadOutcome | Error = { ok: false, reason: 'not_found' };
+  writeError: Error | undefined;
+
+  execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome> {
+    this.execCalls.push(request);
+    return this.exec instanceof Error ? Promise.reject(this.exec) : Promise.resolve(this.exec);
+  }
+
+  writeFile(request: { path: string; content: Uint8Array }): Promise<void> {
+    if (this.writeError !== undefined) {
+      return Promise.reject(this.writeError);
+    }
+    this.writes.push(request);
+    return Promise.resolve();
+  }
+
+  readFile(): Promise<ComputerReadOutcome> {
+    return this.read instanceof Error ? Promise.reject(this.read) : Promise.resolve(this.read);
+  }
+}
 
 export async function migrateDatabase(): Promise<void> {
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);

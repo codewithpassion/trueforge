@@ -7,49 +7,11 @@ import {
 
 import type { SandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
 import { CloudflareComputerProvider } from '../../src/workers/sandbox/CloudflareComputerProvider';
-import type {
-  ComputerExecOutcome,
-  ComputerExecRequest,
-  ComputerReadOutcome,
-  ComputerWorkspace,
-} from '../../src/workers/sandbox/ComputerDO';
+import type { ComputerReadOutcome, ComputerWorkspace } from '../../src/workers/sandbox/ComputerDO';
+import { COMPLETED_EXEC as COMPLETED, FakeComputer } from './harness';
 
 const SANDBOX_ID = 'tenant-1:session-1';
 const MAX_DOWNLOAD_BYTES = 1024;
-
-const COMPLETED: ComputerExecOutcome = {
-  status: 'completed',
-  exitCode: 0,
-  output: '',
-  outputTruncated: false,
-  syncPending: false,
-  syncError: undefined,
-};
-
-class FakeComputer implements ComputerWorkspace {
-  readonly execCalls: ComputerExecRequest[] = [];
-  readonly writes: { path: string; content: Uint8Array }[] = [];
-  exec: ComputerExecOutcome | Error = COMPLETED;
-  read: ComputerReadOutcome | Error = { ok: false, reason: 'not_found' };
-  writeError: Error | undefined;
-
-  execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome> {
-    this.execCalls.push(request);
-    return this.exec instanceof Error ? Promise.reject(this.exec) : Promise.resolve(this.exec);
-  }
-
-  writeFile(request: { path: string; content: Uint8Array }): Promise<void> {
-    if (this.writeError !== undefined) {
-      return Promise.reject(this.writeError);
-    }
-    this.writes.push(request);
-    return Promise.resolve();
-  }
-
-  readFile(_request: { path: string; maxBytes: number }): Promise<ComputerReadOutcome> {
-    return this.read instanceof Error ? Promise.reject(this.read) : Promise.resolve(this.read);
-  }
-}
 
 function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
@@ -160,18 +122,18 @@ describe('CloudflareComputerProvider', () => {
   // transport string that opens with a health-check timeout.
   it('names the instance limit when the platform refuses to start another container', async () => {
     const computer = new FakeComputer();
-    const cause = new Error(
+    computer.exec = new Error(
       'Workspace backend "container-shell": shell.exec failed after 1 reconnect retry: ' +
         'initial=CloudflareContainerBackend(container-shell): connect failed at stage=health ' +
         'port=8080 attempt=2/2 restarts=1 timeoutMs=30000 lastError=container exited: ' +
         'Maximum number of running container instances exceeded. Try again later, or try configuring a higher limit.',
     );
-    computer.exec = cause;
-    const rejection = build(computer).exec({ sandboxId: SANDBOX_ID, command: 'x' });
-    await expect(rejection).rejects.toBeInstanceOf(SandboxNotAvailableError);
-    await expect(rejection).rejects.toMatchObject({ name: 'SandboxInstanceLimitError', cause });
-    await expect(rejection).rejects.toThrow(/max_instances/);
-    await expect(rejection).rejects.toThrow(/Retry in a few minutes/);
+    // A failed command, not a gone sandbox: the workspace is intact, so nothing should recreate it.
+    await expect(build(computer).exec({ sandboxId: SANDBOX_ID, command: 'x' })).resolves.toEqual({
+      success: false,
+      error:
+        'No sandbox could start: the deploy is already running its max_instances limit of containers. Retry in a few minutes.',
+    });
   });
 
   it('reports a lost RPC call as a failure rather than throwing', async () => {
