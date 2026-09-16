@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation.
 
-Status: proposed on 2026-09-16. Nothing in this plan is implemented.
+Status: Phase I1 (the layer) landed on 2026-09-16. Phases I2 to I4 are proposed; no channel adapter ships yet, so ingress answers `501`.
 
 Goal: let people talk to TrueForge agents from Slack, and let agents and schedules post results back to Slack. Build a small integrations layer first, then ship Slack as its first channel. It must run on both the Node deploy and the Workers deploy.
 
