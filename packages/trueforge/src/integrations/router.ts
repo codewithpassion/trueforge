@@ -5,6 +5,7 @@ import type { IIntegrationStore, IntegrationRecord } from '../db/integrationStor
 import type { TurnExecutor, TurnExecutorFailure, TurnStores } from '../runtime/turnExecutor';
 import { newId } from '../utils/id';
 import { toSessionExternalId } from './conversationKey';
+import { firstAttemptDueAt } from './deliverySchedule';
 import type { TurnCompletionNotifier } from './TurnCompletionNotifier';
 import type { ChannelAdapter, InboundEvent, InboundSender } from './types';
 
@@ -162,6 +163,7 @@ export class IntegrationRouter<TTransaction> {
       integration_id: integration.id,
       conversation_key: event.conversation_key,
       turn_id: started.turn.id,
+      next_attempt_at: firstAttemptDueAt(),
     });
     if (!enqueued) {
       logger.warn('Integration turn started without an outbox row', {

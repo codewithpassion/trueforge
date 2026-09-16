@@ -22,6 +22,7 @@ vi.mock('../../src/integrations/registry', () => ({
             delivered.push(input.delivery);
             return Promise.resolve({ ok: true });
           },
+          notice: () => Promise.resolve({ ok: true }),
         },
       ],
     ]),
@@ -111,6 +112,7 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
       integration_id: integrationId,
       conversation_key: conversationKey,
       turn_id: started.turn.id,
+      next_attempt_at: new Date(),
     });
 
     // The alarm holds the turn until its drain settles, so the notifier runs before this returns.
@@ -155,6 +157,7 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
       integration_id: integrationId,
       conversation_key: conversationKey,
       turn_id: started.turn.id,
+      next_attempt_at: new Date(),
     });
     const session = await new Sessions({ sessionStore: stores.sessionStore }).get({
       tenant_id: TENANT_ID,

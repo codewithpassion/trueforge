@@ -61,6 +61,11 @@ export interface IntegrationDeliveryRecord {
   created_at: string;
   /** ISO-8601 UTC instant. */
   updated_at: string;
+  /**
+   * Not the retry sweep's before this instant. A `pending` row carries its backoff, a `sending`
+   * row the deadline its holder has to finish in. ISO-8601 UTC.
+   */
+  next_attempt_at: string;
 }
 
 /**
@@ -144,6 +149,8 @@ export interface EnqueueIntegrationDeliveryInput {
   integration_id: string;
   conversation_key: string;
   turn_id: string;
+  /** When the sweep may take the row if the turn's own drain never delivers it. */
+  next_attempt_at: Date;
 }
 
 export interface GetPendingDeliveryInput {
@@ -152,6 +159,8 @@ export interface GetPendingDeliveryInput {
 
 export interface ClaimDeliveryInput {
   turn_id: string;
+  /** The deadline this claim has to finish in; past it the sweep treats the row as stranded. */
+  next_attempt_at: Date;
 }
 
 export interface DeleteIntegrationEventInput {
@@ -172,7 +181,7 @@ export interface MarkDeliveryFailedInput {
 }
 
 export interface ListRetryableDeliveriesInput {
-  /** Only rows untouched since this instant; the partial index on `updated_at` serves it. */
+  /** Only rows already due at this instant; the partial index on `next_attempt_at` serves it. */
   before: Date;
   limit: number;
 }
@@ -182,6 +191,8 @@ export interface ClaimDeliveryForRetryInput {
   id: string;
   /** Version stamp: the claim lands only while the row is still on this attempt count. */
   attempts: number;
+  /** The deadline this claim has to finish in. */
+  next_attempt_at: Date;
 }
 
 export interface ReleaseDeliveryInput {
@@ -189,6 +200,8 @@ export interface ReleaseDeliveryInput {
   attempts: number;
   /** Short reason kept on the row until the next attempt settles it. */
   error: string;
+  /** When the next attempt becomes due: the caller's backoff, or a longer pause the channel asked for. */
+  next_attempt_at: Date;
 }
 
 export interface IIntegrationStore<TTransaction = never> {
@@ -256,8 +269,8 @@ export interface IIntegrationStore<TTransaction = never> {
     transaction?: TTransaction,
   ): Promise<IntegrationDeliveryRecord | undefined>;
   /**
-   * Unsettled rows the retry sweep may own: `pending` ones owed a further attempt and `sending`
-   * ones stranded by a process that stopped between the claim and the post. Oldest first.
+   * Unsettled rows already due: `pending` ones past their backoff and `sending` ones whose holder
+   * ran out of time. Due-order, so a long wait cannot crowd out a short one.
    */
   listRetryableDeliveries(
     input: ListRetryableDeliveriesInput,

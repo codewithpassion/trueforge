@@ -57,11 +57,11 @@ describe('buildDeliveryContent', () => {
     ).toMatchObject({ type: 'status', state: 'cancelled' });
   });
 
-  it('posts the error message for a failed turn', () => {
+  it('keeps a failed run generic, so a provider message cannot reach the channel', () => {
     expect(buildDeliveryContent({ status: 'error', message: 'model timed out', completed_at: COMPLETED_AT })).toEqual({
       type: 'status',
       state: 'error',
-      detail: 'The run failed: model timed out',
+      detail: 'The agent could not finish this run.',
     });
   });
 });

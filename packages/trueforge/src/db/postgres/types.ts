@@ -571,6 +571,8 @@ export interface IntegrationDeliveryTable {
   last_error: string | null;
   created_at: Date;
   updated_at: Date;
+  /** Not the retry sweep's before this instant. */
+  next_attempt_at: Date;
 }
 
 export interface Database {

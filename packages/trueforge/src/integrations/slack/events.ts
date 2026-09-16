@@ -113,7 +113,9 @@ export function decideSlackEvent(input: {
     return { type: 'ignore', reason: `Unsupported message subtype: ${event.subtype}` };
   }
 
-  const isDirectMessage = event.channel_type === 'im';
+  // `channel_type` is documented on `message` but not on `app_mention`, so the channel id
+  // prefix is the fallback: Slack ids a direct-message conversation with a leading `D`.
+  const isDirectMessage = event.channel_type === 'im' || event.channel.startsWith('D');
   if (isDirectMessage) {
     if (!manifest.allow_direct_messages) {
       return { type: 'ignore', reason: 'Direct messages are not enabled for this integration' };
@@ -131,12 +133,13 @@ export function decideSlackEvent(input: {
   }
 
   const text = stripBotMention({ text: event.text ?? '', botUserId: manifest.bot_user_id });
+  // Attachments are recorded but not fetched, so a message that is only files has nothing to run on.
+  if (text.length === 0) {
+    return { type: 'ignore', reason: 'Message has no text once the mention is removed' };
+  }
   const attachmentUrls = (event.files ?? []).flatMap(file =>
     file.url_private === undefined ? [] : [file.url_private],
   );
-  if (text.length === 0 && attachmentUrls.length === 0) {
-    return { type: 'ignore', reason: 'Message has no content once the mention is removed' };
-  }
 
   return {
     type: 'event',

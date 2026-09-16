@@ -3,11 +3,9 @@ import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/err
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { IIntegrationStore, IntegrationDeliveryRecord } from '../db/integrationStore';
 import { buildDeliveryContent } from './deliveryContent';
+import { claimDeadlineAt, MAX_DELIVERY_ATTEMPTS, nextAttemptAt } from './deliverySchedule';
 import type { IntegrationAdapterRegistry } from './registry';
 import type { DeliveryContent } from './types';
-
-/** How many posts one reply is worth before the outbox row is given up on. */
-export const MAX_DELIVERY_ATTEMPTS = 5;
 
 export interface TurnCompletionNotifierDeps<TTransaction> {
   integrationStore: IIntegrationStore<TTransaction>;
@@ -49,9 +47,16 @@ export class TurnCompletionNotifier<TTransaction> {
         // Not finished here; the drain that owns it delivers.
         return;
       }
+      if (turnState.status === 'error') {
+        // The channel gets a generic line, so the provider's own message is only readable here.
+        logger.warn('Integration turn failed', { sessionId: session.session_id, turnId, reason: turnState.message });
+      }
 
       // Past this point exactly one caller holds the row, so the channel is posted to once.
-      const delivery = await integrationStore.claimDelivery({ turn_id: turnId });
+      const delivery = await integrationStore.claimDelivery({
+        turn_id: turnId,
+        next_attempt_at: claimDeadlineAt(),
+      });
       if (delivery === undefined) {
         return;
       }
@@ -69,7 +74,13 @@ export class TurnCompletionNotifier<TTransaction> {
    * Posts a row the caller already holds. Both the drain hook and the retry sweep end here, so
    * the settle rules — sent, released for another attempt, or given up on — live in one place.
    */
-  async deliverClaimed(input: { delivery: IntegrationDeliveryRecord; content: DeliveryContent }): Promise<void> {
+  async deliverClaimed(input: {
+    delivery: IntegrationDeliveryRecord;
+    content: DeliveryContent;
+    /** The caller's deadline, handed to the channel so a slow post cannot outlive the pass. */
+    signal?: AbortSignal | undefined;
+    now?: (() => number) | undefined;
+  }): Promise<void> {
     const { delivery, content } = input;
     const { integrationStore, adapters } = this.#deps;
 
@@ -92,6 +103,7 @@ export class TurnCompletionNotifier<TTransaction> {
         turn_id: delivery.turn_id,
         content,
       },
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     if (result.ok) {
       await integrationStore.markDeliverySent({ id: delivery.id, attempts: delivery.attempts });
@@ -105,6 +117,11 @@ export class TurnCompletionNotifier<TTransaction> {
       id: delivery.id,
       attempts: delivery.attempts,
       error: result.error,
+      next_attempt_at: nextAttemptAt({
+        attempts: delivery.attempts,
+        retryAfterMs: result.retry_after_ms,
+        ...(input.now === undefined ? {} : { nowMs: input.now() }),
+      }),
     });
     this.#deps.logger.warn('Integration delivery will be retried', {
       deliveryId: delivery.id,

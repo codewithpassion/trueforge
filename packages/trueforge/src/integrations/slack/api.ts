@@ -12,6 +12,12 @@ const RATE_LIMIT_WAIT_CAP_MS = 10_000;
 const RATE_LIMIT_RETRIES = 2;
 /** Slack omits `Retry-After` on some 429s; one second is its documented minimum. */
 const DEFAULT_RETRY_AFTER_MS = 1_000;
+/**
+ * A hung connection must not outlive the claim that owns the row. Well under
+ * `DELIVERY_SENDING_TIMEOUT_MS`, so the sweep never reclaims a post that is still in flight —
+ * which would put the same message in the channel twice.
+ */
+export const SLACK_FETCH_TIMEOUT_MS = 30_000;
 
 /** Slack answers 200 with `ok: false` for logical failures, so the body decides, not the status. */
 const SlackApiResponseSchema = z.object({
@@ -19,14 +25,20 @@ const SlackApiResponseSchema = z.object({
   error: z.string().optional(),
 });
 
-export type SlackPostResult = { ok: true } | { ok: false; error: string };
+export type SlackPostResult =
+  | { ok: true }
+  /** `retryAfterMs` is Slack's own requested pause, so the outbox can wait at least that long. */
+  | { ok: false; error: string; retryAfterMs?: number };
 
 export interface SlackPostMessageInput {
   botToken: string;
   channel: string;
   threadTs: string;
   text: string;
+  /** Caller's own deadline, such as the alarm pass budget; the request timeout applies as well. */
   signal?: AbortSignal | undefined;
+  /** Test seam for the request timeout. */
+  timeoutMs?: number | undefined;
 }
 
 /** `fetch` is taken from the input so tests can drive the adapter without a global stub. */
@@ -40,6 +52,17 @@ function retryAfterMs(response: Response): number {
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** An abort is a delivery failure to report, not a bug to throw; anything else still throws. */
+function abortFailure(error: unknown, signal: AbortSignal | undefined): SlackPostResult {
+  const name = error instanceof DOMException ? error.name : '';
+  if (name !== 'TimeoutError' && name !== 'AbortError') {
+    throw error;
+  }
+  return signal?.aborted === true
+    ? { ok: false, error: 'Slack request was abandoned by its caller' }
+    : { ok: false, error: 'Slack request timed out' };
 }
 
 async function readResult(response: Response): Promise<SlackPostResult> {
@@ -65,23 +88,38 @@ export async function postSlackMessage(
 ): Promise<SlackPostResult> {
   const send = input.fetchImpl ?? fetch;
   const body = JSON.stringify({ channel: input.channel, thread_ts: input.threadTs, text: input.text });
+  const timeoutMs = input.timeoutMs ?? SLACK_FETCH_TIMEOUT_MS;
 
   for (let attempt = 0; ; attempt += 1) {
-    const response = await send(CHAT_POST_MESSAGE_URL, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${input.botToken}`,
-        'content-type': 'application/json; charset=utf-8',
-      },
-      body,
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
-    });
+    if (input.signal?.aborted === true) {
+      return { ok: false, error: 'Slack request was abandoned by its caller' };
+    }
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const signal = input.signal === undefined ? timeout : AbortSignal.any([timeout, input.signal]);
+    let response: Response;
+    try {
+      response = await send(CHAT_POST_MESSAGE_URL, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${input.botToken}`,
+          'content-type': 'application/json; charset=utf-8',
+        },
+        body,
+        signal,
+      });
+    } catch (error) {
+      return abortFailure(error, input.signal);
+    }
     if (response.status !== 429) {
       return readResult(response);
     }
     const delay = retryAfterMs(response);
     if (attempt >= RATE_LIMIT_RETRIES || delay > RATE_LIMIT_WAIT_CAP_MS) {
-      return { ok: false, error: `Slack rate limited the message; retry after ${String(Math.ceil(delay / 1000))}s` };
+      return {
+        ok: false,
+        error: `Slack rate limited the message; retry after ${String(Math.ceil(delay / 1000))}s`,
+        retryAfterMs: delay,
+      };
     }
     await wait(delay);
   }

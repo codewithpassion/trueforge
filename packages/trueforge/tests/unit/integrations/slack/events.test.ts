@@ -166,10 +166,31 @@ describe('decideSlackEvent', () => {
     expect(decide({ text: `<@${BOT}>` })).toMatchObject({ type: 'ignore' });
   });
 
-  it('keeps a file-only message and records its url', () => {
-    expect(decide({ text: `<@${BOT}>`, files: [{ url_private: 'https://files.slack.test/a.png' }] })).toMatchObject({
+  it('ignores a message that is only files, because nothing reads them yet', () => {
+    expect(decide({ text: `<@${BOT}>`, files: [{ url_private: 'https://files.slack.test/a.png' }] })).toEqual({
+      type: 'ignore',
+      reason: 'Message has no text once the mention is removed',
+    });
+  });
+
+  it('records the files that came with a message that does have text', () => {
+    expect(
+      decide({ text: `<@${BOT}> look at this`, files: [{ url_private: 'https://files.slack.test/a.png' }] }),
+    ).toMatchObject({
       type: 'event',
-      event: { text: '', attachment_urls: ['https://files.slack.test/a.png'] },
+      event: { text: 'look at this', attachment_urls: ['https://files.slack.test/a.png'] },
+    });
+  });
+
+  it('treats a direct message as one even when Slack omits channel_type', () => {
+    // `app_mention` is documented without `channel_type`, so the `D` prefix has to carry it.
+    expect(decide({ channel: 'D0ALICE' })).toMatchObject({
+      type: 'ignore',
+      reason: 'Mention in a direct message is handled as a message event',
+    });
+    expect(decide({ type: 'message', channel: 'D0ALICE', text: 'hello there' })).toMatchObject({
+      type: 'event',
+      event: { conversation_key: 'slack:T0TEAM:D0ALICE:1700000000.000100' },
     });
   });
 });

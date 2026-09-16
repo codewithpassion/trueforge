@@ -385,6 +385,7 @@ export interface IntegrationDeliveryTable {
   last_error: string | null;
   created_at: string;
   updated_at: string;
+  next_attempt_at: string;
 }
 
 export interface Database {

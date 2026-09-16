@@ -73,10 +73,16 @@ export class SlackChannelAdapter implements ChannelAdapter {
   async deliver(input: {
     manifest: SlackIntegrationManifest;
     delivery: { conversation_key: string; content: DeliveryContent };
+    signal?: AbortSignal;
   }): Promise<DeliveryResult> {
     const { content } = input.delivery;
     const text = content.type === 'message' ? toMrkdwn(content.text) : statusLine(content);
-    return this.#post({ manifest: input.manifest, conversationKey: input.delivery.conversation_key, text });
+    return this.#post({
+      manifest: input.manifest,
+      conversationKey: input.delivery.conversation_key,
+      text,
+      signal: input.signal,
+    });
   }
 
   async notice(input: {
@@ -95,6 +101,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
     manifest: SlackIntegrationManifest;
     conversationKey: string;
     text: string;
+    signal?: AbortSignal | undefined;
   }): Promise<DeliveryResult> {
     const conversation = parseSlackConversationKey(input.conversationKey);
     if (conversation === undefined) {
@@ -110,10 +117,13 @@ export class SlackChannelAdapter implements ChannelAdapter {
         channel: conversation.channel_id,
         threadTs: conversation.thread_ts,
         text: chunk,
+        signal: input.signal,
         ...(this.#fetch === undefined ? {} : { fetchImpl: this.#fetch }),
       });
       if (!posted.ok) {
-        return posted;
+        return posted.retryAfterMs === undefined
+          ? { ok: false, error: posted.error }
+          : { ok: false, error: posted.error, retry_after_ms: posted.retryAfterMs };
       }
     }
     return { ok: true };

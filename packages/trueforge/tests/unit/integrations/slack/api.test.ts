@@ -85,6 +85,8 @@ describe('postSlackMessage', () => {
     expect(await postSlackMessage({ ...INPUT, fetchImpl })).toEqual({
       ok: false,
       error: 'Slack rate limited the message; retry after 60s',
+      // The outbox waits this out rather than earning a second refusal at its own backoff.
+      retryAfterMs: 60_000,
     });
     expect(calls).toHaveLength(1);
     expect(Date.now() - started).toBeLessThan(500);
@@ -95,5 +97,57 @@ describe('postSlackMessage', () => {
 
     expect(await postSlackMessage({ ...INPUT, fetchImpl })).toMatchObject({ ok: false });
     expect(calls).toHaveLength(3);
+  });
+});
+
+describe('postSlackMessage deadlines', () => {
+  /** Never settles on its own, so only the request's own signal can end it. */
+  const hangingFetch: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(init.signal?.reason ?? new DOMException('aborted', 'AbortError'));
+      });
+    });
+
+  it('gives up on a connection that never answers', async () => {
+    // Without this the request would inherit the runtime's own default, which outlasts the
+    // claim that owns the row — long enough for the sweep to post the same message again.
+    const result = await postSlackMessage({ ...INPUT, fetchImpl: hangingFetch, timeoutMs: 50 });
+
+    expect(result).toEqual({ ok: false, error: 'Slack request timed out' });
+  });
+
+  it("stops when the caller's own deadline passes", async () => {
+    const controller = new AbortController();
+    setTimeout(() => {
+      controller.abort();
+    }, 20);
+
+    const result = await postSlackMessage({
+      ...INPUT,
+      fetchImpl: hangingFetch,
+      signal: controller.signal,
+      timeoutMs: 60_000,
+    });
+
+    expect(result).toEqual({ ok: false, error: 'Slack request was abandoned by its caller' });
+  });
+
+  it('does not call out at all once the caller is already out of time', async () => {
+    const { fetchImpl, calls } = fakeFetch([okResponse()]);
+    const controller = new AbortController();
+    controller.abort();
+
+    expect(await postSlackMessage({ ...INPUT, fetchImpl, signal: controller.signal })).toEqual({
+      ok: false,
+      error: 'Slack request was abandoned by its caller',
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('still throws a failure that is not an abort', async () => {
+    const broken: typeof fetch = () => Promise.reject(new TypeError('network is unreachable'));
+
+    await expect(postSlackMessage({ ...INPUT, fetchImpl: broken })).rejects.toThrow('network is unreachable');
   });
 });

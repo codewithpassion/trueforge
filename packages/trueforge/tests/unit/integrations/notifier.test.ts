@@ -27,7 +27,8 @@ import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteS
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
-import { MAX_DELIVERY_ATTEMPTS, TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
+import { MAX_DELIVERY_ATTEMPTS } from '../../../src/integrations/deliverySchedule';
+import { TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
 import { startTurnInProcess, type BeginTurnExecutionDeps } from '../../../src/runtime/turnRunner';
@@ -188,6 +189,7 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      next_attempt_at: new Date(),
     });
 
     await runTurn({ harness, notifier });
@@ -219,6 +221,7 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      next_attempt_at: new Date(),
     });
     // Finish the turn first so both callers get past the terminal-state check together.
     const state = makeDoneTurnState();
@@ -254,6 +257,7 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      next_attempt_at: new Date(),
     });
 
     await runTurn({ harness, notifier });
@@ -277,6 +281,7 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      next_attempt_at: new Date(),
     });
 
     await runTurn({ harness, notifier });
@@ -299,14 +304,19 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      next_attempt_at: new Date(),
     });
     // Burn every attempt but the last, the way repeated sweeps would.
     for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS - 1; attempt += 1) {
-      const claimed = await harness.integrationStore.claimDelivery({ turn_id: TURN_ID });
+      const claimed = await harness.integrationStore.claimDelivery({
+        turn_id: TURN_ID,
+        next_attempt_at: new Date(),
+      });
       await harness.integrationStore.releaseDelivery({
         id: claimed?.id ?? '',
         attempts: claimed?.attempts ?? 0,
         error: 'earlier failure',
+        next_attempt_at: new Date(),
       });
     }
 
@@ -334,6 +344,7 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      next_attempt_at: new Date(),
     });
 
     await runTurn({ harness, notifier });

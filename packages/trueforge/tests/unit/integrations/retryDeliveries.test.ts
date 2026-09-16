@@ -1,5 +1,5 @@
 import { AgentSpecSchema, Sessions, type CreatedBySubject } from '@truefoundry/trueforge-core/agent-session';
-import type { Kysely } from 'kysely';
+import type { Kysely, Selectable } from 'kysely';
 import { createLogger } from 'winston';
 import {
   makeCreateTurnInput,
@@ -11,13 +11,10 @@ import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite
 import { SqliteIntegrationStore } from '../../../src/db/sqlite/integration-store/SqliteIntegrationStore';
 import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteSessionStore';
 import type { Database } from '../../../src/db/sqlite/types';
-import {
-  DELIVERY_RETRY_BASE_MS,
-  DELIVERY_SENDING_TIMEOUT_MS,
-  deliveryRetryBackoffMs,
-  retryIntegrationDeliveries,
-} from '../../../src/integrations/retryDeliveries';
-import { MAX_DELIVERY_ATTEMPTS, TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
+import { DELIVERY_RETRY_BASE_MS, MAX_DELIVERY_ATTEMPTS } from '../../../src/integrations/deliverySchedule';
+import { retryIntegrationDeliveries } from '../../../src/integrations/retryDeliveries';
+import { TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
+import type { DeliveryResult } from '../../../src/integrations/types';
 import type { IntegrationManifest } from '../../../src/schemas/integration';
 import { newId } from '../../../src/utils/id';
 import { fakeChannelAdapter, type FakeChannelAdapter } from './fakeChannelAdapter';
@@ -47,19 +44,19 @@ function manifest(): IntegrationManifest {
   };
 }
 
+const past = (msAgo = 60_000): Date => new Date(Date.now() - msAgo);
+const soon = (msAhead = 60_000): Date => new Date(Date.now() + msAhead);
+
 interface Harness {
   db: Kysely<Database>;
-  sessionStore: SqliteSessionStore;
   integrationStore: SqliteIntegrationStore;
   channel: FakeChannelAdapter;
-  sweep: () => Promise<void>;
-  /** Moves the outbox row's clock back, standing in for a pass that ran long ago. */
-  age: (ms: number) => Promise<void>;
-  row: () => Promise<Database['integration_delivery'] | undefined>;
+  sweep: (signal?: AbortSignal) => Promise<void>;
+  row: () => Promise<Selectable<Database['integration_delivery']> | undefined>;
 }
 
 async function createHarness(
-  options: { deliver?: () => { ok: false; error: string }; turnRunning?: boolean } = {},
+  options: { deliver?: () => DeliveryResult; turnRunning?: boolean; dueAt?: Date } = {},
 ): Promise<Harness> {
   const db = createSqliteDb(':memory:');
   await migrateSqliteToLatest(db);
@@ -102,6 +99,7 @@ async function createHarness(
     integration_id: integrationId,
     conversation_key: CONVERSATION_KEY,
     turn_id: TURN_ID,
+    next_attempt_at: options.dueAt ?? past(),
   });
 
   const logger = createLogger({ silent: true });
@@ -115,29 +113,12 @@ async function createHarness(
 
   return {
     db,
-    sessionStore,
     integrationStore,
     channel,
-    sweep: () => retryIntegrationDeliveries(deps),
-    age: async ms => {
-      const row = await db.selectFrom('integration_delivery').select('updated_at').executeTakeFirstOrThrow();
-      await db
-        .updateTable('integration_delivery')
-        .set({ updated_at: new Date(Date.parse(row.updated_at) - ms).toISOString() })
-        .execute();
-    },
-    row: () => db.selectFrom('integration_delivery').selectAll().executeTakeFirst(),
+    sweep: signal => retryIntegrationDeliveries({ ...deps, signal }),
+    row: () => db.selectFrom('integration_delivery').selectAll().where('id', '=', DELIVERY_ID).executeTakeFirst(),
   };
 }
-
-describe('deliveryRetryBackoffMs', () => {
-  it('doubles each attempt and stops at the ceiling', () => {
-    expect(deliveryRetryBackoffMs(1)).toBe(DELIVERY_RETRY_BASE_MS);
-    expect(deliveryRetryBackoffMs(2)).toBe(DELIVERY_RETRY_BASE_MS * 2);
-    expect(deliveryRetryBackoffMs(3)).toBe(DELIVERY_RETRY_BASE_MS * 4);
-    expect(deliveryRetryBackoffMs(20)).toBe(deliveryRetryBackoffMs(21));
-  });
-});
 
 describe('retryIntegrationDeliveries', () => {
   let harness: Harness;
@@ -146,8 +127,8 @@ describe('retryIntegrationDeliveries', () => {
     await harness?.db.destroy();
   });
 
-  it('leaves a row alone until its backoff has passed', async () => {
-    harness = await createHarness();
+  it('leaves a row alone until it is due', async () => {
+    harness = await createHarness({ dueAt: soon() });
 
     await harness.sweep();
 
@@ -155,9 +136,8 @@ describe('retryIntegrationDeliveries', () => {
     expect(await harness.row()).toMatchObject({ status: 'pending', attempts: 0 });
   });
 
-  it('posts a row whose backoff has passed and settles it', async () => {
+  it('posts a row that is due and settles it', async () => {
     harness = await createHarness();
-    await harness.age(DELIVERY_RETRY_BASE_MS + 1000);
 
     await harness.sweep();
 
@@ -166,58 +146,48 @@ describe('retryIntegrationDeliveries', () => {
     expect(await harness.row()).toMatchObject({ status: 'sent', attempts: 1 });
   });
 
-  it('reclaims a row a stopped process stranded mid-post', async () => {
+  it('reclaims a claim whose deadline passed, and leaves one that still has time', async () => {
     harness = await createHarness();
-    const claimed = await harness.integrationStore.claimDelivery({ turn_id: TURN_ID });
-    expect(claimed).toMatchObject({ status: 'sending', attempts: 1 });
+    await harness.integrationStore.claimDelivery({ turn_id: TURN_ID, next_attempt_at: soon(5 * 60_000) });
 
-    // Still within the delivery timeout: whoever holds it may yet finish.
-    await harness.age(DELIVERY_RETRY_BASE_MS + 1000);
     await harness.sweep();
     expect(harness.channel.delivered).toEqual([]);
     expect(await harness.row()).toMatchObject({ status: 'sending', attempts: 1 });
 
-    await harness.age(DELIVERY_SENDING_TIMEOUT_MS);
-    await harness.sweep();
+    await harness.integrationStore.releaseDelivery({
+      id: DELIVERY_ID,
+      attempts: 1,
+      error: 'stalled',
+      next_attempt_at: past(),
+    });
+    await harness.integrationStore.claimDeliveryForRetry({ id: DELIVERY_ID, attempts: 1, next_attempt_at: past() });
 
+    await harness.sweep();
     expect(harness.channel.delivered).toHaveLength(1);
-    expect(await harness.row()).toMatchObject({ status: 'sent', attempts: 2 });
+    expect(await harness.row()).toMatchObject({ status: 'sent', attempts: 3 });
   });
 
-  it('keeps a rate-limited row queued with its reason for the next pass', async () => {
+  it('waits out the pause the channel asked for instead of its own backoff', async () => {
     harness = await createHarness({
-      deliver: () => ({ ok: false, error: 'Slack rate limited the message; retry after 60s' }),
-    });
-    await harness.age(DELIVERY_RETRY_BASE_MS + 1000);
-
-    await harness.sweep();
-
-    expect(await harness.row()).toMatchObject({
-      status: 'pending',
-      attempts: 1,
-      last_error: 'Slack rate limited the message; retry after 60s',
+      deliver: () => ({ ok: false, error: 'Slack rate limited the message', retry_after_ms: 10 * 60_000 }),
     });
 
-    // One backoff step is enough for the second attempt.
-    await harness.age(DELIVERY_RETRY_BASE_MS + 1000);
     await harness.sweep();
-    expect(harness.channel.delivered).toHaveLength(2);
-    expect(await harness.row()).toMatchObject({ status: 'pending', attempts: 2 });
 
-    // The third has to wait twice as long as the second.
-    await harness.age(DELIVERY_RETRY_BASE_MS + 1000);
-    await harness.sweep();
-    expect(harness.channel.delivered).toHaveLength(2);
+    const row = await harness.row();
+    expect(row).toMatchObject({ status: 'pending', attempts: 1, last_error: 'Slack rate limited the message' });
+    const waited = Date.parse(row?.next_attempt_at ?? '') - Date.now();
+    expect(waited).toBeGreaterThan(DELIVERY_RETRY_BASE_MS * 2);
+    expect(waited).toBeLessThanOrEqual(10 * 60_000);
 
-    await harness.age(deliveryRetryBackoffMs(2));
+    // Not due again, so a second pass posts nothing.
     await harness.sweep();
-    expect(harness.channel.delivered).toHaveLength(3);
+    expect(harness.channel.delivered).toHaveLength(1);
   });
 
   it('gives a row up once its attempts are spent', async () => {
     harness = await createHarness({ deliver: () => ({ ok: false, error: 'channel rejected the message' }) });
     await harness.db.updateTable('integration_delivery').set({ attempts: MAX_DELIVERY_ATTEMPTS }).execute();
-    await harness.age(deliveryRetryBackoffMs(MAX_DELIVERY_ATTEMPTS) + 1000);
 
     await harness.sweep();
 
@@ -227,7 +197,6 @@ describe('retryIntegrationDeliveries', () => {
 
   it('leaves a turn that is still running to the drain that owns it', async () => {
     harness = await createHarness({ turnRunning: true });
-    await harness.age(DELIVERY_RETRY_BASE_MS + 1000);
 
     await harness.sweep();
 
@@ -237,10 +206,46 @@ describe('retryIntegrationDeliveries', () => {
 
   it('two sweeps racing the same row post exactly once', async () => {
     harness = await createHarness();
-    await harness.age(DELIVERY_RETRY_BASE_MS + 1000);
 
     await Promise.all([harness.sweep(), harness.sweep(), harness.sweep()]);
 
     expect(harness.channel.delivered).toHaveLength(1);
+  });
+
+  it('posts nothing when the pass is already out of time', async () => {
+    harness = await createHarness();
+    const controller = new AbortController();
+    controller.abort();
+
+    await harness.sweep(controller.signal);
+
+    expect(harness.channel.delivered).toEqual([]);
+    expect(await harness.row()).toMatchObject({ status: 'pending', attempts: 0 });
+  });
+
+  it('stops after the row that used up the pass, and hands its deadline to the channel', async () => {
+    const controller = new AbortController();
+    harness = await createHarness({
+      deliver: () => {
+        // Stands in for a post that consumed the rest of the alarm's wall time.
+        controller.abort();
+        return { ok: true };
+      },
+    });
+    const [integration] = await harness.integrationStore.listIntegrations({ tenant_id: TENANT });
+    await harness.integrationStore.enqueueDelivery({
+      id: newId(),
+      tenant_id: TENANT,
+      integration_id: integration?.id ?? '',
+      conversation_key: CONVERSATION_KEY,
+      turn_id: 'turn-2',
+      // Due later than the first, so the pass reaches it second and the abort stops it there.
+      next_attempt_at: past(1_000),
+    });
+
+    await harness.sweep(controller.signal);
+
+    expect(harness.channel.delivered).toHaveLength(1);
+    expect(harness.channel.signals[0]).toBe(controller.signal);
   });
 });

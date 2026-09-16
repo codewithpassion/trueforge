@@ -75,6 +75,7 @@ const DELIVERY_COLUMNS = [
   'last_error',
   'created_at',
   'updated_at',
+  'next_attempt_at',
 ] as const;
 
 export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database>> {
@@ -248,7 +249,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .columns([...DELIVERY_COLUMNS])
       .expression(
         sql`SELECT ${input.id}, i.tenant_id, i.id, ${input.conversation_key}, ${input.turn_id},
-            'pending', 0, NULL, ${timestamp}, ${timestamp}
+            'pending', 0, NULL, ${timestamp}, ${timestamp}, ${input.next_attempt_at.toISOString()}
           FROM integration AS i
           WHERE i.id = ${input.integration_id}
             AND i.tenant_id = ${input.tenant_id}
@@ -286,7 +287,12 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     const db = transaction ?? this.#db;
     return await db
       .updateTable('integration_delivery')
-      .set({ status: 'sending', attempts: sql<number>`attempts + 1`, updated_at: nowIso() })
+      .set({
+        status: 'sending',
+        attempts: sql<number>`attempts + 1`,
+        updated_at: nowIso(),
+        next_attempt_at: input.next_attempt_at.toISOString(),
+      })
       .where('turn_id', '=', input.turn_id)
       .where('status', '=', 'pending')
       .returning([...DELIVERY_COLUMNS])
@@ -332,8 +338,8 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .selectFrom('integration_delivery')
       .select([...DELIVERY_COLUMNS])
       .where('status', 'in', ['pending', 'sending'])
-      .where('updated_at', '<', input.before.toISOString())
-      .orderBy('updated_at', 'asc')
+      .where('next_attempt_at', '<', input.before.toISOString())
+      .orderBy('next_attempt_at', 'asc')
       .limit(input.limit)
       .execute();
   }
@@ -346,7 +352,12 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     const db = transaction ?? this.#db;
     return await db
       .updateTable('integration_delivery')
-      .set({ status: 'sending', attempts: input.attempts + 1, updated_at: nowIso() })
+      .set({
+        status: 'sending',
+        attempts: input.attempts + 1,
+        updated_at: nowIso(),
+        next_attempt_at: input.next_attempt_at.toISOString(),
+      })
       .where('id', '=', input.id)
       .where('attempts', '=', input.attempts)
       .where('status', 'in', ['pending', 'sending'])
@@ -361,7 +372,12 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     const db = transaction ?? this.#db;
     return await db
       .updateTable('integration_delivery')
-      .set({ status: 'pending', last_error: input.error, updated_at: nowIso() })
+      .set({
+        status: 'pending',
+        last_error: input.error,
+        updated_at: nowIso(),
+        next_attempt_at: input.next_attempt_at.toISOString(),
+      })
       .where('id', '=', input.id)
       .where('attempts', '=', input.attempts)
       .where('status', '=', 'sending')

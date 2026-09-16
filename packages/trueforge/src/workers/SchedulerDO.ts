@@ -52,8 +52,8 @@ export class SchedulerDO extends DurableObject {
       if (result.dispatched > 0 || result.failed > 0) {
         this.#logger.debug('Scheduled runs dispatched or failed', result);
       }
-      await this.#pruneIntegrationEventsIfDue();
-      await this.#retryDeliveriesIfDue();
+      await this.#pruneIntegrationEventsIfDue(abort.signal);
+      await this.#retryDeliveriesIfDue(abort.signal);
     } catch (error) {
       // Per-run failures are handled inside the pass; this is a pass that could not run at all.
       this.#logger.error('Schedule dispatch pass failed', extractErrorLogFields(error));
@@ -66,22 +66,33 @@ export class SchedulerDO extends DurableObject {
   /**
    * The singleton is the one place a database-wide sweep can run without overlapping itself, but
    * dispatch wakes every minute, so each sweep's last run time is kept in storage to pace it.
-   * Sweeps never throw, so recording the time before the pass cannot skip one that failed.
+   *
+   * The time is stamped after the pass, not before: an alarm killed at the wall clock never
+   * stamps, so the next one picks the work up instead of waiting out the interval. Sweeps do not
+   * throw, so this cannot spin.
    */
-  async #sweepIfDue(input: { key: string; intervalMs: number; run: () => Promise<void> }): Promise<void> {
+  async #sweepIfDue(input: {
+    key: string;
+    intervalMs: number;
+    run: () => Promise<void>;
+    signal: AbortSignal;
+  }): Promise<void> {
     const now = Date.now();
     const last = await this.ctx.storage.get<number>(input.key);
-    if (last !== undefined && now - last < input.intervalMs) {
+    if ((last !== undefined && now - last < input.intervalMs) || input.signal.aborted) {
       return;
     }
-    await this.ctx.storage.put(input.key, now);
     await input.run();
+    if (!input.signal.aborted) {
+      await this.ctx.storage.put(input.key, Date.now());
+    }
   }
 
-  async #pruneIntegrationEventsIfDue(): Promise<void> {
+  async #pruneIntegrationEventsIfDue(signal: AbortSignal): Promise<void> {
     await this.#sweepIfDue({
       key: LAST_INTEGRATION_PRUNE_KEY,
       intervalMs: INTEGRATION_EVENT_PRUNE_INTERVAL_MS,
+      signal,
       run: () =>
         pruneIntegrationEvents({
           integrationStore: this.#runtimeDeps().persistence.integrationStore,
@@ -90,11 +101,12 @@ export class SchedulerDO extends DurableObject {
     });
   }
 
-  async #retryDeliveriesIfDue(): Promise<void> {
+  async #retryDeliveriesIfDue(signal: AbortSignal): Promise<void> {
     const { persistence } = this.#runtimeDeps();
     await this.#sweepIfDue({
       key: LAST_DELIVERY_RETRY_KEY,
       intervalMs: DELIVERY_RETRY_INTERVAL_MS,
+      signal,
       run: () =>
         retryIntegrationDeliveries({
           integrationStore: persistence.integrationStore,
@@ -105,6 +117,7 @@ export class SchedulerDO extends DurableObject {
             logger: this.#logger,
           }),
           logger: this.#logger,
+          signal,
         }),
     });
   }

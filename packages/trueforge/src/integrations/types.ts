@@ -53,14 +53,17 @@ export interface Delivery {
   content: DeliveryContent;
 }
 
-export type DeliveryResult = { ok: true } | { ok: false; error: string };
+export type DeliveryResult =
+  | { ok: true }
+  /** `retry_after_ms` is a pause the channel asked for; the outbox waits at least that long. */
+  | { ok: false; error: string; retry_after_ms?: number };
 
 export interface ChannelAdapter<TManifest extends IntegrationManifest = IntegrationManifest> {
   readonly type: IntegrationType;
   /** Verifies authenticity and returns the parsed event, a direct reply, or an ignore. Must finish well under 3 s. */
   receive(input: { request: Request; manifest: TManifest; integration_id: string }): Promise<InboundResult>;
-  /** Posts one message; idempotent per delivery id. */
-  deliver(input: { manifest: TManifest; delivery: Delivery }): Promise<DeliveryResult>;
+  /** Posts one message; idempotent per delivery id. `signal` is the caller's deadline, if it has one. */
+  deliver(input: { manifest: TManifest; delivery: Delivery; signal?: AbortSignal }): Promise<DeliveryResult>;
   /**
    * Posts a line the outbox does not owe, such as telling a conversation that its previous
    * message is still running. Best-effort: nothing retries it.

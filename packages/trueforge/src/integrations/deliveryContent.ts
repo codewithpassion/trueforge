@@ -39,6 +39,7 @@ export function buildDeliveryContent(state: TerminalTurnState): DeliveryContent 
     case 'cancelled':
       return { type: 'status', state: 'cancelled', detail: `The run was cancelled (${state.reason}).` };
     case 'error':
-      return { type: 'status', state: 'error', detail: `The run failed: ${state.message}` };
+      // The provider's message can carry urls and account ids, so it stays in the logs.
+      return { type: 'status', state: 'error', detail: 'The agent could not finish this run.' };
   }
 }

@@ -54,6 +54,7 @@ function toDeliveryRecord(row: Selectable<IntegrationDeliveryTable>): Integratio
     last_error: row.last_error,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
+    next_attempt_at: row.next_attempt_at.toISOString(),
   };
 }
 
@@ -226,10 +227,11 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
         'last_error',
         'created_at',
         'updated_at',
+        'next_attempt_at',
       ])
       .expression(
         sql`SELECT ${input.id}, i.tenant_id, i.id, ${input.conversation_key}, ${input.turn_id},
-            'pending', 0, NULL, now(), now()
+            'pending', 0, NULL, now(), now(), ${input.next_attempt_at}
           FROM integration AS i
           WHERE i.id = ${input.integration_id}
             AND i.tenant_id = ${input.tenant_id}
@@ -268,7 +270,12 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     const db = transaction ?? this.#db;
     const row = await db
       .updateTable('integration_delivery')
-      .set({ status: 'sending', attempts: sql<number>`attempts + 1`, updated_at: now() })
+      .set({
+        status: 'sending',
+        attempts: sql<number>`attempts + 1`,
+        updated_at: now(),
+        next_attempt_at: input.next_attempt_at,
+      })
       .where('turn_id', '=', input.turn_id)
       .where('status', '=', 'pending')
       .returningAll()
@@ -317,8 +324,8 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
       .selectFrom('integration_delivery')
       .selectAll()
       .where('status', 'in', ['pending', 'sending'])
-      .where('updated_at', '<', input.before)
-      .orderBy('updated_at', 'asc')
+      .where('next_attempt_at', '<', input.before)
+      .orderBy('next_attempt_at', 'asc')
       .limit(input.limit)
       .execute();
     return rows.map(toDeliveryRecord);
@@ -332,7 +339,12 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     const db = transaction ?? this.#db;
     const row = await db
       .updateTable('integration_delivery')
-      .set({ status: 'sending', attempts: input.attempts + 1, updated_at: now() })
+      .set({
+        status: 'sending',
+        attempts: input.attempts + 1,
+        updated_at: now(),
+        next_attempt_at: input.next_attempt_at,
+      })
       .where('id', '=', input.id)
       .where('attempts', '=', input.attempts)
       .where('status', 'in', ['pending', 'sending'])
@@ -348,7 +360,12 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     const db = transaction ?? this.#db;
     const row = await db
       .updateTable('integration_delivery')
-      .set({ status: 'pending', last_error: input.error, updated_at: now() })
+      .set({
+        status: 'pending',
+        last_error: input.error,
+        updated_at: now(),
+        next_attempt_at: input.next_attempt_at,
+      })
       .where('id', '=', input.id)
       .where('attempts', '=', input.attempts)
       .where('status', '=', 'sending')
