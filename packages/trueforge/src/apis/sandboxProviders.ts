@@ -38,7 +38,10 @@ function redactSandboxProvider(manifest: SandboxProviderManifest): SandboxProvid
 export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvidersRouterDeps<TTransaction>) {
   const getHandler: RouteHandler<typeof getSandboxProviderRoute> = async c => {
     const integration = deps.sandboxIntegration;
-    if (integration === undefined || !integration.isDaytonaSettingsSupported()) {
+    if (integration === undefined) {
+      return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 404);
+    }
+    if (!integration.isDaytonaSettingsSupported()) {
       return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 404);
     }
     const requestContext = deps.resolveRequestContext(c);
@@ -67,7 +70,10 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
 
   const putHandler: RouteHandler<typeof putSandboxProviderRoute> = async c => {
     const integration = deps.sandboxIntegration;
-    if (integration === undefined || !integration.isDaytonaSettingsSupported()) {
+    if (integration === undefined) {
+      return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 422);
+    }
+    if (!integration.isDaytonaSettingsSupported()) {
       return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 422);
     }
     const body: UpdateSandboxProviderRequest = c.req.valid('json');

@@ -41,10 +41,7 @@ export interface ComputerWorkspace {
   readFile(request: { path: string; maxBytes: number }): Promise<ComputerReadOutcome>;
 }
 
-export class ComputerDO
-  extends withWorkspaceContainer(class extends DurableObject<Env> {})
-  implements ComputerWorkspace
-{
+export class ComputerDO extends withWorkspaceContainer(class extends DurableObject {}) implements ComputerWorkspace {
   readonly #backend: CloudflareContainerBackend;
   readonly #workspace: Workspace;
 

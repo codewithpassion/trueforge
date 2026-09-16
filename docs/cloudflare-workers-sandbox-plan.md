@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. It follows `docs/cloudflare-workers-port-plan.md`, which shipped Phases 0 to 5 with code execution disabled.
 
-Status: proposed on 2026-09-16. Nothing in this plan is implemented.
+Status: proposed on 2026-09-16. Phase 7a steps 1 to 8 are implemented on a worktree branch; step 9, the live acceptance test, and step 10, the spike report, are outstanding. Section 8 records what steps 1 to 8 found.
 
 Goal: restore code execution on the Workers deploy with a Cloudflare-native sandbox provider, starting with a time-boxed spike on Cloudflare Computer (`@cloudflare/computer`). The spike decides whether Computer, or the Cloudflare Sandbox SDK as the fallback, backs a new `SandboxProvider`.
 
@@ -85,6 +85,7 @@ Worker (HTTP) ──RPC──► SessionDO (tenant:session)          turn loop, 
 
 **Rules.**
 
+- **Storage type gap.** `DurableObjectStorage` is not assignable to Computer's `DurableObjectStorageLike`. Its `sql.exec<Row extends object>` promises `Row[]` for a row type the caller picks, while workerd's `SqlStorage` only ever yields `Record<string, SqlStorageValue>`, so no implementation can honour the wider promise and the Computer examples reach it with `as unknown as`. `src/workers/sandbox/workspaceStorage.ts` keeps that one unprovable step in an overload declaration instead of a cast, and validates the bindings it forwards. Report it upstream; drop the adapter once Computer's storage port is parameterised on the row type.
 - **Separate class.** `ComputerDO` is a new container-enabled Durable Object class, not a mixin on `SessionDO`. This keeps `SessionDO` free of container wiring, gives the container binding its own `class_name`, and keeps the `SessionDO` migrations untouched. It uses the same name, `tenant_id:session_id`, so one session maps to one workspace.
 - **Provider location.** `CloudflareComputerProvider` lives in `packages/trueforge/src/workers/sandbox/`. It is Workers-only and never imported by Node entrypoints. It calls `ComputerDO` over Workers RPC, and each RPC call keeps `ComputerDO` active for the duration of the command. The `SessionDO` side is already held by its alarm or stream.
 - **Sandbox id.** `createSandbox` returns the `ComputerDO` name as the raw id. `Sandbox.ts` persists it as `v1:cloudflare-computer:<tenant>:<session>`.
@@ -127,8 +128,10 @@ Worker (HTTP) ──RPC──► SessionDO (tenant:session)          turn loop, 
    - Record whether `@daytona/sdk` loads, for option D.
    - If Computer needs `experimental` for the container backend, stop and report. The Worker backends need it, and we do not use them.
 2. **Dependencies.** Add `@cloudflare/computer` at an exact version with pnpm, per the Bun scope decision. Never hand-merge the lockfile.
-3. **`ComputerDO`.** Add it with `withWorkspace` and `withWorkspaceContainer` and a `CloudflareContainerBackend`.
-   - The Computer examples cast `ctx.storage` and the stub (`as unknown as`). This repo forbids casts. Write a typed adapter with guards, and if the package types make that impossible, record the exact type gap and report it upstream instead of casting.
+3. **`ComputerDO`.** Add it with `withWorkspaceContainer` and a `CloudflareContainerBackend`.
+   - `withWorkspace` is not used: it exists to hand a Worker a stub through `getWorkspace`, and the package exports neither the `WORKSPACE` symbol nor a stub type a `DurableObjectStub<ComputerDO>` satisfies, which is the second cast in the examples. `ComputerDO` instead owns its `Workspace` and exposes exec and file access as plain RPC methods whose arguments and results are serializable, which is also what lets the provider map failures to the `SandboxErrors` classes (error classes do not survive Workers RPC).
+   - The Worker entry must re-export `WorkspaceProxy`: the container's egress interceptor is built from `ctx.exports.WorkspaceProxy`, which only resolves for a `WorkerEntrypoint` exported at the Worker's top level, in every egress mode.
+   - The Computer examples cast `ctx.storage` and the stub (`as unknown as`). This repo forbids casts. Write a typed adapter with guards, and if the package types make that impossible, record the exact type gap and report it upstream instead of casting. The storage gap is real and is described in Section 3.
 4. **`wrangler.jsonc` and types.**
    - Add the `containers` entry (`class_name: "ComputerDO"`, `image: "./workers/computer.Dockerfile"`, `instance_type` starting at `standard-2`, `max_instances` 5).
    - Add the `COMPUTER_DO` binding and migration `v3` with `new_sqlite_classes: ["ComputerDO"]`.
@@ -223,3 +226,25 @@ Stop, and keep code execution disabled, when both A and B fail the live exec and
 - **Cost.** Containers bill vCPU, memory, and egress on top of Durable Objects and D1. Measure it in 7a.9 before recommending the feature.
 - **Local development.** Containers need Docker for `wrangler dev`. The main checkout's Docker smoke rule (no root-owned files) applies.
 - **Deploy.** Rolling a new image restarts containers, and a deploy already cancels running turns.
+
+## 8. What Phase 7a steps 1 to 8 found
+
+Built on a worktree branch off `feat/cloudflare-workers-port`. Step 9 (live acceptance test) and step 10 (spike report and the Section 6 verdict) are still open; nothing here decides go or no-go.
+
+**Gate (step 1): pass.** `@cloudflare/computer` and `@cloudflare/computer/backends/container` both load in workerd under `nodejs_compat` with no `experimental` flag, and the same Worker bundles and passes `wrangler deploy --dry-run`. Only the worker-shell and worker-javascript backends need `experimental`, and neither is used. `tests/workers/sandboxBackendLoad.test.ts` keeps this honest. The same test records the option D data point: `@daytona/sdk` also loads in workerd.
+
+**Computer API used.** `Workspace` (`fs.writeFile`, `fs.readFile`, `fs.lstat`, `fs.mkdir`, `runtime.exec`), `CloudflareContainerBackend`, `withWorkspaceContainer`, and `WorkspaceProxy`. `runtime.exec(command, { cwd, env, timeoutMs, encoding: 'utf8' })` returns a disposable handle whose `result()` gives `{ status, exitCode, stdout, stderr, sync }`; `status` is `completed | failed | cancelled` and `sync.status` is `complete | pending`, which is what separates a non-zero exit from an infrastructure failure.
+
+**Type gaps.** One, described in Section 3: `ctx.storage` is not assignable to `DurableObjectStorageLike`. The other two casts in the Computer examples are avoided by owning the `Workspace` inside the Durable Object and exposing typed RPC methods.
+
+**Local containers (step 8): not working here, so the live deploy is the only exec test.** `pnpm workers:dev` starts, builds the container image from `workers/computer.Dockerfile`, and serves (`/healthz` 200, `/api/v1/capabilities` 401 unauthenticated) with `TRUEFORGE_SANDBOX_BACKEND=cloudflare-computer` set. Exec then fails: the Workspace reports `workspace.container.exited` with `reason: "Container failed to start"`, and `connect failed at stage=egress port=8080`, after about 30 s per attempt. Docker only ever creates the `cloudflare/proxy-everything` sidecar; the workload container is never created. Isolated on a throwaway probe Worker that calls `ComputerDO` directly:
+
+- A minimal `debian:stable-slim` plus `computerd` image fails identically, so it is not our base image.
+- wrangler 4.131.2 and 4.132.0 fail identically, so the pin stays at 4.131.2.
+- `computerd` from the built image runs fine outside wrangler: `FUSE_MOUNT=auto` resolves to the userspace shim and it listens on `:8080`.
+
+Environment: Docker 29.2.1, overlayfs, cgroup v2, not rootless.
+
+**`workers:check` now builds the container image.** `wrangler deploy --dry-run` builds `workers/computer.Dockerfile`, so the check needs Docker and anonymous pull access to `ghcr.io/cloudflare/computer-computerd-linux-x64` and the TrueForge sandbox image. A stale `ghcr.io` credential in `~/.docker/config.json` breaks it with `failed to authorize`. This belongs in the port plan's Section 8 CI backlog.
+
+**Bundle.** 5376 KiB (from 4973 KiB), gzip 978 KiB; startup 90.7 ms active. `just-bash` and its native codecs stay out of the bundle because the worker-shell backend is never imported.
