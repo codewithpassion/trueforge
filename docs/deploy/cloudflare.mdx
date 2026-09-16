@@ -4,7 +4,7 @@ sidebarTitle: 'Cloudflare Workers'
 description: 'Run the TrueForge server and chat UI on Cloudflare Workers with D1 storage and OIDC login.'
 ---
 
-TrueForge can run on Cloudflare Workers instead of a Node server. The agent features work the same way, except for code execution. Sandbox, skills, and Code Mode are not available on Workers.
+TrueForge can run on Cloudflare Workers instead of a Node server. The agent features work the same way, except for Code Mode, which is not available yet. Code execution and skills run in a Cloudflare Container, one per session, and are switched on with `TRUEFORGE_SANDBOX_BACKEND`.
 
 The Workers setup is deployed from a clone of this repository. Commands below run from the repository root unless a step says otherwise.
 
@@ -16,6 +16,7 @@ The Workers setup is deployed from a clone of this repository. Commands below ru
 | Static assets | Serve the chat UI from `/`. A browser navigation to any other page gets the UI. Requests for files that do not exist get `404`. |
 | `SessionDO` (Durable Object) | Runs turns, one object per session. Holds the event log of running turns, serves `subscribe` streams, and handles cancel. |
 | `SchedulerDO` (Durable Object) | One instance. Its alarm checks for due scheduled runs every 60 seconds and starts them in `SessionDO`. A cron trigger every 5 minutes re-arms the alarm, for example after a deploy. |
+| `ComputerDO` (Durable Object) | One per session while code execution is on. Owns that session's `/workspace` in its own SQLite storage and runs commands in a Cloudflare Container. |
 | D1 | Stores sessions, turns, agents, schedules, and settings. |
 
 ## Prerequisites
@@ -137,18 +138,36 @@ To run the scheduled handler on demand during local development, call:
 curl "http://localhost:8787/cdn-cgi/local/scheduled"
 ```
 
-## Not supported on Workers
+## Code execution and skills
 
-There is no code execution on Workers. The server reports sandbox and skills as disabled in `GET /api/v1/capabilities`, and the UI hides those features.
+Set `TRUEFORGE_SANDBOX_BACKEND` in `vars` to turn on the `exec` tool, skills, non-inline file uploads, and turn file downloads:
+
+```jsonc packages/trueforge/wrangler.jsonc
+"vars": {
+  "TRUEFORGE_SANDBOX_BACKEND": "cloudflare-computer",
+},
+```
+
+Each session gets its own container-backed `/workspace`, which persists for the life of the session and survives an idle container, because the Durable Object's SQLite storage is the authoritative copy. Skills are downloaded into `/workspace/.trueforge/skills` on the first sandbox use of each turn, and a skill the agent no longer asks for is removed there on the next turn. `GET /api/v1/capabilities` then reports both sandbox and skills as enabled, and the UI shows them.
+
+There is no per-tenant sandbox provider record on Workers: the backend comes from this variable, so the sandbox provider settings routes stay unavailable (`GET` returns `404`, `PUT` returns `422`).
+
+<Warning>
+  Cloudflare Computer is a preview and its own README says it is not ready for production. Leave `TRUEFORGE_SANDBOX_BACKEND` unset if that matters to you.
+</Warning>
+
+The `containers` entry in `wrangler.jsonc` is what provisions Cloudflare Containers, and it does so on the next `wrangler deploy` whether or not the variable is set. Unsetting the variable switches the feature off; removing the `containers` entry is what stops the provisioning and the image push. `pnpm workers:check` and `pnpm workers:deploy` both build the container image, so both need Docker and anonymous pull access to `ghcr.io`.
+
+`max_instances` in the same entry bounds how many sessions can run a container at once. Past it a turn reports that no sandbox could start and asks the caller to retry; the session's workspace is untouched and a later turn works normally. Containers also stay warm for about 10 minutes after their last command, so a session holds its slot past the turn that used it.
+
+## Not supported on Workers
 
 | Feature | What callers see |
 | --- | --- |
-| Sandbox and the `exec` tool | Turns and agent specs that enable a sandbox get `422` with "no sandbox provider configured". |
+| Code Mode | Not available. The model calls MCP tools directly instead, and the in-sandbox client is not installed. |
+| Sandbox and skills with `TRUEFORGE_SANDBOX_BACKEND` unset | Reported as disabled in `GET /api/v1/capabilities`. A sandbox-enabled agent spec gets `422` with "no sandbox provider configured", and a non-inline file upload gets `422` with code `agent_sandbox_required`. Turn file downloads return `412`. |
 | Sandbox provider settings | `GET` returns `404`, `PUT` returns `422`. |
-| Skills | Reported as disabled with a reason. No skills are mounted. |
-| Code Mode | Not available, because it needs a sandbox. |
-| File uploads that are not inline | The turn request gets `422` with code `agent_sandbox_required`. |
-| Turn file downloads | Return `412`. |
+| Deleting a configured skill | The settings skills API has create and replace only, so a skill stays in the tenant list once added. |
 | Session import | Returns `500` with "Session import requires Postgres". |
 | TrueFoundry mode | Rejected at startup. Setting `TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL` stops the Worker from starting. |
 
@@ -161,3 +180,5 @@ There is no code execution on Workers. The server reports sandbox and skills as 
 - **Closing a stream does not cancel the server-side poll.** In local workerd, closing the HTTP stream of a `subscribe` request or a `stream: true` turn does not cancel the Durable Object's event poll over RPC. The poll ends at the turn's next event or when the turn finishes. Behavior on Cloudflare has not been verified.
 - **The UI is served from `/`.** A Workers deployment cannot serve TrueForge under a path prefix, so `PUBLIC_BASE_URL` must be an origin without a path.
 - **Schedules run at most once per hour.** The minimum interval between runs of a schedule is 3600 seconds.
+- **A command shares the turn's 14-minute alarm run.** `SANDBOX_EXEC_TIMEOUT_SECONDS` is capped at two thirds of one alarm run, so a command cannot outlast the pass waiting for it. A skill download is bounded separately at 180 seconds. Combined stdout and stderr from one command are capped at 1 MiB, past which the head is kept and a marker names the full size.
+- **A command that a signal kills is reported as a timeout.** Cloudflare Computer maps the usual signal exit codes to "cancelled", so a command the kernel kills, for example for running out of memory, reads the same as one that hit the timeout.
