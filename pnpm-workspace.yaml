@@ -5,6 +5,9 @@ minimumReleaseAge: 0
 trustLockfile: true
 confirmModulesPurge: false
 allowBuilds:
+  # Native codecs reached through @cloudflare/computer -> just-bash; the worker-shell backend
+  # that uses them never runs, so their build scripts stay off.
+  '@mongodb-js/zstd': false
   '@openuidev/lang-core': true
   '@parcel/watcher': true
   '@swc/core': true
@@ -12,6 +15,7 @@ allowBuilds:
   esbuild: true
   # Fern-generated SDK tests (packages/trueforge-sdk) run msw's postinstall.
   msw: true
+  node-liblzma: false
   protobufjs: true
   # Local D1 store tests (@cloudflare/vitest-pool-workers) run on workerd.
   workerd: true
