@@ -4,7 +4,7 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
-## Cycle 20 — Phase I2: the Slack channel adapter (2026-09-17)
+## Cycle 20 — Phase I2: Slack messaging (2026-09-17)
 
 **Goal:** Ship the Slack adapter from Phase I2 of `docs/integrations-slack-plan.md` so a Slack workspace can talk to an agent on both runtimes, up to but not including the live workspace test.
 
@@ -31,7 +31,7 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 - **Slack delivers a mention inside a DM twice**, once as `app_mention` and once as `message`, with different `event_id`s, so dedupe does not save you and two turns would start. The adapter ignores the `app_mention` copy when `channel_type === 'im'`.
 - **A thread reply only continues the session if it mentions the bot.** With only `app_mention` subscribed in channels, an unmentioned reply never reaches TrueForge at all, so the plan's "replies in the thread continue it" really means "replies that mention the bot". Subscribing `message.channels` is outside I2.
 - **A Workers test that drives `worker.fetch` cannot build the app.** `createWorkersServerRuntime` does OIDC discovery on the first request against `OIDC_ISSUER_URL: https://issuer.test/`, and the pool's `outboundService` 599s anything that is not the mock LLM path, so it fails with `ClientError: unexpected HTTP response status code` inside `initOidc`. `index.test.ts` only escapes it because asset misses return earlier. Building the ingress router on `createWorkersRuntimeDeps(env)` and mounting it on a bare `OpenAPIHono` keeps the test end-to-end with real D1 stores, a real `SessionDO` turn and the real drain hook.
-- **Smaller traps that each cost a round.** The Workers D1 database is shared across a test file, so creating the agent per test threw `AgentNameConflictError` from the second case on; it belongs in `beforeAll`. A shared signing helper at `tests/integrations/` is covered by no tsconfig and eslint reports `was not found by the project service`. `RequestInfo` does not exist in this package's lib, and typing the fake as `const fetchImpl: typeof fetch = …` fixes it without the cast AGENTS forbids. My own backoff test asserted the wrong arithmetic: a row released at `attempts = 1` is due after the 30 s base, not 60 s.
+- **Smaller traps that each cost a round.** The Workers D1 database is shared across a test file, so creating the agent per test threw `AgentNameConflictError` from the second case on; it belongs in `beforeAll`. A shared signing helper at `tests/integrations/` is covered by no tsconfig and eslint reports `was not found by the project service`. `RequestInfo` does not exist in this package's lib, and typing the fake as `const fetchImpl: typeof fetch = …` fixes it without the cast AGENTS forbids. The retry-backoff test asserted the wrong arithmetic: a row released at `attempts = 1` is due after the 30 s base, not 60 s.
 
 **Avoid next time:**
 
@@ -41,7 +41,7 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 - Don't put a control character straight into source. A `.ts` file reported as binary in a diffstat has one.
 - Don't drive `worker.fetch` in a Workers test that needs a built app; build the router on `createWorkersRuntimeDeps(env)` and leave OIDC alone.
 - Don't put a shared test helper outside `tests/unit`, `tests/db` or `tests/workers`; nothing type-checks or lints it there.
-- Don't assume a review covered the phase you are writing up. review-i1 only ever saw I1, and its one deferred finding, the outbox partial index that could not see a stranded `sending` row, had already been closed in `487a5a5e`.
+- Don't assume a review covered the phase you are writing up. review-i1 only ever saw I1. It left two items open at sign-off: the outbox partial index that could not see a stranded `sending` row, which turned out to have been closed already in `487a5a5e`, and `updateIntegration` never rewriting the `type` column, which is still open and starts to matter the moment a second channel type exists.
 
 ## Cycle 19 — Phase 7b: skills in the Computer sandbox, plus the two 7a must-fixes (2026-09-17)
 
