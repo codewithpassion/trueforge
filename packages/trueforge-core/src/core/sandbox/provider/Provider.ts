@@ -84,6 +84,12 @@ export interface SandboxProvider {
   /** Stable provider kind used in fancy sandbox ids and carry-forward (plain string). */
   readonly type: string;
   /**
+   * Whether the sandbox can reach the host's MCP dispatcher from inside a command. When false,
+   * `Sandbox` leaves Code Mode unconfigured and never calls `createCodeModeTransport`; MCP tools
+   * stay available to the model directly.
+   */
+  readonly supportsCodeMode: boolean;
+  /**
    * Ensures the release image is being built into the provider's backing store and
    * returns its current status. Idempotent: an already-built image reports `ready`;
    * a fresh build starts in the background and reports `pending`.

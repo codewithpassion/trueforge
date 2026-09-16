@@ -18,6 +18,7 @@ function makeSandbox(options: {
   const transport = options.transport;
   const provider: SandboxProvider = {
     type: 'test',
+    supportsCodeMode: true,
     buildImage: () => Promise.resolve({ status: 'ready', reason: null, metadata: null }),
     getImageBuildStatus: () => Promise.resolve({ status: 'ready', reason: null, metadata: null }),
     createSandbox: () => Promise.resolve({ sandboxId: 'test-tenant.sandbox-1' }),

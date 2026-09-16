@@ -5,6 +5,7 @@ import {
   SandboxPathIsDirectoryError,
 } from '@truefoundry/trueforge-core/core/sandbox/SandboxErrors';
 
+import type { SandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
 import { CloudflareComputerProvider } from '../../src/workers/sandbox/CloudflareComputerProvider';
 import type {
   ComputerExecOutcome,
@@ -20,6 +21,7 @@ const COMPLETED: ComputerExecOutcome = {
   status: 'completed',
   exitCode: 0,
   output: '',
+  outputTruncated: false,
   syncPending: false,
   syncError: undefined,
 };
@@ -57,6 +59,11 @@ function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+/** The contract type, because `Sandbox` calls the path getters with an id it may not have yet. */
+function buildAsContract(computer: ComputerWorkspace): SandboxProvider {
+  return build(computer);
 }
 
 function build(computer: ComputerWorkspace): CloudflareComputerProvider {
@@ -148,13 +155,26 @@ describe('CloudflareComputerProvider', () => {
       SandboxNotAvailableError,
     );
     expect(computer.execCalls).toEqual([]);
-    expect(() => provider.getFileUploadsDir('tenant-2:session-9')).toThrow(SandboxNotAvailableError);
     await expect(provider.downloadFile({ sandboxId: 'tenant-2:session-9', path: '/a' })).rejects.toBeInstanceOf(
       SandboxNotAvailableError,
     );
     await expect(
       provider.uploadFile({ sandboxId: 'tenant-2:session-9', remotePath: '/a', content: Buffer.from('x') }),
     ).rejects.toBeInstanceOf(SandboxNotAvailableError);
+  });
+
+  it('describes the workspace layout before a sandbox exists, when the prompt id is still empty', () => {
+    // Sandbox.ts builds the uploads and skills prompt sections with an empty id on a first turn.
+    const sandbox = buildAsContract(new FakeComputer());
+    expect(sandbox.getFileUploadsDir('')).toBe('/workspace/uploads');
+    expect(sandbox.getSkillsDir('')).toBe('/workspace/.trueforge/skills');
+    expect(sandbox.getToolResultDumpDir('')).toBe('/workspace/.trueforge/tool-results');
+    expect(sandbox.getSkillDownloaderPath('')).toBe('/workspace/.trueforge/bin/skill_downloader.py');
+    expect(sandbox.getGitCredentialsPath('')).toBe('/workspace/.trueforge/git-credentials');
+  });
+
+  it('does not offer Code Mode, so the core sandbox never asks for a transport', () => {
+    expect(build(new FakeComputer()).supportsCodeMode).toBe(false);
   });
 
   it('uploads a file to the requested path', async () => {
@@ -205,7 +225,7 @@ describe('CloudflareComputerProvider', () => {
   });
 
   it('places every well-known directory under the workspace root', () => {
-    const provider = build(new FakeComputer());
+    const provider = buildAsContract(new FakeComputer());
     expect({
       uploads: provider.getFileUploadsDir(SANDBOX_ID),
       dumps: provider.getToolResultDumpDir(SANDBOX_ID),

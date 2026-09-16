@@ -17,10 +17,16 @@
  * live in `nodeConfig.ts`.
  */
 import path from 'node:path';
+import { ALARM_PASS_BUDGET_MS } from './workers/alarmBudget';
 
 const DEFAULT_PORT = 8790;
 /** Loopback default; container images set HOST=0.0.0.0 so probes and Service traffic reach the process. */
 const DEFAULT_HOST = 'localhost';
+/**
+ * A sandbox command runs inside the alarm pass that holds its turn, so it must leave that pass room
+ * to finish the turn afterwards. Two thirds of the pass is the cap.
+ */
+const SANDBOX_EXEC_TIMEOUT_MAX_SECONDS = Math.floor((ALARM_PASS_BUDGET_MS / 1000 / 3) * 2);
 /** Default HTTP request body ceiling: 30 MB. */
 const DEFAULT_MAX_REQUEST_BODY_BYTES = 30 * 1024 * 1024;
 /** Turn ids minted by a non-peering process; no peer can ever own them. */
@@ -111,14 +117,22 @@ export function parseOidcAllowedEmails(raw: string | undefined): string[] {
 }
 
 /** Parses a positive-integer env var, falling back to `defaultValue` when unset/blank. */
-function parsePositiveInt(options: { envKey: string; raw: string | undefined; defaultValue: number }): number {
-  const { envKey, raw, defaultValue } = options;
+function parsePositiveInt(options: {
+  envKey: string;
+  raw: string | undefined;
+  defaultValue: number;
+  maxValue?: number;
+}): number {
+  const { envKey, raw, defaultValue, maxValue } = options;
   if (raw === undefined || raw.trim() === '') {
     return defaultValue;
   }
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`Environment variable ${envKey} must be a positive integer, got "${raw}"`);
+  }
+  if (maxValue !== undefined && value > maxValue) {
+    throw new Error(`Environment variable ${envKey} must be at most ${String(maxValue)}, got "${raw}"`);
   }
   return value;
 }
@@ -443,8 +457,8 @@ export interface SharedServerConfiguration {
    */
   TRUEFORGE_SANDBOX_BACKEND: 'cloudflare-computer' | undefined;
   /**
-   * Default timeout for one sandbox command when the caller sets none. Must stay well under the
-   * Workers alarm window that holds a turn. Env: `SANDBOX_EXEC_TIMEOUT_SECONDS`. Default 5 minutes.
+   * Default timeout for one sandbox command when the caller sets none. Capped at two thirds of the
+   * Workers alarm pass that holds a turn. Env: `SANDBOX_EXEC_TIMEOUT_SECONDS`. Default 5 minutes.
    */
   SANDBOX_EXEC_TIMEOUT_SECONDS: number;
   /**
@@ -704,6 +718,7 @@ export function parseServerConfiguration(): ServerConfiguration {
       envKey: 'SANDBOX_EXEC_TIMEOUT_SECONDS',
       raw: getEnv('SANDBOX_EXEC_TIMEOUT_SECONDS'),
       defaultValue: 300,
+      maxValue: SANDBOX_EXEC_TIMEOUT_MAX_SECONDS,
     }),
     MAX_REQUEST_BODY_BYTES: parsePositiveInt({
       envKey: 'MAX_REQUEST_BODY_BYTES',

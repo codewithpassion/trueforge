@@ -27,6 +27,11 @@ export interface SandboxProvidersRouterDeps<TTransaction> {
   sandboxIntegration: SandboxIntegration | undefined;
 }
 
+/** The integration only when this runtime serves the settings-managed Daytona provider. */
+function daytonaSettingsIntegration(integration: SandboxIntegration | undefined): SandboxIntegration | undefined {
+  return integration?.isDaytonaSettingsSupported() === true ? integration : undefined;
+}
+
 function redactSandboxProvider(manifest: SandboxProviderManifest): SandboxProviderManifest {
   return {
     ...manifest,
@@ -37,11 +42,8 @@ function redactSandboxProvider(manifest: SandboxProviderManifest): SandboxProvid
 /** Admin/settings sandbox provider surface (mounted at /api/v1/settings/sandbox-providers). */
 export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvidersRouterDeps<TTransaction>) {
   const getHandler: RouteHandler<typeof getSandboxProviderRoute> = async c => {
-    const integration = deps.sandboxIntegration;
+    const integration = daytonaSettingsIntegration(deps.sandboxIntegration);
     if (integration === undefined) {
-      return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 404);
-    }
-    if (!integration.isDaytonaSettingsSupported()) {
       return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 404);
     }
     const requestContext = deps.resolveRequestContext(c);
@@ -69,11 +71,8 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
   };
 
   const putHandler: RouteHandler<typeof putSandboxProviderRoute> = async c => {
-    const integration = deps.sandboxIntegration;
+    const integration = daytonaSettingsIntegration(deps.sandboxIntegration);
     if (integration === undefined) {
-      return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 422);
-    }
-    if (!integration.isDaytonaSettingsSupported()) {
       return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 422);
     }
     const body: UpdateSandboxProviderRequest = c.req.valid('json');

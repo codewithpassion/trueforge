@@ -13,6 +13,7 @@ const MANAGED_KEYS = [
   'TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL',
   'PUBLIC_BASE_URL',
   'TRUEFORGE_SANDBOX_BACKEND',
+  'SANDBOX_EXEC_TIMEOUT_SECONDS',
 ] as const;
 
 type ManagedEnv = Partial<Record<(typeof MANAGED_KEYS)[number], string>>;
@@ -171,6 +172,33 @@ describe('parseServerConfiguration', () => {
 
   it('rejects an unknown TRUEFORGE_RUNTIME', () => {
     expect(() => parseWithEnv({ TRUEFORGE_RUNTIME: 'lambda' })).toThrow(/TRUEFORGE_RUNTIME must be/);
+  });
+
+  describe('SANDBOX_EXEC_TIMEOUT_SECONDS', () => {
+    it('defaults to 5 minutes', () => {
+      expect(parseWithEnv(WORKERS_ENV).SANDBOX_EXEC_TIMEOUT_SECONDS).toBe(300);
+    });
+
+    it('accepts a value that still leaves the alarm pass room to finish the turn', () => {
+      expect(parseWithEnv({ ...WORKERS_ENV, SANDBOX_EXEC_TIMEOUT_SECONDS: '560' }).SANDBOX_EXEC_TIMEOUT_SECONDS).toBe(
+        560,
+      );
+    });
+
+    it('rejects a timeout that would outlast the alarm pass holding the turn', () => {
+      expect(() => parseWithEnv({ ...WORKERS_ENV, SANDBOX_EXEC_TIMEOUT_SECONDS: '561' })).toThrow(
+        /SANDBOX_EXEC_TIMEOUT_SECONDS must be at most 560/,
+      );
+      expect(() => parseWithEnv({ ...WORKERS_ENV, SANDBOX_EXEC_TIMEOUT_SECONDS: '900' })).toThrow(
+        /must be at most 560/,
+      );
+    });
+
+    it('still rejects a non-positive value', () => {
+      expect(() => parseWithEnv({ ...WORKERS_ENV, SANDBOX_EXEC_TIMEOUT_SECONDS: '0' })).toThrow(
+        /must be a positive integer/,
+      );
+    });
   });
 
   describe('TRUEFORGE_SANDBOX_BACKEND', () => {

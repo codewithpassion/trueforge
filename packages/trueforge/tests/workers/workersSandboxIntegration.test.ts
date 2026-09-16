@@ -1,3 +1,5 @@
+import { InstructionBuilder } from '@truefoundry/trueforge-core/core/InstructionBuilder';
+import type { IToolSet } from '@truefoundry/trueforge-core/core/mcp/IMCPServer';
 import type { Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { NOOP_AGENT_TRACING } from '@truefoundry/trueforge-core/core/tracing/NoopAgentTracing';
 import { env } from 'cloudflare:workers';
@@ -18,6 +20,17 @@ const DAYTONA_MANIFEST: SandboxProviderManifest = {
   auto_stop_interval_in_minutes: 15,
   auto_archive_interval_in_minutes: 60,
   auto_delete_interval_in_minutes: 0,
+};
+
+/** Stands in for a configured MCP server on the turn's main thread. */
+const MCP_TOOL_SET: IToolSet = {
+  name: 'context7',
+  id: 'context7',
+  preload: false,
+  hasPreloadedTools: false,
+  listTools: () => Promise.reject(new Error('not used by this test')),
+  callTool: () => Promise.reject(new Error('not used by this test')),
+  toolCallInfo: () => Promise.reject(new Error('not used by this test')),
 };
 
 const SKILL: Skill = {
@@ -118,6 +131,33 @@ describe.each([undefined, 'cloudflare-computer' as const])(
         /skills are not available/,
       );
       expect(integration.buildTurnSandbox({ ...turnSandbox, skills: [] })).toBeDefined();
+    });
+
+    it('builds a turn sandbox that carries MCP servers without asking for a Code Mode transport', async () => {
+      const provider = await build('cloudflare-computer').resolveProvider(storeInput());
+      if (provider === undefined) {
+        throw new Error('expected a provider for the cloudflare-computer backend');
+      }
+      const sandbox = build(backend).buildTurnSandbox({
+        provider,
+        logger,
+        skills: [],
+        fileDownloadEnabled: false,
+        existingSandboxId: undefined,
+        tracing: NOOP_AGENT_TRACING,
+      });
+
+      // The turn wires Code Mode from the main thread's tool sets before any thread runs.
+      expect(() => {
+        sandbox.configureCodeMode([MCP_TOOL_SET]);
+      }).not.toThrow();
+
+      const builder = new InstructionBuilder('root');
+      sandbox.buildInstruction(builder);
+      const prompt = builder.build();
+      // No in-sandbox client is installed, so the prompt must not send the model to one.
+      expect(prompt).not.toContain('mcp_client');
+      expect(prompt).toContain('/workspace/uploads/');
     });
   },
 );

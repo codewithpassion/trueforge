@@ -1,11 +1,23 @@
 import { Workspace } from '@cloudflare/computer';
 import { CloudflareContainerBackend, withWorkspaceContainer } from '@cloudflare/computer/backends/container';
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import { DurableObject } from 'cloudflare:workers';
+import configuration from '../../config';
 import type { Env } from '../env';
+import { createConsoleLogger } from '../logger';
 import { workspaceStorage } from './workspaceStorage';
 
 /** Binding name the container egress proxy resolves back to this class. */
 export const COMPUTER_DO_BINDING = 'COMPUTER_DO';
+
+/**
+ * Combined stdout and stderr kept from one command. A serialized RPC message caps at 32 MiB, and an
+ * uncapped result would fail opaquely there and then again on the way into the model's context.
+ */
+export const COMPUTER_EXEC_OUTPUT_MAX_BYTES = 1024 * 1024;
+
+/** Idle time before the platform stops the container; a later command starts a fresh one. */
+const CONTAINER_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
 
 export interface ComputerExecRequest {
   command: string;
@@ -23,9 +35,25 @@ export interface ComputerExecOutcome {
   exitCode: number;
   /** stdout followed by stderr, which is what the sandbox contract reports as `result`. */
   output: string;
+  /** `output` was cut at COMPUTER_EXEC_OUTPUT_MAX_BYTES; the command itself still ran to completion. */
+  outputTruncated: boolean;
   /** The command finished but its writes had not reached the workspace store yet. */
   syncPending: boolean;
   syncError: string | undefined;
+}
+
+/** Keeps the head of the output, which is where a command puts what matters most often. */
+export function capOutput(output: string): { output: string; outputTruncated: boolean } {
+  const encoded = new TextEncoder().encode(output);
+  if (encoded.byteLength <= COMPUTER_EXEC_OUTPUT_MAX_BYTES) {
+    return { output, outputTruncated: false };
+  }
+  // `fatal: false` keeps a split multi-byte character at the cut from throwing.
+  const kept = new TextDecoder().decode(encoded.subarray(0, COMPUTER_EXEC_OUTPUT_MAX_BYTES));
+  return {
+    output: `${kept}\n[output truncated at ${String(COMPUTER_EXEC_OUTPUT_MAX_BYTES)} bytes of ${String(encoded.byteLength)}; write it to a file under /workspace and read the part you need]`,
+    outputTruncated: true,
+  };
 }
 
 export type ComputerReadOutcome =
@@ -49,6 +77,8 @@ export interface ComputerWorkspace {
 export class ComputerDO extends withWorkspaceContainer(class extends DurableObject {}) implements ComputerWorkspace {
   readonly #backend: CloudflareContainerBackend;
   readonly #workspace: Workspace;
+  readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'ComputerDO' } });
+  #inactivityTimeoutSet = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -77,13 +107,37 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
       encoding: 'utf8',
     });
     const result = await handle.result();
+    await this.#keepContainerWarmBriefly();
+    const capped = capOutput(result.stdout + result.stderr);
+    if (capped.outputTruncated) {
+      this.#logger.warn('Sandbox command output was truncated', {
+        limit: COMPUTER_EXEC_OUTPUT_MAX_BYTES,
+      });
+    }
     return {
       status: result.status,
       exitCode: result.exitCode,
-      output: result.stdout + result.stderr,
+      ...capped,
       syncPending: result.sync.status === 'pending',
       syncError: result.sync.status === 'pending' ? result.sync.error : undefined,
     };
+  }
+
+  /**
+   * Applied once the container is attached, since the platform rejects it before a start. Best
+   * effort: a container that stays on its default lifetime is not worth failing a command over.
+   */
+  async #keepContainerWarmBriefly(): Promise<void> {
+    if (this.#inactivityTimeoutSet) {
+      return;
+    }
+    this.#inactivityTimeoutSet = true;
+    try {
+      await this.getWorkspaceContainer().setInactivityTimeout(CONTAINER_INACTIVITY_TIMEOUT_MS);
+    } catch (error) {
+      this.#inactivityTimeoutSet = false;
+      this.#logger.warn('Could not set the sandbox container inactivity timeout', extractErrorLogFields(error));
+    }
   }
 
   async writeFile(request: { path: string; content: Uint8Array }): Promise<void> {

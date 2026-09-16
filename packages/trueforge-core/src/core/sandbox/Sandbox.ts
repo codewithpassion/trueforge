@@ -262,6 +262,13 @@ export class Sandbox extends LocalToolMCP {
     if (!servers.length) {
       return;
     }
+    // Leaving codeExecToolSets empty also keeps the mcp_client instructions out of the prompt.
+    if (!this.provider.supportsCodeMode) {
+      this.logger.info('Sandbox provider does not support Code Mode; MCP tools stay directly available', {
+        provider: this.provider.type,
+      });
+      return;
+    }
     if (this.codeModeDispatcher !== undefined || this.codeModeTransport !== undefined) {
       throw new Error('Code Mode is already configured for this Sandbox');
     }

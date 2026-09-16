@@ -145,7 +145,10 @@ Worker (HTTP) ──RPC──► SessionDO (tenant:session)          turn loop, 
    - A second turn in the same session reads `/workspace/a.txt`, which shows persistence across turns.
    - A large Context7 result is offloaded to `/workspace/.trueforge/tool-results` and read back with `exec`.
    - A non-inline file upload lands in `/workspace/uploads`, and a turn file download returns it.
+   - An agent with `sandbox.enabled` and one MCP server runs a turn that calls an MCP tool directly, since Code Mode is off on this provider until 7c.
    - Record cold-start time, exec latency, and the alarm invocation's CPU.
+   - Record Containers cost (vCPU, memory, egress) and how long a container stays warm, so 7d can set `max_instances` and the idle timeout from measurements rather than guesses.
+   - Record whether any command's output hit the 1 MiB cap.
 10. **Spike report.** Findings and a go or no-go against Section 6, appended to this document. Commits stay on a worktree branch until the Opus review.
 
 ### Phase 7b: skills
@@ -174,6 +177,8 @@ Code Mode needs a channel from the sandbox's `mcp_client.py` back to the host di
 - **Egress.** Use `http-gateway` mode with an allowlist from config. The default denies everything except the model provider hosts the sandbox needs, the skill catalog, and git hosts.
 - **Process user.** Run `computerd` and exec as a non-root user once Computer supports it. Track the open item in Computer's `docs/07_injected_service.md`.
 - **Container lifetime.** Set idle sleep and instance limits, and document the cost of Containers vCPU, memory, and egress next to Durable Objects and D1.
+- **Cancellation.** A cancelled turn does not cancel the command it is waiting on: `SandboxExecParams` carries no `AbortSignal`, so `runtime.exec` runs to its own timeout while the turn is already terminal. Give the provider contract a signal, thread it to `runtime.killExec`, and keep the Node providers behaving as they do today.
+- **Instance limits.** `max_instances` bounds concurrent sessions; past it a session gets whatever the platform returns. Decide the limit from the 7a.9 cost numbers and map the no-capacity failure to a message that names the limit instead of surfacing the raw transport error.
 - **Container restart.** Verify on the deploy that the DO SQLite state resyncs into a fresh container, that `SandboxNotAvailableError` recreates correctly, and that an in-flight exec reports `EEXEC_LOST` as `{ success: false }`.
 - **Deploy guide.** Update `docs/deploy/cloudflare.mdx`: sandbox, skills, and Code Mode move out of "Not supported on Workers" into a section on enabling code execution, with the preview warning.
 - **Changesets.** One for `@truefoundry/trueforge`, plus the frontend if capabilities change the UI.
@@ -247,4 +252,14 @@ Environment: Docker 29.2.1, overlayfs, cgroup v2, not rootless.
 
 **`workers:check` now builds the container image.** `wrangler deploy --dry-run` builds `workers/computer.Dockerfile`, so the check needs Docker and anonymous pull access to `ghcr.io/cloudflare/computer-computerd-linux-x64` and the TrueForge sandbox image. A stale `ghcr.io` credential in `~/.docker/config.json` breaks it with `failed to authorize`. This belongs in the port plan's Section 8 CI backlog.
 
-**Bundle.** 5376 KiB (from 4973 KiB), gzip 978 KiB; startup 90.7 ms active. `just-bash` and its native codecs stay out of the bundle because the worker-shell backend is never imported.
+**Bundle.** 5423 KiB (from 4973 KiB), gzip 989 KiB; startup about 85 ms active. `just-bash` and its native codecs stay out of the bundle because the worker-shell backend is never imported.
+
+**Deploying is not a no-op even with the var unset.** Runtime behaviour is unchanged — no provider resolves, capabilities report code execution off — but the `containers` entry provisions Containers on the account and pushes the image on the next deploy. Turning the feature off is the var; not provisioning is removing the `containers` entry.
+
+**Limits chosen here.**
+
+- Exec output: stdout plus stderr is capped at 1 MiB in `ComputerDO`, past which the head is kept and a marker names the full size. A serialized RPC message caps at 32 MiB, and an uncapped result would fail opaquely there and again on the way into the model's context. No Node provider caps exec output today; this cap is Workers-only.
+- Exec timeout: `SANDBOX_EXEC_TIMEOUT_SECONDS` is capped at two thirds of the alarm pass that holds a turn (560 s of 840 s), so a command cannot outlast the pass waiting for it.
+- Container idle: `ComputerDO` asks for a 10-minute inactivity timeout after the first command, best effort.
+
+**Code Mode is off by capability, not by exception.** `SandboxProvider` gained `supportsCodeMode`; `Sandbox.configureCodeMode` returns early when it is false, so `createCodeModeTransport` is never called and the `mcp_client` instructions stay out of the prompt. MCP tools remain available to the model directly. Node providers set it to `true` and behave exactly as before.

@@ -56,6 +56,9 @@ async function readAll(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
  */
 export class CloudflareComputerProvider implements SandboxProvider {
   readonly type = CLOUDFLARE_COMPUTER_PROVIDER_TYPE;
+  // Phase 7c gives the sandbox a channel back to the host dispatcher; until then MCP tools are
+  // only reachable directly, not from inside a command.
+  readonly supportsCodeMode = false;
   readonly #computer: ComputerWorkspace;
   readonly #sandboxId: string;
   readonly #defaultExecTimeoutSeconds: number;
@@ -111,28 +114,25 @@ export class CloudflareComputerProvider implements SandboxProvider {
     return `${COMPUTER_WORKSPACE_ROOT} persists for the whole session. The machine running commands may restart between commands, so re-create anything you installed outside ${COMPUTER_WORKSPACE_ROOT}.`;
   }
 
-  getToolResultDumpDir(sandboxId: string): string {
-    this.#assertOwnSandbox(sandboxId);
+  // The layout is fixed for every workspace, and the prompt asks for it before a sandbox exists
+  // (the id is then empty), so the getters take no view on which sandbox they describe.
+  getToolResultDumpDir(): string {
     return COMPUTER_TOOL_RESULT_DIR;
   }
 
-  getGitCredentialsPath(sandboxId: string): string {
-    this.#assertOwnSandbox(sandboxId);
+  getGitCredentialsPath(): string {
     return COMPUTER_GIT_CREDENTIALS_PATH;
   }
 
-  getFileUploadsDir(sandboxId: string): string {
-    this.#assertOwnSandbox(sandboxId);
+  getFileUploadsDir(): string {
     return COMPUTER_UPLOADS_DIR;
   }
 
-  getSkillsDir(sandboxId: string): string {
-    this.#assertOwnSandbox(sandboxId);
+  getSkillsDir(): string {
     return COMPUTER_SKILLS_DIR;
   }
 
-  getSkillDownloaderPath(sandboxId: string): string {
-    this.#assertOwnSandbox(sandboxId);
+  getSkillDownloaderPath(): string {
     return COMPUTER_SKILL_DOWNLOADER_PATH;
   }
 
@@ -166,13 +166,15 @@ export class CloudflareComputerProvider implements SandboxProvider {
     }
   }
 
+  /** Unreachable while `supportsCodeMode` is false; kept so a regression there fails loudly. */
   createCodeModeTransport(): CodeModeTransport {
     throw new Error('Code Mode is not available on the Cloudflare Computer sandbox');
   }
 
   /**
-   * The workspace is fixed by the session this provider was built for. An id from another session
-   * reads as gone, so the caller creates a fresh sandbox instead of reaching another workspace.
+   * Guards the calls that touch the workspace. The workspace is fixed by the session this provider
+   * was built for, so an id from another session reads as gone and the caller makes a fresh sandbox
+   * instead of reaching another one.
    */
   #assertOwnSandbox(sandboxId: string): void {
     if (sandboxId !== this.#sandboxId) {

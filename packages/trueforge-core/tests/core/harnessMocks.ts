@@ -58,6 +58,7 @@ export function makeMockIMCPServer(params: {
 export function makeStubPublicSandbox(): Sandbox {
   const provider: SandboxProvider = {
     type: 'test',
+    supportsCodeMode: true,
     buildImage: jest.fn(),
     getImageBuildStatus: jest.fn(),
     createSandbox: jest.fn(),

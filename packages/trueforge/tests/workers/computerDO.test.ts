@@ -5,6 +5,7 @@ import {
 } from '@truefoundry/trueforge-core/core/sandbox/SandboxErrors';
 import { env } from 'cloudflare:workers';
 import { CloudflareComputerProvider } from '../../src/workers/sandbox/CloudflareComputerProvider';
+import { capOutput, COMPUTER_EXEC_OUTPUT_MAX_BYTES } from '../../src/workers/sandbox/ComputerDO';
 
 /**
  * Drives the real Durable Object over real RPC. The container backend connects lazily, so the
@@ -113,5 +114,32 @@ describe('CloudflareComputerProvider against the real Durable Object', () => {
     await expect(sandbox.downloadFile({ sandboxId, path: '/workspace/deep/file.txt' })).rejects.toBeInstanceOf(
       SandboxFileTooLargeError,
     );
+  });
+});
+
+describe('exec output cap', () => {
+  it('stays under the RPC message limit', () => {
+    // A serialized Workers RPC message caps at 32 MiB; the output must not be able to reach it.
+    expect(COMPUTER_EXEC_OUTPUT_MAX_BYTES).toBeLessThan(32 * 1024 * 1024);
+    expect(COMPUTER_EXEC_OUTPUT_MAX_BYTES).toBe(1024 * 1024);
+  });
+
+  it('passes a small output through untouched', () => {
+    expect(capOutput('hello')).toEqual({ output: 'hello', outputTruncated: false });
+  });
+
+  it('cuts an oversized output and says where to find the rest', () => {
+    const capped = capOutput('x'.repeat(COMPUTER_EXEC_OUTPUT_MAX_BYTES + 2048));
+    expect(capped.outputTruncated).toBe(true);
+    expect(capped.output).toContain('[output truncated at 1048576 bytes of 1050624');
+    expect(capped.output).toContain('/workspace');
+    expect(new TextEncoder().encode(capped.output).byteLength).toBeLessThan(COMPUTER_EXEC_OUTPUT_MAX_BYTES + 512);
+  });
+
+  it('cuts on a byte boundary without corrupting the surrounding text', () => {
+    // Multi-byte characters put the cut inside a code point; the decoder must not throw.
+    const capped = capOutput('\u00e9'.repeat(COMPUTER_EXEC_OUTPUT_MAX_BYTES));
+    expect(capped.outputTruncated).toBe(true);
+    expect(capped.output.startsWith('\u00e9\u00e9')).toBe(true);
   });
 });

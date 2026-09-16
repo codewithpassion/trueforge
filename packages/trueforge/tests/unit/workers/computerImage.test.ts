@@ -5,8 +5,21 @@ import path from 'node:path';
 const packageDir = path.join(__dirname, '../../..');
 const dockerfile = readFileSync(path.join(packageDir, 'workers/computer.Dockerfile'), 'utf8');
 
-function fromImages(): string[] {
-  return [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map(match => match[1] ?? '');
+interface BaseImage {
+  /** Everything before `@sha256:` — what the version and URI pins are compared against. */
+  reference: string;
+  digest: string | undefined;
+}
+
+function fromImages(): BaseImage[] {
+  return [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map(match => {
+    const [reference = '', digest] = (match[1] ?? '').split('@');
+    return { reference, digest };
+  });
+}
+
+function references(): string[] {
+  return fromImages().map(image => image.reference);
 }
 
 function computerVersion(): string {
@@ -27,12 +40,20 @@ function computerVersion(): string {
 
 describe('workers/computer.Dockerfile', () => {
   it('builds on the release sandbox image', () => {
-    expect(fromImages()).toContain(SANDBOX_IMAGE_URI);
+    expect(references()).toContain(SANDBOX_IMAGE_URI);
   });
 
   it('pins computerd to the exact @cloudflare/computer version', () => {
     expect(computerVersion()).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(fromImages()).toContain(`ghcr.io/cloudflare/computer-computerd-linux-x64:${computerVersion()}`);
+    expect(references()).toContain(`ghcr.io/cloudflare/computer-computerd-linux-x64:${computerVersion()}`);
+  });
+
+  it('pins every base by digest, so a moved tag cannot change the build', () => {
+    const images = fromImages();
+    expect(images).not.toHaveLength(0);
+    for (const image of images) {
+      expect(image.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    }
   });
 
   it('mounts the workspace where the provider expects it', () => {

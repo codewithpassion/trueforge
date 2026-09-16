@@ -14,6 +14,7 @@ function makeProvider(
 ): SandboxProvider {
   return {
     type: 'local',
+    supportsCodeMode: true,
     buildImage: () => Promise.resolve({ status: 'ready', reason: null, metadata: null }),
     getImageBuildStatus: () => Promise.resolve({ status: 'ready', reason: null, metadata: null }),
     getAdditionalInstructions: () => undefined,
