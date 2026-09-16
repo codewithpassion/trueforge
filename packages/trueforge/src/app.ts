@@ -13,6 +13,7 @@ import { createAgentsRouter } from './apis/agents';
 import { createAuthRouter } from './apis/auth';
 import { createCapabilitiesRouter } from './apis/capabilities';
 import { createCatalogRouter } from './apis/catalog';
+import { createIntegrationEventsRouter } from './apis/integrationEvents';
 import { createMcpOAuthRouter } from './apis/mcpOAuth';
 import { createMcpServersRouter } from './apis/mcpServers';
 import { createModelsRouter } from './apis/models';
@@ -47,6 +48,7 @@ import type { SessionImport } from './db/sessionImport';
 import type { ISessionMetricsStore } from './db/sessionMetricsStore';
 import type { ISkillStore } from './db/skillStore';
 import type { WithTransaction } from './db/transaction';
+import { createIntegrationAdapters } from './integrations/registry';
 import type { IOAuthTokenStore } from './mcp/auth/types';
 import { PACKAGE_VERSION } from './packageVersion.gen';
 import { OPENAPI_DOCUMENT_TAGS } from './routes/openapiTags';
@@ -301,6 +303,23 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       logger: deps.logger,
     }),
   );
+  // Channel ingress carries the channel's own signature instead of a TrueForge credential,
+  // so it is mounted without an auth shell.
+  app.route(
+    '/api/v1/integrations',
+    createIntegrationEventsRouter({
+      integrationStore: deps.integrationStore,
+      adapters: createIntegrationAdapters(),
+      sessions: deps.sessions,
+      turnExecutor: deps.turnExecutor,
+      resolveModelProviderStore: deps.resolveModelProviderStore,
+      resolveMcpServerStore: deps.resolveMcpServerStore,
+      resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+      agentStore: deps.agentStore,
+      turnSkillsResolverStore: deps.turnSkillsResolverStore,
+      logger: deps.logger,
+    }),
+  );
   app.route(
     '/api/v1/mcp-servers',
     withAuth(
@@ -372,6 +391,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         resolveMcpServerStore: deps.resolveMcpServerStore,
         resolveSkillStore: deps.resolveSkillStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+        resolveIntegrationStore: () => deps.integrationStore,
         sandboxIntegration: deps.sandboxIntegration,
         withTransaction: deps.withTransaction,
         logger: deps.logger,
