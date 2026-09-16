@@ -19,11 +19,22 @@
     "bindings": [
       { "name": "SESSION_DO", "class_name": "SessionDO" },
       { "name": "SCHEDULER_DO", "class_name": "SchedulerDO" },
+      { "name": "COMPUTER_DO", "class_name": "ComputerDO" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
     { "tag": "v2", "new_sqlite_classes": ["SchedulerDO"] },
+    { "tag": "v3", "new_sqlite_classes": ["ComputerDO"] },
+  ],
+  // One sandbox container per session, started only when TRUEFORGE_SANDBOX_BACKEND is set.
+  "containers": [
+    {
+      "class_name": "ComputerDO",
+      "image": "./workers/computer.Dockerfile",
+      "instance_type": "standard-2",
+      "max_instances": 5,
+    },
   ],
   // Only re-arms the scheduler's alarm; dispatch itself runs from that alarm.
   "triggers": { "crons": ["*/5 * * * *"] },

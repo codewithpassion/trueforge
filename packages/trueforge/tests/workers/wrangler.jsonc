@@ -16,11 +16,13 @@
     "bindings": [
       { "name": "SESSION_DO", "class_name": "SessionDO" },
       { "name": "SCHEDULER_DO", "class_name": "SchedulerDO" },
+      { "name": "COMPUTER_DO", "class_name": "ComputerDO" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
     { "tag": "v2", "new_sqlite_classes": ["SchedulerDO"] },
+    { "tag": "v3", "new_sqlite_classes": ["ComputerDO"] },
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
