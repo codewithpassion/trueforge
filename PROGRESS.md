@@ -4,6 +4,37 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 19 — Phase 7b: skills in the Computer sandbox, plus the two 7a must-fixes (2026-09-17)
+
+**Goal:** Close the two must-fixes Phase 7a left behind, rename the flag Section 9 found lying, and turn skills on for the Cloudflare Computer sandbox — image check, wiring, live test, measurements.
+
+**What we did:**
+
+- **Must-fix 1: a non-zero exit is a result, not a broken sandbox.** Computer derives `status` from `exitCode` alone (`0` → `completed`, a signal code → `cancelled`, everything else → `failed`) and leaves `exitCode` at `-1` when no exit event ever arrived. So `CloudflareComputerProvider.exec` now branches on `exitCode < 0`, returning `{ success: true, response: { exitCode, result } }` for anything that ran — matching the Node providers — and keeping `{ success: false }` only for a command that never launched, one that was cancelled, or one whose writes never reached the workspace store. Section 8's claim that `status` separates the two was corrected in place rather than left standing.
+- **Must-fix 2: the instance limit names itself.** The provider matches `Maximum number of running container instances exceeded` (the string captured live in Section 9, which arrives at the _tail_ of a transport error that opens with a health-check timeout) and raises a `SandboxInstanceLimitError extends SandboxNotAvailableError` whose message names `max_instances` and asks the caller to retry.
+- **Renamed `isLocalFallbackEnabled` to `isSandboxUsableWithoutStoredRecord`** on the sandbox integration port — which is what its doc comment already said, and what both runtimes actually decide. Behaviour unchanged everywhere.
+- **7b.1, the image needs nothing added.** `workers/computer.Dockerfile` builds on the release sandbox image, which already carries everything `skill_downloader.py` uses: Python 3.13.15, pydantic 2.12.5, git 2.39.5, a CA bundle, stdlib `tarfile`/`urllib`. Verified by running the real downloader _inside the built image_ — installed a git skill in 2.2 s, removed it in 0.1 s — not by reading the Dockerfile. No Dockerfile change, so no image-pin fixture to regenerate.
+- **7b.2, skills follow the workspace.** `isSkillMountingSupported` now returns whether the backend var is set, so `skill.enabled` tracks `sandbox.enabled` in `GET /api/v1/capabilities`; `buildTurnSandbox` dropped its 422 and always attaches a `SkillMounter`, empty or not, which is what makes a dropped skill get cleaned up on the next init.
+- **7b.3, live on `trueforge.rockyshoreslabs.io`** (Worker `fd7c5f89`, `wrangler tail` across the window: 126 invocations, zero exceptions). Agent `smoke-skills` with the `algorithmic-art` git skill: create with a skill plus `sandbox.enabled` (201, the 422 is gone), mount under `/workspace/.trueforge/skills` in both turn modes, a turn that actually read `SKILL.md` and wrote a 68-line p5.js sketch, removal cleaned up on the next init (state file shrank 213 → 69 bytes), re-add reinstalled. Six for six.
+- **7b.4, measurements.** Cold sandbox init 9.8 s of which 5.3 s is container start; warm 0.7–3.6 s. Downloader exec: 4.4 s worst (cold, one skill installed), 3.4 s warm install, 1.1 s when nothing changed, 431 ms for a removal. Against the 840 s alarm pass that is about 0.5 %, and `SKILL_DOWNLOAD_TIMEOUT_SECONDS` caps it at 180 s (21 %), so the download cannot starve a turn.
+
+**Lessons learned:**
+
+- **The 7a acceptance test passed straight through the exit-code bug.** Reading `status` as "did the command run" is wrong by construction when the library computes `status` from `exitCode`; the only real signal is the negative code that says no exit event arrived. Worth checking how a status field is _derived_ before treating it as independent evidence.
+- **A Dockerfile is not evidence.** The only thing that settled 7b.1 was executing `skill_downloader.py` inside the built image. Reading the base image's manifest would have implied the same answer with none of the confidence.
+- **Reconciliation is not free.** A turn whose skill pin has not moved still pays about 1.1 s, because the downloader runs on every init to reconcile state. That is the cost of cleanup being automatic, and it is charged to the alarm pass holding the turn.
+- **FUSE did not show up in the numbers** the way we expected: a warm reinstall inside the container took 3.4 s against 2.2 s on overlayfs outside it. A git skill installs a sparse, blob-filtered clone, so cost tracks the skill subdirectory, not the repository.
+- **The streaming client was the ceiling, not the server.** One live streaming turn was cut off client-side after 45 s and finished `cancelled` / `reason: client-cancelled`. Nothing server-side was wrong.
+- **Still open from Section 8:** the container inactivity timeout is set once per Durable Object instance, so a container restarting under a live instance keeps the platform default until that instance is evicted.
+
+**Avoid next time:**
+
+- Don't gate a runtime feature on an unverified assumption about the image — run the dependency inside the built image before flipping the flag.
+- Don't drive a long live turn through a browser tab with a short ceiling; re-run it non-streaming.
+- Don't read a derived status field as independent of the value it was derived from.
+- Don't sweep the plan doc into the progress commit — `docs/cloudflare-workers-sandbox-plan.md` Section 11 is its own change and lands first.
+- Test data left behind: tenant skill `algorithmic-art` stays configured, because the settings skills API has no delete. Agent `smoke-skills` and its three sessions were removed; cycle 18's `smoke-sandbox` and its six sessions still were not.
+
 ## Cycle 18 — Phase 7a steps 9 and 10: the live deploy, the acceptance test and the verdict (2026-09-16)
 
 **Goal:** Deploy the Computer sandbox live, run the 7a.9 list in both turn modes, and decide go or no-go against Section 6 of `docs/cloudflare-workers-sandbox-plan.md`.
