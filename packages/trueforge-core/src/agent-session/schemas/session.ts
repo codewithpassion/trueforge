@@ -74,31 +74,37 @@ export const SessionAgentSchema = z
   .discriminatedUnion('type', [SessionAgentReferenceSchema, SessionAgentInlineSchema])
   .openapi('SessionAgent');
 
-export const SessionSourceTypeSchema = z.enum(['schedule']).openapi('SessionSourceType');
+export const SessionSourceTypeSchema = z.enum(['schedule', 'integration']).openapi('SessionSourceType');
 
 export type SessionSourceType = z.infer<typeof SessionSourceTypeSchema>;
 
-function sessionSourceScheduleObject() {
-  return z
-    .object({
-      type: z.literal(SessionSourceTypeSchema.enum.schedule).describe('Session was created by a schedule run.'),
-      id: z.string().min(1).describe('Schedule id.'),
-      run_id: z.string().min(1).describe('Schedule run id.'),
-    })
-    .strict();
-}
+export const SessionSourceScheduleSchema = z
+  .object({
+    type: z.literal(SessionSourceTypeSchema.enum.schedule).describe('Session was created by a schedule run.'),
+    id: z.string().min(1).describe('Schedule id.'),
+    run_id: z.string().min(1).describe('Schedule run id.'),
+  })
+  .strict()
+  .openapi('SessionSourceSchedule');
 
-export const SessionSourceScheduleSchema = sessionSourceScheduleObject().openapi('SessionSourceSchedule');
+export const SessionSourceIntegrationSchema = z
+  .object({
+    type: z.literal(SessionSourceTypeSchema.enum.integration).describe('Session was created by an integration.'),
+    id: z.string().min(1).describe('Integration id.'),
+    conversation_key: z.string().min(1).describe('Stable key of the channel conversation this session mirrors.'),
+  })
+  .strict()
+  .openapi('SessionSourceIntegration');
 
-/**
- * How a session was created. Same shape as {@link SessionSourceScheduleSchema} today;
- * switch to `discriminatedUnion('type', …)` when a second source arm lands.
- */
-export const SessionSourceSchema = sessionSourceScheduleObject()
-  .describe('How this session was created (e.g. a schedule run). Null for interactive sessions.')
+/** How a session was created. Null for interactive sessions. */
+export const SessionSourceSchema = z
+  .discriminatedUnion('type', [SessionSourceScheduleSchema, SessionSourceIntegrationSchema])
+  .describe('How this session was created (a schedule run or an integration). Null for interactive sessions.')
   .openapi('SessionSource');
 
 export type SessionSource = z.infer<typeof SessionSourceSchema>;
+export type SessionSourceSchedule = z.infer<typeof SessionSourceScheduleSchema>;
+export type SessionSourceIntegration = z.infer<typeof SessionSourceIntegrationSchema>;
 
 export const SessionSchema = z
   .object({

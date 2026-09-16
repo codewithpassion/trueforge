@@ -25,6 +25,7 @@ export {
   SessionMetadataSchema,
   SessionMetricsSchema,
   SessionSchema,
+  SessionSourceIntegrationSchema,
   SessionSourceScheduleSchema,
   SessionSourceSchema,
   SessionSourceTypeSchema,
@@ -35,6 +36,8 @@ export type {
   SessionMetadata,
   SessionMetrics,
   SessionSource,
+  SessionSourceIntegration,
+  SessionSourceSchedule,
   SessionSourceType,
 } from './schemas/session';
 
