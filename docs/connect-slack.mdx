@@ -66,9 +66,11 @@ Install the app to the workspace, then copy two values:
 - the **Bot User OAuth Token** (`xoxb-…`) from **OAuth & Permissions**,
 - the **Signing Secret** from **Basic Information → App Credentials**.
 
-You also need the workspace's **team id** (`T…`) and the **bot user id** (`U…`). Both appear in the
-`Bot User ID` field and the install URL; the team id is also the `T…` segment of any Slack message
-link.
+You also need two ids:
+
+- the **bot user id** (`U…`), under **App Home → Your App's Presence → Bot User ID**,
+- the workspace's **team id** (`T…`), the `T…` segment of `https://app.slack.com/client/T…/…`, or the
+  `team_id` that `auth.test` returns for the bot token.
 
 ## 2. Invite the bot
 

@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation.
 
-Status: Phase I1 (the layer) landed on 2026-09-16. Phases I2 to I4 are proposed; no channel adapter ships yet, so ingress answers `501`.
+Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4) and the settings UI section, which waits on an `integrationCatalog` port in `@truefoundry/assistant-ui-runtime`. Phases I3 and I4 are proposed.
 
 Goal: let people talk to TrueForge agents from Slack, and let agents and schedules post results back to Slack. Build a small integrations layer first, then ship Slack as its first channel. It must run on both the Node deploy and the Workers deploy.
 
@@ -54,9 +54,11 @@ Modules live in `packages/trueforge/src/integrations/`. Channel code never impor
 interface ChannelAdapter<TManifest> {
   readonly type: string;
   /** Verifies authenticity and returns the parsed event, a challenge reply, or an ignore. Must finish well under 3 s. */
-  receive(input: { request: Request; manifest: TManifest }): Promise<InboundResult>;
+  receive(input: { request: Request; manifest: TManifest; integration_id: string }): Promise<InboundResult>;
   /** Posts one message; idempotent per delivery id. */
   deliver(input: { manifest: TManifest; delivery: Delivery }): Promise<DeliveryResult>;
+  /** Posts a line the outbox does not owe, such as the busy-thread reply. Best-effort. */
+  notice(input: { manifest: TManifest; conversation_key: string; text: string }): Promise<DeliveryResult>;
 }
 ```
 
