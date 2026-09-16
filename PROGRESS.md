@@ -10,7 +10,7 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 **What we did:**
 
-- `SessionSourceSchema` became a `z.discriminatedUnion('type', …)` with a new `integration` arm (`integration_id`, `conversation_key`), plus a session-store contract case so every backend round-trips and filters it.
+- `SessionSourceSchema` became a `z.discriminatedUnion('type', …)` with a new `integration` arm (`id`, `conversation_key`), plus a session-store contract case so every backend round-trips and filters it.
 - Three tables — `integration`, `integration_event` (dedupe, unique on `(integration_id, event_id)`) and `integration_delivery` (outbox, unique on `turn_id`) — behind one `IIntegrationStore` with one shared contract suite, paired across Kysely SQLite, Postgres and `migrations/d1/0002_integration.sql`. `recordEvent` and `enqueueDelivery` are single guarded `INSERT … SELECT … WHERE NOT EXISTS (…)` statements with `ON CONFLICT DO NOTHING`.
 - `IntegrationRouter` dedupes the inbound event, gets or creates the thread's session, starts a non-streaming turn as the connecting admin's `created_by_subject`, and writes the reply owed to the outbox. `TurnCompletionNotifier` posts it. The adapter registry is empty until Slack lands, so ingress answers `501`.
 - Delivery fires from two places — the new `onTurnDrained` hook chained _inside_ `drained` in `startTurnInProcess` (so the Workers alarm holding the turn holds delivery too), and again straight after the outbox row lands — with the row's `pending` status guard making it exactly once.
