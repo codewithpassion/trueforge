@@ -61,5 +61,7 @@
     "OIDC_USER_ROLE_CLAIM": "email",
     "OIDC_ADMIN_ROLE_VALUE": "dominik.fretz@harbouredgeintelligence.com",
     "OIDC_ALLOWED_EMAILS": "dominik.fretz@harbouredgeintelligence.com",
+    // Turns on the Cloudflare Computer sandbox. Unset keeps code execution off.
+    "TRUEFORGE_SANDBOX_BACKEND": "cloudflare-computer",
   },
 }
