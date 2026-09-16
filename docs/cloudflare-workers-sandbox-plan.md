@@ -274,19 +274,19 @@ Run on `trueforge.rockyshoreslabs.io` on 2026-09-16 against Worker version `98fa
 
 **One blocker had to be fixed before any turn could run.** With the var set, `GET /api/v1/capabilities` reported the sandbox enabled while `POST /api/v1/agents` with `sandbox.enabled` answered 422 "no sandbox provider is configured". Two definitions of "configured" had drifted: `capabilities.ts` asks `checkSnapshotStatus()`, which the Workers integration answers `ready`, while `validateAgentSpec` in `sessionResources.ts` requires a row in the sandbox-provider table or `isLocalFallbackEnabled()`, which returned `false`. The Workers workspace comes from the deploy var and never has a stored record, so every sandbox-enabled agent and session was rejected. The integration now reports that a sandbox needs no stored record, which is what the port's own doc comment already says the flag means. The name `isLocalFallbackEnabled` now reads wrong on Workers and is worth renaming in the review. `tests/workers/sandboxTurn.test.ts` could not catch this because it writes its session straight to the store; the pin added here drives the real validator.
 
-**Results.** Every item ran once as a streaming turn and once as a non-streaming turn. All passed.
+**Results.** Every item ran once as a streaming turn and once as a non-streaming turn. All passed. The upload was worth running twice rather than assuming: `startStreaming` bypasses `startTurnInProcess`, so a file part inside a streaming body is its own path, and it is the one the UI uses.
 
-| 7a.9 item                                             | Non-streaming                          | Streaming                        |
-| ----------------------------------------------------- | -------------------------------------- | -------------------------------- |
-| `python3 --version`                                   | pass, `Python 3.13.15`                 | pass                             |
-| `ls -la /workspace`                                   | pass, `.trueforge` and `uploads` only  | pass                             |
-| `echo hi > /workspace/a.txt && cat …`                 | pass                                   | pass                             |
-| Second turn reads `/workspace/a.txt`                  | pass, 312 ms, no new sandbox           | pass                             |
-| Large tool result offloaded and read back with `exec` | pass, 3 files (9871, 6374, 6231 bytes) | pass, 2 files (9988, 6374 bytes) |
-| Non-inline upload to `/workspace/uploads`             | pass, 3034 bytes, 201 lines            | n/a, same turn shape             |
-| Turn file download                                    | pass, byte-identical, 172 ms           | n/a                              |
-| Sandbox plus one MCP server, tool called directly     | pass                                   | pass                             |
-| 20 consecutive execs                                  | 20 of 20, no `pending`, none lost      | n/a                              |
+| 7a.9 item                                             | Non-streaming                          | Streaming                            |
+| ----------------------------------------------------- | -------------------------------------- | ------------------------------------ |
+| `python3 --version`                                   | pass, `Python 3.13.15`                 | pass                                 |
+| `ls -la /workspace`                                   | pass, `.trueforge` and `uploads` only  | pass                                 |
+| `echo hi > /workspace/a.txt && cat …`                 | pass                                   | pass                                 |
+| Second turn reads `/workspace/a.txt`                  | pass, 312 ms, no new sandbox           | pass                                 |
+| Large tool result offloaded and read back with `exec` | pass, 3 files (9871, 6374, 6231 bytes) | pass, 2 files (9988, 6374 bytes)     |
+| Non-inline upload to `/workspace/uploads`             | pass, 3034 bytes, 201 lines            | pass, 1206 bytes, 151 lines          |
+| Turn file download                                    | pass, byte-identical, 172 ms           | pass, byte-identical, 197 and 641 ms |
+| Sandbox plus one MCP server, tool called directly     | pass                                   | pass                                 |
+| 20 consecutive execs                                  | 20 of 20, no `pending`, none lost      | n/a                                  |
 
 **Measurements.**
 
@@ -319,6 +319,8 @@ Try again later, or try configu…
 The limit is named, but only at the end of a transport string that opens with a health-check timeout. The turn did not crash: the sandbox init failed twice and the turn finished as `done` with the agent reporting the transport error. 7d should match `Maximum number of running container instances exceeded` and answer with a message that names the limit.
 
 **A non-zero exit is reported as an infrastructure failure.** Section 8 assumed `status` separates a non-zero exit from a failure to run. It does not. `sh -c 'echo OUTLINE; echo ERRLINE 1>&2; exit 3'` comes back as `{"success": false, "error": "Sandbox exec did not run: OUTLINE\nERRLINE\n"}`, and `ls /nope` the same way. Computer sets `result.status` to `failed` whenever the command exits non-zero, so `CloudflareComputerProvider.exec` maps it to `{ success: false }` and the exit code is dropped. The Node providers return `{ success: true, response: { exitCode, result } }` for the same command, so an agent on Workers sees a shell error as a broken sandbox. The output text still reaches the model, which is why the acceptance items passed, but this must be fixed before 7b: read `exitCode` and treat `failed` as a real failure only when the command never ran.
+
+**The workspace survives an idle container.** The streaming upload turn ran 14 minutes after that session's first exec and still read back `/workspace/a.txt` and both files under `/workspace/.trueforge/tool-results`, so the Durable Object SQLite state is what the workspace serves. A full container restart is still 7d's to verify.
 
 **Test data left on the deploy.** Agent `smoke-sandbox`, six sessions with Computer workspaces, and the files those turns wrote under `/workspace`.
 
