@@ -86,10 +86,20 @@ describe('CloudflareComputerProvider', () => {
 
   it('runs a command in the workspace root with the default timeout', async () => {
     const computer = new FakeComputer();
-    computer.exec = { ...COMPLETED, exitCode: 2, output: 'out' };
+    computer.exec = { ...COMPLETED, output: 'out' };
     const result = await build(computer).exec({ sandboxId: SANDBOX_ID, command: 'ls' });
     expect(computer.execCalls).toEqual([{ command: 'ls', cwd: '/workspace', env: {}, timeoutMs: 30_000 }]);
-    expect(result).toEqual({ success: true, response: { exitCode: 2, result: 'out' } });
+    expect(result).toEqual({ success: true, response: { exitCode: 0, result: 'out' } });
+  });
+
+  // Computer calls every non-zero exit `failed`, so a shell error used to read as a broken sandbox.
+  it('reports a non-zero exit as a result with its exit code, the way the Node providers do', async () => {
+    const computer = new FakeComputer();
+    computer.exec = { ...COMPLETED, status: 'failed', exitCode: 3, output: 'OUTLINE\nERRLINE\n' };
+    await expect(build(computer).exec({ sandboxId: SANDBOX_ID, command: 'x' })).resolves.toEqual({
+      success: true,
+      response: { exitCode: 3, result: 'OUTLINE\nERRLINE\n' },
+    });
   });
 
   it('passes the caller cwd, env and timeout through', async () => {
@@ -118,15 +128,22 @@ describe('CloudflareComputerProvider', () => {
     });
   });
 
-  it.each([
-    ['cancelled' as const, 'Sandbox exec timed out after 30s'],
-    ['failed' as const, 'Sandbox exec did not run: boom'],
-  ])('reports a %s command as an infrastructure failure', async (status, error) => {
+  it('reports a cancelled command as an infrastructure failure', async () => {
     const computer = new FakeComputer();
-    computer.exec = { ...COMPLETED, status, output: 'boom' };
+    computer.exec = { ...COMPLETED, status: 'cancelled', exitCode: 137, output: 'boom' };
     await expect(build(computer).exec({ sandboxId: SANDBOX_ID, command: 'x' })).resolves.toEqual({
       success: false,
-      error,
+      error: 'Sandbox exec timed out after 30s',
+    });
+  });
+
+  // No exit event means nothing launched, which is the only `failed` the caller must not read as output.
+  it('reports a command that never ran as an infrastructure failure', async () => {
+    const computer = new FakeComputer();
+    computer.exec = { ...COMPLETED, status: 'failed', exitCode: -1, output: 'boom' };
+    await expect(build(computer).exec({ sandboxId: SANDBOX_ID, command: 'x' })).resolves.toEqual({
+      success: false,
+      error: 'Sandbox exec did not run: boom',
     });
   });
 

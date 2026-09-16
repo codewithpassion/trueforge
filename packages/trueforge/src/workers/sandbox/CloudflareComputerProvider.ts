@@ -100,7 +100,10 @@ export class CloudflareComputerProvider implements SandboxProvider {
     if (outcome.status === 'cancelled') {
       return { success: false, error: `Sandbox exec timed out after ${String(timeoutSeconds)}s` };
     }
-    if (outcome.status === 'failed') {
+    // Computer derives `failed` from any non-zero exit, so the status alone cannot tell a shell
+    // error from a command that never launched. Only a missing exit event leaves the code negative,
+    // and that is the one case the sandbox contract reports as an infrastructure failure.
+    if (outcome.exitCode < 0) {
       return { success: false, error: `Sandbox exec did not run: ${outcome.output}` };
     }
     // The command ran, but its writes never reached the workspace store, so the result is not durable.

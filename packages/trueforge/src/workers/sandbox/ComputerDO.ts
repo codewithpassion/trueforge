@@ -31,7 +31,9 @@ export interface ComputerExecRequest {
  * object — turns these into `ExecResult`.
  */
 export interface ComputerExecOutcome {
+  /** Derived from `exitCode` alone: `failed` covers every non-zero exit, including an ordinary one. */
   status: 'completed' | 'failed' | 'cancelled';
+  /** Negative when no exit event arrived, which is the only sign that the command never launched. */
   exitCode: number;
   /** stdout followed by stderr, which is what the sandbox contract reports as `result`. */
   output: string;
