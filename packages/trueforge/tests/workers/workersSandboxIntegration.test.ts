@@ -10,7 +10,16 @@ import type { SandboxIntegration } from '../../src/sandbox/integration';
 import type { SandboxProviderManifest } from '../../src/schemas/sandboxProvider';
 import { createConsoleLogger } from '../../src/workers/logger';
 import { createWorkersRuntimeDeps } from '../../src/workers/runtime';
-import { CLOUDFLARE_COMPUTER_PROVIDER_TYPE } from '../../src/workers/sandbox/CloudflareComputerProvider';
+import {
+  CLOUDFLARE_COMPUTER_PROVIDER_TYPE,
+  CloudflareComputerProvider,
+} from '../../src/workers/sandbox/CloudflareComputerProvider';
+import type {
+  ComputerExecOutcome,
+  ComputerExecRequest,
+  ComputerReadOutcome,
+  ComputerWorkspace,
+} from '../../src/workers/sandbox/ComputerDO';
 import { createWorkersSandboxIntegration } from '../../src/workers/sandbox/workersSandboxIntegration';
 import { d1Persistence, migrateDatabase, TENANT_ID, upsertMockProvider } from './harness';
 
@@ -44,6 +53,33 @@ const SKILL: Skill = {
   path: 'demo',
   ref: 'main',
 };
+
+/** Records what a turn's sandbox init asks of the workspace, without needing a container. */
+class RecordingComputer implements ComputerWorkspace {
+  readonly execCalls: ComputerExecRequest[] = [];
+  readonly writes: { path: string; content: Uint8Array }[] = [];
+
+  execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome> {
+    this.execCalls.push(request);
+    return Promise.resolve({
+      status: 'completed',
+      exitCode: 0,
+      output: '',
+      outputTruncated: false,
+      syncPending: false,
+      syncError: undefined,
+    });
+  }
+
+  writeFile(request: { path: string; content: Uint8Array }): Promise<void> {
+    this.writes.push(request);
+    return Promise.resolve();
+  }
+
+  readFile(): Promise<ComputerReadOutcome> {
+    return Promise.resolve({ ok: false, reason: 'not_found' });
+  }
+}
 
 function storeInput() {
   return { tenant_id: TENANT_ID, sessionId: 'session-1', store: d1Persistence().sandboxProviderStore, logger };
@@ -117,6 +153,37 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
     });
   });
 
+  // An agent that drops its last skill still has to reach the downloader, or the old install stays.
+  it.each([
+    ['one skill', [SKILL], '[{"type":"git","name":"demo"'],
+    ['no skills', [], '{"skills":[]}'],
+  ])('runs the skill downloader on init with %s', async (_label, skills, requested) => {
+    const computer = new RecordingComputer();
+    const sandbox = build('cloudflare-computer').buildTurnSandbox({
+      provider: new CloudflareComputerProvider({
+        computer,
+        sandboxId: `${TENANT_ID}:session-1`,
+        defaultExecTimeoutSeconds: 30,
+        fileMaxBytesForDownload: 1024,
+      }),
+      logger,
+      skills,
+      fileDownloadEnabled: false,
+      existingSandboxId: undefined,
+      tracing: NOOP_AGENT_TRACING,
+    });
+
+    // An upload is the cheapest public entry point that drives the one-off sandbox init.
+    await sandbox.uploadFile({ targetDir: '/workspace/uploads', fileName: 'a.txt', content: Buffer.from('x') });
+
+    const download = computer.execCalls.find(call => call.command.includes('skill_downloader.py'));
+    expect(download?.env).toEqual({ TFY_SKILLS_DIR: '/workspace/.trueforge/skills' });
+    const upload = computer.writes.find(
+      write => write.path === '/workspace/.trueforge/skills/.tfy-requested-skills.json',
+    );
+    expect(Buffer.from(upload?.content ?? new Uint8Array()).toString()).toContain(requested);
+  });
+
   it('accepts a sandbox-enabled spec with nothing in the sandbox-provider table', async () => {
     expect(build('cloudflare-computer').isSandboxUsableWithoutStoredRecord()).toBe(true);
     await expect(validateSandboxSpec(build('cloudflare-computer'))).resolves.toBeUndefined();
@@ -126,9 +193,9 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
 describe.each([undefined, 'cloudflare-computer' as const])(
   'createWorkersSandboxIntegration (backend %s) runtime support',
   backend => {
-    it('offers no skills and no Daytona settings surface', () => {
+    it('follows the workspace with skills, and offers no Daytona settings surface', () => {
       const integration = build(backend);
-      expect(integration.isSkillMountingSupported()).toBe(false);
+      expect(integration.isSkillMountingSupported()).toBe(backend !== undefined);
       expect(integration.isDaytonaSettingsSupported()).toBe(false);
       expect(integration.isDaytonaAuthError(new Error('x'))).toBe(false);
       expect(integration.isDaytonaPermissionError(new Error('x'))).toBe(false);
@@ -140,7 +207,7 @@ describe.each([undefined, 'cloudflare-computer' as const])(
       ).toThrow(/not supported on the Cloudflare Workers runtime/);
     });
 
-    it('refuses a turn sandbox that mounts skills, rather than dropping them silently', async () => {
+    it('mounts a requested skill into the workspace skills directory', async () => {
       const integration = build(backend);
       const provider = await createWorkersSandboxIntegration({
         backend: 'cloudflare-computer',
@@ -151,17 +218,17 @@ describe.each([undefined, 'cloudflare-computer' as const])(
       if (provider === undefined) {
         throw new Error('expected a provider for the cloudflare-computer backend');
       }
-      const turnSandbox = {
+      const sandbox = integration.buildTurnSandbox({
         provider,
         logger,
+        skills: [SKILL],
         fileDownloadEnabled: false,
         existingSandboxId: undefined,
         tracing: NOOP_AGENT_TRACING,
-      };
-      expect(() => integration.buildTurnSandbox({ ...turnSandbox, skills: [SKILL] })).toThrow(
-        /skills are not available/,
-      );
-      expect(integration.buildTurnSandbox({ ...turnSandbox, skills: [] })).toBeDefined();
+      });
+      const builder = new InstructionBuilder('root');
+      sandbox.buildInstruction(builder);
+      expect(builder.build()).toContain('/workspace/.trueforge/skills/demo');
     });
 
     it('builds a turn sandbox that carries MCP servers without asking for a Code Mode transport', async () => {

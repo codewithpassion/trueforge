@@ -6,4 +6,6 @@ On the Cloudflare Computer sandbox, a command that exits non-zero is reported as
 
 A turn that cannot get a sandbox because the deploy is already running its `max_instances` limit of containers now says so and asks the caller to retry, instead of surfacing a raw transport string that opens with a health-check timeout.
 
+Skills now work on the Cloudflare Workers runtime whenever `TRUEFORGE_SANDBOX_BACKEND` is set. `GET /api/v1/capabilities` reports them enabled, an agent can attach catalog skills, and each turn's sandbox init downloads them into `/workspace/.trueforge/skills` and removes the ones the agent no longer asks for. Creating an agent or a session with skills no longer answers 422 on this runtime.
+
 The runtime sandbox port's `isLocalFallbackEnabled` is now `isSandboxUsableWithoutStoredRecord`, which is what it has always decided: whether a sandbox works without a row in the sandbox-provider table. Nothing about the behaviour changes; the old name described only the standalone Node case and read as false on a runtime whose sandbox comes from a deploy variable.

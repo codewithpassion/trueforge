@@ -1,4 +1,5 @@
 import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
+import { SkillMounter } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { HTTPException } from 'hono/http-exception';
 import configuration from '../../config';
 import type { SandboxIntegration } from '../../sandbox/integration';
@@ -55,27 +56,26 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
     // The workspace comes from the deploy var, not from a stored settings record, so a
     // sandbox-enabled agent is valid with nothing in the sandbox-provider table.
     isSandboxUsableWithoutStoredRecord: () => options.backend !== undefined,
-    // Phase 7b turns skills on once the image is confirmed to carry the downloader's dependencies.
-    isSkillMountingSupported: () => false,
+    // The container image is the release sandbox image, so the skill downloader has the python3,
+    // pydantic and git it needs; skills follow the workspace.
+    isSkillMountingSupported: () => options.backend !== undefined,
     isDaytonaSettingsSupported: () => false,
     checkSnapshotStatus: () => Promise.resolve(options.backend === undefined ? undefined : READY_STATUS),
     createDaytonaProvider: notSupported,
     isDaytonaAuthError: () => false,
     isDaytonaPermissionError: () => false,
-    buildTurnSandbox: input => {
-      if (input.skills.length > 0) {
-        throw new HTTPException(422, { message: 'skills are not available on the Cloudflare Workers runtime' });
-      }
-      return new Sandbox({
+    buildTurnSandbox: input =>
+      // The mounter runs even with no skills, so one the agent dropped is removed on the next init.
+      new Sandbox({
         provider: input.provider,
         existingSandboxId: input.existingSandboxId,
         fileDownloadEnabled: input.fileDownloadEnabled,
         blockDestructiveToolsInCodeMode: true,
         mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,
         mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
+        skillMounter: new SkillMounter({ skills: input.skills }),
         tracing: input.tracing,
         logger: input.logger,
-      });
-    },
+      }),
   };
 }
