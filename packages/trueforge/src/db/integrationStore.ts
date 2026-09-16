@@ -160,10 +160,13 @@ export interface DeleteIntegrationEventInput {
 
 export interface MarkDeliverySentInput {
   id: string;
+  /** The attempt this caller claimed; a row that moved on is another caller's and stays untouched. */
+  attempts: number;
 }
 
 export interface MarkDeliveryFailedInput {
   id: string;
+  attempts: number;
   /** Short reason kept on the row for operators. */
   error: string;
 }
@@ -183,6 +186,7 @@ export interface ClaimDeliveryForRetryInput {
 
 export interface ReleaseDeliveryInput {
   id: string;
+  attempts: number;
   /** Short reason kept on the row until the next attempt settles it. */
   error: string;
 }
@@ -238,8 +242,9 @@ export interface IIntegrationStore<TTransaction = never> {
    */
   claimDelivery(input: ClaimDeliveryInput, transaction?: TTransaction): Promise<IntegrationDeliveryRecord | undefined>;
   /**
-   * Terminal transition out of `sending`, returning the settled row. A row this caller does not
-   * hold is untouched and reported as undefined.
+   * Terminal transition out of `sending`, returning the settled row. A row this caller no longer
+   * holds — the sweep reclaimed it and the attempt count moved on — is untouched and reported as
+   * undefined, so a reclaimed reply is never settled by the caller it was taken from.
    */
   markDeliverySent(
     input: MarkDeliverySentInput,

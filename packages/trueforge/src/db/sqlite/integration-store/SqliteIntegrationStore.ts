@@ -302,6 +302,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .updateTable('integration_delivery')
       .set({ status: 'sent', last_error: null, updated_at: nowIso() })
       .where('id', '=', input.id)
+      .where('attempts', '=', input.attempts)
       .where('status', '=', 'sending')
       .returning([...DELIVERY_COLUMNS])
       .executeTakeFirst();
@@ -316,6 +317,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .updateTable('integration_delivery')
       .set({ status: 'failed', last_error: input.error, updated_at: nowIso() })
       .where('id', '=', input.id)
+      .where('attempts', '=', input.attempts)
       .where('status', '=', 'sending')
       .returning([...DELIVERY_COLUMNS])
       .executeTakeFirst();
@@ -361,6 +363,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .updateTable('integration_delivery')
       .set({ status: 'pending', last_error: input.error, updated_at: nowIso() })
       .where('id', '=', input.id)
+      .where('attempts', '=', input.attempts)
       .where('status', '=', 'sending')
       .returning([...DELIVERY_COLUMNS])
       .executeTakeFirst();

@@ -303,7 +303,11 @@ describe('TurnCompletionNotifier on Node', () => {
     // Burn every attempt but the last, the way repeated sweeps would.
     for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS - 1; attempt += 1) {
       const claimed = await harness.integrationStore.claimDelivery({ turn_id: TURN_ID });
-      await harness.integrationStore.releaseDelivery({ id: claimed?.id ?? '', error: 'earlier failure' });
+      await harness.integrationStore.releaseDelivery({
+        id: claimed?.id ?? '',
+        attempts: claimed?.attempts ?? 0,
+        error: 'earlier failure',
+      });
     }
 
     await runTurn({ harness, notifier });

@@ -94,14 +94,18 @@ export class TurnCompletionNotifier<TTransaction> {
       },
     });
     if (result.ok) {
-      await integrationStore.markDeliverySent({ id: delivery.id });
+      await integrationStore.markDeliverySent({ id: delivery.id, attempts: delivery.attempts });
       return;
     }
     if (delivery.attempts >= MAX_DELIVERY_ATTEMPTS) {
       await this.#giveUp({ delivery, error: result.error });
       return;
     }
-    await integrationStore.releaseDelivery({ id: delivery.id, error: result.error });
+    await integrationStore.releaseDelivery({
+      id: delivery.id,
+      attempts: delivery.attempts,
+      error: result.error,
+    });
     this.#deps.logger.warn('Integration delivery will be retried', {
       deliveryId: delivery.id,
       turnId: delivery.turn_id,
@@ -113,6 +117,7 @@ export class TurnCompletionNotifier<TTransaction> {
   async #giveUp(input: { delivery: IntegrationDeliveryRecord; error: string }): Promise<void> {
     const settled = await this.#deps.integrationStore.markDeliveryFailed({
       id: input.delivery.id,
+      attempts: input.delivery.attempts,
       error: input.error,
     });
     this.#deps.logger.warn('Integration delivery gave up', {

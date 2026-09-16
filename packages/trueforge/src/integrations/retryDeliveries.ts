@@ -80,6 +80,7 @@ async function retryOneDelivery<TTransaction>(input: {
       if (claimed !== undefined) {
         await integrationStore.markDeliveryFailed({
           id: claimed.id,
+          attempts: claimed.attempts,
           error: row.last_error ?? 'Out of delivery attempts',
         });
       }
@@ -96,7 +97,11 @@ async function retryOneDelivery<TTransaction>(input: {
       logger.warn('Integration delivery has no turn to report', { deliveryId: row.id, turnId: row.turn_id });
       const orphan = await integrationStore.claimDeliveryForRetry({ id: row.id, attempts: row.attempts });
       if (orphan !== undefined) {
-        await integrationStore.markDeliveryFailed({ id: orphan.id, error: 'Turn is no longer readable' });
+        await integrationStore.markDeliveryFailed({
+          id: orphan.id,
+          attempts: orphan.attempts,
+          error: 'Turn is no longer readable',
+        });
       }
       return;
     }

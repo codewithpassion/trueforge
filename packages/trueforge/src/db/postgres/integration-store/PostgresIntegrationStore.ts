@@ -285,6 +285,7 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
       .updateTable('integration_delivery')
       .set({ status: 'sent', last_error: null, updated_at: now() })
       .where('id', '=', input.id)
+      .where('attempts', '=', input.attempts)
       .where('status', '=', 'sending')
       .returningAll()
       .executeTakeFirst();
@@ -300,6 +301,7 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
       .updateTable('integration_delivery')
       .set({ status: 'failed', last_error: input.error, updated_at: now() })
       .where('id', '=', input.id)
+      .where('attempts', '=', input.attempts)
       .where('status', '=', 'sending')
       .returningAll()
       .executeTakeFirst();
@@ -348,6 +350,7 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
       .updateTable('integration_delivery')
       .set({ status: 'pending', last_error: input.error, updated_at: now() })
       .where('id', '=', input.id)
+      .where('attempts', '=', input.attempts)
       .where('status', '=', 'sending')
       .returningAll()
       .executeTakeFirst();
