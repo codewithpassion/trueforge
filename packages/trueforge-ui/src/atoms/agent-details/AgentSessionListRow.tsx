@@ -37,6 +37,13 @@ export function AgentSessionListRow({
             </span>
           </Tooltip>
         ) : null}
+        {sourceType === 'integration' ? (
+          <Tooltip content="Started from a connected channel">
+            <span aria-label="Channel session" className="mt-0.5 inline-flex shrink-0">
+              <Icon name="plug" className="size-3.5 text-primary-button-bg" />
+            </span>
+          </Tooltip>
+        ) : null}
       </span>
       <span className="flex items-end justify-between gap-2 text-xs text-text-secondary">
         <span className="flex min-w-0 items-center gap-1">

@@ -23,7 +23,7 @@ export type AgentSessionsProps = {
 export type AgentSessionListRowProps = {
   title: string;
   agentName?: string;
-  sourceType?: 'schedule';
+  sourceType?: 'schedule' | 'integration';
   lastActivityAt: string;
   metrics: {
     totalTurns: number;

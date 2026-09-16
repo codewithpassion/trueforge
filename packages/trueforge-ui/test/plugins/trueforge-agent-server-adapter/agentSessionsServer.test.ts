@@ -154,4 +154,47 @@ describe('createHarnessAgentSessionsServer', () => {
     const result = await server.listSessions();
     assert.deepEqual(result.data[0]?.metrics, { totalTurns: 2, totalDurationMs: 96_201 });
   });
+
+  it('marks a session an integration opened', async () => {
+    const list = vi.fn(async () => ({
+      data: [
+        {
+          id: 'sess-2',
+          title: 'from slack',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          agent: { type: 'reference', id: 'agent-1', name: 'writer' },
+          createdBy: 'user-1',
+          metrics: { totalTurns: 1, totalDurationMs: 100 },
+          source: {
+            type: 'integration',
+            id: 'int-1',
+            conversationKey: 'slack:T0TEAM:C0GENERAL:1700000000.000100',
+          },
+        },
+      ],
+      response: { pagination: {} },
+    }));
+    const server = createHarnessAgentSessionsServer({
+      baseUrl: 'https://trueforge.example',
+      client: { sessions: { list } } as unknown as TrueForge,
+    });
+
+    assert.deepEqual(await server.listSessions({ limit: 10 }), {
+      data: [
+        {
+          id: 'sess-2',
+          title: 'from slack',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          lastActivityAt: '2026-01-02T00:00:00.000Z',
+          isCreateAgent: false,
+          isMutable: false,
+          metrics: { totalTurns: 1, totalDurationMs: 100 },
+          agentName: 'writer',
+          sourceType: 'integration',
+        },
+      ],
+    });
+  });
 });

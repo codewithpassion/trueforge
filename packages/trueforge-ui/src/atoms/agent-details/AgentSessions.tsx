@@ -34,8 +34,12 @@ function entryIsMutable(entry: SessionListEntry): boolean {
   return entry.agentName == null;
 }
 
-function entrySourceType(entry: SessionListEntry): 'schedule' | undefined {
-  return 'sourceType' in entry && Reflect.get(entry, 'sourceType') === 'schedule' ? 'schedule' : undefined;
+function entrySourceType(entry: SessionListEntry): 'schedule' | 'integration' | undefined {
+  const sourceType = 'sourceType' in entry ? Reflect.get(entry, 'sourceType') : undefined;
+  if (sourceType === 'schedule' || sourceType === 'integration') {
+    return sourceType;
+  }
+  return undefined;
 }
 
 export function AgentSessions({ agentId, startTimestamp, endTimestamp, shareView }: AgentSessionsProps) {
