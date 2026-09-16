@@ -38,6 +38,7 @@ import type { SandboxCatalog } from './catalog/SandboxCatalog';
 import type { SkillCatalog } from './catalog/SkillCatalog';
 import configuration, { getPublicUiBasePath, getTrueForgeAuthMode, TrueForgeAuthMode } from './config';
 import type { AgentRecord, IAgentStore } from './db/agentStore';
+import type { IIntegrationStore } from './db/integrationStore';
 import type { IMcpServerWithAuthStore } from './db/mcpServerStore';
 import type { IModelProviderStore } from './db/modelProviderStore';
 import type { ISandboxProviderStore } from './db/sandboxProviderStore';
@@ -199,6 +200,7 @@ export interface ServerDeps<TTransaction> {
   withTransaction: WithTransaction<TTransaction>;
   tokenStore: IOAuthTokenStore<TTransaction>;
   scheduleStore: IScheduleStore<TTransaction>;
+  integrationStore: IIntegrationStore<TTransaction>;
   sessionStore: ISessionStore;
   /** Historical session backfill; undefined makes the import session routes fail with 500. */
   sessionImport: SessionImport | undefined;

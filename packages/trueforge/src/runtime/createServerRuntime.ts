@@ -12,6 +12,7 @@ import { SandboxCatalog } from '../catalog/SandboxCatalog';
 import { SkillCatalog } from '../catalog/SkillCatalog';
 import configuration, { isOidcConfigured } from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
+import type { IIntegrationStore } from '../db/integrationStore';
 import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
@@ -38,6 +39,7 @@ export interface ServerPersistence<TTransaction> {
   sessionMetricsStore: ISessionMetricsStore;
   tokenStore: IOAuthTokenStore<TTransaction>;
   scheduleStore: IScheduleStore<TTransaction>;
+  integrationStore: IIntegrationStore<TTransaction>;
   mcpOAuthStore: IMcpServerWithAuthStore<TTransaction>;
   resolveModelProviderStore: (rc: RequestContext, runAsAgent?: AgentRecord) => IModelProviderStore<TTransaction>;
   resolveMcpServerStore: (
@@ -76,6 +78,7 @@ export async function createServerRuntime<TTransaction>(options: {
     sessionMetricsStore,
     tokenStore,
     scheduleStore,
+    integrationStore,
     mcpOAuthStore,
     resolveImportAgentStore,
     agentStore,
@@ -125,6 +128,7 @@ export async function createServerRuntime<TTransaction>(options: {
     withTransaction,
     tokenStore,
     scheduleStore,
+    integrationStore,
     agentStore,
     turnSkillsResolverStore,
     sessionStore,

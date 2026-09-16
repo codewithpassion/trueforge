@@ -256,6 +256,7 @@ async function createStandalonePersistence(options: {
     tokenStore,
     mcpServerStore,
     scheduleStore,
+    integrationStore,
     agentStore,
     modelProviderStore,
     sandboxProviderStore,
@@ -273,6 +274,7 @@ async function createStandalonePersistence(options: {
     mcpOAuthStore: mcpServerStore,
     tokenStore,
     scheduleStore,
+    integrationStore,
     resolveModelProviderStore: () => modelProviderStore,
     resolveMcpServerStore: () => mcpServerStore,
     resolveSandboxProviderStore: () => sandboxProviderStore,
@@ -316,6 +318,7 @@ async function createDistributedPersistence(options: {
       import('./db/postgres/sandbox-provider-store/PostgresSandboxProviderStore'),
       import('./db/postgres/agent-store/PostgresAgentStore'),
       import('./db/postgres/schedule-store/PostgresScheduleStore'),
+      import('./db/postgres/integration-store/PostgresIntegrationStore'),
     ]),
   ]);
   const [
@@ -328,6 +331,7 @@ async function createDistributedPersistence(options: {
     { PostgresSandboxProviderStore },
     { PostgresAgentStore },
     { PostgresScheduleStore },
+    { PostgresIntegrationStore },
   ] = postgresStores;
 
   const db = createDb({
@@ -406,6 +410,7 @@ async function createDistributedPersistence(options: {
     mcpOAuthStore: mcpServerWithAuthStore,
     tokenStore,
     scheduleStore: new PostgresScheduleStore(db),
+    integrationStore: new PostgresIntegrationStore(db),
     resolveModelProviderStore,
     resolveMcpServerStore,
     resolveSandboxProviderStore,

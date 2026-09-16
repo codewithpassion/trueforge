@@ -12,6 +12,7 @@ import configuration, { parseServerConfiguration } from '../../src/config';
 import { McpServerWithAuthStore } from '../../src/db/McpServerWithAuthStore';
 import { SqliteAgentStore } from '../../src/db/sqlite/agent-store/SqliteAgentStore';
 import { BetterSqliteAtomicRunner, createSqliteDb } from '../../src/db/sqlite/client';
+import { SqliteIntegrationStore } from '../../src/db/sqlite/integration-store/SqliteIntegrationStore';
 import { SqliteMcpServerStore } from '../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
@@ -82,6 +83,7 @@ function createApp() {
     turnSkillsResolverStore: skillStore,
     withTransaction: callback => db.transaction().execute(callback),
     scheduleStore: new SqliteScheduleStore(db, new BetterSqliteAtomicRunner(db)),
+    integrationStore: new SqliteIntegrationStore(db, new BetterSqliteAtomicRunner(db)),
     tokenStore,
     sessionStore,
     sessionMetricsStore: new SqliteSessionMetricsStore(db),

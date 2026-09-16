@@ -27,6 +27,7 @@ export function createWorkersRuntimeDeps(env: Env): WorkersRuntimeDeps {
       sessionMetricsStore: d1.sessionMetricsStore,
       tokenStore: d1.tokenStore,
       scheduleStore: d1.scheduleStore,
+      integrationStore: d1.integrationStore,
       mcpOAuthStore: d1.mcpServerStore,
       resolveModelProviderStore: () => d1.modelProviderStore,
       resolveMcpServerStore: () => d1.mcpServerStore,
