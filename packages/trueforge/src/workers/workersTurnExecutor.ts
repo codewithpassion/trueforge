@@ -9,6 +9,7 @@ import {
   type TurnStreamingStartInput,
 } from '../runtime/turnExecutor';
 import type { SessionDO, StartTurnRequest } from './SessionDO';
+import { sessionDurableObjectName } from './sessionScope';
 import { decodeTurnEvents } from './turnEventWire';
 import { turnInputTooLarge } from './turnInputLimit';
 
@@ -102,7 +103,7 @@ export class WorkersTurnExecutor implements TurnExecutor {
     return { ok: true };
   }
 
-  #session({ tenant_id: tenantId, session_id: sessionId }: { tenant_id: string; session_id: string }) {
-    return this.#namespace.get(this.#namespace.idFromName(`${tenantId}:${sessionId}`));
+  #session(session: { tenant_id: string; session_id: string }) {
+    return this.#namespace.get(this.#namespace.idFromName(sessionDurableObjectName(session)));
   }
 }

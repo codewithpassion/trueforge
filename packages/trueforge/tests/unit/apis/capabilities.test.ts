@@ -162,6 +162,24 @@ describe('capabilities routers', () => {
     });
   });
 
+  it('reports skill disabled on a runtime that runs sandboxes but cannot mount skills', async () => {
+    disableOidcAuth();
+    mockStatus.mockResolvedValue(buildWithStatus('ready'));
+    const router = makeRouter({
+      sandboxIntegration: { ...stubIntegration(), isSkillMountingSupported: () => false },
+    });
+
+    const response = await router.request('/');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      data: {
+        sandbox: { enabled: true },
+        skill: { enabled: false, reason: 'Skills are not available on this server.' },
+        settings: { enabled: true },
+      },
+    });
+  });
+
   it('reports sandbox disabled with a "being prepared" skill reason while the image is still pending', async () => {
     disableOidcAuth();
     mockStatus.mockResolvedValue(buildWithStatus('pending'));

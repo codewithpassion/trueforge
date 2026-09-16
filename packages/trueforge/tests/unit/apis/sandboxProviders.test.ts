@@ -254,6 +254,31 @@ describe('sandboxProviders router without a sandbox integration', () => {
   });
 });
 
+describe('sandboxProviders router on a runtime without the Daytona settings surface', () => {
+  const unsupported = { error: { message: 'Sandbox providers are not supported by this server' } };
+  const noDaytonaSettings: SandboxIntegration = { ...sandboxIntegration, isDaytonaSettingsSupported: () => false };
+
+  it('GET returns 404 without reading the store', async () => {
+    const { settingsRouter, sandboxProviderStore } = await createRouters({ sandboxIntegration: noDaytonaSettings });
+    const getSandboxProvider = jest.spyOn(sandboxProviderStore, 'getSandboxProvider');
+
+    const response = await settingsRouter.request('/');
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual(unsupported);
+    expect(getSandboxProvider).not.toHaveBeenCalled();
+  });
+
+  it('PUT returns 422 and never reaches the Daytona helpers', async () => {
+    const { settingsRouter, sandboxProviderStore } = await createRouters({ sandboxIntegration: noDaytonaSettings });
+
+    const response = await settingsRouter.request('/', putInit(putBody));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual(unsupported);
+    expect(mockProviderFactory).not.toHaveBeenCalled();
+    expect(await sandboxProviderStore.getSandboxProvider('default')).toBeUndefined();
+  });
+});
+
 describe('sandbox-provider secret redaction and strict PUT', () => {
   it('PUT create with a redacted api_key returns 400', async () => {
     const { settingsRouter } = await createRouters();

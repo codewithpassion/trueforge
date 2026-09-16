@@ -177,6 +177,19 @@ function parseTrueFoundrySandboxProvider(raw: string | undefined): 'daytona' | '
   );
 }
 
+function parseSandboxBackend(raw: string | undefined): 'cloudflare-computer' | undefined {
+  const value = raw?.trim() ?? '';
+  if (value === '') {
+    return undefined;
+  }
+  if (value === 'cloudflare-computer') {
+    return value;
+  }
+  throw new Error(
+    `Environment variable TRUEFORGE_SANDBOX_BACKEND must be "cloudflare-computer", got ${JSON.stringify(raw)}`,
+  );
+}
+
 /** Parses `POSTGRES_SSL_MODE`. Unset/blank → `''`. Unknown values throw. */
 function parsePostgresSslMode(raw: string | undefined): string {
   if (!raw) {
@@ -424,6 +437,16 @@ export interface SharedServerConfiguration {
    * Env: `SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD`. Default 20 MB (same as gateway).
    */
   SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD: number;
+  /**
+   * Deploy-configured sandbox backend for the Workers runtime; unset means code execution is off.
+   * Env: `TRUEFORGE_SANDBOX_BACKEND` (`cloudflare-computer`).
+   */
+  TRUEFORGE_SANDBOX_BACKEND: 'cloudflare-computer' | undefined;
+  /**
+   * Default timeout for one sandbox command when the caller sets none. Must stay well under the
+   * Workers alarm window that holds a turn. Env: `SANDBOX_EXEC_TIMEOUT_SECONDS`. Default 5 minutes.
+   */
+  SANDBOX_EXEC_TIMEOUT_SECONDS: number;
   /**
    * Max bytes for an HTTP request body. Env: `MAX_REQUEST_BODY_BYTES`. Default 30 MB.
    */
@@ -675,6 +698,12 @@ export function parseServerConfiguration(): ServerConfiguration {
       envKey: 'SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD',
       raw: getEnv('SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD'),
       defaultValue: 20_971_520,
+    }),
+    TRUEFORGE_SANDBOX_BACKEND: parseSandboxBackend(getEnv('TRUEFORGE_SANDBOX_BACKEND', { required: false })),
+    SANDBOX_EXEC_TIMEOUT_SECONDS: parsePositiveInt({
+      envKey: 'SANDBOX_EXEC_TIMEOUT_SECONDS',
+      raw: getEnv('SANDBOX_EXEC_TIMEOUT_SECONDS'),
+      defaultValue: 300,
     }),
     MAX_REQUEST_BODY_BYTES: parsePositiveInt({
       envKey: 'MAX_REQUEST_BODY_BYTES',

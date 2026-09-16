@@ -58,11 +58,17 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
       deps.logger.warn('Sandbox image status check failed; reporting sandbox disabled', extractErrorLogFields(error));
     }
     const sandboxEnabled = status === 'ready' || (status === undefined && integration.isLocalFallbackEnabled());
+    const skillEnabled = sandboxEnabled && integration.isSkillMountingSupported();
     return c.json(
       {
         data: {
           sandbox: { enabled: sandboxEnabled },
-          skill: sandboxEnabled ? { enabled: true } : { enabled: false, reason: skillDisabledReason(status) },
+          skill: skillEnabled
+            ? { enabled: true }
+            : {
+                enabled: false,
+                reason: sandboxEnabled ? 'Skills are not available on this server.' : skillDisabledReason(status),
+              },
           settings: { enabled: settingsEnabled },
         },
       },

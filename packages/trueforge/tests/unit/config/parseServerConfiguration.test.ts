@@ -12,6 +12,7 @@ const MANAGED_KEYS = [
   'TRUEFORGE_API_KEY',
   'TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL',
   'PUBLIC_BASE_URL',
+  'TRUEFORGE_SANDBOX_BACKEND',
 ] as const;
 
 type ManagedEnv = Partial<Record<(typeof MANAGED_KEYS)[number], string>>;
@@ -170,5 +171,26 @@ describe('parseServerConfiguration', () => {
 
   it('rejects an unknown TRUEFORGE_RUNTIME', () => {
     expect(() => parseWithEnv({ TRUEFORGE_RUNTIME: 'lambda' })).toThrow(/TRUEFORGE_RUNTIME must be/);
+  });
+
+  describe('TRUEFORGE_SANDBOX_BACKEND', () => {
+    it('is undefined when unset or blank', () => {
+      expect(parseWithEnv(WORKERS_ENV).TRUEFORGE_SANDBOX_BACKEND).toBeUndefined();
+      expect(
+        parseWithEnv({ ...WORKERS_ENV, TRUEFORGE_SANDBOX_BACKEND: '  ' }).TRUEFORGE_SANDBOX_BACKEND,
+      ).toBeUndefined();
+    });
+
+    it('accepts cloudflare-computer', () => {
+      expect(
+        parseWithEnv({ ...WORKERS_ENV, TRUEFORGE_SANDBOX_BACKEND: 'cloudflare-computer' }).TRUEFORGE_SANDBOX_BACKEND,
+      ).toBe('cloudflare-computer');
+    });
+
+    it('rejects any other value', () => {
+      expect(() => parseWithEnv({ ...WORKERS_ENV, TRUEFORGE_SANDBOX_BACKEND: 'daytona' })).toThrow(
+        /TRUEFORGE_SANDBOX_BACKEND must be/,
+      );
+    });
   });
 });

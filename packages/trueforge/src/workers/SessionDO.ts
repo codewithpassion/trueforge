@@ -20,11 +20,13 @@ import {
   type TurnStartResult,
 } from '../runtime/turnExecutor';
 import { startTurnInProcess, toWireTurn, turnStreamId } from '../runtime/turnRunner';
+import type { SandboxIntegration } from '../sandbox/integration';
 import { newId } from '../utils/id';
 import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { DurableObjectEventSubscriptions } from './durableObjectEventSubscriptions';
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
+import { createWorkersSandboxIntegration } from './sandbox/workersSandboxIntegration';
 import { encodeTurnEvents, isSequencedTurnStreamingEvent } from './turnEventWire';
 import { turnInputTooLarge } from './turnInputLimit';
 
@@ -99,9 +101,16 @@ export class SessionDO extends DurableObject {
   /** Turns this instance runs, from start request to drain end; each promise resolves when its drain settles. */
   readonly #running = new Map<string, Promise<undefined>>();
   readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'SessionDO' } });
+  readonly #sandboxIntegration: SandboxIntegration;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.#sandboxIntegration = createWorkersSandboxIntegration({
+      backend: configuration.TRUEFORGE_SANDBOX_BACKEND,
+      namespace: env.COMPUTER_DO,
+      defaultExecTimeoutSeconds: configuration.SANDBOX_EXEC_TIMEOUT_SECONDS,
+      fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
+    });
     this.#events = new DurableObjectEventSubscriptions({
       sql: ctx.storage.sql,
       isEvent: isSequencedTurnStreamingEvent,
@@ -164,7 +173,7 @@ export class SessionDO extends DurableObject {
           activeTurns: this.#activeTurns,
           eventSubscriptions: this.#events,
           logger: this.#logger,
-          sandboxIntegration: undefined,
+          sandboxIntegration: this.#sandboxIntegration,
           // Awaited inside `drained`, so the alarm invocation that holds the turn holds this too.
           onTurnDrained: input => notifier.deliverForTurn(input),
         },

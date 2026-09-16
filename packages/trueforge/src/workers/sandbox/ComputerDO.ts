@@ -2,7 +2,6 @@ import { Workspace } from '@cloudflare/computer';
 import { CloudflareContainerBackend, withWorkspaceContainer } from '@cloudflare/computer/backends/container';
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env';
-import { COMPUTER_WORKSPACE_ROOT } from './computerPaths';
 import { workspaceStorage } from './workspaceStorage';
 
 /** Binding name the container egress proxy resolves back to this class. */
@@ -35,7 +34,17 @@ export type ComputerReadOutcome =
   | { ok: false; reason: 'is_directory' }
   | { ok: false; reason: 'too_large'; size: number };
 
-export class ComputerDO extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+/** What `CloudflareComputerProvider` calls; everything crossing it is serializable over Workers RPC. */
+export interface ComputerWorkspace {
+  execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome>;
+  writeFile(request: { path: string; content: Uint8Array }): Promise<void>;
+  readFile(request: { path: string; maxBytes: number }): Promise<ComputerReadOutcome>;
+}
+
+export class ComputerDO
+  extends withWorkspaceContainer(class extends DurableObject<Env> {})
+  implements ComputerWorkspace
+{
   readonly #backend: CloudflareContainerBackend;
   readonly #workspace: Workspace;
 
@@ -95,13 +104,5 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
       return { ok: false, reason: 'too_large', size: stat.size };
     }
     return { ok: true, size: stat.size, content: await this.#workspace.fs.readFile(request.path) };
-  }
-
-  /** Creates the workspace directory layout; idempotent, so every turn may call it. */
-  async ensureLayout(directories: readonly string[]): Promise<void> {
-    await this.#workspace.fs.mkdir(COMPUTER_WORKSPACE_ROOT, { recursive: true });
-    for (const directory of directories) {
-      await this.#workspace.fs.mkdir(directory, { recursive: true });
-    }
   }
 }

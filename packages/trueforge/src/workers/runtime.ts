@@ -5,14 +5,17 @@ import configuration from '../config';
 import { createD1Persistence } from '../db/d1/persistence';
 import type { Database } from '../db/sqlite/types';
 import { createServerRuntime, type ServerPersistence } from '../runtime/createServerRuntime';
+import type { SandboxIntegration } from '../sandbox/integration';
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
 import { assertWorkersRuntime } from './runtimeGuard';
+import { createWorkersSandboxIntegration } from './sandbox/workersSandboxIntegration';
 import { WorkersTurnExecutor } from './workersTurnExecutor';
 
 export interface WorkersRuntimeDeps {
   persistence: ServerPersistence<Kysely<Database>>;
   turnExecutor: WorkersTurnExecutor;
+  sandboxIntegration: SandboxIntegration;
 }
 
 /** D1 persistence and the session Durable Object executor, shared by the HTTP app and the scheduler. */
@@ -39,17 +42,23 @@ export function createWorkersRuntimeDeps(env: Env): WorkersRuntimeDeps {
       turnSkillsResolverStore: d1.skillStore,
     },
     turnExecutor: new WorkersTurnExecutor({ namespace: env.SESSION_DO, sessionStore: d1.sessionStore }),
+    sandboxIntegration: createWorkersSandboxIntegration({
+      backend: configuration.TRUEFORGE_SANDBOX_BACKEND,
+      namespace: env.COMPUTER_DO,
+      defaultExecTimeoutSeconds: configuration.SANDBOX_EXEC_TIMEOUT_SECONDS,
+      fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
+    }),
   };
 }
 
 /** The Hono app over D1 stores and session Durable Objects. Build once per isolate, on first request. */
 export async function createWorkersServerRuntime(env: Env) {
-  const { persistence, turnExecutor } = createWorkersRuntimeDeps(env);
+  const { persistence, turnExecutor, sandboxIntegration } = createWorkersRuntimeDeps(env);
   const logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'worker' } });
   return createServerRuntime({
     persistence,
     logger,
-    sandboxIntegration: undefined,
+    sandboxIntegration,
     clientCertificateMiddleware: undefined,
     authenticator: new OidcAuthenticator(),
     authorizer: new TrueForgeAuthorizer(),

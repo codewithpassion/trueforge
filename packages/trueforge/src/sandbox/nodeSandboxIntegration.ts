@@ -49,6 +49,8 @@ export function createNodeSandboxIntegration({
     },
     // Never in TrueFoundry mode: that mode is distributed-only.
     isLocalFallbackEnabled: () => configuration.RUNTIME === 'standalone' && localSupport?.supported === true,
+    isSkillMountingSupported: () => true,
+    isDaytonaSettingsSupported: () => true,
     checkSnapshotStatus,
     createDaytonaProvider: toDaytonaSandboxProvider,
     isDaytonaAuthError,

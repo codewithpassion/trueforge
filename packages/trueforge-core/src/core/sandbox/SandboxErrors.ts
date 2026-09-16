@@ -20,8 +20,9 @@ export class SandboxFileNotFoundError extends SandboxError {
 export class SandboxNotAvailableError extends SandboxError {
   readonly statusCode = 410;
 
-  constructor(sandboxId: string) {
-    super(`Sandbox '${sandboxId}' no longer exists — it may have been auto-deleted`);
+  /** `options.cause` carries the transport failure a provider classified as a gone sandbox. */
+  constructor(sandboxId: string, options?: ErrorOptions) {
+    super(`Sandbox '${sandboxId}' no longer exists — it may have been auto-deleted`, options);
     this.name = 'SandboxNotAvailableError';
   }
 }
