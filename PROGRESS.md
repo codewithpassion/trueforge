@@ -4,6 +4,38 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 18 — Phase 7a steps 9 and 10: the live deploy, the acceptance test and the verdict (2026-09-16)
+
+**Goal:** Deploy the Computer sandbox live, run the 7a.9 list in both turn modes, and decide go or no-go against Section 6 of `docs/cloudflare-workers-sandbox-plan.md`.
+
+**What we did:**
+
+- Set `TRUEFORGE_SANDBOX_BACKEND=cloudflare-computer` in `wrangler.jsonc` vars and deployed `trueforge.rockyshoreslabs.io` (Worker version `98fa9ab0`). Containers provisioned without complaint, `workers/computer.Dockerfile` built and pushed as `trueforge-computerdo`, `instance_type: standard-2` resolved to 1 vCPU / 6 GiB / 12 GB disk. Bundle 5462 KiB, 996 KiB gzip, startup 230 ms. The remote D1 migration `0002_integration.sql` applied first. `wrangler tail --format json` ran across the whole test window: 328 invocations, zero exceptions.
+- **One blocker had to be fixed before any turn could run.** With the var set, `GET /api/v1/capabilities` reported the sandbox on while `POST /api/v1/agents` with `sandbox.enabled` answered 422 "no sandbox provider is configured". The integration now reports that a sandbox needs no stored record, and a Workers test drives the real validator.
+- **Every 7a.9 item passed, once streaming and once not:** `python3 --version` (3.13.15), `ls -la /workspace`, write-then-read a file, a second turn reading it back (312 ms, no new sandbox), the large tool-result offload read back with `exec`, a non-inline upload into `/workspace/uploads`, a byte-identical turn file download (172 ms), a sandbox plus one MCP server called directly, and 20 consecutive execs with no `pending` and none lost.
+- Measured: cold start plus first exec 4.6 to 5.8 s one container at a time, 8.7 to 12.1 s with three starting at once; warm exec median 171 ms over 20 samples (min 167, max 257); `ComputerDO` CPU median 3 ms, wall up to 326 s; the 1 MiB exec output cap never reached.
+- Probed the failures on purpose: six concurrent sessions against `max_instances: 5` to capture the no-capacity error shape, and a non-zero exit to check the status mapping. The second one found a real bug (below).
+- Wrote Section 9 (the acceptance test) and Section 10 (the verdict) of the sandbox plan and flipped the status line. **Verdict: go, continue to 7b with Cloudflare Computer** — all four Section 6 criteria met, none of the switch-to-B conditions fired.
+- Two must-fix items carry into 7b as its first commits: map a non-zero exit to `{ success: true, exitCode }`, and map the instance-limit failure to a message that names the limit.
+
+**Lessons learned:**
+
+- **"All pass" is partly masked by a real bug.** Computer sets `result.status` to `failed` whenever a command exits non-zero, so `CloudflareComputerProvider.exec` maps `ls /nope` to `{ success: false, error: "Sandbox exec did not run: …" }` and drops the exit code — an agent on Workers reads an ordinary shell error as a broken sandbox. The Node providers return `{ success: true, response: { exitCode, result } }` for the same command. The acceptance items passed only because the output text still reaches the model.
+- **Two definitions of "configured" had drifted.** `capabilities.ts` asks `checkSnapshotStatus()`, which the Workers integration answers `ready`; `validateAgentSpec` in `sessionResources.ts` requires a sandbox-provider row or `isLocalFallbackEnabled()`. The Workers workspace comes from a deploy var and never has a row, so every sandbox-enabled agent was rejected while the capability endpoint said yes. `isLocalFallbackEnabled` now reads wrong on Workers and wants renaming.
+- **A test that bypasses the validator cannot find a validator bug.** `tests/workers/sandboxTurn.test.ts` writes its session straight to the store, so it was green through all of this.
+- **The Containers application takes about three minutes to go from `provisioning` to `ready` after a first deploy.** Cold-start numbers taken before that measure image distribution, not container start.
+- **`ComputerDO` costs almost no CPU and a lot of wall clock** — 326 s active for about 8 ms of CPU, because the object is held while the session works. Durable Object duration bills on wall time, so 7d must size it alongside the Containers vCPU bill rather than assuming the container dominates. The 10-minute inactivity timeout also keeps containers `active` minutes past their last exec, holding instance slots.
+- **The no-capacity failure names the limit, but badly.** `Maximum number of running container instances exceeded` arrives at the tail of a transport string that opens with a health-check timeout at `stage=health port=8080`. The turn does not crash: sandbox init fails twice and the turn finishes `done` with the agent reporting the transport error.
+- **Context7 rarely trips the tool-result offload on its own.** One `query-docs` call is 2 to 7.5 KB (about 1900 tokens); eight parallel calls reached 36.8 KB and still wrote nothing. Twelve parallel calls cleared the 10000-token total threshold in both turn modes.
+
+**Avoid next time:**
+
+- Don't take cold-start measurements until the Containers application reports `ready`, or you are timing image distribution.
+- Don't trust `status` alone from a Computer exec — read `exitCode`, and treat `failed` as infrastructure only when the command never ran.
+- Don't let a capability endpoint and a request validator answer "is a sandbox configured" from different sources; one of them will lie on a deploy.
+- Don't ask for one large tool call to exercise the offload; ask for twelve parallel Context7 calls.
+- Clean up after a live acceptance run: agent `smoke-sandbox`, six sessions with Computer workspaces and their `/workspace` files are still on the deploy.
+
 ## Cycle 17 — Phase 7a: a Cloudflare Computer sandbox, steps 1 to 8 (2026-09-16)
 
 **Goal:** Run the Phase 7a spike from `docs/cloudflare-workers-sandbox-plan.md` — clear the workerd load gate, then build a container-backed sandbox provider for the Workers runtime behind a deploy variable. Step 9, the live acceptance test, and step 10, the spike report and go/no-go verdict, are still open; nothing in this cycle decides them.
