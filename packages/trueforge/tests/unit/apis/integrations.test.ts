@@ -166,7 +166,9 @@ describe('settings integrations router', () => {
       jsonInit('POST', { manifest: manifest({ auth: { bot_token: SECRET_REDACTION, signing_secret: 'real' } }) }),
     );
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: { message: 'Integration credentials are required' } });
+    expect(await response.json()).toMatchObject({
+      error: { message: expect.stringContaining('Integration credentials are required') },
+    });
   });
 
   it('returns 409 when the same channel account is connected twice', async () => {
@@ -218,6 +220,51 @@ describe('settings integrations router', () => {
 
     const stored = await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: data.id });
     expect(stored?.manifest.auth).toEqual({ bot_token: 'xoxb-rotated-token', signing_secret: SIGNING_SECRET });
+  });
+
+  it('refuses to move to another channel account with a redacted credential', async () => {
+    harness = await createHarness();
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const { data } = (await created.json()) as { data: Integration };
+
+    // Keeping the old workspace's token against a new workspace could never authenticate.
+    const response = await harness.settings.request(
+      `/${data.id}`,
+      jsonInit('PUT', {
+        manifest: manifest({
+          team_id: 'T0OTHER',
+          auth: {
+            bot_token: toRedactedSecretValue(BOT_TOKEN),
+            signing_secret: toRedactedSecretValue(SIGNING_SECRET),
+          },
+        }),
+      }),
+    );
+    expect(response.status).toBe(400);
+
+    const stored = await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: data.id });
+    expect(stored?.external_account_id).toBe('T0TEAM');
+    expect(stored?.manifest.auth).toEqual({ bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET });
+  });
+
+  it('allows moving to another channel account with real credentials', async () => {
+    harness = await createHarness();
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const { data } = (await created.json()) as { data: Integration };
+
+    const response = await harness.settings.request(
+      `/${data.id}`,
+      jsonInit('PUT', {
+        manifest: manifest({
+          team_id: 'T0OTHER',
+          auth: { bot_token: 'xoxb-other', signing_secret: 'other-secret' },
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const stored = await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: data.id });
+    expect(stored?.external_account_id).toBe('T0OTHER');
   });
 
   it('returns 404 for an unknown integration on GET and PUT', async () => {

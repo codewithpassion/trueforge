@@ -14,10 +14,11 @@ export interface TurnCompletionNotifierDeps<TTransaction> {
 /**
  * Posts the reply owed for a finished turn.
  *
- * Runs after the turn's event drain settles — in `turnRunner` on Node, inside the
- * alarm invocation that holds the turn on Workers — and again right after the router
- * writes the outbox row, which covers a turn that finished before that write landed.
- * The outbox `pending` guard is what makes both paths deliver at most once.
+ * Runs after the turn's event drain settles — in `turnRunner` on Node, inside the alarm
+ * invocation that holds the turn on Workers — and again after the router writes the outbox
+ * row, which covers a turn that finished before that write landed. Those two paths run in
+ * different isolates and can both see the same owed row, so the adapter is called only by
+ * the caller that wins `claimDelivery`, a single guarded `pending` -> `sending` write.
  *
  * Never throws: the drain must not fail because a channel is unreachable.
  */
@@ -35,14 +36,19 @@ export class TurnCompletionNotifier<TTransaction> {
     }
     const { integrationStore, adapters, logger } = this.#deps;
     try {
-      const delivery = await integrationStore.getPendingDelivery({ turn_id: turnId });
-      if (delivery === undefined) {
+      if ((await integrationStore.getPendingDelivery({ turn_id: turnId })) === undefined) {
         return;
       }
       const turn = await session.getTurn(turnId);
       const turnState = turn?.state;
       if (turnState === undefined || turnState.status === 'running') {
         // Not finished here; the drain that owns it delivers.
+        return;
+      }
+
+      // Past this point exactly one caller holds the row, so the channel is posted to once.
+      const delivery = await integrationStore.claimDelivery({ turn_id: turnId });
+      if (delivery === undefined) {
         return;
       }
 

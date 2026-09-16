@@ -62,6 +62,8 @@ interface Harness {
   integration: IntegrationRecord;
   router: IntegrationRouter<Kysely<Database>>;
   executor: RecordingTurnExecutor;
+  /** Awaits the flushes the router handed to `deferDelivery`, which a request would not wait on. */
+  flush: () => Promise<void>;
 }
 
 async function createHarness(options: { withAgent?: boolean } = {}): Promise<Harness> {
@@ -94,7 +96,11 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
 
   const logger = createLogger({ silent: true });
   const executor = new RecordingTurnExecutor(sessionStore);
+  const deferred: Promise<void>[] = [];
   const router = new IntegrationRouter({
+    deferDelivery: run => {
+      deferred.push(run());
+    },
     integrationStore,
     sessions: new Sessions({ sessionStore }),
     agentStore,
@@ -118,7 +124,16 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
     }),
     logger,
   });
-  return { db, integrationStore, integration, router, executor };
+  return {
+    db,
+    integrationStore,
+    integration,
+    router,
+    executor,
+    flush: async () => {
+      await Promise.all(deferred.splice(0));
+    },
+  };
 }
 
 describe('IntegrationRouter', () => {
@@ -205,11 +220,44 @@ describe('IntegrationRouter', () => {
     expect(deliveries).toHaveLength(2);
   });
 
-  it('reports a missing agent without starting a turn', async () => {
+  it('reports a missing agent without starting a turn, and releases the event', async () => {
     harness = await createHarness({ withAgent: false });
     const routed = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
 
     expect(routed).toEqual({ type: 'agent_not_found', agent_name: AGENT_NAME });
     expect(harness.executor.starts).toHaveLength(0);
+    // Nothing ran, so the channel's retry of the same event id must not look like a replay.
+    expect(await harness.db.selectFrom('integration_event').selectAll().execute()).toEqual([]);
+  });
+
+  it('releases the event when the turn cannot start, so the channel retry runs it', async () => {
+    harness = await createHarness();
+    harness.executor.failNextStart({
+      ok: false,
+      status: 409,
+      code: 'previous_turn_running',
+      message: 'previous turn is running',
+    });
+
+    const first = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    expect(first).toMatchObject({ type: 'turn_failed' });
+    expect(await harness.db.selectFrom('integration_event').selectAll().execute()).toEqual([]);
+
+    // The retry is a fresh event as far as dedupe is concerned, so the message is not lost.
+    const retry = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    expect(retry.type).toBe('started');
+    expect(harness.executor.starts).toHaveLength(2);
+  });
+
+  it("keeps the post-start flush out of the caller's path", async () => {
+    harness = await createHarness();
+    const routed = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    if (routed.type !== 'started') {
+      throw new Error('expected the turn to start');
+    }
+
+    // route() returned without waiting on delivery; the row is still owed until the flush runs.
+    expect(await harness.integrationStore.getPendingDelivery({ turn_id: routed.turn_id })).toBeDefined();
+    await harness.flush();
   });
 });

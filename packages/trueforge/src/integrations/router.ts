@@ -26,6 +26,11 @@ export interface IntegrationRouterDeps<TTransaction> {
   /** Stores bound to the integration's creator for the conversation's agent. */
   resolveTurnStores: (agent: AgentRecord) => TurnStores;
   notifier: TurnCompletionNotifier<TTransaction>;
+  /**
+   * Runs the post-start delivery flush outside the acknowledgement the channel is waiting on
+   * (`waitUntil` on Workers, unawaited on Node). It must not throw.
+   */
+  deferDelivery: (run: () => Promise<void>) => void;
   logger: Logger;
 }
 
@@ -53,8 +58,9 @@ export class IntegrationRouter<TTransaction> {
     const { integration, event } = input;
     const { integrationStore, sessions, agentStore, turnExecutor, resolveTurnStores, notifier, logger } = this.#deps;
 
+    const eventRowId = newId();
     const { recorded } = await integrationStore.recordEvent({
-      id: newId(),
+      id: eventRowId,
       tenant_id: integration.tenant_id,
       integration_id: integration.id,
       event_id: event.event_id,
@@ -63,9 +69,16 @@ export class IntegrationRouter<TTransaction> {
       return { type: 'duplicate' };
     }
 
+    // Nothing ran for this event yet, so its dedupe row must not outlive a failure: keeping it
+    // would make the channel's retry look like a replay and the message would be lost.
+    const release = async (): Promise<void> => {
+      await integrationStore.deleteEvent({ id: eventRowId });
+    };
+
     const agentName = integration.manifest.default_agent_name;
     const agent = await agentStore.getAgent({ tenant_id: integration.tenant_id, name: agentName });
     if (agent === undefined) {
+      await release();
       return { type: 'agent_not_found', agent_name: agentName };
     }
 
@@ -88,6 +101,7 @@ export class IntegrationRouter<TTransaction> {
       stores: resolveTurnStores(agent),
     });
     if (!started.ok) {
+      await release();
       logger.warn('Integration turn could not start', {
         integrationId: integration.id,
         sessionId: session.session_id,
@@ -111,9 +125,10 @@ export class IntegrationRouter<TTransaction> {
       });
     }
 
-    // A turn that finished before the outbox row landed has no drain left to deliver it.
-    // The row's `pending` guard keeps this from double-posting a still-running turn.
-    await notifier.deliverForTurn({ session, turn_id: started.turn.id });
+    // A turn that finished before the outbox row landed has no drain left to deliver it. The
+    // flush is deferred because it may post to the channel, which does not belong inside the
+    // acknowledgement window; `claimDelivery` keeps it from racing the drain hook.
+    this.#deps.deferDelivery(() => notifier.deliverForTurn({ session, turn_id: started.turn.id }));
 
     return { type: 'started', turn_id: started.turn.id, session_id: session.session_id };
   }

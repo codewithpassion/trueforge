@@ -1,5 +1,6 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
 import type { Sessions } from '@truefoundry/trueforge-core/agent-session';
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -38,6 +39,24 @@ function respond(c: Context, result: InboundRespond): Response {
 }
 
 /**
+ * Keeps the post-start delivery flush off the acknowledgement the channel is waiting on.
+ * Workers keeps the isolate alive with `waitUntil`; Node just lets the promise run.
+ */
+function deferOutsideResponse(c: Context, logger: Logger): (run: () => Promise<void>) => void {
+  return run => {
+    const settled = run().catch((error: unknown) => {
+      logger.error('Deferred integration delivery failed', extractErrorLogFields(error));
+    });
+    try {
+      // Hono throws rather than returning undefined when the runtime has no execution context.
+      c.executionCtx.waitUntil(settled);
+    } catch {
+      // Node has none; the promise runs on its own and logs its own failures.
+    }
+  };
+}
+
+/**
  * Channel ingress (mounted at /api/v1/integrations). No user auth runs here: the adapter
  * verifies the channel's own signature, and the tenant comes from the stored integration.
  */
@@ -55,6 +74,7 @@ export function createIntegrationEventsRouter<TTransaction>(deps: IntegrationEve
       sessions: deps.sessions,
       agentStore: deps.agentStore,
       turnExecutor: deps.turnExecutor,
+      deferDelivery: deferOutsideResponse(c, deps.logger),
       resolveTurnStores: (agent: AgentRecord) => ({
         agentStore: deps.agentStore,
         modelProviderStore: deps.resolveModelProviderStore(c, agent),
@@ -101,7 +121,14 @@ export function createIntegrationEventsRouter<TTransaction>(deps: IntegrationEve
       throw new HTTPException(422, { message: `Agent not found: ${routed.agent_name}` });
     }
     if (routed.type === 'turn_failed') {
-      throw new HTTPException(routed.failure.status, { message: routed.failure.message });
+      // Every executor failure is the same thing to the channel: this event could not run, and
+      // its dedupe row was released so a retry can. 422 is the route's declared answer for that.
+      deps.logger.warn('Integration ingress could not run the event', {
+        integrationId: integration.id,
+        status: routed.failure.status,
+        code: routed.failure.code,
+      });
+      throw new HTTPException(422, { message: routed.failure.message });
     }
     return c.body(null, 200);
   };

@@ -77,14 +77,16 @@ New tables, with the migration paired across Kysely SQLite and Postgres and D1 `
 - **`integration_event`:** `integration_id`, `event_id`, `received_at`.
   - Unique on (`integration_id`, `event_id`) for replay and retry dedupe.
   - Rows older than 24 hours are pruned by the `SchedulerDO` alarm on Workers and by the controller on Node.
-- **`integration_delivery`,** the outbox: `id`, `integration_id`, `conversation_key`, `turn_id`, `status` (`pending` | `sent` | `failed`), `attempts`, `last_error`, `created_at`, `updated_at`.
+- **`integration_delivery`,** the outbox: `id`, `integration_id`, `conversation_key`, `turn_id`, `status` (`pending` | `sending` | `sent` | `failed`), `attempts`, `last_error`, `created_at`, `updated_at`.
   - Unique on `turn_id`, so a turn delivers at most once per conversation.
+  - `pending` to `sending` is one guarded write and is the exactly-once gate: several callers can read the same owed row, but only the one that changes it posts to the channel.
+  - `attempts` and the partial `status = 'pending'` index exist for the I2 retry sweep; I1 counts the one attempt and settles the row.
 
 Writes that go together use the conditional-chain rule on D1 (port plan Section 4.2). Examples: the dedupe insert plus the session get-or-create, and the outbox row plus turn start.
 
 Schemas:
 
-- `IntegrationManifestSchema` is a `z.discriminatedUnion("type", [SlackIntegrationManifestSchema])`, with named `.openapi()` components and snake_case fields.
+- `IntegrationManifestSchema` carries a `type` discriminator and snake_case fields under named `.openapi()` components. While Slack is the only variant it names the Slack object directly: the repo forbids a one-member `oneOf`, so it becomes a `z.discriminatedUnion("type", …)` when a second channel lands (the same shape `SandboxProviderManifest` uses).
 - `SessionSourceSchema` gains the `integration` variant, and `SessionSourceType` gains `"integration"`.
 
 ### 2.4 API
@@ -211,7 +213,7 @@ Each phase follows the port process:
 
 ## 5. Rules
 
-- No casts, no `z.merge`, no inline nested object schemas, and `z.discriminatedUnion` for the manifest and the source.
+- No casts, no `z.merge`, no inline nested object schemas. `z.discriminatedUnion` for the session source, and for the manifest once it has a second variant — a single-variant union is a plain object alias.
 - Secrets never go in `wrangler.jsonc` vars or `.env` files. Slack credentials live in the integration record, which is redacted on read.
 - The ingress route never trusts path or body data for tenant selection beyond the stored integration record. The Slack `team_id` in the payload must match the manifest.
 - Ingress work before the `200` stays under 1 s on both runtimes. No model calls or MCP calls happen before the acknowledgement.
@@ -225,4 +227,5 @@ Each phase follows the port process:
 - **D1 query budget.** Each inbound event adds a few statements (dedupe, session, outbox) outside the turn. The turn budget is unchanged.
 - **Formatting.** Markdown-to-mrkdwn conversion loses tables and some formatting. Generative UI blocks are replaced with a text fallback.
 - **Multiple workspaces per tenant.** Supported by the unique key, but the settings UI in I2 shows one Slack integration.
+- **Ingress probing.** The ingress looks the integration up by the id in the URL before the adapter checks the signature, so an unauthenticated caller can tell a live integration id from a dead one. Acceptable while the id grants nothing on its own — the credentials live in the record and every event is signature-checked — but worth closing if ids ever become guessable.
 - **Code execution.** Sandbox features depend on Phase 7 (`docs/cloudflare-workers-sandbox-plan.md`). Slack turns follow the agent's sandbox settings on each runtime.

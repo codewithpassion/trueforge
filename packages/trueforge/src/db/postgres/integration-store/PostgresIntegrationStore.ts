@@ -1,7 +1,11 @@
+import { CreatedBySubjectSchema } from '@truefoundry/trueforge-core/agent-session';
 import { sql, type Kysely, type Selectable, type Transaction } from 'kysely';
 import {
   IntegrationConflictError,
+  parseStoredIntegrationManifest,
+  type ClaimDeliveryInput,
   type CreateIntegrationInput,
+  type DeleteIntegrationEventInput,
   type DeleteIntegrationInput,
   type EnqueueIntegrationDeliveryInput,
   type GetIntegrationByIdInput,
@@ -21,14 +25,15 @@ import { isUniqueViolation } from '../client';
 import { json, now } from '../sqlExpressions';
 import type { Database, IntegrationDeliveryTable, IntegrationTable } from '../types';
 
+/** Re-validates both persisted documents, so a row written under an older schema cannot leak through. */
 function toRecord(row: Selectable<IntegrationTable>): IntegrationRecord {
   return {
     id: row.id,
     tenant_id: row.tenant_id,
     type: row.type,
     external_account_id: row.external_account_id,
-    manifest: row.manifest,
-    created_by_subject: row.created_by_subject,
+    manifest: parseStoredIntegrationManifest(row.manifest),
+    created_by_subject: CreatedBySubjectSchema.parse(row.created_by_subject),
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
@@ -189,6 +194,11 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     return { recorded: inserted !== undefined };
   }
 
+  async deleteEvent(input: DeleteIntegrationEventInput, transaction?: Transaction<Database>): Promise<void> {
+    const db = transaction ?? this.#db;
+    await db.deleteFrom('integration_event').where('id', '=', input.id).execute();
+  }
+
   async pruneEvents(input: PruneIntegrationEventsInput, transaction?: Transaction<Database>): Promise<number> {
     const db = transaction ?? this.#db;
     const result = await db.deleteFrom('integration_event').where('received_at', '<', input.before).executeTakeFirst();
@@ -244,6 +254,25 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     return row === undefined ? undefined : toDeliveryRecord(row);
   }
 
+  /**
+   * The exactly-once gate. `status = 'pending'` in the WHERE means only one of several callers
+   * that all read the same pending row changes it, and only that caller gets a record back.
+   */
+  async claimDelivery(
+    input: ClaimDeliveryInput,
+    transaction?: Transaction<Database>,
+  ): Promise<IntegrationDeliveryRecord | undefined> {
+    const db = transaction ?? this.#db;
+    const row = await db
+      .updateTable('integration_delivery')
+      .set({ status: 'sending', attempts: sql<number>`attempts + 1`, updated_at: now() })
+      .where('turn_id', '=', input.turn_id)
+      .where('status', '=', 'pending')
+      .returningAll()
+      .executeTakeFirst();
+    return row === undefined ? undefined : toDeliveryRecord(row);
+  }
+
   async markDeliverySent(
     input: MarkDeliverySentInput,
     transaction?: Transaction<Database>,
@@ -251,9 +280,9 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     const db = transaction ?? this.#db;
     const row = await db
       .updateTable('integration_delivery')
-      .set({ status: 'sent', attempts: sql<number>`attempts + 1`, last_error: null, updated_at: now() })
+      .set({ status: 'sent', last_error: null, updated_at: now() })
       .where('id', '=', input.id)
-      .where('status', '=', 'pending')
+      .where('status', '=', 'sending')
       .returningAll()
       .executeTakeFirst();
     return row === undefined ? undefined : toDeliveryRecord(row);
@@ -266,14 +295,9 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     const db = transaction ?? this.#db;
     const row = await db
       .updateTable('integration_delivery')
-      .set({
-        status: 'failed',
-        attempts: sql<number>`attempts + 1`,
-        last_error: input.error,
-        updated_at: now(),
-      })
+      .set({ status: 'failed', last_error: input.error, updated_at: now() })
       .where('id', '=', input.id)
-      .where('status', '=', 'pending')
+      .where('status', '=', 'sending')
       .returningAll()
       .executeTakeFirst();
     return row === undefined ? undefined : toDeliveryRecord(row);

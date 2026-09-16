@@ -39,7 +39,12 @@ export interface IntegrationEventRecord {
   received_at: string;
 }
 
-export type IntegrationDeliveryStatus = 'pending' | 'sent' | 'failed';
+/**
+ * `pending` is owed, `sending` is claimed by one caller, `sent` and `failed` are terminal.
+ * The `pending` -> `sending` transition is the exactly-once gate: two callers can both read a
+ * pending row, but only one claim changes a row.
+ */
+export type IntegrationDeliveryStatus = 'pending' | 'sending' | 'sent' | 'failed';
 
 /** Outbox row: the reply owed to one conversation for one terminal turn. */
 export interface IntegrationDeliveryRecord {
@@ -145,6 +150,14 @@ export interface GetPendingDeliveryInput {
   turn_id: string;
 }
 
+export interface ClaimDeliveryInput {
+  turn_id: string;
+}
+
+export interface DeleteIntegrationEventInput {
+  id: string;
+}
+
 export interface MarkDeliverySentInput {
   id: string;
 }
@@ -181,6 +194,11 @@ export interface IIntegrationStore<TTransaction = never> {
    * drops the event either way.
    */
   recordEvent(input: RecordIntegrationEventInput, transaction?: TTransaction): Promise<{ recorded: boolean }>;
+  /**
+   * Releases an accepted event id so the channel's own retry can run it again. The caller uses
+   * this when nothing ran after the row was written, for example a turn that would not start.
+   */
+  deleteEvent(input: DeleteIntegrationEventInput, transaction?: TTransaction): Promise<void>;
   /** Drops dedupe rows past their retention window. Returns how many were removed. */
   pruneEvents(input: PruneIntegrationEventsInput, transaction?: TTransaction): Promise<number>;
 
@@ -190,20 +208,25 @@ export interface IIntegrationStore<TTransaction = never> {
    * already has a row, or when the integration no longer exists.
    */
   enqueueDelivery(input: EnqueueIntegrationDeliveryInput, transaction?: TTransaction): Promise<{ enqueued: boolean }>;
-  /** The turn's outbox row while it is still owed; undefined once it is sent or failed. */
+  /** The turn's outbox row while it is still owed; undefined once it is claimed, sent or failed. */
   getPendingDelivery(
     input: GetPendingDeliveryInput,
     transaction?: TTransaction,
   ): Promise<IntegrationDeliveryRecord | undefined>;
   /**
-   * Terminal transition out of `pending`, returning the settled row. A row that already left
-   * `pending` is untouched and reported as undefined.
+   * Takes the turn's reply for delivery: one guarded `pending` -> `sending` write that counts the
+   * attempt. Exactly one concurrent caller gets the row; the losers get undefined and post nothing.
+   */
+  claimDelivery(input: ClaimDeliveryInput, transaction?: TTransaction): Promise<IntegrationDeliveryRecord | undefined>;
+  /**
+   * Terminal transition out of `sending`, returning the settled row. A row this caller does not
+   * hold is untouched and reported as undefined.
    */
   markDeliverySent(
     input: MarkDeliverySentInput,
     transaction?: TTransaction,
   ): Promise<IntegrationDeliveryRecord | undefined>;
-  /** Terminal transition out of `pending` that records the attempt and the reason. */
+  /** Terminal transition out of `sending` that records the reason. */
   markDeliveryFailed(
     input: MarkDeliveryFailedInput,
     transaction?: TTransaction,

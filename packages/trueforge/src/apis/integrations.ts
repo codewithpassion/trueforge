@@ -18,9 +18,15 @@ import {
   type UpdateIntegrationRequest,
 } from '../schemas/integration';
 import { newId } from '../utils/id';
-import { MissingStoredSecretError, resolveStoredSecretValue, toRedactedSecretValue } from '../utils/secretRedaction';
+import {
+  isRedactedSecretValue,
+  MissingStoredSecretError,
+  resolveStoredSecretValue,
+  toRedactedSecretValue,
+} from '../utils/secretRedaction';
 
-const CREDENTIALS_REQUIRED_MESSAGE = 'Integration credentials are required';
+const CREDENTIALS_REQUIRED_MESSAGE =
+  'Integration credentials are required; send real values when the channel account changes';
 
 export interface IntegrationsRouterDeps<TTransaction> {
   resolveIntegrationStore: (c: Context) => IIntegrationStore<TTransaction>;
@@ -135,6 +141,15 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
           return undefined;
         }
         const manifest = resolveManifestForWrite({ incoming: body.manifest, existing: existing.manifest });
+        // Moving to another channel account with a redacted credential would silently copy the
+        // old account's secret onto the new one, which would never authenticate.
+        if (
+          integrationExternalAccountId(manifest) !== existing.external_account_id &&
+          (isRedactedSecretValue(body.manifest.auth.bot_token) ||
+            isRedactedSecretValue(body.manifest.auth.signing_secret))
+        ) {
+          throw new MissingStoredSecretError();
+        }
         return store.updateIntegration(
           {
             tenant_id: requestContext.tenant_id,

@@ -45,6 +45,17 @@ function createInput(overrides: Partial<CreateIntegrationInput> = {}): CreateInt
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
+/** One outbox row `del-1` owed to `turn-1`, the shape the delivery cases start from. */
+function enqueue(store: IIntegrationStore, integrationId: string): Promise<{ enqueued: boolean }> {
+  return store.enqueueDelivery({
+    id: 'del-1',
+    tenant_id: TENANT,
+    integration_id: integrationId,
+    conversation_key: 'slack:T:C:1',
+    turn_id: 'turn-1',
+  });
+}
+
 export function runIntegrationStoreContractSuite(getStore: () => IIntegrationStore): void {
   it('create round-trips the manifest and creator, and is readable by id', async () => {
     const store = getStore();
@@ -307,39 +318,77 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     ).toEqual({ enqueued: false });
   });
 
-  it('markDeliverySent takes the row out of pending exactly once', async () => {
+  it('claimDelivery takes the row once and counts the attempt', async () => {
     const store = getStore();
     const created = await store.createIntegration(createInput());
-    await store.enqueueDelivery({
-      id: 'del-1',
-      tenant_id: TENANT,
-      integration_id: created.id,
-      conversation_key: 'slack:T:C:1',
-      turn_id: 'turn-1',
-    });
+    await enqueue(store, created.id);
+
+    const claimed = await store.claimDelivery({ turn_id: 'turn-1' });
+    expect(claimed).toMatchObject({ id: 'del-1', status: 'sending', attempts: 1 });
+    // A claimed row is no longer owed, so a second caller has nothing to post.
+    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toBeUndefined();
+    expect(await store.claimDelivery({ turn_id: 'turn-1' })).toBeUndefined();
+  });
+
+  it('concurrent claims for one turn hand the row to exactly one caller', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await enqueue(store, created.id);
+
+    const claims = await Promise.all(Array.from({ length: 8 }, () => store.claimDelivery({ turn_id: 'turn-1' })));
+
+    expect(claims.filter(claim => claim !== undefined)).toHaveLength(1);
+  });
+
+  it('markDeliverySent settles the row this caller claimed', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await enqueue(store, created.id);
+    await store.claimDelivery({ turn_id: 'turn-1' });
 
     const sent = await store.markDeliverySent({ id: 'del-1' });
     expect(sent).toMatchObject({ status: 'sent', attempts: 1, last_error: null });
-    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toBeUndefined();
 
-    // A second terminal write finds nothing pending and leaves the row alone.
+    // A second terminal write finds nothing in flight and leaves the row alone.
     expect(await store.markDeliveryFailed({ id: 'del-1', error: 'late' })).toBeUndefined();
     expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toBeUndefined();
   });
 
-  it('markDeliveryFailed records the attempt and the reason', async () => {
+  it('markDeliveryFailed records the reason on the row this caller claimed', async () => {
     const store = getStore();
     const created = await store.createIntegration(createInput());
-    await store.enqueueDelivery({
-      id: 'del-1',
-      tenant_id: TENANT,
-      integration_id: created.id,
-      conversation_key: 'slack:T:C:1',
-      turn_id: 'turn-1',
-    });
+    await enqueue(store, created.id);
+    await store.claimDelivery({ turn_id: 'turn-1' });
 
     const failed = await store.markDeliveryFailed({ id: 'del-1', error: 'no adapter for slack' });
     expect(failed).toMatchObject({ status: 'failed', attempts: 1, last_error: 'no adapter for slack' });
     expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toBeUndefined();
+  });
+
+  it('a terminal write without a claim changes nothing', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await enqueue(store, created.id);
+
+    expect(await store.markDeliverySent({ id: 'del-1' })).toBeUndefined();
+    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toMatchObject({ status: 'pending', attempts: 0 });
+  });
+
+  it('deleteEvent releases the event id so the channel retry runs again', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    const event = { tenant_id: TENANT, integration_id: created.id, event_id: 'Ev-release' };
+
+    expect(await store.recordEvent({ id: 'event-1', ...event })).toEqual({ recorded: true });
+    expect(await store.recordEvent({ id: 'event-2', ...event })).toEqual({ recorded: false });
+
+    await store.deleteEvent({ id: 'event-1' });
+
+    expect(await store.recordEvent({ id: 'event-3', ...event })).toEqual({ recorded: true });
+  });
+
+  it('deleteEvent is idempotent', async () => {
+    const store = getStore();
+    await expect(store.deleteEvent({ id: 'missing' })).resolves.toBeUndefined();
   });
 }

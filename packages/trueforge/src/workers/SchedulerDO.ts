@@ -6,13 +6,16 @@ import configuration from '../config';
 import { dispatchScheduledRuns, SCHEDULE_DISPATCH_INTERVAL_MS } from '../controller/scheduleDispatch';
 import { executeScheduleRun } from '../controller/scheduleRunExecution';
 import type { ScheduleDispatchItem } from '../db/scheduleStore';
-import { pruneIntegrationEvents } from '../integrations/pruneEvents';
+import { INTEGRATION_EVENT_PRUNE_INTERVAL_MS, pruneIntegrationEvents } from '../integrations/pruneEvents';
 import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { createConsoleLogger } from './logger';
 import { createWorkersRuntimeDeps, type WorkersRuntimeDeps } from './runtime';
 
 /** The one scheduler instance: `idFromName(SCHEDULER_INSTANCE_NAME)`. */
 export const SCHEDULER_INSTANCE_NAME = 'singleton';
+
+/** Durable Object storage key holding the last integration-event sweep time, in epoch ms. */
+const LAST_INTEGRATION_PRUNE_KEY = 'last_integration_prune_at';
 
 /**
  * Schedule dispatch on Workers. Dispatch requires exactly one controller per database; a single named
@@ -45,11 +48,7 @@ export class SchedulerDO extends DurableObject {
       if (result.dispatched > 0 || result.failed > 0) {
         this.#logger.debug('Scheduled runs dispatched or failed', result);
       }
-      // The singleton is the one place a database-wide sweep can run without overlapping itself.
-      await pruneIntegrationEvents({
-        integrationStore: this.#runtimeDeps().persistence.integrationStore,
-        logger: this.#logger,
-      });
+      await this.#pruneIntegrationEventsIfDue();
     } catch (error) {
       // Per-run failures are handled inside the pass; this is a pass that could not run at all.
       this.#logger.error('Schedule dispatch pass failed', extractErrorLogFields(error));
@@ -57,6 +56,23 @@ export class SchedulerDO extends DurableObject {
       clearTimeout(budget);
       await this.ctx.storage.setAlarm(Date.now() + SCHEDULE_DISPATCH_INTERVAL_MS);
     }
+  }
+
+  /**
+   * The singleton is the one place a database-wide sweep can run without overlapping itself, but
+   * dispatch wakes every minute, so the last sweep time is kept in storage to keep it hourly.
+   */
+  async #pruneIntegrationEventsIfDue(): Promise<void> {
+    const now = Date.now();
+    const last = await this.ctx.storage.get<number>(LAST_INTEGRATION_PRUNE_KEY);
+    if (last !== undefined && now - last < INTEGRATION_EVENT_PRUNE_INTERVAL_MS) {
+      return;
+    }
+    await this.ctx.storage.put(LAST_INTEGRATION_PRUNE_KEY, now);
+    await pruneIntegrationEvents({
+      integrationStore: this.#runtimeDeps().persistence.integrationStore,
+      logger: this.#logger,
+    });
   }
 
   /** Throws when the turn cannot start, so dispatch records the run as failed. */

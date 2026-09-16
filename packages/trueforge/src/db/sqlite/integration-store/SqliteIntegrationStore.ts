@@ -1,9 +1,12 @@
-import type { CreatedBySubject } from '@truefoundry/trueforge-core/agent-session';
+import { CreatedBySubjectSchema } from '@truefoundry/trueforge-core/agent-session';
 import { sql, type ExpressionBuilder, type Kysely } from 'kysely';
-import type { IntegrationManifest } from '../../../schemas/integration';
+import type { IntegrationType } from '../../../schemas/integration';
 import {
   IntegrationConflictError,
+  parseStoredIntegrationManifest,
+  type ClaimDeliveryInput,
   type CreateIntegrationInput,
+  type DeleteIntegrationEventInput,
   type DeleteIntegrationInput,
   type EnqueueIntegrationDeliveryInput,
   type GetIntegrationByIdInput,
@@ -31,11 +34,31 @@ function integrationColumns(eb: ExpressionBuilder<Database, 'integration'>) {
     'tenant_id' as const,
     'type' as const,
     'external_account_id' as const,
-    jsonText<IntegrationManifest>(eb.ref('manifest')).as('manifest'),
-    jsonText<CreatedBySubject>(eb.ref('created_by_subject')).as('created_by_subject'),
+    jsonText<unknown>(eb.ref('manifest')).as('manifest'),
+    jsonText<unknown>(eb.ref('created_by_subject')).as('created_by_subject'),
     'created_at' as const,
     'updated_at' as const,
   ];
+}
+
+interface IntegrationRow {
+  id: string;
+  tenant_id: string;
+  type: IntegrationType;
+  external_account_id: string;
+  manifest: unknown;
+  created_by_subject: unknown;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Re-validates both persisted documents, so a row written under an older schema cannot leak through. */
+function toRecord(row: IntegrationRow): IntegrationRecord {
+  return {
+    ...row,
+    manifest: parseStoredIntegrationManifest(row.manifest),
+    created_by_subject: CreatedBySubjectSchema.parse(row.created_by_subject),
+  };
 }
 
 const DELIVERY_COLUMNS = [
@@ -62,13 +85,14 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
 
   async listIntegrations(input: ListIntegrationsInput, transaction?: Kysely<Database>): Promise<IntegrationRecord[]> {
     const db = transaction ?? this.#db;
-    return await db
+    const rows = await db
       .selectFrom('integration')
       .select(integrationColumns)
       .where('tenant_id', '=', input.tenant_id)
       .orderBy('created_at')
       .orderBy('id')
       .execute();
+    return rows.map(toRecord);
   }
 
   async getIntegration(
@@ -76,12 +100,13 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     transaction?: Kysely<Database>,
   ): Promise<IntegrationRecord | undefined> {
     const db = transaction ?? this.#db;
-    return await db
+    const row = await db
       .selectFrom('integration')
       .select(integrationColumns)
       .where('tenant_id', '=', input.tenant_id)
       .where('id', '=', input.id)
       .executeTakeFirst();
+    return row === undefined ? undefined : toRecord(row);
   }
 
   async getIntegrationById(
@@ -89,14 +114,19 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     transaction?: Kysely<Database>,
   ): Promise<IntegrationRecord | undefined> {
     const db = transaction ?? this.#db;
-    return await db.selectFrom('integration').select(integrationColumns).where('id', '=', input.id).executeTakeFirst();
+    const row = await db
+      .selectFrom('integration')
+      .select(integrationColumns)
+      .where('id', '=', input.id)
+      .executeTakeFirst();
+    return row === undefined ? undefined : toRecord(row);
   }
 
   async createIntegration(input: CreateIntegrationInput, transaction?: Kysely<Database>): Promise<IntegrationRecord> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
     try {
-      return await db
+      const row = await db
         .insertInto('integration')
         .values({
           id: input.id,
@@ -110,6 +140,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
         })
         .returning(integrationColumns)
         .executeTakeFirstOrThrow();
+      return toRecord(row);
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new IntegrationConflictError(
@@ -127,7 +158,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
   ): Promise<IntegrationRecord | undefined> {
     const db = transaction ?? this.#db;
     try {
-      return await db
+      const row = await db
         .updateTable('integration')
         .set({
           external_account_id: input.external_account_id,
@@ -138,6 +169,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
         .where('id', '=', input.id)
         .returning(integrationColumns)
         .executeTakeFirst();
+      return row === undefined ? undefined : toRecord(row);
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new IntegrationConflictError(
@@ -185,6 +217,11 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .compile();
     const [insert] = await this.#atomic.batchWrite({ executor: db, queries: [query] });
     return { recorded: (insert?.changes ?? 0) > 0 };
+  }
+
+  async deleteEvent(input: DeleteIntegrationEventInput, transaction?: Kysely<Database>): Promise<void> {
+    const db = transaction ?? this.#db;
+    await db.deleteFrom('integration_event').where('id', '=', input.id).execute();
   }
 
   async pruneEvents(input: PruneIntegrationEventsInput, transaction?: Kysely<Database>): Promise<number> {
@@ -235,6 +272,24 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .executeTakeFirst();
   }
 
+  /**
+   * The exactly-once gate. `status = 'pending'` in the WHERE means only one of several callers
+   * that all read the same pending row changes it, and only that caller gets a record back.
+   */
+  async claimDelivery(
+    input: ClaimDeliveryInput,
+    transaction?: Kysely<Database>,
+  ): Promise<IntegrationDeliveryRecord | undefined> {
+    const db = transaction ?? this.#db;
+    return await db
+      .updateTable('integration_delivery')
+      .set({ status: 'sending', attempts: sql<number>`attempts + 1`, updated_at: nowIso() })
+      .where('turn_id', '=', input.turn_id)
+      .where('status', '=', 'pending')
+      .returning([...DELIVERY_COLUMNS])
+      .executeTakeFirst();
+  }
+
   async markDeliverySent(
     input: MarkDeliverySentInput,
     transaction?: Kysely<Database>,
@@ -242,9 +297,9 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     const db = transaction ?? this.#db;
     return await db
       .updateTable('integration_delivery')
-      .set({ status: 'sent', attempts: sql<number>`attempts + 1`, last_error: null, updated_at: nowIso() })
+      .set({ status: 'sent', last_error: null, updated_at: nowIso() })
       .where('id', '=', input.id)
-      .where('status', '=', 'pending')
+      .where('status', '=', 'sending')
       .returning([...DELIVERY_COLUMNS])
       .executeTakeFirst();
   }
@@ -256,14 +311,9 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     const db = transaction ?? this.#db;
     return await db
       .updateTable('integration_delivery')
-      .set({
-        status: 'failed',
-        attempts: sql<number>`attempts + 1`,
-        last_error: input.error,
-        updated_at: nowIso(),
-      })
+      .set({ status: 'failed', last_error: input.error, updated_at: nowIso() })
       .where('id', '=', input.id)
-      .where('status', '=', 'pending')
+      .where('status', '=', 'sending')
       .returning([...DELIVERY_COLUMNS])
       .executeTakeFirst();
   }

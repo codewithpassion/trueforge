@@ -206,6 +206,42 @@ describe('TurnCompletionNotifier on Node', () => {
     expect(fake.delivered).toHaveLength(1);
   });
 
+  it('two flushes racing for one turn post exactly once', async () => {
+    harness = await createHarness();
+    const fake = fakeChannelAdapter();
+    const notifier = new TurnCompletionNotifier({
+      integrationStore: harness.integrationStore,
+      adapters: fake.adapters,
+      logger: createLogger({ silent: true }),
+    });
+    await harness.integrationStore.enqueueDelivery({
+      id: 'del-1',
+      tenant_id: TENANT,
+      integration_id: harness.integrationId,
+      conversation_key: CONVERSATION_KEY,
+      turn_id: TURN_ID,
+    });
+    // Finish the turn first so both callers get past the terminal-state check together.
+    const state = makeDoneTurnState();
+    await harness.sessionStore.updateTurnState({
+      session_id: SESSION_ID,
+      turn_id: TURN_ID,
+      state,
+      turn_done_event: makeTurnDoneEvent(state),
+    });
+    const session = await sessionHandle(harness);
+    if (session === undefined) {
+      throw new Error('session was not created');
+    }
+
+    // The drain hook and the router's post-start flush run in different isolates in production.
+    await Promise.all(Array.from({ length: 4 }, () => notifier.deliverForTurn({ session, turn_id: TURN_ID })));
+
+    expect(fake.delivered).toHaveLength(1);
+    const [row] = await harness.db.selectFrom('integration_delivery').selectAll().execute();
+    expect(row).toMatchObject({ status: 'sent', attempts: 1 });
+  });
+
   it('records "no adapter" on the outbox row when the type has none registered', async () => {
     harness = await createHarness();
     const notifier = new TurnCompletionNotifier({

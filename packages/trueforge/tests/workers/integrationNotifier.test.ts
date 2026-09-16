@@ -1,7 +1,10 @@
-import { AgentSpecSchema, type CreatedBySubject } from '@truefoundry/trueforge-core/agent-session';
+import { AgentSpecSchema, Sessions, type CreatedBySubject } from '@truefoundry/trueforge-core/agent-session';
 import { runInDurableObject } from 'cloudflare:test';
+import { createIntegrationAdapters } from '../../src/integrations/registry';
+import { TurnCompletionNotifier } from '../../src/integrations/TurnCompletionNotifier';
 import type { Delivery } from '../../src/integrations/types';
 import type { IntegrationManifest } from '../../src/schemas/integration';
+import { createConsoleLogger } from '../../src/workers/logger';
 import { d1Persistence, migrateDatabase, sessionStub, TENANT_ID, upsertMockProvider, USER_REF } from './harness';
 
 /** Deliveries the fake Slack adapter was asked to post, from inside the Durable Object. */
@@ -119,6 +122,58 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
 
     const turn = await d1Persistence().sessionStore.getTurn({ session_id: sessionId, turn_id: started.turn.id });
     expect(turn?.state.status).toBe('done');
+    expect(await stores.integrationStore.getPendingDelivery({ turn_id: started.turn.id })).toBeUndefined();
+  });
+
+  it('two flushes racing for one turn post exactly once on D1', async () => {
+    const sessionId = 'integration-delivery-race';
+    const conversationKey = 'slack:T0TEAM:C0GENERAL:1700000000.000200';
+    const { stores, integrationId } = await createIntegrationSession({
+      sessionId,
+      scenario: 'text',
+      conversationKey,
+    });
+    const stub = sessionStub(sessionId);
+
+    const started = await stub.startTurn({
+      tenant_id: TENANT_ID,
+      session_id: sessionId,
+      input: [{ type: 'user.message', content: 'hi' }],
+      previous_turn_id: undefined,
+      user_ref: USER_REF,
+    });
+    if (!started.ok) {
+      throw new Error(`startTurn failed: ${started.code} ${started.message}`);
+    }
+    // Nothing is owed while the turn runs, so the alarm's own flush posts nothing.
+    await runInDurableObject(stub, instance => instance.alarm());
+    expect(delivered).toHaveLength(0);
+
+    await stores.integrationStore.enqueueDelivery({
+      id: 'del-race',
+      tenant_id: TENANT_ID,
+      integration_id: integrationId,
+      conversation_key: conversationKey,
+      turn_id: started.turn.id,
+    });
+    const session = await new Sessions({ sessionStore: stores.sessionStore }).get({
+      tenant_id: TENANT_ID,
+      session_id: sessionId,
+    });
+    if (session === undefined) {
+      throw new Error('session was not created');
+    }
+    const notifier = new TurnCompletionNotifier({
+      integrationStore: stores.integrationStore,
+      adapters: createIntegrationAdapters(),
+      logger: createConsoleLogger({ level: 'error', bindings: {} }),
+    });
+
+    // The drain hook and the router's post-start flush run in different isolates in production;
+    // only the D1 claim keeps them from both posting.
+    await Promise.all(Array.from({ length: 4 }, () => notifier.deliverForTurn({ session, turn_id: started.turn.id })));
+
+    expect(delivered).toHaveLength(1);
     expect(await stores.integrationStore.getPendingDelivery({ turn_id: started.turn.id })).toBeUndefined();
   });
 
