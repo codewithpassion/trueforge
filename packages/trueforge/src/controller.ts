@@ -2,9 +2,11 @@ import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { fetch as undiciFetch, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
 import { Controller } from './controller/Controller';
 import { createHttpScheduleRunExecutor, scheduleDispatchLoop } from './controller/scheduleDispatch';
+import type { IIntegrationStore } from './db/integrationStore';
 import type { IScheduleStore } from './db/scheduleStore';
 import type { WithTransaction } from './db/transaction';
 import { createTlsDispatcher, normalizeTlsUrl, type TlsOptions } from './http/tls';
+import { integrationEventPruneLoop } from './integrations/pruneEvents';
 
 /** Resolves `fetch`'s first argument (`string | URL | Request`) to a URL string. */
 function requestUrlFromFetchInput(input: Parameters<typeof fetch>[0]): string {
@@ -73,6 +75,7 @@ export interface ControllerServerTarget {
 export function createController<TTransaction>(
   params: ControllerServerTarget & {
     scheduleStore: IScheduleStore<TTransaction>;
+    integrationStore: IIntegrationStore<TTransaction>;
     withTransaction: WithTransaction<TTransaction>;
     logger: Logger;
   },
@@ -80,6 +83,10 @@ export function createController<TTransaction>(
   const { tls } = params;
   return new Controller({
     loops: [
+      integrationEventPruneLoop({
+        integrationStore: params.integrationStore,
+        logger: params.logger,
+      }),
       scheduleDispatchLoop({
         scheduleStore: params.scheduleStore,
         withTransaction: params.withTransaction,
@@ -101,6 +108,7 @@ export function createController<TTransaction>(
 export function runController<TTransaction>(
   params: ControllerServerTarget & {
     scheduleStore: IScheduleStore<TTransaction>;
+    integrationStore: IIntegrationStore<TTransaction>;
     withTransaction: WithTransaction<TTransaction>;
     logger: Logger;
     gracefulTimeoutSeconds: number;

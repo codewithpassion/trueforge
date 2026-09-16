@@ -15,6 +15,7 @@
 import configuration from './config';
 import { runController } from './controller';
 import { createDb } from './db/postgres/client';
+import { PostgresIntegrationStore } from './db/postgres/integration-store/PostgresIntegrationStore';
 import { PostgresScheduleStore } from './db/postgres/schedule-store/PostgresScheduleStore';
 import { createControllerLogger } from './logger';
 import { PACKAGE_VERSION } from './packageVersion.gen';
@@ -51,6 +52,7 @@ try {
 
   runController({
     scheduleStore: new PostgresScheduleStore(db),
+    integrationStore: new PostgresIntegrationStore(db),
     withTransaction: callback => db.transaction().execute(callback),
     logger,
     serverUrl: configuration.SERVER_URL,

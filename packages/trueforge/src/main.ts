@@ -484,6 +484,7 @@ async function createNodeServerRuntime<TTransaction>(options: {
   const controller = configuration.STANDALONE
     ? createController({
         scheduleStore,
+        integrationStore: persistence.integrationStore,
         withTransaction,
         logger,
         serverUrl: configuration.SERVER_URL,

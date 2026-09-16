@@ -6,6 +6,7 @@ import configuration from '../config';
 import { dispatchScheduledRuns, SCHEDULE_DISPATCH_INTERVAL_MS } from '../controller/scheduleDispatch';
 import { executeScheduleRun } from '../controller/scheduleRunExecution';
 import type { ScheduleDispatchItem } from '../db/scheduleStore';
+import { pruneIntegrationEvents } from '../integrations/pruneEvents';
 import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { createConsoleLogger } from './logger';
 import { createWorkersRuntimeDeps, type WorkersRuntimeDeps } from './runtime';
@@ -44,6 +45,11 @@ export class SchedulerDO extends DurableObject {
       if (result.dispatched > 0 || result.failed > 0) {
         this.#logger.debug('Scheduled runs dispatched or failed', result);
       }
+      // The singleton is the one place a database-wide sweep can run without overlapping itself.
+      await pruneIntegrationEvents({
+        integrationStore: this.#runtimeDeps().persistence.integrationStore,
+        logger: this.#logger,
+      });
     } catch (error) {
       // Per-run failures are handled inside the pass; this is a pass that could not run at all.
       this.#logger.error('Schedule dispatch pass failed', extractErrorLogFields(error));
