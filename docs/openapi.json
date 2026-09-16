@@ -1007,6 +1007,18 @@
         ],
         "type": "object"
       },
+      "CreateIntegrationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/IntegrationManifest"
+          }
+        },
+        "required": [
+          "manifest"
+        ],
+        "type": "object"
+      },
       "CreateMCPServerRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1223,6 +1235,10 @@
         "properties": {},
         "type": "object"
       },
+      "DeleteIntegrationResponse": {
+        "properties": {},
+        "type": "object"
+      },
       "DeleteScheduleResponse": {
         "properties": {},
         "type": "object"
@@ -1394,6 +1410,17 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/CapabilitiesData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "GetIntegrationResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Integration"
           }
         },
         "required": [
@@ -2129,6 +2156,108 @@
         ],
         "type": "object"
       },
+      "Integration": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "description": "ISO 8601 creation timestamp.",
+            "type": "string"
+          },
+          "created_by_subject": {
+            "$ref": "#/components/schemas/CreatedBySubject"
+          },
+          "external_account_id": {
+            "description": "Channel-side account this integration is bound to.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Immutable integration id.",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/IntegrationManifest"
+          },
+          "type": {
+            "$ref": "#/components/schemas/IntegrationType"
+          },
+          "updated_at": {
+            "description": "ISO 8601 last-update timestamp.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "external_account_id",
+          "manifest",
+          "created_by_subject",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "IntegrationManifest": {
+        "additionalProperties": false,
+        "description": "Channel connection document. Credentials are redacted on read.",
+        "properties": {
+          "allow_direct_messages": {
+            "description": "Whether direct messages to the bot are answered.",
+            "type": "boolean"
+          },
+          "allowed_channel_ids": {
+            "description": "Channels the bot answers in. An empty list allows no channel.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "auth": {
+            "$ref": "#/components/schemas/SlackIntegrationAuth"
+          },
+          "bot_user_id": {
+            "description": "User id of the bot, used to ignore its own messages.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "default_agent_name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
+          "reply_mode": {
+            "$ref": "#/components/schemas/SlackReplyMode"
+          },
+          "team_id": {
+            "description": "Slack workspace (team) id this integration is bound to.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "description": "Slack workspace connection.",
+            "enum": [
+              "slack"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "team_id",
+          "bot_user_id",
+          "default_agent_name",
+          "allowed_channel_ids",
+          "allow_direct_messages",
+          "reply_mode",
+          "auth"
+        ],
+        "type": "object"
+      },
+      "IntegrationType": {
+        "description": "Channel type.",
+        "enum": [
+          "slack"
+        ],
+        "type": "string"
+      },
       "LargeToolResponseConfig": {
         "default": {
           "enabled": true
@@ -2193,6 +2322,20 @@
           "data": {
             "items": {
               "$ref": "#/components/schemas/AvailableSkill"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ListIntegrationsResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Integration"
             },
             "type": "array"
           }
@@ -4285,23 +4428,36 @@
         "type": "object"
       },
       "SessionSource": {
+        "description": "How this session was created (a schedule run or an integration). Null for interactive sessions.",
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SessionSourceSchedule"
+          },
+          {
+            "$ref": "#/components/schemas/SessionSourceIntegration"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "SessionSourceIntegration": {
         "additionalProperties": false,
-        "description": "How this session was created (e.g. a schedule run). Null for interactive sessions.",
         "properties": {
-          "id": {
-            "description": "Schedule id.",
+          "conversation_key": {
+            "description": "Stable key of the channel conversation this session mirrors.",
             "minLength": 1,
             "type": "string"
           },
-          "run_id": {
-            "description": "Schedule run id.",
+          "id": {
+            "description": "Integration id.",
             "minLength": 1,
             "type": "string"
           },
           "type": {
-            "description": "Session was created by a schedule run.",
+            "description": "Session was created by an integration.",
             "enum": [
-              "schedule"
+              "integration"
             ],
             "type": "string"
           }
@@ -4309,12 +4465,9 @@
         "required": [
           "type",
           "id",
-          "run_id"
+          "conversation_key"
         ],
-        "type": [
-          "object",
-          "null"
-        ]
+        "type": "object"
       },
       "SessionSourceSchedule": {
         "additionalProperties": false,
@@ -4347,7 +4500,8 @@
       "SessionSourceType": {
         "description": "When set, returns only sessions created by this source type.",
         "enum": [
-          "schedule"
+          "schedule",
+          "integration"
         ],
         "type": "string"
       },
@@ -4444,6 +4598,34 @@
           "version"
         ],
         "type": "object"
+      },
+      "SlackIntegrationAuth": {
+        "additionalProperties": false,
+        "description": "Slack app credentials.",
+        "properties": {
+          "bot_token": {
+            "description": "Slack bot user OAuth token. Responses are redacted; on PUT, a real value sets/rotates and a redacted value keeps the stored token.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "signing_secret": {
+            "description": "Slack app signing secret used to verify request signatures. Responses are redacted; on PUT, a real value sets/rotates and a redacted value keeps the stored secret.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot_token",
+          "signing_secret"
+        ],
+        "type": "object"
+      },
+      "SlackReplyMode": {
+        "description": "Where replies are posted.",
+        "enum": [
+          "thread"
+        ],
+        "type": "string"
       },
       "TextContent": {
         "properties": {
@@ -5405,6 +5587,18 @@
           },
           "manifest": {
             "$ref": "#/components/schemas/AgentSpec"
+          }
+        },
+        "required": [
+          "manifest"
+        ],
+        "type": "object"
+      },
+      "UpdateIntegrationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/IntegrationManifest"
           }
         },
         "required": [
@@ -6898,6 +7092,75 @@
           "skills"
         ],
         "x-fern-sdk-method-name": "list"
+      }
+    },
+    "/api/v1/integrations/{integration_id}/events": {
+      "post": {
+        "description": "Endpoint a channel posts events to. The request is authenticated by the channel signature in its own headers, not by a TrueForge credential.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event accepted, ignored as a duplicate, or answered by the channel adapter."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel signature did not verify."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The event cannot run: the bound agent is missing, or the turn could not start."
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No adapter is registered for this integration type."
+          }
+        },
+        "summary": "Receive a channel event",
+        "tags": [
+          "Integrations"
+        ],
+        "x-excluded": true,
+        "x-fern-ignore": true
       }
     },
     "/api/v1/mcp-servers": {
@@ -9136,6 +9399,269 @@
         }
       }
     },
+    "/api/v1/settings/integrations": {
+      "get": {
+        "description": "All channel integrations for this tenant. Manifest credentials are redacted.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListIntegrationsResponse"
+                }
+              }
+            },
+            "description": "All connected integrations."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "OIDC is configured and the request has no valid session cookie."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "OIDC is configured and the caller is authenticated but not an admin."
+          }
+        },
+        "summary": "List connected integrations",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "list"
+      },
+      "post": {
+        "description": "Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationResponse"
+                }
+              }
+            },
+            "description": "The connected integration."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body, or a redacted credential with no stored secret to keep."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "That channel account is already connected."
+          }
+        },
+        "summary": "Connect an integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "create"
+      }
+    },
+    "/api/v1/settings/integrations/{integration_id}": {
+      "delete": {
+        "description": "Deletes the integration by immutable id and stops its ingress. Existing sessions stay.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteIntegrationResponse"
+                }
+              }
+            },
+            "description": "Integration disconnected."
+          }
+        },
+        "summary": "Disconnect an integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "delete"
+      },
+      "get": {
+        "description": "One integration by immutable id. Manifest credentials are redacted.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationResponse"
+                }
+              }
+            },
+            "description": "The integration."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          }
+        },
+        "summary": "Get a connected integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "get"
+      },
+      "put": {
+        "description": "Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationResponse"
+                }
+              }
+            },
+            "description": "The saved integration."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body, or a redacted credential with no stored secret to keep."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "That channel account is already connected to another integration."
+          }
+        },
+        "summary": "Replace a connected integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "update"
+      }
+    },
     "/api/v1/settings/mcp-servers": {
       "get": {
         "description": "Configured MCP servers with auth_status. Header secrets are redacted.",
@@ -9903,6 +10429,9 @@
     },
     {
       "name": "Schedules"
+    },
+    {
+      "name": "Integrations"
     },
     {
       "name": "Agent Sessions"
