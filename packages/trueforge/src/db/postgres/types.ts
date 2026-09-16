@@ -23,6 +23,7 @@ import type {
 import type { CurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
 import type { SandboxInfo } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import type { ColumnType, Generated, JSONColumnType } from 'kysely';
+import type { IntegrationManifest, IntegrationType } from '../../schemas/integration';
 import type { McpServerManifest } from '../../schemas/mcpServer';
 import type { ModelProviderManifest } from '../../schemas/modelProvider';
 import type {
@@ -32,6 +33,7 @@ import type {
 } from '../../schemas/sandboxProvider';
 import type { ScheduleManifest, ScheduleRunStatus, ScheduleStatus } from '../../schemas/schedule';
 import type { SkillManifest } from '../../schemas/skill';
+import type { IntegrationDeliveryStatus } from '../integrationStore';
 import type { OAuthClient, OAuthPendingAuthorizationData, OAuthServer, OAuthToken } from '../mcpServerStore';
 
 /**
@@ -513,6 +515,64 @@ export interface OAuthPendingAuthorizationTable {
  *
  * Canonical Kysely database.
  */
+/**
+ * One connected channel account.
+ * PRIMARY KEY (id)
+ * CREATE UNIQUE INDEX integration_account_uq ON integration (tenant_id, type, external_account_id)
+ * CREATE INDEX integration_list_idx ON integration (tenant_id, created_at, id)
+ */
+export interface IntegrationTable {
+  /** application-generated (ulid); FK target for the child tables */
+  id: string;
+  tenant_id: string;
+  /** varchar(32) */
+  type: IntegrationType;
+  /** channel-side account id (Slack `team_id`) */
+  external_account_id: string;
+  /** IntegrationManifest document; replaced whole on update */
+  manifest: JSONColumnType<IntegrationManifest, IntegrationManifest, IntegrationManifest>;
+  created_by_subject: JSONColumnType<CreatedBySubject, CreatedBySubject, CreatedBySubject>;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/**
+ * Accepted inbound event ids, so a channel retry does not start a second turn.
+ * PRIMARY KEY (id)
+ * CREATE UNIQUE INDEX integration_event_uq ON integration_event (integration_id, event_id)
+ * FK (integration_id) -> integration(id) ON DELETE CASCADE
+ */
+export interface IntegrationEventTable {
+  /** application-generated (ulid) */
+  id: string;
+  tenant_id: string;
+  integration_id: string;
+  /** channel-supplied event id */
+  event_id: string;
+  received_at: Date;
+}
+
+/**
+ * Outbox: the reply owed to one conversation for one terminal turn.
+ * PRIMARY KEY (id)
+ * CREATE UNIQUE INDEX integration_delivery_turn_uq ON integration_delivery (turn_id)
+ * FK (integration_id) -> integration(id) ON DELETE CASCADE
+ */
+export interface IntegrationDeliveryTable {
+  /** application-generated (ulid) */
+  id: string;
+  tenant_id: string;
+  integration_id: string;
+  conversation_key: string;
+  turn_id: string;
+  /** `pending` | `sent` | `failed` — varchar(16) */
+  status: IntegrationDeliveryStatus;
+  attempts: number;
+  last_error: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface Database {
   session: SessionTable;
   turn: TurnTable;
@@ -529,4 +589,7 @@ export interface Database {
   mcp_server: McpServerTable;
   oauth_token: OAuthTokenTable;
   oauth_pending_authorization: OAuthPendingAuthorizationTable;
+  integration: IntegrationTable;
+  integration_event: IntegrationEventTable;
+  integration_delivery: IntegrationDeliveryTable;
 }

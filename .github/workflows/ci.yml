@@ -69,6 +69,7 @@ jobs:
             store:
               - 'packages/trueforge/src/db/**'
               - 'packages/trueforge/tests/db/**'
+              - 'packages/trueforge/migrations/**'
               - 'packages/trueforge/jest.store.postgres.config.cjs'
               - 'packages/trueforge/jest.store.sqlite.config.cjs'
               - 'packages/trueforge/package.json'

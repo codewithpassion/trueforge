@@ -26,6 +26,7 @@ import type {
 import type { CurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
 import type { SandboxInfo } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import type { ColumnType, Generated, JSONColumnType } from 'kysely';
+import type { IntegrationManifest, IntegrationType } from '../../schemas/integration';
 import type { McpServerManifest } from '../../schemas/mcpServer';
 import type { ModelProviderManifest } from '../../schemas/modelProvider';
 import type {
@@ -35,6 +36,7 @@ import type {
 } from '../../schemas/sandboxProvider';
 import type { ScheduleManifest, ScheduleRunStatus, ScheduleStatus } from '../../schemas/schedule';
 import type { SkillManifest } from '../../schemas/skill';
+import type { IntegrationDeliveryStatus } from '../integrationStore';
 import type { OAuthClient, OAuthPendingAuthorizationData, OAuthServer, OAuthToken } from '../mcpServerStore';
 
 /**
@@ -332,6 +334,59 @@ export interface OAuthPendingAuthorizationTable {
   created_at: string;
 }
 
+/**
+ * One connected channel account.
+ * PRIMARY KEY (id)
+ * CREATE UNIQUE INDEX integration_account_uq ON integration (tenant_id, type, external_account_id)
+ * CREATE INDEX integration_list_idx ON integration (tenant_id, created_at, id)
+ */
+export interface IntegrationTable {
+  /** application-generated (ulid); FK target for the child tables */
+  id: string;
+  tenant_id: string;
+  type: IntegrationType;
+  /** channel-side account id (Slack `team_id`) */
+  external_account_id: string;
+  /** IntegrationManifest document; replaced whole on update */
+  manifest: JsonbColumn<IntegrationManifest>;
+  created_by_subject: JsonbColumn<CreatedBySubject>;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Accepted inbound event ids, so a channel retry does not start a second turn.
+ * PRIMARY KEY (id)
+ * CREATE UNIQUE INDEX integration_event_uq ON integration_event (integration_id, event_id)
+ * CREATE INDEX integration_event_received_at_idx ON integration_event (received_at)
+ */
+export interface IntegrationEventTable {
+  id: string;
+  tenant_id: string;
+  integration_id: string;
+  event_id: string;
+  received_at: string;
+}
+
+/**
+ * Outbox: the reply owed to one conversation for one terminal turn.
+ * PRIMARY KEY (id)
+ * CREATE UNIQUE INDEX integration_delivery_turn_uq ON integration_delivery (turn_id)
+ * CREATE INDEX integration_delivery_pending_idx ON integration_delivery (updated_at) WHERE status = 'pending'
+ */
+export interface IntegrationDeliveryTable {
+  id: string;
+  tenant_id: string;
+  integration_id: string;
+  conversation_key: string;
+  turn_id: string;
+  status: IntegrationDeliveryStatus;
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Database {
   session: SessionTable;
   turn: TurnTable;
@@ -349,4 +404,7 @@ export interface Database {
   mcp_server: McpServerTable;
   oauth_token: OAuthTokenTable;
   oauth_pending_authorization: OAuthPendingAuthorizationTable;
+  integration: IntegrationTable;
+  integration_event: IntegrationEventTable;
+  integration_delivery: IntegrationDeliveryTable;
 }
