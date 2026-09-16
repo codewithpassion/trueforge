@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. It follows `docs/cloudflare-workers-port-plan.md`, which shipped Phases 0 to 5 with code execution disabled.
 
-Status: proposed on 2026-09-16. Phase 7a steps 1 to 8 are implemented on a worktree branch; step 9, the live acceptance test, and step 10, the spike report, are outstanding. Section 8 records what steps 1 to 8 found.
+Status: proposed on 2026-09-16. Phase 7a is complete and the verdict is go: continue to 7b with Cloudflare Computer. Section 8 records what steps 1 to 8 found, Section 9 the live acceptance test, and Section 10 the Section 6 verdict.
 
 Goal: restore code execution on the Workers deploy with a Cloudflare-native sandbox provider, starting with a time-boxed spike on Cloudflare Computer (`@cloudflare/computer`). The spike decides whether Computer, or the Cloudflare Sandbox SDK as the fallback, backs a new `SandboxProvider`.
 
@@ -264,4 +264,78 @@ Environment: Docker 29.2.1, overlayfs, cgroup v2, not rootless.
 
 **Code Mode is off by capability, not by exception.** `SandboxProvider` gained `supportsCodeMode`; `Sandbox.configureCodeMode` returns early when it is false, so `createCodeModeTransport` is never called and the `mcp_client` instructions stay out of the prompt. MCP tools remain available to the model directly. Node providers set it to `true` and behave exactly as before. A Workers test runs a whole turn with `sandbox.enabled` and one MCP server; flipping the flag back to `true` fails it.
 
-**Still open from the review.** The no-capacity failure past `max_instances` is not mapped to a message that names the limit, because the error shape is unknown until the deploy; 7a.9 records it. The container inactivity timeout is set once per Durable Object instance, so a container that restarts under a live instance keeps the platform default until that instance is evicted.
+**Still open from the review.** The no-capacity failure past `max_instances` is not mapped to a message that names the limit; Section 9 records the error shape observed live, so 7d can match on it. The container inactivity timeout is set once per Durable Object instance, so a container that restarts under a live instance keeps the platform default until that instance is evicted.
+
+## 9. Phase 7a step 9: the live acceptance test
+
+Run on `trueforge.rockyshoreslabs.io` on 2026-09-16 against Worker version `98fa9ab0-7a55-41fc-8b86-243c385db2e3`, with `TRUEFORGE_SANDBOX_BACKEND=cloudflare-computer` in `wrangler.jsonc` vars. `wrangler tail --format json` ran from before the first deploy until after the last test; 328 invocations were captured and none threw.
+
+**Deploy.** Containers is enabled on the account and `wrangler deploy` provisioned it without complaint. The image built from `workers/computer.Dockerfile` and pushed as `registry.cloudflare.com/<account>/trueforge-computerdo@sha256:69ab7479…`, creating application `trueforge-computerdo`. `instance_type: standard-2` resolves to 1 vCPU, 6 GiB memory, 12 GB disk on the firecracker runtime. Worker bundle 5462 KiB, gzip 996 KiB, startup 230 ms. The remote D1 migration `0002_integration.sql` applied first (10 commands, 2.11 ms); `PRAGMA table_info(integration_delivery)` confirms it on the remote database. `/healthz` answers 200 and `/api/v1/capabilities` answers 401 unauthenticated. The Containers application takes about three minutes to move from `provisioning` to `ready` after the first deploy; cold-start numbers taken before that measure image distribution, not container start.
+
+**One blocker had to be fixed before any turn could run.** With the var set, `GET /api/v1/capabilities` reported the sandbox enabled while `POST /api/v1/agents` with `sandbox.enabled` answered 422 "no sandbox provider is configured". Two definitions of "configured" had drifted: `capabilities.ts` asks `checkSnapshotStatus()`, which the Workers integration answers `ready`, while `validateAgentSpec` in `sessionResources.ts` requires a row in the sandbox-provider table or `isLocalFallbackEnabled()`, which returned `false`. The Workers workspace comes from the deploy var and never has a stored record, so every sandbox-enabled agent and session was rejected. The integration now reports that a sandbox needs no stored record, which is what the port's own doc comment already says the flag means. The name `isLocalFallbackEnabled` now reads wrong on Workers and is worth renaming in the review. `tests/workers/sandboxTurn.test.ts` could not catch this because it writes its session straight to the store; the pin added here drives the real validator.
+
+**Results.** Every item ran once as a streaming turn and once as a non-streaming turn. All passed.
+
+| 7a.9 item                                             | Non-streaming                          | Streaming                        |
+| ----------------------------------------------------- | -------------------------------------- | -------------------------------- |
+| `python3 --version`                                   | pass, `Python 3.13.15`                 | pass                             |
+| `ls -la /workspace`                                   | pass, `.trueforge` and `uploads` only  | pass                             |
+| `echo hi > /workspace/a.txt && cat …`                 | pass                                   | pass                             |
+| Second turn reads `/workspace/a.txt`                  | pass, 312 ms, no new sandbox           | pass                             |
+| Large tool result offloaded and read back with `exec` | pass, 3 files (9871, 6374, 6231 bytes) | pass, 2 files (9988, 6374 bytes) |
+| Non-inline upload to `/workspace/uploads`             | pass, 3034 bytes, 201 lines            | n/a, same turn shape             |
+| Turn file download                                    | pass, byte-identical, 172 ms           | n/a                              |
+| Sandbox plus one MCP server, tool called directly     | pass                                   | pass                             |
+| 20 consecutive execs                                  | 20 of 20, no `pending`, none lost      | n/a                              |
+
+**Measurements.**
+
+| What                                                          | Value                                        |
+| ------------------------------------------------------------- | -------------------------------------------- |
+| Cold start plus first exec, one container at a time           | 4.6 s, 5.5 s, 5.8 s                          |
+| Cold start plus first exec, three containers starting at once | 8.7 s, 12.1 s                                |
+| Warm exec, 20 samples                                         | min 167 ms, median 171 ms, max 257 ms        |
+| Turn file download                                            | 163 to 172 ms                                |
+| `SessionDO` alarm holding a turn                              | wall 13 to 128 s, CPU 97 to 2711 ms          |
+| `ComputerDO` RPC invocation                                   | CPU median 3 ms, max 12 ms; wall up to 326 s |
+| Exec output hitting the 1 MiB cap                             | never; no `outputTruncated`, no warning      |
+
+Container lifetime: `ComputerDO` asks for a 10-minute inactivity timeout on the first command, and the five containers were still `active` three minutes after their last exec, so a session holds an instance slot well past the turn that used it. Egress was not billed separately here because the workspace only talks to its Durable Object; a sandbox that reaches the internet is unmeasured and 7d must price it.
+
+`ComputerDO` costs almost no CPU and a lot of wall clock: a single invocation stayed active 326 s for about 8 ms of CPU, because the object is held while the session works. Durable Object duration bills on wall time, so 7d should size that alongside the Containers vCPU and memory bill rather than assuming the container dominates.
+
+**Context7 rarely triggers the offload on its own.** One `query-docs` call returns 2 to 7.5 KB, about 1900 estimated tokens, well under the 6000-token individual threshold — the same thing Cycle 13 saw. Eight parallel calls reached 36.8 KB, still short of the 10000-token total threshold, and nothing was written. Twelve parallel calls cleared it and the offload fired in both turn modes. Anyone re-running 7a.9 should ask for twelve parallel calls, not one large one.
+
+**The no-capacity failure shape is now known.** Six concurrent sessions against `max_instances: 5` left five containers `active` and `0` healthy, and the sixth session's first exec failed with:
+
+```
+Sandbox initialization failed: Sandbox exec failed: Workspace backend "container-shell":
+shell.exec failed after 1 reconnect retry: initial=CloudflareContainerBackend(container-shell):
+connect failed at stage=health port=8080 attempt=2/2 restarts=1 timeoutMs=30000 …
+lastError=container exited: Maximum number of running container instances exceeded.
+Try again later, or try configu…
+```
+
+The limit is named, but only at the end of a transport string that opens with a health-check timeout. The turn did not crash: the sandbox init failed twice and the turn finished as `done` with the agent reporting the transport error. 7d should match `Maximum number of running container instances exceeded` and answer with a message that names the limit.
+
+**A non-zero exit is reported as an infrastructure failure.** Section 8 assumed `status` separates a non-zero exit from a failure to run. It does not. `sh -c 'echo OUTLINE; echo ERRLINE 1>&2; exit 3'` comes back as `{"success": false, "error": "Sandbox exec did not run: OUTLINE\nERRLINE\n"}`, and `ls /nope` the same way. Computer sets `result.status` to `failed` whenever the command exits non-zero, so `CloudflareComputerProvider.exec` maps it to `{ success: false }` and the exit code is dropped. The Node providers return `{ success: true, response: { exitCode, result } }` for the same command, so an agent on Workers sees a shell error as a broken sandbox. The output text still reaches the model, which is why the acceptance items passed, but this must be fixed before 7b: read `exitCode` and treat `failed` as a real failure only when the command never ran.
+
+**Test data left on the deploy.** Agent `smoke-sandbox`, six sessions with Computer workspaces, and the files those turns wrote under `/workspace`.
+
+## 10. Go or no-go after 7a
+
+**Go, continue to 7b with Cloudflare Computer.**
+
+Against Section 6:
+
+- **Every 7a.9 item passes live, in both turn modes.** Yes. One Worker-side validation bug blocked the first attempt; it was fixed with a one-line change to the integration plus a test pin, redeployed once, and every item then passed. No fix was made to the container path.
+- **No casts beyond the reported type gap.** Unchanged. `workspaceStorage.ts` still holds the single overload for `DurableObjectStorageLike`, and it is still worth reporting upstream.
+- **Cold start plus first exec under 30 s, warm exec under 1 s.** Comfortably: 4.6 to 12.1 s cold, 171 ms median warm.
+- **No unexplained `pending` results or lost execs across 20 execs.** 20 of 20 in order, zero `pending`, zero `EEXEC_LOST`, zero exceptions in the tail.
+
+None of the switch-to-B conditions fired. The container backend needs no `experimental` flag, the pinned `0.3.0` API did not move during the spike, stdout and file transfer handled a 10 KB offload and a 3 KB download with the 1 MiB cap never reached, and the capnweb and FUSE path ran 76 `ComputerDO` invocations without a single exception. The only exec failures in the whole run were the deliberate instance-limit probe and the deliberate non-zero exit.
+
+Two must-fix items carry into 7b, neither of which changes the verdict:
+
+1. Map a non-zero exit to `{ success: true, exitCode }` instead of a failure.
+2. Map the instance-limit failure to a message that names the limit.
