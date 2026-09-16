@@ -1,15 +1,18 @@
+import { AgentSpecSchema } from '@truefoundry/trueforge-core/agent-session';
 import { InstructionBuilder } from '@truefoundry/trueforge-core/core/InstructionBuilder';
 import type { IToolSet } from '@truefoundry/trueforge-core/core/mcp/IMCPServer';
 import type { Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { NOOP_AGENT_TRACING } from '@truefoundry/trueforge-core/core/tracing/NoopAgentTracing';
 import { env } from 'cloudflare:workers';
 import configuration from '../../src/config';
+import { validateAgentSpec } from '../../src/runtime/sessionResources';
+import type { SandboxIntegration } from '../../src/sandbox/integration';
 import type { SandboxProviderManifest } from '../../src/schemas/sandboxProvider';
 import { createConsoleLogger } from '../../src/workers/logger';
 import { createWorkersRuntimeDeps } from '../../src/workers/runtime';
 import { CLOUDFLARE_COMPUTER_PROVIDER_TYPE } from '../../src/workers/sandbox/CloudflareComputerProvider';
 import { createWorkersSandboxIntegration } from '../../src/workers/sandbox/workersSandboxIntegration';
-import { d1Persistence, TENANT_ID } from './harness';
+import { d1Persistence, migrateDatabase, TENANT_ID, upsertMockProvider } from './harness';
 
 const logger = createConsoleLogger({ level: 'error', bindings: {} });
 
@@ -46,6 +49,25 @@ function storeInput() {
   return { tenant_id: TENANT_ID, sessionId: 'session-1', store: d1Persistence().sandboxProviderStore, logger };
 }
 
+/** The agent-create and session-create gate, which reads the sandbox-provider table. */
+async function validateSandboxSpec(sandboxIntegration: SandboxIntegration): Promise<void> {
+  await migrateDatabase();
+  const stores = d1Persistence();
+  const providerName = await upsertMockProvider({ stores, scenario: 'text' });
+  await validateAgentSpec({
+    spec: AgentSpecSchema.parse({
+      model: { name: `${providerName}/mock-model` },
+      config: { sandbox: { enabled: true, file_downloads: false } },
+    }),
+    tenant_id: TENANT_ID,
+    modelProviderStore: stores.modelProviderStore,
+    mcpServerStore: stores.mcpServerStore,
+    skillStore: stores.skillStore,
+    sandboxProviderStore: stores.sandboxProviderStore,
+    sandboxIntegration,
+  });
+}
+
 function build(backend: 'cloudflare-computer' | undefined) {
   return createWorkersSandboxIntegration({
     backend,
@@ -62,6 +84,11 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND unset',
 
   it('reports no image status, so a sandbox-enabled turn keeps its 422', async () => {
     await expect(build(undefined).checkSnapshotStatus(storeInput())).resolves.toBeUndefined();
+  });
+
+  it('offers no sandbox without a stored record, so a sandbox-enabled spec is rejected', async () => {
+    expect(build(undefined).isLocalFallbackEnabled()).toBe(false);
+    await expect(validateSandboxSpec(build(undefined))).rejects.toThrow(/no sandbox provider is configured/);
   });
 });
 
@@ -89,14 +116,18 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
       build_metadata: null,
     });
   });
+
+  it('accepts a sandbox-enabled spec with nothing in the sandbox-provider table', async () => {
+    expect(build('cloudflare-computer').isLocalFallbackEnabled()).toBe(true);
+    await expect(validateSandboxSpec(build('cloudflare-computer'))).resolves.toBeUndefined();
+  });
 });
 
 describe.each([undefined, 'cloudflare-computer' as const])(
   'createWorkersSandboxIntegration (backend %s) runtime support',
   backend => {
-    it('offers no local fallback, no skills and no Daytona settings surface', () => {
+    it('offers no skills and no Daytona settings surface', () => {
       const integration = build(backend);
-      expect(integration.isLocalFallbackEnabled()).toBe(false);
       expect(integration.isSkillMountingSupported()).toBe(false);
       expect(integration.isDaytonaSettingsSupported()).toBe(false);
       expect(integration.isDaytonaAuthError(new Error('x'))).toBe(false);
