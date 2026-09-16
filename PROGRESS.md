@@ -4,6 +4,36 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 17 — Phase 7a: a Cloudflare Computer sandbox, steps 1 to 8 (2026-09-16)
+
+**Goal:** Run the Phase 7a spike from `docs/cloudflare-workers-sandbox-plan.md` — clear the workerd load gate, then build a container-backed sandbox provider for the Workers runtime behind a deploy variable. Step 9, the live acceptance test, and step 10, the spike report and go/no-go verdict, are still open; nothing in this cycle decides them.
+
+**What we did:**
+
+- **Gate (step 1): pass.** `@cloudflare/computer` and `@cloudflare/computer/backends/container` both load in workerd under `nodejs_compat` with no `experimental` flag, so option A stayed open. Only the unused worker-shell and worker-javascript backends need it. `tests/workers/sandboxBackendLoad.test.ts` pins that, and records the option D data point: `@daytona/sdk` loads in workerd too.
+- Pinned `@cloudflare/computer` at `0.3.0` through pnpm. `just-bash` arrives behind it and drags two optional native codecs in; `@mongodb-js/zstd` and `node-liblzma` are `false` in `allowBuilds` because the backend that uses them never runs.
+- `ComputerDO` is a separate container-enabled Durable Object class, not a mixin on `SessionDO`, named `tenant_id:session_id` so one session maps to one workspace. It owns its `Workspace` and exposes exec plus file access as plain RPC returning serializable outcomes. Added `workers/computer.Dockerfile`, the `containers` entry, the `COMPUTER_DO` binding and migration `v3`.
+- `CloudflareComputerProvider` implements the sandbox contract over that DO: exec, uploads, downloads, `/workspace` path getters. It refuses any sandbox id but its own session workspace, so an id carried in from elsewhere reads as gone and the caller makes a fresh sandbox instead of reaching another tenant.
+- `WorkersSandboxIntegration` wires into the Worker runtime and `SessionDO`. `TRUEFORGE_SANDBOX_BACKEND` unset keeps Phase 5 behaviour exactly, pinned by a Workers test over the real wiring; set to `cloudflare-computer` it reports code execution enabled. Two runtime-support flags on the sandbox integration port keep skills off until 7b and keep the settings sandbox-provider routes answering 404 and 422 on a runtime with no Daytona surface, rather than reaching helpers that throw.
+- `SandboxNotAvailableError` now accepts `{ cause }` so the provider keeps the transport failure it classified. Tests added for the provider, the integration, capabilities, the sandbox-provider routes, the new config parsing and the container image.
+- Recorded everything in a new Section 8 of the sandbox plan and added the changeset. Bundle went 4973 to 5376 KiB (978 KiB gzip), startup 90.7 ms.
+
+**Lessons learned:**
+
+- **One real type gap, two casts designed away.** `DurableObjectStorage` is not assignable to Computer's `DurableObjectStorageLike`: its `sql.exec<Row extends object>` promises a caller-chosen row type, while workerd's `SqlStorage` only ever yields `Record<string, SqlStorageValue>`, so no implementation can honour it. The Computer examples reach it with `as unknown as`. `src/workers/sandbox/workspaceStorage.ts` isolates that one unprovable step in an overload declaration and validates the bindings it forwards. Worth reporting upstream.
+- `withWorkspace` and `getWorkspace` are unusable without the second example cast — the package exports neither the `WORKSPACE` symbol nor a stub type a `DurableObjectStub<ComputerDO>` satisfies. Having the DO own its `Workspace` and expose typed RPC removes the need entirely.
+- Sandbox error classes do not survive Workers RPC. `ComputerDO` returns outcomes and the provider maps them to `SandboxErrors`.
+- The Worker entry must re-export `WorkspaceProxy` at the top level in every egress mode: the container's egress interceptor is built from `ctx.exports.WorkspaceProxy`, which only resolves for a `WorkerEntrypoint` exported there.
+- **Local `wrangler dev` never starts the workload container here, so the live deploy is the only way to test exec.** The Worker serves fine, but exec fails after about 30 s with `workspace.container.exited`, `reason: "Container failed to start"` and `connect failed at stage=egress port=8080`. Docker only ever creates the `cloudflare/proxy-everything` sidecar. Isolated on a throwaway probe Worker: a minimal `debian:stable-slim` plus `computerd` image fails identically, so it is not our base image; wrangler 4.131.2 and 4.132.0 fail identically, so the pin stays; `computerd` from the built image runs fine outside wrangler with `FUSE_MOUNT=auto`. Docker 29.2.1, overlayfs, cgroup v2, not rootless.
+- `pnpm workers:check` now builds the container image, because `wrangler deploy --dry-run` builds the Dockerfile. It needs Docker and anonymous pull access to `ghcr.io/cloudflare/computer-computerd-linux-x64`; a stale `ghcr.io` credential in `~/.docker/config.json` breaks it with `failed to authorize`. That belongs in the port plan's CI backlog.
+
+**Avoid next time:**
+
+- Don't copy the Computer examples' three `as unknown as` casts. Two go away by owning the `Workspace` inside the Durable Object; only the storage one is a genuine package gap, and it belongs in a single declaration with a note, not sprinkled at call sites.
+- Don't keep grinding on local container exec. The failure is upstream of our image and our code; the minimal-image and two-wrangler reproductions in Section 8 are enough to stop on.
+- Clear stale `ghcr.io` credentials before `workers:check` now that it builds an image, or the failure looks like a wrangler problem.
+- Don't add a container-enabled class as a mixin on `SessionDO`; a separate `class_name` keeps the `SessionDO` migrations untouched.
+
 ## Cycle 16 — Phase I1: the integrations layer (2026-09-16)
 
 **Goal:** Build the integrations layer from the Slack plan — schemas, stores, router, outbox, ingress — with no channel adapter yet, on both the Node and Workers deploys.
