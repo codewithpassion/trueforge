@@ -1,3 +1,5 @@
+export * from "./integrations/client/requests/index.js";
+export * as integrations from "./integrations/index.js";
 export * from "./mcpServers/client/requests/index.js";
 export * as mcpServers from "./mcpServers/index.js";
 export * from "./modelProviders/client/requests/index.js";

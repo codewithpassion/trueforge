@@ -58,6 +58,7 @@ if typing.TYPE_CHECKING:
     from .custom_model_provider import CustomModelProvider
     from .daytona_sandbox_provider_auth import DaytonaSandboxProviderAuth
     from .delete_agent_response import DeleteAgentResponse
+    from .delete_integration_response import DeleteIntegrationResponse
     from .delete_schedule_response import DeleteScheduleResponse
     from .dynamic_sub_agents_config import DynamicSubAgentsConfig
     from .extended_chunk_delta_tool_call import ExtendedChunkDeltaToolCall
@@ -69,6 +70,7 @@ if typing.TYPE_CHECKING:
     from .get_agent_response import GetAgentResponse
     from .get_available_mcp_server_response import GetAvailableMcpServerResponse
     from .get_capabilities_response import GetCapabilitiesResponse
+    from .get_integration_response import GetIntegrationResponse
     from .get_mcp_server_catalog_response import GetMcpServerCatalogResponse
     from .get_mcp_server_response import GetMcpServerResponse
     from .get_me_response import GetMeResponse
@@ -89,11 +91,15 @@ if typing.TYPE_CHECKING:
     from .google_gemini_model_provider import GoogleGeminiModelProvider
     from .initial_user_message import InitialUserMessage
     from .input_tokens_compaction_trigger import InputTokensCompactionTrigger
+    from .integration import Integration
+    from .integration_manifest import IntegrationManifest
+    from .integration_type import IntegrationType
     from .large_tool_response_config import LargeToolResponseConfig
     from .list_agents_response import ListAgentsResponse
     from .list_available_mcp_servers_response import ListAvailableMcpServersResponse
     from .list_available_models_response import ListAvailableModelsResponse
     from .list_available_skills_response import ListAvailableSkillsResponse
+    from .list_integrations_response import ListIntegrationsResponse
     from .list_mcp_server_tools_response import ListMcpServerToolsResponse
     from .list_mcp_servers_response import ListMcpServersResponse
     from .list_model_providers_response import ListModelProvidersResponse
@@ -188,6 +194,7 @@ if typing.TYPE_CHECKING:
     from .session_metrics_meter_response import SessionMetricsMeterResponse
     from .session_metrics_point import SessionMetricsPoint
     from .session_source import SessionSource
+    from .session_source_integration import SessionSourceIntegration
     from .session_source_schedule import SessionSourceSchedule
     from .session_source_type import SessionSourceType
     from .settings_capability import SettingsCapability
@@ -195,6 +202,8 @@ if typing.TYPE_CHECKING:
     from .skill_capability import SkillCapability
     from .skill_manifest import SkillManifest
     from .skill_version import SkillVersion
+    from .slack_integration_auth import SlackIntegrationAuth
+    from .slack_reply_mode import SlackReplyMode
     from .text_content import TextContent
     from .thread_created_event import ThreadCreatedEvent
     from .thread_done_event import ThreadDoneEvent
@@ -288,6 +297,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "CustomModelProvider": ".custom_model_provider",
     "DaytonaSandboxProviderAuth": ".daytona_sandbox_provider_auth",
     "DeleteAgentResponse": ".delete_agent_response",
+    "DeleteIntegrationResponse": ".delete_integration_response",
     "DeleteScheduleResponse": ".delete_schedule_response",
     "DynamicSubAgentsConfig": ".dynamic_sub_agents_config",
     "ExtendedChunkDeltaToolCall": ".extended_chunk_delta_tool_call",
@@ -299,6 +309,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "GetAgentResponse": ".get_agent_response",
     "GetAvailableMcpServerResponse": ".get_available_mcp_server_response",
     "GetCapabilitiesResponse": ".get_capabilities_response",
+    "GetIntegrationResponse": ".get_integration_response",
     "GetMcpServerCatalogResponse": ".get_mcp_server_catalog_response",
     "GetMcpServerResponse": ".get_mcp_server_response",
     "GetMeResponse": ".get_me_response",
@@ -319,11 +330,15 @@ _dynamic_imports: typing.Dict[str, str] = {
     "GoogleGeminiModelProvider": ".google_gemini_model_provider",
     "InitialUserMessage": ".initial_user_message",
     "InputTokensCompactionTrigger": ".input_tokens_compaction_trigger",
+    "Integration": ".integration",
+    "IntegrationManifest": ".integration_manifest",
+    "IntegrationType": ".integration_type",
     "LargeToolResponseConfig": ".large_tool_response_config",
     "ListAgentsResponse": ".list_agents_response",
     "ListAvailableMcpServersResponse": ".list_available_mcp_servers_response",
     "ListAvailableModelsResponse": ".list_available_models_response",
     "ListAvailableSkillsResponse": ".list_available_skills_response",
+    "ListIntegrationsResponse": ".list_integrations_response",
     "ListMcpServerToolsResponse": ".list_mcp_server_tools_response",
     "ListMcpServersResponse": ".list_mcp_servers_response",
     "ListModelProvidersResponse": ".list_model_providers_response",
@@ -418,6 +433,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "SessionMetricsMeterResponse": ".session_metrics_meter_response",
     "SessionMetricsPoint": ".session_metrics_point",
     "SessionSource": ".session_source",
+    "SessionSourceIntegration": ".session_source_integration",
     "SessionSourceSchedule": ".session_source_schedule",
     "SessionSourceType": ".session_source_type",
     "SettingsCapability": ".settings_capability",
@@ -425,6 +441,8 @@ _dynamic_imports: typing.Dict[str, str] = {
     "SkillCapability": ".skill_capability",
     "SkillManifest": ".skill_manifest",
     "SkillVersion": ".skill_version",
+    "SlackIntegrationAuth": ".slack_integration_auth",
+    "SlackReplyMode": ".slack_reply_mode",
     "TextContent": ".text_content",
     "ThreadCreatedEvent": ".thread_created_event",
     "ThreadDoneEvent": ".thread_done_event",
@@ -542,6 +560,7 @@ __all__ = [
     "CustomModelProvider",
     "DaytonaSandboxProviderAuth",
     "DeleteAgentResponse",
+    "DeleteIntegrationResponse",
     "DeleteScheduleResponse",
     "DynamicSubAgentsConfig",
     "ExtendedChunkDeltaToolCall",
@@ -553,6 +572,7 @@ __all__ = [
     "GetAgentResponse",
     "GetAvailableMcpServerResponse",
     "GetCapabilitiesResponse",
+    "GetIntegrationResponse",
     "GetMcpServerCatalogResponse",
     "GetMcpServerResponse",
     "GetMeResponse",
@@ -573,11 +593,15 @@ __all__ = [
     "GoogleGeminiModelProvider",
     "InitialUserMessage",
     "InputTokensCompactionTrigger",
+    "Integration",
+    "IntegrationManifest",
+    "IntegrationType",
     "LargeToolResponseConfig",
     "ListAgentsResponse",
     "ListAvailableMcpServersResponse",
     "ListAvailableModelsResponse",
     "ListAvailableSkillsResponse",
+    "ListIntegrationsResponse",
     "ListMcpServerToolsResponse",
     "ListMcpServersResponse",
     "ListModelProvidersResponse",
@@ -672,6 +696,7 @@ __all__ = [
     "SessionMetricsMeterResponse",
     "SessionMetricsPoint",
     "SessionSource",
+    "SessionSourceIntegration",
     "SessionSourceSchedule",
     "SessionSourceType",
     "SettingsCapability",
@@ -679,6 +704,8 @@ __all__ = [
     "SkillCapability",
     "SkillManifest",
     "SkillVersion",
+    "SlackIntegrationAuth",
+    "SlackReplyMode",
     "TextContent",
     "ThreadCreatedEvent",
     "ThreadDoneEvent",

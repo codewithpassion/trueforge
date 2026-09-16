@@ -1299,6 +1299,54 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       });
       expect(unmatched.data).toEqual([]);
     });
+
+    it('persists an integration source and filters it apart from schedule sources', async () => {
+      const store = createStore();
+      const integrationSource = {
+        type: 'integration' as const,
+        id: 'int-1',
+        conversation_key: 'slack:T0TEAM:C0GENERAL:1700000000.000100',
+      };
+      await store.createSession({
+        tenant_id: tenant,
+        session_id: 'from-integration',
+        created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
+        agent: { type: 'inline', spec: makeAgentSpec() },
+        custom: null,
+        metadata: {},
+        external_id: integrationSource.conversation_key,
+        source: integrationSource,
+      });
+      await store.createSession({
+        tenant_id: tenant,
+        session_id: 'from-schedule',
+        created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
+        agent: { type: 'inline', spec: makeAgentSpec() },
+        custom: null,
+        metadata: {},
+        external_id: 'run-1',
+        source: { type: 'schedule', id: 'sched-1', run_id: 'run-1' },
+      });
+
+      expect(mustGet(await store.getSession({ tenant_id: tenant, session_id: 'from-integration' })).source).toEqual(
+        integrationSource,
+      );
+
+      const byType = await store.listSessions({
+        agent_id: undefined,
+        created_by_or_agent_ids: undefined,
+        metadata: undefined,
+        tenant_id: tenant,
+        limit: 10,
+        page_token: undefined,
+        order: undefined,
+        start_timestamp: undefined,
+        end_timestamp: undefined,
+        source_type: 'integration',
+        source_id: 'int-1',
+      });
+      expect(byType.data.map(session => session.session_id)).toEqual(['from-integration']);
+    });
   });
 
   describe('createTurn', () => {

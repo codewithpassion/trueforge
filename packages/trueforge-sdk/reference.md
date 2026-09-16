@@ -3195,6 +3195,350 @@ await client.internal.agents.getCodeSnippets("agent_id");
 </dl>
 </details>
 
+## Settings Integrations
+<details><summary><code>client.settings.integrations.<a href="/src/api/resources/settings/resources/integrations/client/Client.ts">list</a>() -> TrueForge.ListIntegrationsResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+All channel integrations for this tenant. Manifest credentials are redacted.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+await client.settings.integrations.list();
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**requestOptions:** `IntegrationsClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.settings.integrations.<a href="/src/api/resources/settings/resources/integrations/client/Client.ts">create</a>({ ...params }) -> TrueForge.GetIntegrationResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+await client.settings.integrations.create({
+    manifest: {
+        allowDirectMessages: true,
+        allowedChannelIds: ["allowed_channel_ids"],
+        auth: {
+            botToken: "bot_token",
+            signingSecret: "signing_secret"
+        },
+        botUserId: "bot_user_id",
+        defaultAgentName: "default_agent_name",
+        replyMode: "thread",
+        teamId: "team_id",
+        type: "slack"
+    }
+});
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**request:** `TrueForge.settings.CreateIntegrationRequest` 
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**requestOptions:** `IntegrationsClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.settings.integrations.<a href="/src/api/resources/settings/resources/integrations/client/Client.ts">get</a>(integration_id) -> TrueForge.GetIntegrationResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+One integration by immutable id. Manifest credentials are redacted.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+await client.settings.integrations.get("integration_id");
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**integration_id:** `string` — Immutable integration id.
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**requestOptions:** `IntegrationsClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.settings.integrations.<a href="/src/api/resources/settings/resources/integrations/client/Client.ts">update</a>(integration_id, { ...params }) -> TrueForge.GetIntegrationResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+await client.settings.integrations.update("integration_id", {
+    manifest: {
+        allowDirectMessages: true,
+        allowedChannelIds: ["allowed_channel_ids"],
+        auth: {
+            botToken: "bot_token",
+            signingSecret: "signing_secret"
+        },
+        botUserId: "bot_user_id",
+        defaultAgentName: "default_agent_name",
+        replyMode: "thread",
+        teamId: "team_id",
+        type: "slack"
+    }
+});
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**integration_id:** `string` — Immutable integration id.
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**request:** `TrueForge.settings.UpdateIntegrationRequest` 
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**requestOptions:** `IntegrationsClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.settings.integrations.<a href="/src/api/resources/settings/resources/integrations/client/Client.ts">delete</a>(integration_id) -> TrueForge.DeleteIntegrationResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+Deletes the integration by immutable id and stops its ingress. Existing sessions stay.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+await client.settings.integrations.delete("integration_id");
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**integration_id:** `string` — Immutable integration id.
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**requestOptions:** `IntegrationsClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
 ## Settings McpServers
 <details><summary><code>client.settings.mcpServers.<a href="/src/api/resources/settings/resources/mcpServers/client/Client.ts">list</a>() -> TrueForge.ListMcpServersResponse</code></summary>
 <dl>

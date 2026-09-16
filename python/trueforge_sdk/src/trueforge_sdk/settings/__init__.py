@@ -6,8 +6,9 @@ import typing
 from importlib import import_module
 
 if typing.TYPE_CHECKING:
-    from . import mcp_servers, model_providers, sandbox_providers, skills
+    from . import integrations, mcp_servers, model_providers, sandbox_providers, skills
 _dynamic_imports: typing.Dict[str, str] = {
+    "integrations": ".integrations",
     "mcp_servers": ".mcp_servers",
     "model_providers": ".model_providers",
     "sandbox_providers": ".sandbox_providers",
@@ -36,4 +37,4 @@ def __dir__():
     return sorted(lazy_attrs)
 
 
-__all__ = ["mcp_servers", "model_providers", "sandbox_providers", "skills"]
+__all__ = ["integrations", "mcp_servers", "model_providers", "sandbox_providers", "skills"]

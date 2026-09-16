@@ -242,6 +242,17 @@
             },
             "default": "./dist/cjs/api/resources/settings/exports.js"
         },
+        "./settings/integrations": {
+            "import": {
+                "types": "./dist/esm/api/resources/settings/resources/integrations/exports.d.mts",
+                "default": "./dist/esm/api/resources/settings/resources/integrations/exports.mjs"
+            },
+            "require": {
+                "types": "./dist/cjs/api/resources/settings/resources/integrations/exports.d.ts",
+                "default": "./dist/cjs/api/resources/settings/resources/integrations/exports.js"
+            },
+            "default": "./dist/cjs/api/resources/settings/resources/integrations/exports.js"
+        },
         "./settings/mcpServers": {
             "import": {
                 "types": "./dist/esm/api/resources/settings/resources/mcpServers/exports.d.mts",
