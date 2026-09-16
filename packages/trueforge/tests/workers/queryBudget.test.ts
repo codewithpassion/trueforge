@@ -39,6 +39,7 @@ async function measureTurn(toolCalls: number) {
       eventSubscriptions,
       logger: createConsoleLogger({ level: 'error', bindings: {} }),
       sandboxIntegration: undefined,
+      onTurnDrained: undefined,
     },
   });
   await drained;

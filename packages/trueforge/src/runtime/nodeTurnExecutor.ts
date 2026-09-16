@@ -30,7 +30,14 @@ import {
   type TurnStartResult,
   type TurnStreamingStartInput,
 } from './turnExecutor';
-import { beginTurnExecution, drainTurnEvents, startTurnInProcess, toWireTurn, turnStreamId } from './turnRunner';
+import {
+  beginTurnExecution,
+  drainTurnEvents,
+  startTurnInProcess,
+  toWireTurn,
+  turnStreamId,
+  type TurnDrainedHook,
+} from './turnRunner';
 
 /** Request-reply path a replica serves to cancel a turn it owns. */
 export const SESSIONS_CANCEL_PATH = 'sessions/cancel';
@@ -178,6 +185,8 @@ export interface NodeTurnExecutorDeps {
   /** Peering identity embedded in the turn ids this process mints. */
   executorId: string;
   requestReply: RequestReplyTimings;
+  /** Runs after a non-streaming turn's drain settles; undefined skips it. */
+  onTurnDrained: TurnDrainedHook | undefined;
 }
 
 /** Runs turns in this process; cancels reach the owning replica over Redis request-reply. */
@@ -286,6 +295,7 @@ export class NodeTurnExecutor implements TurnExecutor {
         eventSubscriptions: this.#deps.eventSubscriptions,
         logger: this.#deps.logger,
         sandboxIntegration: this.#deps.sandboxIntegration,
+        onTurnDrained: this.#deps.onTurnDrained,
       },
     };
   }

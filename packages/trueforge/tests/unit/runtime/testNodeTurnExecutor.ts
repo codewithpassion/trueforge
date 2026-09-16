@@ -5,6 +5,7 @@ import { createLogger } from 'winston';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
 import { NodeTurnExecutor } from '../../../src/runtime/nodeTurnExecutor';
+import type { TurnDrainedHook } from '../../../src/runtime/turnRunner';
 import type { SandboxIntegration } from '../../../src/sandbox/integration';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 
@@ -15,6 +16,7 @@ export function testNodeTurnExecutor(
     logger?: Logger;
     eventSubscriptions?: EventSubscriptionRegistry<TurnStreamingEvent>;
     sessionStore?: Pick<ISessionStore, 'getTurn'>;
+    onTurnDrained?: TurnDrainedHook;
   } = {},
 ): NodeTurnExecutor {
   return new NodeTurnExecutor({
@@ -30,5 +32,6 @@ export function testNodeTurnExecutor(
     logger: options.logger ?? createLogger({ silent: true }),
     executorId: 'local',
     requestReply: { replyTimeoutMs: 60_000, pollIntervalMs: 500 },
+    onTurnDrained: options.onTurnDrained,
   });
 }

@@ -96,6 +96,7 @@ const app = createServerApp({
   sessions: new Sessions({ sessionStore }),
   turnExecutor: new NodeTurnExecutor({
     activeTurns: new ActiveTurnRegistry(),
+    onTurnDrained: undefined,
     eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
     sessionStore,
     redis: undefined,

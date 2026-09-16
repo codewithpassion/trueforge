@@ -64,6 +64,8 @@ import type { ISkillStore } from './db/skillStore';
 import type { Database as SqliteDatabase } from './db/sqlite/types';
 import { mountFrontend } from './frontend';
 import { createClientCertificateMiddleware, serverTlsServeOptions } from './http/tls';
+import { createIntegrationAdapters } from './integrations/registry';
+import { TurnCompletionNotifier } from './integrations/TurnCompletionNotifier';
 import { createServerLogger, shouldColorize } from './logger';
 import type { IOAuthTokenStore } from './mcp/auth/types';
 import { CODE_MODE_SOCKET_PARENT, FRONTEND_DIR, LOCAL_SANDBOX_ROOT_PARENT, SQLITE_PATH } from './nodeConfig';
@@ -436,8 +438,14 @@ async function createNodeServerRuntime<TTransaction>(options: {
 
   const activeTurns = new ActiveTurnRegistry();
   const requestReplyRouter = new RequestReplyRouter();
+  const notifier = new TurnCompletionNotifier({
+    integrationStore: persistence.integrationStore,
+    adapters: createIntegrationAdapters(),
+    logger,
+  });
   const turnExecutor = new NodeTurnExecutor({
     activeTurns,
+    onTurnDrained: input => notifier.deliverForTurn(input),
     eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(redis),
     sessionStore: persistence.sessionStore,
     redis,

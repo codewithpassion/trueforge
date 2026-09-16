@@ -9,6 +9,8 @@ import { DurableObject } from 'cloudflare:workers';
 import configuration from '../config';
 import { D1ValueTooLargeError, D1WriteOutcomeUnknownError } from '../db/d1/client';
 import { createD1Persistence } from '../db/d1/persistence';
+import { createIntegrationAdapters } from '../integrations/registry';
+import { TurnCompletionNotifier } from '../integrations/TurnCompletionNotifier';
 import { ActiveTurnRegistry } from '../runtime/activeTurns';
 import { StreamGoneError } from '../runtime/event-subscription';
 import {
@@ -138,6 +140,11 @@ export class SessionDO extends DurableObject {
     const { promise: settled, resolve: settle } = Promise.withResolvers<undefined>();
     this.#running.set(turnId, settled);
 
+    const notifier = new TurnCompletionNotifier({
+      integrationStore: persistence.integrationStore,
+      adapters: createIntegrationAdapters(),
+      logger: this.#logger,
+    });
     let started: Awaited<ReturnType<typeof startTurnInProcess>>;
     try {
       // Work after an RPC invocation ends is not kept alive, so an alarm invocation holds the turn until it settles.
@@ -158,6 +165,8 @@ export class SessionDO extends DurableObject {
           eventSubscriptions: this.#events,
           logger: this.#logger,
           sandboxIntegration: undefined,
+          // Awaited inside `drained`, so the alarm invocation that holds the turn holds this too.
+          onTurnDrained: input => notifier.deliverForTurn(input),
         },
       });
     } catch (error) {

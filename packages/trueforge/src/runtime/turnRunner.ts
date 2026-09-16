@@ -52,7 +52,15 @@ export type BeginTurnExecutionDeps = TurnStores & {
   eventSubscriptions: Pick<EventSubscriptionRegistry<TurnStreamingEvent>, 'get'>;
   logger: Logger;
   sandboxIntegration: SandboxIntegration | undefined;
+  /** Runs once the turn's drain settles, before `drained` resolves; undefined skips it. */
+  onTurnDrained: TurnDrainedHook | undefined;
 };
+
+/**
+ * Post-turn work that must finish while the runtime still holds the turn — on Workers that
+ * is the alarm invocation awaiting `drained`. Implementations must not throw.
+ */
+export type TurnDrainedHook = (input: { session: SessionHandle; turn_id: string }) => Promise<void>;
 
 /**
  * Builds the per-turn resolver. Agent / MCP / sandbox / LLM lookups are wired
@@ -379,15 +387,32 @@ export async function startTurnInProcess(params: {
 
   // Same unawaited drain scheduling as Hono streamSSE's run(cb).
   const { promise: firstEventDualWritten, resolve: markFirstEventDualWritten } = Promise.withResolvers<undefined>();
+  const onTurnDrained = params.deps.onTurnDrained;
   const drained = drainTurnEvents({
     ...drainInput,
     onEvent: () => {
       markFirstEventDualWritten(undefined);
       return Promise.resolve();
     },
-  }).finally(() => {
-    markFirstEventDualWritten(undefined);
-  });
+  })
+    .finally(() => {
+      markFirstEventDualWritten(undefined);
+    })
+    // Inside `drained` so a runtime that holds the turn until it settles also holds this.
+    .then(async () => {
+      if (onTurnDrained === undefined) {
+        return;
+      }
+      try {
+        await onTurnDrained({ session: params.session, turn_id: turn.id });
+      } catch (error) {
+        params.deps.logger.error('Turn drained hook failed', {
+          sessionId: params.session.session_id,
+          turnId: turn.id,
+          ...extractErrorLogFields(error),
+        });
+      }
+    });
   await firstEventDualWritten;
   return { turn, drained };
 }
