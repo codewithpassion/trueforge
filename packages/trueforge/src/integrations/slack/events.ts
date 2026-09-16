@@ -45,12 +45,11 @@ const SlackEventCallbackSchema = z.object({
 /** Both arms carry a `type` literal, so the payload is a discriminated union. */
 export const SlackPayloadSchema = z.discriminatedUnion('type', [SlackUrlVerificationSchema, SlackEventCallbackSchema]);
 
-export type SlackPayload = z.infer<typeof SlackPayloadSchema>;
 export type SlackEventCallback = z.infer<typeof SlackEventCallbackSchema>;
 export type SlackMessageEvent = z.infer<typeof SlackMessageEventSchema>;
 
 /** Slack ids never contain `:`, so the key splits back apart unambiguously. */
-export function slackConversationKey(input: { teamId: string; channelId: string; threadTs: string }): string {
+function slackConversationKey(input: { teamId: string; channelId: string; threadTs: string }): string {
   return `slack:${input.teamId}:${input.channelId}:${input.threadTs}`;
 }
 
