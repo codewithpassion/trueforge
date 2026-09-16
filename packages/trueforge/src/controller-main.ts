@@ -12,11 +12,13 @@
  * each tick until the schema is present. The loops call the server over HTTP(S) at
  * `SERVER_URL` (mutual TLS when `TRUEFORGE_MTLS_ENABLED`), so no Redis peering is wired here.
  */
+import { Sessions } from '@truefoundry/trueforge-core/agent-session';
 import configuration from './config';
 import { runController } from './controller';
 import { createDb } from './db/postgres/client';
 import { PostgresIntegrationStore } from './db/postgres/integration-store/PostgresIntegrationStore';
 import { PostgresScheduleStore } from './db/postgres/schedule-store/PostgresScheduleStore';
+import { PostgresSessionStore } from './db/postgres/session-store/PostgresSessionStore';
 import { createControllerLogger } from './logger';
 import { PACKAGE_VERSION } from './packageVersion.gen';
 
@@ -53,6 +55,7 @@ try {
   runController({
     scheduleStore: new PostgresScheduleStore(db),
     integrationStore: new PostgresIntegrationStore(db),
+    sessions: new Sessions({ sessionStore: new PostgresSessionStore(db) }),
     withTransaction: callback => db.transaction().execute(callback),
     logger,
     serverUrl: configuration.SERVER_URL,

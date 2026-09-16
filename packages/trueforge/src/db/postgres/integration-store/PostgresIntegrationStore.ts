@@ -3,6 +3,7 @@ import { sql, type Kysely, type Selectable, type Transaction } from 'kysely';
 import {
   IntegrationConflictError,
   parseStoredIntegrationManifest,
+  type ClaimDeliveryForRetryInput,
   type ClaimDeliveryInput,
   type CreateIntegrationInput,
   type DeleteIntegrationEventInput,
@@ -15,10 +16,12 @@ import {
   type IntegrationDeliveryRecord,
   type IntegrationRecord,
   type ListIntegrationsInput,
+  type ListRetryableDeliveriesInput,
   type MarkDeliveryFailedInput,
   type MarkDeliverySentInput,
   type PruneIntegrationEventsInput,
   type RecordIntegrationEventInput,
+  type ReleaseDeliveryInput,
   type UpdateIntegrationInput,
 } from '../../integrationStore';
 import { isUniqueViolation } from '../client';
@@ -296,6 +299,54 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     const row = await db
       .updateTable('integration_delivery')
       .set({ status: 'failed', last_error: input.error, updated_at: now() })
+      .where('id', '=', input.id)
+      .where('status', '=', 'sending')
+      .returningAll()
+      .executeTakeFirst();
+    return row === undefined ? undefined : toDeliveryRecord(row);
+  }
+
+  async listRetryableDeliveries(
+    input: ListRetryableDeliveriesInput,
+    transaction?: Transaction<Database>,
+  ): Promise<IntegrationDeliveryRecord[]> {
+    const db = transaction ?? this.#db;
+    const rows = await db
+      .selectFrom('integration_delivery')
+      .selectAll()
+      .where('status', 'in', ['pending', 'sending'])
+      .where('updated_at', '<', input.before)
+      .orderBy('updated_at', 'asc')
+      .limit(input.limit)
+      .execute();
+    return rows.map(toDeliveryRecord);
+  }
+
+  /** `attempts` is the version stamp, so this claims a stranded `sending` row as well as a `pending` one. */
+  async claimDeliveryForRetry(
+    input: ClaimDeliveryForRetryInput,
+    transaction?: Transaction<Database>,
+  ): Promise<IntegrationDeliveryRecord | undefined> {
+    const db = transaction ?? this.#db;
+    const row = await db
+      .updateTable('integration_delivery')
+      .set({ status: 'sending', attempts: input.attempts + 1, updated_at: now() })
+      .where('id', '=', input.id)
+      .where('attempts', '=', input.attempts)
+      .where('status', 'in', ['pending', 'sending'])
+      .returningAll()
+      .executeTakeFirst();
+    return row === undefined ? undefined : toDeliveryRecord(row);
+  }
+
+  async releaseDelivery(
+    input: ReleaseDeliveryInput,
+    transaction?: Transaction<Database>,
+  ): Promise<IntegrationDeliveryRecord | undefined> {
+    const db = transaction ?? this.#db;
+    const row = await db
+      .updateTable('integration_delivery')
+      .set({ status: 'pending', last_error: input.error, updated_at: now() })
       .where('id', '=', input.id)
       .where('status', '=', 'sending')
       .returningAll()

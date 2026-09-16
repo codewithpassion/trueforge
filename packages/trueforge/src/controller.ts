@@ -1,3 +1,4 @@
+import type { Sessions } from '@truefoundry/trueforge-core/agent-session';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { fetch as undiciFetch, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
 import { Controller } from './controller/Controller';
@@ -7,6 +8,9 @@ import type { IScheduleStore } from './db/scheduleStore';
 import type { WithTransaction } from './db/transaction';
 import { createTlsDispatcher, normalizeTlsUrl, type TlsOptions } from './http/tls';
 import { integrationEventPruneLoop } from './integrations/pruneEvents';
+import { createIntegrationAdapters } from './integrations/registry';
+import { integrationDeliveryRetryLoop } from './integrations/retryDeliveries';
+import { TurnCompletionNotifier } from './integrations/TurnCompletionNotifier';
 
 /** Resolves `fetch`'s first argument (`string | URL | Request`) to a URL string. */
 function requestUrlFromFetchInput(input: Parameters<typeof fetch>[0]): string {
@@ -76,6 +80,8 @@ export function createController<TTransaction>(
   params: ControllerServerTarget & {
     scheduleStore: IScheduleStore<TTransaction>;
     integrationStore: IIntegrationStore<TTransaction>;
+    /** Reads the turn a stalled outbox row owes a reply for. */
+    sessions: Sessions;
     withTransaction: WithTransaction<TTransaction>;
     logger: Logger;
   },
@@ -85,6 +91,16 @@ export function createController<TTransaction>(
     loops: [
       integrationEventPruneLoop({
         integrationStore: params.integrationStore,
+        logger: params.logger,
+      }),
+      integrationDeliveryRetryLoop({
+        integrationStore: params.integrationStore,
+        sessions: params.sessions,
+        notifier: new TurnCompletionNotifier({
+          integrationStore: params.integrationStore,
+          adapters: createIntegrationAdapters(),
+          logger: params.logger,
+        }),
         logger: params.logger,
       }),
       scheduleDispatchLoop({
@@ -109,6 +125,7 @@ export function runController<TTransaction>(
   params: ControllerServerTarget & {
     scheduleStore: IScheduleStore<TTransaction>;
     integrationStore: IIntegrationStore<TTransaction>;
+    sessions: Sessions;
     withTransaction: WithTransaction<TTransaction>;
     logger: Logger;
     gracefulTimeoutSeconds: number;

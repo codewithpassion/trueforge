@@ -1,4 +1,4 @@
-import type { Sessions } from '@truefoundry/trueforge-core/agent-session';
+import type { SessionHandle, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IIntegrationStore, IntegrationRecord } from '../db/integrationStore';
@@ -6,15 +6,25 @@ import type { TurnExecutor, TurnExecutorFailure, TurnStores } from '../runtime/t
 import { newId } from '../utils/id';
 import { toSessionExternalId } from './conversationKey';
 import type { TurnCompletionNotifier } from './TurnCompletionNotifier';
-import type { InboundEvent, InboundSender } from './types';
+import type { ChannelAdapter, InboundEvent, InboundSender } from './types';
 
 /** Longest session metadata value the session schema accepts. */
 const METADATA_VALUE_MAX_LENGTH = 128;
+
+/**
+ * What a conversation hears when a message arrives while its previous one is still running.
+ * Queuing the follow-up instead is a later option; starting a second turn is not, because the
+ * session tip would cancel the first one.
+ */
+export const BUSY_CONVERSATION_NOTICE =
+  'Still working on the previous message in this thread — I will reply when it is done.';
 
 export type IntegrationRouteResult =
   | { type: 'started'; turn_id: string; session_id: string }
   /** The channel replayed an event that was already accepted; nothing ran. */
   | { type: 'duplicate' }
+  /** The conversation's previous turn is still running, so the channel was told to wait. */
+  | { type: 'busy'; running_turn_id: string }
   | { type: 'agent_not_found'; agent_name: string }
   | { type: 'turn_failed'; failure: TurnExecutorFailure };
 
@@ -32,6 +42,16 @@ export interface IntegrationRouterDeps<TTransaction> {
    */
   deferDelivery: (run: () => Promise<void>) => void;
   logger: Logger;
+}
+
+/** The conversation's turn still in flight, if any. Read from the session tip, so it costs one row. */
+async function runningTurnId(session: SessionHandle): Promise<string | undefined> {
+  const tip = session.record.last_turn_id;
+  if (tip === null) {
+    return undefined;
+  }
+  const turn = await session.getTurn(tip);
+  return turn?.state.status === 'running' ? tip : undefined;
 }
 
 /** Provenance only; it never changes what the turn is allowed to do. */
@@ -54,8 +74,12 @@ export class IntegrationRouter<TTransaction> {
     this.#deps = deps;
   }
 
-  async route(input: { integration: IntegrationRecord; event: InboundEvent }): Promise<IntegrationRouteResult> {
-    const { integration, event } = input;
+  async route(input: {
+    integration: IntegrationRecord;
+    adapter: ChannelAdapter;
+    event: InboundEvent;
+  }): Promise<IntegrationRouteResult> {
+    const { integration, adapter, event } = input;
     const { integrationStore, sessions, agentStore, turnExecutor, resolveTurnStores, notifier, logger } = this.#deps;
 
     const eventRowId = newId();
@@ -90,6 +114,27 @@ export class IntegrationRouter<TTransaction> {
       source: { type: 'integration', id: integration.id, conversation_key: event.conversation_key },
       metadata: senderMetadata(event.sender),
     });
+
+    // A second turn would take the session tip from the first and cancel it, so a busy
+    // conversation is told to wait instead. The event stays deduped: the notice is the answer.
+    const running = await runningTurnId(session);
+    if (running !== undefined) {
+      this.#deps.deferDelivery(async () => {
+        const posted = await adapter.notice({
+          manifest: integration.manifest,
+          conversation_key: event.conversation_key,
+          text: BUSY_CONVERSATION_NOTICE,
+        });
+        if (!posted.ok) {
+          logger.warn('Integration busy notice was not posted', {
+            integrationId: integration.id,
+            sessionId: session.session_id,
+            reason: posted.error,
+          });
+        }
+      });
+      return { type: 'busy', running_turn_id: running };
+    }
 
     // 'auto' continues from the session tip, so the first message starts a thread and
     // later messages in it continue the same conversation.

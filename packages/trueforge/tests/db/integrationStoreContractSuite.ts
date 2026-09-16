@@ -374,6 +374,87 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toMatchObject({ status: 'pending', attempts: 0 });
   });
 
+  it('releaseDelivery puts a claimed row back in the queue with its reason', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await enqueue(store, created.id);
+    await store.claimDelivery({ turn_id: 'turn-1' });
+
+    const released = await store.releaseDelivery({ id: 'del-1', error: 'slack unreachable' });
+    expect(released).toMatchObject({ status: 'pending', attempts: 1, last_error: 'slack unreachable' });
+    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toMatchObject({ status: 'pending', attempts: 1 });
+    // Nothing is in flight any more, so a second release changes nothing.
+    expect(await store.releaseDelivery({ id: 'del-1', error: 'late' })).toBeUndefined();
+  });
+
+  it('listRetryableDeliveries returns unsettled rows older than the cutoff, oldest first', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await enqueue(store, created.id);
+    await store.enqueueDelivery({
+      id: 'del-2',
+      tenant_id: TENANT,
+      integration_id: created.id,
+      conversation_key: 'slack:T:C:2',
+      turn_id: 'turn-2',
+    });
+    await store.enqueueDelivery({
+      id: 'del-3',
+      tenant_id: TENANT,
+      integration_id: created.id,
+      conversation_key: 'slack:T:C:3',
+      turn_id: 'turn-3',
+    });
+    // `del-2` is stranded mid-post and `del-3` is settled; only the first two are owed.
+    await store.claimDelivery({ turn_id: 'turn-2' });
+    await store.claimDelivery({ turn_id: 'turn-3' });
+    await store.markDeliverySent({ id: 'del-3' });
+
+    const soon = new Date(Date.now() + 60_000);
+    const owed = await store.listRetryableDeliveries({ before: soon, limit: 10 });
+    expect(owed.map(row => row.id).sort()).toEqual(['del-1', 'del-2']);
+
+    // Rows touched after the cutoff are not the sweep's yet.
+    expect(await store.listRetryableDeliveries({ before: new Date(Date.now() - 60_000), limit: 10 })).toEqual([]);
+    expect(await store.listRetryableDeliveries({ before: soon, limit: 1 })).toHaveLength(1);
+  });
+
+  it('claimDeliveryForRetry takes a stranded sending row once, guarded by its attempt count', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await enqueue(store, created.id);
+    const stranded = await store.claimDelivery({ turn_id: 'turn-1' });
+    expect(stranded).toMatchObject({ status: 'sending', attempts: 1 });
+
+    const reclaimed = await store.claimDeliveryForRetry({ id: 'del-1', attempts: 1 });
+    expect(reclaimed).toMatchObject({ status: 'sending', attempts: 2 });
+    // The attempt count moved on, so the stale read no longer claims anything.
+    expect(await store.claimDeliveryForRetry({ id: 'del-1', attempts: 1 })).toBeUndefined();
+  });
+
+  it('concurrent retry claims for one row hand it to exactly one sweep', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await enqueue(store, created.id);
+
+    const claims = await Promise.all(
+      Array.from({ length: 8 }, () => store.claimDeliveryForRetry({ id: 'del-1', attempts: 0 })),
+    );
+
+    expect(claims.filter(claim => claim !== undefined)).toHaveLength(1);
+  });
+
+  it('a settled row is never handed back to the sweep', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await enqueue(store, created.id);
+    await store.claimDelivery({ turn_id: 'turn-1' });
+    await store.markDeliveryFailed({ id: 'del-1', error: 'gave up' });
+
+    expect(await store.listRetryableDeliveries({ before: new Date(Date.now() + 60_000), limit: 10 })).toEqual([]);
+    expect(await store.claimDeliveryForRetry({ id: 'del-1', attempts: 1 })).toBeUndefined();
+  });
+
   it('deleteEvent releases the event id so the channel retry runs again', async () => {
     const store = getStore();
     const created = await store.createIntegration(createInput());

@@ -58,7 +58,12 @@ export type DeliveryResult = { ok: true } | { ok: false; error: string };
 export interface ChannelAdapter<TManifest extends IntegrationManifest = IntegrationManifest> {
   readonly type: IntegrationType;
   /** Verifies authenticity and returns the parsed event, a direct reply, or an ignore. Must finish well under 3 s. */
-  receive(input: { request: Request; manifest: TManifest }): Promise<InboundResult>;
+  receive(input: { request: Request; manifest: TManifest; integration_id: string }): Promise<InboundResult>;
   /** Posts one message; idempotent per delivery id. */
   deliver(input: { manifest: TManifest; delivery: Delivery }): Promise<DeliveryResult>;
+  /**
+   * Posts a line the outbox does not owe, such as telling a conversation that its previous
+   * message is still running. Best-effort: nothing retries it.
+   */
+  notice(input: { manifest: TManifest; conversation_key: string; text: string }): Promise<DeliveryResult>;
 }

@@ -97,7 +97,11 @@ export function createIntegrationEventsRouter<TTransaction>(deps: IntegrationEve
       return c.json({ error: { message: `No adapter for integration type ${integration.type}` } }, 501);
     }
 
-    const received = await adapter.receive({ request: c.req.raw, manifest: integration.manifest });
+    const received = await adapter.receive({
+      request: c.req.raw,
+      manifest: integration.manifest,
+      integration_id: integration.id,
+    });
     if (received.type === 'respond') {
       return respond(c, received);
     }
@@ -116,7 +120,7 @@ export function createIntegrationEventsRouter<TTransaction>(deps: IntegrationEve
         created_by_subject: integration.created_by_subject,
       }),
     );
-    const routed = await integrationRouterFor(c).route({ integration, event: received.event });
+    const routed = await integrationRouterFor(c).route({ integration, adapter, event: received.event });
     if (routed.type === 'agent_not_found') {
       throw new HTTPException(422, { message: `Agent not found: ${routed.agent_name}` });
     }

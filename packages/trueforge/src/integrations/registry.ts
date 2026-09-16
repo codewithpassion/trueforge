@@ -1,4 +1,5 @@
-import type { IntegrationType } from '../schemas/integration';
+import { IntegrationTypeSchema, type IntegrationType } from '../schemas/integration';
+import { SlackChannelAdapter } from './slack/SlackChannelAdapter';
 import type { ChannelAdapter } from './types';
 
 /**
@@ -7,7 +8,7 @@ import type { ChannelAdapter } from './types';
  */
 export type IntegrationAdapterRegistry = ReadonlyMap<IntegrationType, ChannelAdapter>;
 
-/** No channel adapter ships yet, so every ingress request answers 501. */
+/** Adapters hold no per-request state, so callers on hot paths may build the map freely. */
 export function createIntegrationAdapters(): IntegrationAdapterRegistry {
-  return new Map<IntegrationType, ChannelAdapter>();
+  return new Map<IntegrationType, ChannelAdapter>([[IntegrationTypeSchema.enum.slack, new SlackChannelAdapter()]]);
 }

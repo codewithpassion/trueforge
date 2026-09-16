@@ -25,6 +25,7 @@ import type { Integration, IntegrationManifest } from '../../../src/schemas/inte
 import { newId } from '../../../src/utils/id';
 import { SECRET_REDACTION, toRedactedSecretValue } from '../../../src/utils/secretRedaction';
 import { RecordingTurnExecutor } from '../integrations/recordingTurnExecutor';
+import { slackRequest } from '../integrations/slack/slackRequest';
 
 const TENANT = STANDALONE_REQUEST_CONTEXT.tenant_id;
 const AGENT_NAME = 'support-bot';
@@ -127,6 +128,7 @@ function slackAdapter(receive: () => InboundResult): IntegrationAdapterRegistry 
     type: 'slack',
     receive: () => Promise.resolve(receive()),
     deliver: () => Promise.resolve({ ok: true }),
+    notice: () => Promise.resolve({ ok: true }),
   };
   return new Map([['slack', adapter]]);
 }
@@ -299,7 +301,8 @@ describe('integration events ingress', () => {
   });
 
   it('returns 501 for a type with no adapter registered', async () => {
-    const { db, app, integration } = await createIngress({ adapters: createIntegrationAdapters() });
+    // A registry without this channel stands in for a manifest type whose adapter has not landed.
+    const { db, app, integration } = await createIngress({ adapters: new Map() });
     try {
       const response = await app.request(`/${integration.id}/events`, { method: 'POST' });
       expect(response.status).toBe(501);
@@ -377,6 +380,48 @@ describe('integration events ingress', () => {
       const deliveries = await db.selectFrom('integration_delivery').selectAll().execute();
       expect(deliveries).toHaveLength(1);
       expect(await integrationStore.getPendingDelivery({ turn_id: deliveries[0]?.turn_id ?? '' })).toBeDefined();
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('runs a signed Slack mention end to end through the registered adapter', async () => {
+    const { db, app, integration, executor } = await createIngress({ adapters: createIntegrationAdapters() });
+    try {
+      const request = await slackRequest({
+        url: `https://trueforge.test/${integration.id}/events`,
+        signingSecret: SIGNING_SECRET,
+        payload: {
+          type: 'event_callback',
+          team_id: 'T0TEAM',
+          event_id: 'Ev0001',
+          event: {
+            type: 'app_mention',
+            user: 'U0HUMAN',
+            text: '<@U0BOT> status?',
+            ts: '1700000000.000100',
+            channel: 'C0GENERAL',
+            channel_type: 'channel',
+          },
+        },
+      });
+
+      expect((await app.request(request)).status).toBe(200);
+      expect(executor.starts).toHaveLength(1);
+      expect(executor.starts[0]?.input).toEqual([{ type: 'user.message', content: 'status?' }]);
+      expect(executor.starts[0]?.session.record.external_id).toBe('slack:T0TEAM:C0GENERAL:1700000000.000100');
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('refuses an unsigned request without touching the outbox', async () => {
+    const { db, app, integration, executor } = await createIngress({ adapters: createIntegrationAdapters() });
+    try {
+      const response = await app.request(`/${integration.id}/events`, { method: 'POST', body: '{}' });
+      expect(response.status).toBe(401);
+      expect(executor.starts).toHaveLength(0);
+      expect(await db.selectFrom('integration_delivery').selectAll().execute()).toEqual([]);
     } finally {
       await db.destroy();
     }

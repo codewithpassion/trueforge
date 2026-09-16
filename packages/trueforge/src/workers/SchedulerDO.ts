@@ -7,6 +7,9 @@ import { dispatchScheduledRuns, SCHEDULE_DISPATCH_INTERVAL_MS } from '../control
 import { executeScheduleRun } from '../controller/scheduleRunExecution';
 import type { ScheduleDispatchItem } from '../db/scheduleStore';
 import { INTEGRATION_EVENT_PRUNE_INTERVAL_MS, pruneIntegrationEvents } from '../integrations/pruneEvents';
+import { createIntegrationAdapters } from '../integrations/registry';
+import { DELIVERY_RETRY_INTERVAL_MS, retryIntegrationDeliveries } from '../integrations/retryDeliveries';
+import { TurnCompletionNotifier } from '../integrations/TurnCompletionNotifier';
 import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { createConsoleLogger } from './logger';
 import { createWorkersRuntimeDeps, type WorkersRuntimeDeps } from './runtime';
@@ -14,8 +17,9 @@ import { createWorkersRuntimeDeps, type WorkersRuntimeDeps } from './runtime';
 /** The one scheduler instance: `idFromName(SCHEDULER_INSTANCE_NAME)`. */
 export const SCHEDULER_INSTANCE_NAME = 'singleton';
 
-/** Durable Object storage key holding the last integration-event sweep time, in epoch ms. */
+/** Durable Object storage keys holding the last sweep times, in epoch ms. */
 const LAST_INTEGRATION_PRUNE_KEY = 'last_integration_prune_at';
+const LAST_DELIVERY_RETRY_KEY = 'last_delivery_retry_at';
 
 /**
  * Schedule dispatch on Workers. Dispatch requires exactly one controller per database; a single named
@@ -49,6 +53,7 @@ export class SchedulerDO extends DurableObject {
         this.#logger.debug('Scheduled runs dispatched or failed', result);
       }
       await this.#pruneIntegrationEventsIfDue();
+      await this.#retryDeliveriesIfDue();
     } catch (error) {
       // Per-run failures are handled inside the pass; this is a pass that could not run at all.
       this.#logger.error('Schedule dispatch pass failed', extractErrorLogFields(error));
@@ -60,18 +65,47 @@ export class SchedulerDO extends DurableObject {
 
   /**
    * The singleton is the one place a database-wide sweep can run without overlapping itself, but
-   * dispatch wakes every minute, so the last sweep time is kept in storage to keep it hourly.
+   * dispatch wakes every minute, so each sweep's last run time is kept in storage to pace it.
+   * Sweeps never throw, so recording the time before the pass cannot skip one that failed.
    */
-  async #pruneIntegrationEventsIfDue(): Promise<void> {
+  async #sweepIfDue(input: { key: string; intervalMs: number; run: () => Promise<void> }): Promise<void> {
     const now = Date.now();
-    const last = await this.ctx.storage.get<number>(LAST_INTEGRATION_PRUNE_KEY);
-    if (last !== undefined && now - last < INTEGRATION_EVENT_PRUNE_INTERVAL_MS) {
+    const last = await this.ctx.storage.get<number>(input.key);
+    if (last !== undefined && now - last < input.intervalMs) {
       return;
     }
-    await this.ctx.storage.put(LAST_INTEGRATION_PRUNE_KEY, now);
-    await pruneIntegrationEvents({
-      integrationStore: this.#runtimeDeps().persistence.integrationStore,
-      logger: this.#logger,
+    await this.ctx.storage.put(input.key, now);
+    await input.run();
+  }
+
+  async #pruneIntegrationEventsIfDue(): Promise<void> {
+    await this.#sweepIfDue({
+      key: LAST_INTEGRATION_PRUNE_KEY,
+      intervalMs: INTEGRATION_EVENT_PRUNE_INTERVAL_MS,
+      run: () =>
+        pruneIntegrationEvents({
+          integrationStore: this.#runtimeDeps().persistence.integrationStore,
+          logger: this.#logger,
+        }),
+    });
+  }
+
+  async #retryDeliveriesIfDue(): Promise<void> {
+    const { persistence } = this.#runtimeDeps();
+    await this.#sweepIfDue({
+      key: LAST_DELIVERY_RETRY_KEY,
+      intervalMs: DELIVERY_RETRY_INTERVAL_MS,
+      run: () =>
+        retryIntegrationDeliveries({
+          integrationStore: persistence.integrationStore,
+          sessions: new Sessions({ sessionStore: persistence.sessionStore }),
+          notifier: new TurnCompletionNotifier({
+            integrationStore: persistence.integrationStore,
+            adapters: createIntegrationAdapters(),
+            logger: this.#logger,
+          }),
+          logger: this.#logger,
+        }),
     });
   }
 

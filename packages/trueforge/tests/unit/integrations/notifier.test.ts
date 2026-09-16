@@ -27,8 +27,7 @@ import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteS
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
-import { createIntegrationAdapters } from '../../../src/integrations/registry';
-import { TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
+import { MAX_DELIVERY_ATTEMPTS, TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
 import { startTurnInProcess, type BeginTurnExecutionDeps } from '../../../src/runtime/turnRunner';
@@ -246,7 +245,7 @@ describe('TurnCompletionNotifier on Node', () => {
     harness = await createHarness();
     const notifier = new TurnCompletionNotifier({
       integrationStore: harness.integrationStore,
-      adapters: createIntegrationAdapters(),
+      adapters: new Map(),
       logger: createLogger({ silent: true }),
     });
     await harness.integrationStore.enqueueDelivery({
@@ -264,7 +263,7 @@ describe('TurnCompletionNotifier on Node', () => {
     expect(row).toMatchObject({ status: 'failed', attempts: 1, last_error: 'No adapter for integration type slack' });
   });
 
-  it('a delivery failure leaves the row failed with the reason', async () => {
+  it('a delivery failure puts the row back in the queue with its reason', async () => {
     harness = await createHarness();
     const fake = fakeChannelAdapter({ deliver: () => ({ ok: false, error: 'channel rejected the message' }) });
     const notifier = new TurnCompletionNotifier({
@@ -283,7 +282,38 @@ describe('TurnCompletionNotifier on Node', () => {
     await runTurn({ harness, notifier });
 
     const [row] = await harness.db.selectFrom('integration_delivery').selectAll().execute();
-    expect(row).toMatchObject({ status: 'failed', attempts: 1, last_error: 'channel rejected the message' });
+    expect(row).toMatchObject({ status: 'pending', attempts: 1, last_error: 'channel rejected the message' });
+  });
+
+  it('gives the row up once its attempts are spent', async () => {
+    harness = await createHarness();
+    const fake = fakeChannelAdapter({ deliver: () => ({ ok: false, error: 'channel rejected the message' }) });
+    const notifier = new TurnCompletionNotifier({
+      integrationStore: harness.integrationStore,
+      adapters: fake.adapters,
+      logger: createLogger({ silent: true }),
+    });
+    await harness.integrationStore.enqueueDelivery({
+      id: 'del-1',
+      tenant_id: TENANT,
+      integration_id: harness.integrationId,
+      conversation_key: CONVERSATION_KEY,
+      turn_id: TURN_ID,
+    });
+    // Burn every attempt but the last, the way repeated sweeps would.
+    for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS - 1; attempt += 1) {
+      const claimed = await harness.integrationStore.claimDelivery({ turn_id: TURN_ID });
+      await harness.integrationStore.releaseDelivery({ id: claimed?.id ?? '', error: 'earlier failure' });
+    }
+
+    await runTurn({ harness, notifier });
+
+    const [row] = await harness.db.selectFrom('integration_delivery').selectAll().execute();
+    expect(row).toMatchObject({
+      status: 'failed',
+      attempts: MAX_DELIVERY_ATTEMPTS,
+      last_error: 'channel rejected the message',
+    });
   });
 
   it('ignores a session that no integration owns', async () => {

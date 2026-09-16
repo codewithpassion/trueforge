@@ -1,9 +1,13 @@
 import type { SessionHandle } from '@truefoundry/trueforge-core/agent-session';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import type { IIntegrationStore } from '../db/integrationStore';
+import type { IIntegrationStore, IntegrationDeliveryRecord } from '../db/integrationStore';
 import { buildDeliveryContent } from './deliveryContent';
 import type { IntegrationAdapterRegistry } from './registry';
+import type { DeliveryContent } from './types';
+
+/** How many posts one reply is worth before the outbox row is given up on. */
+export const MAX_DELIVERY_ATTEMPTS = 5;
 
 export interface TurnCompletionNotifierDeps<TTransaction> {
   integrationStore: IIntegrationStore<TTransaction>;
@@ -34,7 +38,7 @@ export class TurnCompletionNotifier<TTransaction> {
     if (session.record.source?.type !== 'integration') {
       return;
     }
-    const { integrationStore, adapters, logger } = this.#deps;
+    const { integrationStore, logger } = this.#deps;
     try {
       if ((await integrationStore.getPendingDelivery({ turn_id: turnId })) === undefined) {
         return;
@@ -51,36 +55,7 @@ export class TurnCompletionNotifier<TTransaction> {
       if (delivery === undefined) {
         return;
       }
-
-      const integration = await integrationStore.getIntegrationById({ id: delivery.integration_id });
-      if (integration === undefined) {
-        await this.#fail({ id: delivery.id, error: 'Integration was disconnected', turnId });
-        return;
-      }
-      const adapter = adapters.get(integration.type);
-      if (adapter === undefined) {
-        await this.#fail({
-          id: delivery.id,
-          error: `No adapter for integration type ${integration.type}`,
-          turnId,
-        });
-        return;
-      }
-
-      const result = await adapter.deliver({
-        manifest: integration.manifest,
-        delivery: {
-          id: delivery.id,
-          conversation_key: delivery.conversation_key,
-          turn_id: turnId,
-          content: buildDeliveryContent(turnState),
-        },
-      });
-      if (result.ok) {
-        await integrationStore.markDeliverySent({ id: delivery.id });
-        return;
-      }
-      await this.#fail({ id: delivery.id, error: result.error, turnId });
+      await this.deliverClaimed({ delivery, content: buildDeliveryContent(turnState) });
     } catch (error) {
       logger.error('Integration delivery failed', {
         sessionId: session.session_id,
@@ -90,11 +65,59 @@ export class TurnCompletionNotifier<TTransaction> {
     }
   }
 
-  async #fail(input: { id: string; error: string; turnId: string }): Promise<void> {
-    const settled = await this.#deps.integrationStore.markDeliveryFailed({ id: input.id, error: input.error });
+  /**
+   * Posts a row the caller already holds. Both the drain hook and the retry sweep end here, so
+   * the settle rules — sent, released for another attempt, or given up on — live in one place.
+   */
+  async deliverClaimed(input: { delivery: IntegrationDeliveryRecord; content: DeliveryContent }): Promise<void> {
+    const { delivery, content } = input;
+    const { integrationStore, adapters } = this.#deps;
+
+    const integration = await integrationStore.getIntegrationById({ id: delivery.integration_id });
+    if (integration === undefined) {
+      await this.#giveUp({ delivery, error: 'Integration was disconnected' });
+      return;
+    }
+    const adapter = adapters.get(integration.type);
+    if (adapter === undefined) {
+      await this.#giveUp({ delivery, error: `No adapter for integration type ${integration.type}` });
+      return;
+    }
+
+    const result = await adapter.deliver({
+      manifest: integration.manifest,
+      delivery: {
+        id: delivery.id,
+        conversation_key: delivery.conversation_key,
+        turn_id: delivery.turn_id,
+        content,
+      },
+    });
+    if (result.ok) {
+      await integrationStore.markDeliverySent({ id: delivery.id });
+      return;
+    }
+    if (delivery.attempts >= MAX_DELIVERY_ATTEMPTS) {
+      await this.#giveUp({ delivery, error: result.error });
+      return;
+    }
+    await integrationStore.releaseDelivery({ id: delivery.id, error: result.error });
+    this.#deps.logger.warn('Integration delivery will be retried', {
+      deliveryId: delivery.id,
+      turnId: delivery.turn_id,
+      attempts: delivery.attempts,
+      reason: result.error,
+    });
+  }
+
+  async #giveUp(input: { delivery: IntegrationDeliveryRecord; error: string }): Promise<void> {
+    const settled = await this.#deps.integrationStore.markDeliveryFailed({
+      id: input.delivery.id,
+      error: input.error,
+    });
     this.#deps.logger.warn('Integration delivery gave up', {
-      deliveryId: input.id,
-      turnId: input.turnId,
+      deliveryId: input.delivery.id,
+      turnId: input.delivery.turn_id,
       attempts: settled?.attempts,
       reason: input.error,
     });

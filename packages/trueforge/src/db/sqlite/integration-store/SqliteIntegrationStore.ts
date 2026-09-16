@@ -4,6 +4,7 @@ import type { IntegrationType } from '../../../schemas/integration';
 import {
   IntegrationConflictError,
   parseStoredIntegrationManifest,
+  type ClaimDeliveryForRetryInput,
   type ClaimDeliveryInput,
   type CreateIntegrationInput,
   type DeleteIntegrationEventInput,
@@ -16,10 +17,12 @@ import {
   type IntegrationDeliveryRecord,
   type IntegrationRecord,
   type ListIntegrationsInput,
+  type ListRetryableDeliveriesInput,
   type MarkDeliveryFailedInput,
   type MarkDeliverySentInput,
   type PruneIntegrationEventsInput,
   type RecordIntegrationEventInput,
+  type ReleaseDeliveryInput,
   type UpdateIntegrationInput,
 } from '../../integrationStore';
 import type { AtomicRunner } from '../atomic';
@@ -312,6 +315,51 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     return await db
       .updateTable('integration_delivery')
       .set({ status: 'failed', last_error: input.error, updated_at: nowIso() })
+      .where('id', '=', input.id)
+      .where('status', '=', 'sending')
+      .returning([...DELIVERY_COLUMNS])
+      .executeTakeFirst();
+  }
+
+  async listRetryableDeliveries(
+    input: ListRetryableDeliveriesInput,
+    transaction?: Kysely<Database>,
+  ): Promise<IntegrationDeliveryRecord[]> {
+    const db = transaction ?? this.#db;
+    return await db
+      .selectFrom('integration_delivery')
+      .select([...DELIVERY_COLUMNS])
+      .where('status', 'in', ['pending', 'sending'])
+      .where('updated_at', '<', input.before.toISOString())
+      .orderBy('updated_at', 'asc')
+      .limit(input.limit)
+      .execute();
+  }
+
+  /** `attempts` is the version stamp, so this claims a stranded `sending` row as well as a `pending` one. */
+  async claimDeliveryForRetry(
+    input: ClaimDeliveryForRetryInput,
+    transaction?: Kysely<Database>,
+  ): Promise<IntegrationDeliveryRecord | undefined> {
+    const db = transaction ?? this.#db;
+    return await db
+      .updateTable('integration_delivery')
+      .set({ status: 'sending', attempts: input.attempts + 1, updated_at: nowIso() })
+      .where('id', '=', input.id)
+      .where('attempts', '=', input.attempts)
+      .where('status', 'in', ['pending', 'sending'])
+      .returning([...DELIVERY_COLUMNS])
+      .executeTakeFirst();
+  }
+
+  async releaseDelivery(
+    input: ReleaseDeliveryInput,
+    transaction?: Kysely<Database>,
+  ): Promise<IntegrationDeliveryRecord | undefined> {
+    const db = transaction ?? this.#db;
+    return await db
+      .updateTable('integration_delivery')
+      .set({ status: 'pending', last_error: input.error, updated_at: nowIso() })
       .where('id', '=', input.id)
       .where('status', '=', 'sending')
       .returning([...DELIVERY_COLUMNS])

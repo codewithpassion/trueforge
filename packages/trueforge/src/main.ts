@@ -42,7 +42,7 @@ try {
 }
 
 import { serve } from '@hono/node-server';
-import { CancellationReason, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import { CancellationReason, Sessions, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { RequestReplyExecutor, RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import type { Kysely, Transaction } from 'kysely';
@@ -485,6 +485,7 @@ async function createNodeServerRuntime<TTransaction>(options: {
     ? createController({
         scheduleStore,
         integrationStore: persistence.integrationStore,
+        sessions: new Sessions({ sessionStore: persistence.sessionStore }),
         withTransaction,
         logger,
         serverUrl: configuration.SERVER_URL,

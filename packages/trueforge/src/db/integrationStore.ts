@@ -168,6 +168,25 @@ export interface MarkDeliveryFailedInput {
   error: string;
 }
 
+export interface ListRetryableDeliveriesInput {
+  /** Only rows untouched since this instant; the partial index on `updated_at` serves it. */
+  before: Date;
+  limit: number;
+}
+
+/** A retry claim is guarded by `attempts` rather than `status`, so a stranded `sending` row is reachable. */
+export interface ClaimDeliveryForRetryInput {
+  id: string;
+  /** Version stamp: the claim lands only while the row is still on this attempt count. */
+  attempts: number;
+}
+
+export interface ReleaseDeliveryInput {
+  id: string;
+  /** Short reason kept on the row until the next attempt settles it. */
+  error: string;
+}
+
 export interface IIntegrationStore<TTransaction = never> {
   // --- integration ---
   listIntegrations(input: ListIntegrationsInput, transaction?: TTransaction): Promise<IntegrationRecord[]>;
@@ -229,6 +248,27 @@ export interface IIntegrationStore<TTransaction = never> {
   /** Terminal transition out of `sending` that records the reason. */
   markDeliveryFailed(
     input: MarkDeliveryFailedInput,
+    transaction?: TTransaction,
+  ): Promise<IntegrationDeliveryRecord | undefined>;
+  /**
+   * Unsettled rows the retry sweep may own: `pending` ones owed a further attempt and `sending`
+   * ones stranded by a process that stopped between the claim and the post. Oldest first.
+   */
+  listRetryableDeliveries(
+    input: ListRetryableDeliveriesInput,
+    transaction?: TTransaction,
+  ): Promise<IntegrationDeliveryRecord[]>;
+  /**
+   * Takes an unsettled row for another attempt, guarded on the attempt count the sweep read. A row
+   * another caller has already moved is untouched and reported as undefined.
+   */
+  claimDeliveryForRetry(
+    input: ClaimDeliveryForRetryInput,
+    transaction?: TTransaction,
+  ): Promise<IntegrationDeliveryRecord | undefined>;
+  /** Puts a claimed row back in `pending` so the sweep can retry it after its backoff. */
+  releaseDelivery(
+    input: ReleaseDeliveryInput,
     transaction?: TTransaction,
   ): Promise<IntegrationDeliveryRecord | undefined>;
 }

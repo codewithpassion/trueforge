@@ -1,4 +1,9 @@
-import { AgentSpecSchema, Sessions, type CreatedBySubject } from '@truefoundry/trueforge-core/agent-session';
+import {
+  AgentSpecSchema,
+  CancellationReason,
+  Sessions,
+  type CreatedBySubject,
+} from '@truefoundry/trueforge-core/agent-session';
 import type { Kysely } from 'kysely';
 import { createLogger } from 'winston';
 import type { IIntegrationStore, IntegrationRecord } from '../../../src/db/integrationStore';
@@ -14,12 +19,12 @@ import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteS
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
-import { IntegrationRouter } from '../../../src/integrations/router';
+import { BUSY_CONVERSATION_NOTICE, IntegrationRouter } from '../../../src/integrations/router';
 import { TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
 import type { InboundEvent } from '../../../src/integrations/types';
 import type { IntegrationManifest } from '../../../src/schemas/integration';
 import { newId } from '../../../src/utils/id';
-import { fakeChannelAdapter } from './fakeChannelAdapter';
+import { fakeChannelAdapter, type FakeChannelAdapter } from './fakeChannelAdapter';
 import { RecordingTurnExecutor } from './recordingTurnExecutor';
 
 const TENANT = 'default';
@@ -61,7 +66,9 @@ interface Harness {
   integrationStore: IIntegrationStore<Kysely<Database>>;
   integration: IntegrationRecord;
   router: IntegrationRouter<Kysely<Database>>;
+  channel: FakeChannelAdapter;
   executor: RecordingTurnExecutor;
+  sessions: Sessions;
   /** Awaits the flushes the router handed to `deferDelivery`, which a request would not wait on. */
   flush: () => Promise<void>;
 }
@@ -95,6 +102,8 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
   });
 
   const logger = createLogger({ silent: true });
+  const channel = fakeChannelAdapter();
+  const sessions = new Sessions({ sessionStore });
   const executor = new RecordingTurnExecutor(sessionStore);
   const deferred: Promise<void>[] = [];
   const router = new IntegrationRouter({
@@ -102,7 +111,7 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
       deferred.push(run());
     },
     integrationStore,
-    sessions: new Sessions({ sessionStore }),
+    sessions,
     agentStore,
     turnExecutor: executor,
     // The recording executor ignores these; the real stores keep the shape honest.
@@ -119,7 +128,7 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
     }),
     notifier: new TurnCompletionNotifier({
       integrationStore,
-      adapters: fakeChannelAdapter().adapters,
+      adapters: channel.adapters,
       logger,
     }),
     logger,
@@ -129,11 +138,22 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
     integrationStore,
     integration,
     router,
+    channel,
     executor,
+    sessions,
     flush: async () => {
       await Promise.all(deferred.splice(0));
     },
   };
+}
+
+/** Ends the conversation's running turn, so the next message is not answered as busy. */
+async function settleTurn(harness: Harness, turnId: string): Promise<void> {
+  const session = await harness.sessions.getByExternalId({
+    tenant_id: TENANT,
+    external_id: inboundEvent().conversation_key,
+  });
+  await session?.freezeTurn({ turn_id: turnId, reason: CancellationReason.CancelledForNextTurn });
 }
 
 describe('IntegrationRouter', () => {
@@ -145,7 +165,11 @@ describe('IntegrationRouter', () => {
 
   it('starts one turn for an event and records the reply owed', async () => {
     harness = await createHarness();
-    const routed = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    const routed = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
 
     expect(routed).toMatchObject({ type: 'started' });
     expect(harness.executor.starts).toHaveLength(1);
@@ -168,7 +192,11 @@ describe('IntegrationRouter', () => {
 
   it('binds the session to the conversation and records the sender', async () => {
     harness = await createHarness();
-    const routed = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    const routed = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
     if (routed.type !== 'started') {
       throw new Error('expected the turn to start');
     }
@@ -189,8 +217,16 @@ describe('IntegrationRouter', () => {
 
   it('the same event id twice starts one turn and writes one outbox row', async () => {
     harness = await createHarness();
-    const first = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
-    const second = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    const first = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
+    const second = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
 
     expect(first.type).toBe('started');
     expect(second).toEqual({ type: 'duplicate' });
@@ -202,27 +238,65 @@ describe('IntegrationRouter', () => {
 
   it('a second message in the same conversation continues the session and adds its own outbox row', async () => {
     harness = await createHarness();
-    const first = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    const first = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
+    if (first.type !== 'started') {
+      throw new Error('expected the first turn to start');
+    }
+    await settleTurn(harness, first.turn_id);
+
     const second = await harness.router.route({
       integration: harness.integration,
+      adapter: harness.channel.adapter,
       event: inboundEvent({ event_id: 'Ev0002', text: 'any update?' }),
     });
-
-    expect(first.type).toBe('started');
-    expect(second.type).toBe('started');
-    if (first.type !== 'started' || second.type !== 'started') {
-      throw new Error('expected both turns to start');
+    if (second.type !== 'started') {
+      throw new Error('expected the second turn to start');
     }
     expect(second.session_id).toBe(first.session_id);
     expect(second.turn_id).not.toBe(first.turn_id);
+    expect(harness.channel.notices).toEqual([]);
 
     const deliveries = await harness.db.selectFrom('integration_delivery').selectAll().execute();
     expect(deliveries).toHaveLength(2);
   });
 
+  it('answers a busy thread in the channel instead of starting a second turn', async () => {
+    harness = await createHarness();
+    const first = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
+    if (first.type !== 'started') {
+      throw new Error('expected the first turn to start');
+    }
+
+    const second = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent({ event_id: 'Ev0002', text: 'any update?' }),
+    });
+    await harness.flush();
+
+    expect(second).toEqual({ type: 'busy', running_turn_id: first.turn_id });
+    expect(harness.executor.starts).toHaveLength(1);
+    expect(harness.channel.notices).toEqual([BUSY_CONVERSATION_NOTICE]);
+    // The message was answered, so its dedupe row stays and a channel retry does not repeat the notice.
+    expect(await harness.db.selectFrom('integration_delivery').selectAll().execute()).toHaveLength(1);
+    expect(await harness.db.selectFrom('integration_event').selectAll().execute()).toHaveLength(2);
+  });
+
   it('reports a missing agent without starting a turn, and releases the event', async () => {
     harness = await createHarness({ withAgent: false });
-    const routed = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    const routed = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
 
     expect(routed).toEqual({ type: 'agent_not_found', agent_name: AGENT_NAME });
     expect(harness.executor.starts).toHaveLength(0);
@@ -239,19 +313,31 @@ describe('IntegrationRouter', () => {
       message: 'previous turn is running',
     });
 
-    const first = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    const first = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
     expect(first).toMatchObject({ type: 'turn_failed' });
     expect(await harness.db.selectFrom('integration_event').selectAll().execute()).toEqual([]);
 
     // The retry is a fresh event as far as dedupe is concerned, so the message is not lost.
-    const retry = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    const retry = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
     expect(retry.type).toBe('started');
     expect(harness.executor.starts).toHaveLength(2);
   });
 
   it("keeps the post-start flush out of the caller's path", async () => {
     harness = await createHarness();
-    const routed = await harness.router.route({ integration: harness.integration, event: inboundEvent() });
+    const routed = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
     if (routed.type !== 'started') {
       throw new Error('expected the turn to start');
     }
