@@ -23,6 +23,22 @@ import {
 
 export const CLOUDFLARE_COMPUTER_PROVIDER_TYPE = 'cloudflare-computer';
 
+/**
+ * The platform reports a refused container at the tail of a transport string that opens with a
+ * health-check timeout, so only this phrase tells the capacity limit from a broken container.
+ */
+const INSTANCE_LIMIT_MARKER = 'Maximum number of running container instances exceeded';
+
+/** No container starts once the deploy is at `max_instances`, so this session has no workspace. */
+class SandboxInstanceLimitError extends SandboxNotAvailableError {
+  constructor(sandboxId: string, options: ErrorOptions) {
+    super(sandboxId, options);
+    this.name = 'SandboxInstanceLimitError';
+    this.message =
+      'No sandbox could start: the deploy is already running its max_instances limit of containers. Retry in a few minutes.';
+  }
+}
+
 /** `wrangler deploy` builds and rolls the container image, so there is no runtime build. */
 const READY_BUILD: SandboxBuild = { status: 'ready', reason: null, metadata: null };
 
@@ -95,7 +111,11 @@ export class CloudflareComputerProvider implements SandboxProvider {
         timeoutMs: timeoutSeconds * 1000,
       });
     } catch (error) {
-      return { success: false, error: `Sandbox exec failed: ${errorMessage(error)}` };
+      const message = errorMessage(error);
+      if (message.includes(INSTANCE_LIMIT_MARKER)) {
+        throw new SandboxInstanceLimitError(params.sandboxId, { cause: error });
+      }
+      return { success: false, error: `Sandbox exec failed: ${message}` };
     }
     if (outcome.status === 'cancelled') {
       return { success: false, error: `Sandbox exec timed out after ${String(timeoutSeconds)}s` };

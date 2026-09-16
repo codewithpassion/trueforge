@@ -156,6 +156,24 @@ describe('CloudflareComputerProvider', () => {
     });
   });
 
+  // Captured live in Section 9 of the sandbox plan: the limit is named only at the tail of a
+  // transport string that opens with a health-check timeout.
+  it('names the instance limit when the platform refuses to start another container', async () => {
+    const computer = new FakeComputer();
+    const cause = new Error(
+      'Workspace backend "container-shell": shell.exec failed after 1 reconnect retry: ' +
+        'initial=CloudflareContainerBackend(container-shell): connect failed at stage=health ' +
+        'port=8080 attempt=2/2 restarts=1 timeoutMs=30000 lastError=container exited: ' +
+        'Maximum number of running container instances exceeded. Try again later, or try configuring a higher limit.',
+    );
+    computer.exec = cause;
+    const rejection = build(computer).exec({ sandboxId: SANDBOX_ID, command: 'x' });
+    await expect(rejection).rejects.toBeInstanceOf(SandboxNotAvailableError);
+    await expect(rejection).rejects.toMatchObject({ name: 'SandboxInstanceLimitError', cause });
+    await expect(rejection).rejects.toThrow(/max_instances/);
+    await expect(rejection).rejects.toThrow(/Retry in a few minutes/);
+  });
+
   it('reports a lost RPC call as a failure rather than throwing', async () => {
     const computer = new FakeComputer();
     computer.exec = new Error('EEXEC_LOST');
