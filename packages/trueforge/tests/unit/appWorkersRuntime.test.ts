@@ -10,6 +10,7 @@ import { SandboxCatalog } from '../../src/catalog/SandboxCatalog';
 import { SkillCatalog } from '../../src/catalog/SkillCatalog';
 import configuration, { parseServerConfiguration } from '../../src/config';
 import { McpServerWithAuthStore } from '../../src/db/McpServerWithAuthStore';
+import { migrateSqliteToLatest } from '../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../src/db/sqlite/agent-store/SqliteAgentStore';
 import { BetterSqliteAtomicRunner, createSqliteDb } from '../../src/db/sqlite/client';
 import { SqliteIntegrationStore } from '../../src/db/sqlite/integration-store/SqliteIntegrationStore';
@@ -53,9 +54,10 @@ jest.mock('../../src/auth/middleware', () => {
   return { ...actual, createApiKeyAuthMiddleware: jest.fn(actual.createApiKeyAuthMiddleware) };
 });
 
-function createApp() {
+async function createApp() {
   const sessionStore = new InMemorySessionStore();
   const db = createSqliteDb(':memory:');
+  await migrateSqliteToLatest(db);
   const tokenStore = new SqliteOAuthTokenStore(db);
   const agentStore = new SqliteAgentStore(db);
   const skillStore = new SqliteSkillStore(db);
@@ -102,7 +104,7 @@ describe('createServerApp on the workers runtime', () => {
   });
 
   it('does not mount the internal schedule execution route', async () => {
-    const app = createApp();
+    const app = await createApp();
 
     const response = await app.request(EXECUTE_RUN_PATH, {
       method: 'POST',
@@ -114,16 +116,28 @@ describe('createServerApp on the workers runtime', () => {
     expect(Object.keys(buildOpenApiDocument(app).paths ?? {})).not.toContain(EXECUTE_RUN_PATH);
   });
 
-  it('does not construct the service API-key middleware', () => {
+  it('mounts the channel ingress without an auth shell on this runtime', async () => {
+    const app = await createApp();
+
+    // Unknown integration, not 401: the route is reachable with no TrueForge credential.
+    const response = await app.request('/api/v1/integrations/missing/events', { method: 'POST' });
+
+    expect(response.status).toBe(404);
+    expect(Object.keys(buildOpenApiDocument(app).paths ?? {})).toContain(
+      '/api/v1/integrations/{integration_id}/events',
+    );
+  });
+
+  it('does not construct the service API-key middleware', async () => {
     jest.mocked(createApiKeyAuthMiddleware).mockClear();
-    createApp();
+    await createApp();
 
     expect(jest.isMockFunction(createApiKeyAuthMiddleware)).toBe(true);
     expect(createApiKeyAuthMiddleware).not.toHaveBeenCalled();
   });
 
   // Control: proves the middleware mock intercepts app.ts, so the workers assertion above is meaningful.
-  it('constructs the service API-key middleware on a standalone configuration', () => {
+  it('constructs the service API-key middleware on a standalone configuration', async () => {
     const standaloneConfiguration = parseServerConfiguration();
     expect(standaloneConfiguration.RUNTIME).toBe('standalone');
     const replaced = jest.replaceProperty(
@@ -133,7 +147,7 @@ describe('createServerApp on the workers runtime', () => {
     );
     jest.mocked(createApiKeyAuthMiddleware).mockClear();
     try {
-      createApp();
+      await createApp();
     } finally {
       replaced.restore();
     }
