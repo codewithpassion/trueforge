@@ -476,7 +476,8 @@ The acceptance run did not happen: the deploy's own session had expired, and re-
 1. From inside a sandbox, timed with `curl -w '%{time_total}'`: `curl https://example.com`, `curl http://example.com`, and `python3 -c "urllib.request.urlopen('https://example.com')"` — the last one checks the system CA path the skill downloader uses.
 2. `curl http://code-mode.trueforge.internal/dispatch` with no token, ten times, for the round trip; the gateway answers 401 without leaving the machine.
 3. A skill download, which is a `git clone` over intercepted HTTPS.
-4. Agent `smoke-codemode` with the sandbox, Code Mode and the `context7` MCP server: a streaming turn and a non-streaming turn where a script calls two tools and returns a value.
-5. From the tail: round-trip latency per dispatcher call, alarm wall and CPU, and any exception.
+4. `mcp-client call-tool …` from the shell, not only `from mcp_client import call_tool`. The module is installed on the FUSE mount and `chmod 0555`, with the PATH link at `/usr/local/bin/mcp-client`; if the mount does not keep the mode, the CLI half of the prompt's promise is broken while the import half still works, and the module moves to the container disk.
+5. Agent `smoke-codemode` with the sandbox, Code Mode and the `context7` MCP server: a streaming turn and a non-streaming turn where a script calls two tools and returns a value.
+6. From the tail: round-trip latency per dispatcher call, alarm wall and CPU, and any exception.
 
 If HTTPS does not survive interception, the fallback needs no new protocol: Computer routes `computer.internal` to `ComputerDO.fetch` in **every** egress mode, so the same client, token, registry and dispatcher work with `egress: { mode: 'direct' }` and a path match in `ComputerDO.fetch` ahead of `backend.handleFetch`. Only the host match moves.
