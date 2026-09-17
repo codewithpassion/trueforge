@@ -9,14 +9,15 @@ import type { Env } from '../env';
 import { sessionDurableObjectName } from '../sessionScope';
 import { CloudflareComputerProvider } from './CloudflareComputerProvider';
 import type { CodeModeBridgeRegistry } from './codeModeBridge';
-import type { ComputerDO } from './ComputerDO';
+import type { ComputerWorkspace } from './ComputerDO';
 
 const NOT_SUPPORTED_MESSAGE = 'Daytona sandbox providers are not supported on the Cloudflare Workers runtime';
 
 export interface WorkersSandboxIntegrationOptions {
   /** Unset means code execution stays off, which is the phase 5 behaviour. */
   backend: 'cloudflare-computer' | undefined;
-  namespace: Pick<DurableObjectNamespace<ComputerDO>, 'get' | 'idFromName'>;
+  /** Narrowed to what the provider uses, so a test can stand a workspace in without a container. */
+  namespace: { idFromName(name: string): DurableObjectId; get(id: DurableObjectId): ComputerWorkspace };
   defaultExecTimeoutSeconds: number;
   fileMaxBytesForDownload: number;
   /**

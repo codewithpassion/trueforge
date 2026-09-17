@@ -119,6 +119,35 @@ describe('the Code Mode hostname', () => {
     expect(status).toBe(405);
   });
 
+  it('answers for the session its workspace is named after, whatever the request claims', async () => {
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const status = await inComputerDO('tenant-a:session-1', async state => {
+        const named = new Request(`http://${new URL(CODE_MODE_BRIDGE_URL).host}/dispatch/tenant-b:session-2`, {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer a-token-of-another-session',
+            'x-session-id': 'tenant-b:session-2',
+            'x-tenant-id': 'tenant-b',
+          },
+          body: JSON.stringify({ op: 'list_tools', server: 'demo', session_id: 'tenant-b:session-2' }),
+        });
+        const response = await gateway(state, 'tenant-a:session-1').fetch(named);
+        return response.status;
+      });
+
+      expect(status).toBe(401);
+      const refusals = warned.mock.calls.map(([line]) => String(line)).filter(line => line.includes('Refused'));
+      expect(refusals).not.toHaveLength(0);
+      for (const line of refusals) {
+        expect(line).toContain('tenant-a:session-1');
+        expect(line).not.toContain('tenant-b');
+      }
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
   it('refuses outright when the workspace cannot name its session', async () => {
     const status = await inComputerDO('tenant-1:code-mode-nameless', async state => {
       const response = await gateway(state, undefined).fetch(

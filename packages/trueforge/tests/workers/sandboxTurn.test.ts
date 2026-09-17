@@ -1,4 +1,5 @@
 import { AgentSpecSchema, Sessions, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import { CodeModeReplySchema } from '@truefoundry/trueforge-core/core/sandbox/codeMode/types';
 import { env } from 'cloudflare:workers';
 import { ActiveTurnRegistry } from '../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../src/runtime/event-subscription';
@@ -7,19 +8,60 @@ import { startTurnInProcess } from '../../src/runtime/turnRunner';
 import { SANDBOX_READY_STATUS } from '../../src/schemas/sandboxProvider';
 import { newId } from '../../src/utils/id';
 import { createConsoleLogger } from '../../src/workers/logger';
+import { CODE_MODE_BRIDGE_URL, CodeModeBridgeRegistry } from '../../src/workers/sandbox/codeModeBridge';
+import type { ComputerExecOutcome, ComputerExecRequest, ComputerWorkspace } from '../../src/workers/sandbox/ComputerDO';
 import { createWorkersSandboxIntegration } from '../../src/workers/sandbox/workersSandboxIntegration';
-import { d1Persistence, migrateDatabase, TENANT_ID, upsertMockProvider, USER_REF } from './harness';
+import { d1Persistence, FakeComputer, migrateDatabase, TENANT_ID, upsertMockProvider, USER_REF } from './harness';
 
 const logger = createConsoleLogger({ level: 'error', bindings: { component: 'sandbox-turn-test' } });
 
+/**
+ * Stands in for the container and does what it would do: while the command runs, it presents the
+ * token it was handed on the bridge. A turn's channel is closed when the turn ends, so this is the
+ * only moment the token is good for anything.
+ */
+class CodeModeProbeComputer extends FakeComputer {
+  readonly replies: { server: string; reply: unknown }[] = [];
+
+  constructor(private readonly registry: CodeModeBridgeRegistry) {
+    super();
+  }
+
+  override async execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome> {
+    const outcome = await super.execCommand(request);
+    const token = request.env['TFY_CM_HTTP_TOKEN'];
+    if (token !== undefined) {
+      for (const server of ['context7', 'some-other-agents-server']) {
+        const dispatched = await this.registry.dispatch({
+          token,
+          requestJson: JSON.stringify({ op: 'list_tools', server }),
+          traceCarrier: {},
+        });
+        this.replies.push({
+          server,
+          reply: dispatched.ok ? CodeModeReplySchema.parse(JSON.parse(dispatched.replyJson)) : dispatched,
+        });
+      }
+    }
+    return outcome;
+  }
+}
+
 /** The sandbox backend the deploy would set; the test wrangler config leaves the var unset. */
-function sandboxIntegration() {
+function sandboxIntegration(options?: {
+  codeModeRegistry?: CodeModeBridgeRegistry | undefined;
+  computer?: ComputerWorkspace | undefined;
+}) {
+  const computer = options?.computer;
   return createWorkersSandboxIntegration({
     backend: 'cloudflare-computer',
-    namespace: env.COMPUTER_DO,
+    namespace:
+      computer === undefined
+        ? env.COMPUTER_DO
+        : { idFromName: name => env.COMPUTER_DO.idFromName(name), get: () => computer },
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024,
-    codeModeRegistry: undefined,
+    codeModeRegistry: options?.codeModeRegistry,
   });
 }
 
@@ -43,9 +85,10 @@ async function enableBuiltInSandbox(): Promise<void> {
 }
 
 /** A session whose agent has a sandbox and one deferred MCP server, which is what crashed in review. */
-async function createSandboxSession(sessionId: string) {
+async function createSandboxSession(params: { sessionId: string; scenario: string }) {
+  const { sessionId } = params;
   const stores = d1Persistence();
-  const providerName = await upsertMockProvider({ stores, scenario: 'text' });
+  const providerName = await upsertMockProvider({ stores, scenario: params.scenario });
   await stores.mcpServerStore.upsertServer({
     tenant_id: TENANT_ID,
     name: 'context7',
@@ -70,6 +113,45 @@ async function createSandboxSession(sessionId: string) {
   return { stores, providerName };
 }
 
+async function runSandboxTurn(params: {
+  sessionId: string;
+  scenario: string;
+  sandboxIntegration: ReturnType<typeof sandboxIntegration>;
+}) {
+  const { stores } = await createSandboxSession({ sessionId: params.sessionId, scenario: params.scenario });
+  await enableBuiltInSandbox();
+  const session = await new Sessions({ sessionStore: stores.sessionStore }).get({
+    tenant_id: TENANT_ID,
+    session_id: params.sessionId,
+  });
+  if (session === undefined) {
+    throw new Error('expected the session that was just created');
+  }
+
+  const started = await startTurnInProcess({
+    session,
+    turn_id: newId(),
+    input: [{ type: 'user.message', content: 'hello' }],
+    previous_turn_id: undefined,
+    userRef: USER_REF,
+    deps: {
+      agentStore: stores.agentStore,
+      modelProviderStore: stores.modelProviderStore,
+      mcpServerStore: stores.mcpServerStore,
+      sandboxProviderStore: stores.sandboxProviderStore,
+      skillStore: stores.skillStore,
+      activeTurns: new ActiveTurnRegistry(),
+      eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
+      logger,
+      sandboxIntegration: params.sandboxIntegration,
+      onTurnDrained: undefined,
+    },
+  });
+  await started.drained;
+
+  return stores.sessionStore.getTurn({ session_id: params.sessionId, turn_id: started.turn.record.turn_id });
+}
+
 describe('a turn with the sandbox enabled and an MCP server', () => {
   beforeAll(async () => {
     await migrateDatabase();
@@ -77,7 +159,10 @@ describe('a turn with the sandbox enabled and an MCP server', () => {
 
   // The deploy var alone is not enough: nothing runs until the tenant enables it in Settings.
   it('refuses the sandbox agent before the built-in provider is enabled, and accepts it after', async () => {
-    const { stores, providerName } = await createSandboxSession(`sandbox-gate-${newId()}`);
+    const { stores, providerName } = await createSandboxSession({
+      sessionId: `sandbox-gate-${newId()}`,
+      scenario: 'text',
+    });
     await stores.sandboxProviderStore.deleteSandboxProvider(TENANT_ID);
     const validate = () =>
       validateAgentSpec({
@@ -96,42 +181,66 @@ describe('a turn with the sandbox enabled and an MCP server', () => {
     await expect(validate()).resolves.toBeUndefined();
   });
 
-  it('builds and runs instead of failing on a Code Mode transport the provider cannot make', async () => {
-    const sessionId = `sandbox-mcp-${newId()}`;
-    const { stores } = await createSandboxSession(sessionId);
-    await enableBuiltInSandbox();
-    const session = await new Sessions({ sessionStore: stores.sessionStore }).get({
-      tenant_id: TENANT_ID,
-      session_id: sessionId,
-    });
-    if (session === undefined) {
-      throw new Error('expected the session that was just created');
-    }
-
-    const started = await startTurnInProcess({
-      session,
-      turn_id: newId(),
-      input: [{ type: 'user.message', content: 'hello' }],
-      previous_turn_id: undefined,
-      userRef: USER_REF,
-      deps: {
-        agentStore: stores.agentStore,
-        modelProviderStore: stores.modelProviderStore,
-        mcpServerStore: stores.mcpServerStore,
-        sandboxProviderStore: stores.sandboxProviderStore,
-        skillStore: stores.skillStore,
-        activeTurns: new ActiveTurnRegistry(),
-        eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
-        logger,
-        sandboxIntegration: sandboxIntegration(),
-        onTurnDrained: undefined,
-      },
+  it('runs on a runtime that serves no Code Mode bridge, with the MCP tools called directly', async () => {
+    const finished = await runSandboxTurn({
+      sessionId: `sandbox-mcp-${newId()}`,
+      scenario: 'text',
+      sandboxIntegration: sandboxIntegration(),
     });
 
-    await started.drained;
-
-    const finished = await stores.sessionStore.getTurn({ session_id: sessionId, turn_id: started.turn.record.turn_id });
     // The old failure was a thrown `createCodeModeTransport`, which ended the turn as `error`.
     expect(finished?.state.status).toBe('done');
+  });
+
+  it('opens a Code Mode channel for the turn and answers the agent MCP servers on it', async () => {
+    const codeModeRegistry = new CodeModeBridgeRegistry();
+    const computer = new CodeModeProbeComputer(codeModeRegistry);
+
+    const finished = await runSandboxTurn({
+      sessionId: `sandbox-code-mode-${newId()}`,
+      // The model asks for one sandbox command, which is where a turn gets its Code Mode channel.
+      scenario: 'sandbox',
+      sandboxIntegration: sandboxIntegration({ codeModeRegistry, computer }),
+    });
+    expect(finished?.state.status).toBe('done');
+
+    const withBridge = computer.execCalls.filter(call => call.env['TFY_CM_HTTP_TOKEN'] !== undefined);
+    expect(withBridge).not.toHaveLength(0);
+    expect(withBridge[0]?.env['TFY_CM_HTTP_URL']).toBe(CODE_MODE_BRIDGE_URL);
+
+    // The MCP server itself is unreachable in these tests; what matters is that the dispatcher holds
+    // this turn's servers, so `context7` is not reported as one the agent does not have.
+    expect(computer.replies).toContainEqual({
+      server: 'context7',
+      reply: expect.not.objectContaining({ error: expect.stringContaining('is not available for this agent') }),
+    });
+    expect(computer.replies).toContainEqual({
+      server: 'some-other-agents-server',
+      reply: expect.objectContaining({
+        ok: false,
+        source: 'caller',
+        error: expect.stringContaining('is not available for this agent'),
+      }),
+    });
+  });
+
+  it('closes the channel when the turn ends, so the token stops working', async () => {
+    const codeModeRegistry = new CodeModeBridgeRegistry();
+    const computer = new CodeModeProbeComputer(codeModeRegistry);
+
+    await runSandboxTurn({
+      sessionId: `sandbox-code-mode-closed-${newId()}`,
+      scenario: 'sandbox',
+      sandboxIntegration: sandboxIntegration({ codeModeRegistry, computer }),
+    });
+
+    const token = computer.execCalls.map(call => call.env['TFY_CM_HTTP_TOKEN']).find(value => value !== undefined);
+    const afterTurn = await codeModeRegistry.dispatch({
+      token: token ?? '',
+      requestJson: JSON.stringify({ op: 'list_tools', server: 'context7' }),
+      traceCarrier: {},
+    });
+
+    expect(afterTurn).toMatchObject({ ok: false, status: 401 });
   });
 });

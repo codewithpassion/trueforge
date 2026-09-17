@@ -1,7 +1,8 @@
 /**
  * OpenAI-compatible chat completions served to the Worker through miniflare's outbound service.
  * The base URL picks the behavior: https://llm.test/<scenario>/v1, where scenario is `text`,
- * `tools-<K>` (K datetime tool calls, then text), `slow` (one delta, then a stalled stream), `gap` (one
+ * `tools-<K>` (K datetime tool calls, then text), `sandbox` (one sandbox exec, then text), `slow`
+ * (one delta, then a stalled stream), `gap` (one
  * delta, a second after `GAP_MS`, then a stalled stream), `delay-<ms>` (a text reply after ms), or `huge` (one
  * reply larger than D1 stores per value).
  */
@@ -35,12 +36,12 @@ function textReply(text: string): Response {
   return sse(`${chunk({ role: 'assistant', content: text }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`);
 }
 
-function toolCallReply(input: { toolName: string; callIndex: number }): Response {
+function toolCallReply(input: { toolName: string; callIndex: number; args?: Record<string, string> }): Response {
   const toolCall = {
     index: 0,
     id: `call_${String(input.callIndex)}`,
     type: 'function',
-    function: { name: input.toolName, arguments: '{}' },
+    function: { name: input.toolName, arguments: JSON.stringify(input.args ?? {}) },
   };
   return sse(
     `${chunk({ role: 'assistant', content: null, tool_calls: [toolCall] }, null)}${chunk({}, 'tool_calls')}data: [DONE]\n\n`,
@@ -112,6 +113,18 @@ export async function handleMockLlmRequest(request: Request): Promise<Response> 
   if (delayed?.[1] !== undefined) {
     await new Promise(resolve => setTimeout(resolve, Number(delayed[1])));
     return textReply('Hello after a delay.');
+  }
+  if (scenario === 'sandbox') {
+    const done = (body.messages ?? []).filter(message => message.role === 'tool').length;
+    const toolName = (body.tools ?? []).map(tool => tool.function?.name).find(name => name?.endsWith('exec'));
+    if (done > 0 || toolName === undefined) {
+      return textReply(`Finished after ${String(done)} sandbox calls.`);
+    }
+    return toolCallReply({
+      toolName,
+      callIndex: 1,
+      args: { intent: 'check the Code Mode client', command: 'mcp-client call-tool context7 query-docs {}' },
+    });
   }
   const toolCalls = /^tools-(\d+)$/.exec(scenario);
   if (toolCalls?.[1] !== undefined) {
