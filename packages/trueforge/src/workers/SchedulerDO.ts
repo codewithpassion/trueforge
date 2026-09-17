@@ -79,11 +79,14 @@ export class SchedulerDO extends DurableObject {
   }): Promise<void> {
     const now = Date.now();
     const last = await this.ctx.storage.get<number>(input.key);
-    if ((last !== undefined && now - last < input.intervalMs) || input.signal.aborted) {
+    // Read through a call, not a field: the pass can run out of time while `run` is awaited,
+    // and a narrowed `aborted` would still read as it did before.
+    const outOfTime = (): boolean => input.signal.aborted;
+    if ((last !== undefined && now - last < input.intervalMs) || outOfTime()) {
       return;
     }
     await input.run();
-    if (!input.signal.aborted) {
+    if (!outOfTime()) {
       await this.ctx.storage.put(input.key, Date.now());
     }
   }
