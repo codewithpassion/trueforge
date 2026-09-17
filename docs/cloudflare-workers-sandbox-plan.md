@@ -471,13 +471,23 @@ Local containers still do not start on this machine (Section 8), so **nothing ab
 
 Deployed as Worker version `9e10a572-3299-4712-8976-e2ed03b65838` with the gate — the egress switch, the pass-through gateway and the CA entrypoint — on 2026-09-18. The remote D1 migration `0003_delivery_next_attempt.sql` applied first (5 commands, 1.46 ms). `/healthz` answers 200 and `/api/v1/capabilities` answers 401 unauthenticated. The container image rebuilt and pushed as `trueforge-computerdo@sha256:59d23276…`; `enableInternet` flips with the egress mode, so existing containers relaunch on their next command.
 
-The acceptance run did not happen: the deploy's own session had expired, and re-establishing it stops at a Clerk OAuth consent screen, which an agent must not click. The list to run, once someone has clicked Allow:
+**Only the gate is deployed.** `9e10a572` is the first commit of the phase and nothing else: the transport, the registry, the routing and the provider flip are on the branch, not on the deploy, so `supportsCodeMode` is still false live and Code Mode is still off for every agent. Leaving it up costs nothing — the tenant has no sessions, and the only behaviour that changed is where a container's outbound requests go.
+
+The acceptance run did not happen: the deploy's own session had expired, and re-establishing it stops at a Clerk OAuth consent screen, which an agent must not click. It runs in two passes, once someone has clicked Allow.
+
+**Pass one decides the gate, against `9e10a572` as deployed.** Stop here and report if any of it fails.
 
 1. From inside a sandbox, timed with `curl -w '%{time_total}'`: `curl https://example.com`, `curl http://example.com`, and `python3 -c "urllib.request.urlopen('https://example.com')"` — the last one checks the system CA path the skill downloader uses.
-2. `curl http://code-mode.trueforge.internal/dispatch` with no token, ten times, for the round trip; the gateway answers 401 without leaving the machine.
+2. `curl http://code-mode.trueforge.internal/` ten times, for the round trip and for whether the name is reachable at all. On the gate build the gateway passes it through, so the answer says whether the interception catches a host that resolves nowhere.
 3. A skill download, which is a `git clone` over intercepted HTTPS.
+
+**Pass two needs a second `pnpm workers:deploy`** from the branch, and its own version id.
+
 4. `mcp-client call-tool …` from the shell, not only `from mcp_client import call_tool`. The module is installed on the FUSE mount and `chmod 0555`, with the PATH link at `/usr/local/bin/mcp-client`; if the mount does not keep the mode, the CLI half of the prompt's promise is broken while the import half still works, and the module moves to the container disk.
 5. Agent `smoke-codemode` with the sandbox, Code Mode and the `context7` MCP server: a streaming turn and a non-streaming turn where a script calls two tools and returns a value.
-6. From the tail: round-trip latency per dispatcher call, alarm wall and CPU, and any exception.
+6. `curl http://code-mode.trueforge.internal/dispatch` with no token and with a made-up one; both must be refused without leaving the machine.
+7. From the tail: round-trip latency per dispatcher call, alarm wall and CPU, and any exception.
+
+The likeliest failure is item 2. `http-gateway` sets `enableInternet: false`, which leaves the container only ports 80 and 443 and Cloudflare's resolvers, and whether intercept-all catches a name that resolves nowhere — before a lookup, not after it — is exactly what that probe answers. Computer's own `computer.internal` is the existence proof that some such name works, because `computerd` dials `http://computer.internal/api` from inside the container in every egress mode.
 
 If HTTPS does not survive interception, the fallback needs no new protocol: Computer routes `computer.internal` to `ComputerDO.fetch` in **every** egress mode, so the same client, token, registry and dispatcher work with `egress: { mode: 'direct' }` and a path match in `ComputerDO.fetch` ahead of `backend.handleFetch`. Only the host match moves.
