@@ -45,6 +45,7 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 - Don't put a shared test helper outside `tests/unit`, `tests/db` or `tests/workers`; nothing type-checks or lints it there.
 - Don't let a column mean two things. `updated_at` standing in for both a backoff and a claim deadline made a five-minute wait able to crowd due rows out of a batch; a column that says when the row is next owed removes the ambiguity and the ordering bug together.
 - Don't start long work inside an alarm without its abort signal, and don't stamp the pace marker before the pass. A killed alarm then both overruns and waits out an interval it never used.
+- Don't treat `pnpm d1:schema:dump` as a check on `migrations/d1/`. It writes the whole current schema into `0001_init.sql`, so since I1 it emits the integration tables that live in `0002` and `0001` on disk no longer matches what it produces. The delta files are hand-copied from a throwaway dump and their headers cannot be re-verified by re-running the script; diff a migrated database instead.
 - Don't assume a review covered the phase you are writing up. review-i1 only ever saw I1. It left two items open at sign-off: the outbox partial index that could not see a stranded `sending` row, which turned out to have been closed already in `487a5a5e`, and `updateIntegration` never rewriting the `type` column, which is still open and starts to matter the moment a second channel type exists.
 
 ## Cycle 19 — Phase 7b: skills in the Computer sandbox, plus the two 7a must-fixes (2026-09-17)

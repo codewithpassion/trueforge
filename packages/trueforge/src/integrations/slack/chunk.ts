@@ -15,10 +15,17 @@ function fenceInfo(line: string): string | undefined {
   return trimmed.startsWith('```') ? trimmed : undefined;
 }
 
-/** A break between the halves of a surrogate pair would post a lone code unit. */
+/**
+ * A break between the halves of a surrogate pair would post a lone code unit, so it steps back
+ * to before the pair — unless that would leave nothing to take, in which case it takes the whole
+ * pair instead. A cut of zero makes no progress and the caller would never terminate.
+ */
 function safeCut(text: string, cut: number): number {
   const before = text.charCodeAt(cut - 1);
-  return before >= 0xd800 && before <= 0xdbff ? cut - 1 : cut;
+  if (before < 0xd800 || before > 0xdbff) {
+    return cut;
+  }
+  return cut > 1 ? cut - 1 : Math.min(cut + 1, text.length);
 }
 
 function splitOversizedLine(line: string, limit: number): string[] {

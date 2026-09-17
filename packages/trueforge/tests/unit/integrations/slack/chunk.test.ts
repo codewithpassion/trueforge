@@ -84,6 +84,19 @@ describe('chunkForSlack', () => {
     expect(chunks.join('').replaceAll('`', '').replaceAll('\n', '')).toBe('abcdefghij');
   });
 
+  it('takes a whole pair when stepping back would leave nothing to take', () => {
+    // Fence headroom clamps the fill to one code unit, which is half of the first character:
+    // stepping back would cut nothing, and the split would never finish.
+    const chunks = chunkForSlack(['```', '\u{1F600}'.repeat(20), '```'].join('\n'), 13);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join('').replaceAll('`', '').replaceAll('\n', '')).toBe('\u{1F600}'.repeat(20));
+    for (const chunk of chunks) {
+      const lastUnit = chunk.charCodeAt(chunk.length - 1);
+      expect(lastUnit >= 0xd800 && lastUnit <= 0xdbff).toBe(false);
+    }
+  });
+
   it('never splits a surrogate pair', () => {
     const chunks = chunkForSlack('🎉'.repeat(200), 51);
 
