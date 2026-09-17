@@ -4,7 +4,10 @@
  */
 export const SLACK_MESSAGE_MAX_LENGTH = 3500;
 
-/** Longest fence line the splitter reserves room for when a chunk has to close one. */
+/**
+ * Headroom kept while a fenced block is open, for the closing fence a break appends and the
+ * opening fence the next chunk starts with. Both are short, so it costs a few characters.
+ */
 const FENCE_RESERVE = 12;
 
 function fenceInfo(line: string): string | undefined {
@@ -46,6 +49,10 @@ export function chunkForSlack(text: string, limit: number = SLACK_MESSAGE_MAX_LE
   if (trimmed.length === 0) {
     return [];
   }
+  // Nothing that already fits can break a fence, so it needs no headroom.
+  if (trimmed.length <= limit) {
+    return [trimmed];
+  }
 
   const chunks: string[] = [];
   let current = '';
@@ -62,8 +69,9 @@ export function chunkForSlack(text: string, limit: number = SLACK_MESSAGE_MAX_LE
 
   for (const line of trimmed.split('\n')) {
     const fence = fenceInfo(line);
-    // Room for the closing fence this chunk may have to grow, so it still fits after `push`.
-    const fill = openFence === undefined && fence === undefined ? limit : limit - FENCE_RESERVE;
+    // Inside a fence the fill stops short, so a chunk still fits once `push` closes it. The
+    // floor keeps a caller-supplied limit smaller than the headroom from stalling the split.
+    const fill = openFence === undefined && fence === undefined ? limit : Math.max(1, limit - FENCE_RESERVE);
     for (const piece of splitOversizedLine(line, fill)) {
       const candidate = current.length === 0 ? piece : `${current}\n${piece}`;
       if (candidate.length > fill) {

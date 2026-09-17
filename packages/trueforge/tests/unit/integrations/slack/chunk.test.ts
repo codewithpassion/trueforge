@@ -75,6 +75,15 @@ describe('chunkForSlack', () => {
     expect(fenceCount(last ?? '')).toBe(0);
   });
 
+  it('still makes progress on a limit smaller than the fence headroom', () => {
+    // A limit this small is not a real one; what matters is that the split ends and loses nothing.
+    const chunks = chunkForSlack(['```', 'abcdefghij', '```'].join('\n'), 4);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    // The fences multiply at this width; only the text has to come through whole and in order.
+    expect(chunks.join('').replaceAll('`', '').replaceAll('\n', '')).toBe('abcdefghij');
+  });
+
   it('never splits a surrogate pair', () => {
     const chunks = chunkForSlack('🎉'.repeat(200), 51);
 
