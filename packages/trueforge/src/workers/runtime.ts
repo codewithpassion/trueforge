@@ -42,7 +42,7 @@ export function createWorkersRuntimeDeps(env: Env): WorkersRuntimeDeps {
       turnSkillsResolverStore: d1.skillStore,
     },
     turnExecutor: new WorkersTurnExecutor({ namespace: env.SESSION_DO, sessionStore: d1.sessionStore }),
-    sandboxIntegration: workersSandboxIntegrationFromEnv(env),
+    sandboxIntegration: workersSandboxIntegrationFromEnv({ env }),
   };
 }
 

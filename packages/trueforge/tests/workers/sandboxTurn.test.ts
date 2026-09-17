@@ -19,6 +19,7 @@ function sandboxIntegration() {
     namespace: env.COMPUTER_DO,
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024,
+    codeModeRegistry: undefined,
   });
 }
 

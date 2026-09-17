@@ -26,6 +26,7 @@ import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { DurableObjectEventSubscriptions } from './durableObjectEventSubscriptions';
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
+import { CodeModeBridgeRegistry, type CodeModeDispatchOutcome } from './sandbox/codeModeBridge';
 import { workersSandboxIntegrationFromEnv } from './sandbox/workersSandboxIntegration';
 import { encodeTurnEvents, isSequencedTurnStreamingEvent } from './turnEventWire';
 import { turnInputTooLarge } from './turnInputLimit';
@@ -102,10 +103,12 @@ export class SessionDO extends DurableObject {
   readonly #running = new Map<string, Promise<undefined>>();
   readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'SessionDO' } });
   readonly #sandboxIntegration: SandboxIntegration;
+  /** Code Mode channels the turns in this instance have open; their sandboxes reach them by token. */
+  readonly #codeMode = new CodeModeBridgeRegistry();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.#sandboxIntegration = workersSandboxIntegrationFromEnv(env);
+    this.#sandboxIntegration = workersSandboxIntegrationFromEnv({ env, codeModeRegistry: this.#codeMode });
     this.#events = new DurableObjectEventSubscriptions({
       sql: ctx.storage.sql,
       isEvent: isSequencedTurnStreamingEvent,
@@ -249,6 +252,18 @@ export class SessionDO extends DurableObject {
    */
   livePolls(request: { tenant_id: string; session_id: string; turn_id: string }): number {
     return this.#events.livePolls(turnStreamId(request.tenant_id, request.session_id, request.turn_id));
+  }
+
+  /**
+   * Answers the Code Mode client of a sandbox this session owns. The caller is the workspace's own
+   * egress gateway, which picked this object from the workspace name rather than from the request.
+   */
+  dispatchCodeMode(request: {
+    token: string;
+    requestJson: string;
+    traceCarrier: Record<string, string>;
+  }): Promise<CodeModeDispatchOutcome> {
+    return this.#codeMode.dispatch(request);
   }
 
   /** `cancelled: false` means no turn with this id runs in this instance. */

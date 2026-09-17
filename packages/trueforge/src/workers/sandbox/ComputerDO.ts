@@ -88,8 +88,12 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
       container: () => this,
       workspace: { binding: COMPUTER_DO_BINDING, id: ctx.id.toString() },
       // Every outbound request the container makes arrives at the gateway with its original URL, so
-      // Code Mode gets an address inside the Worker and the rest of egress stays reviewable.
-      egress: { mode: 'http-gateway', gateway: ctx.exports.SandboxEgressGateway },
+      // Code Mode gets an address inside the Worker and the rest of egress stays reviewable. The
+      // session the gateway may reach is this workspace's own name, never anything from a request.
+      egress: {
+        mode: 'http-gateway',
+        gateway: ctx.exports.SandboxEgressGateway({ props: { sessionDurableObjectName: ctx.id.name } }),
+      },
     });
     this.#workspace = new Workspace({
       storage: workspaceStorage(ctx.storage),

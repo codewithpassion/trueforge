@@ -34,6 +34,7 @@ function build(computer: ComputerWorkspace): CloudflareComputerProvider {
     sandboxId: SANDBOX_ID,
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: MAX_DOWNLOAD_BYTES,
+    codeModeRegistry: undefined,
   });
 }
 
@@ -239,7 +240,10 @@ describe('CloudflareComputerProvider', () => {
     expect(provider.getAdditionalInstructions()).toContain('/workspace');
   });
 
-  it('has no Code Mode transport yet', () => {
-    expect(() => build(new FakeComputer()).createCodeModeTransport()).toThrow('Code Mode is not available');
+  it('reports no Code Mode on a runtime that serves no bridge', () => {
+    const provider = build(new FakeComputer());
+
+    expect(provider.supportsCodeMode).toBe(false);
+    expect(() => provider.createCodeModeTransport()).toThrow('runtime that serves the sandbox bridge');
   });
 });

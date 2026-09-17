@@ -8,6 +8,7 @@ import { SANDBOX_READY_STATUS } from '../../schemas/sandboxProvider';
 import type { Env } from '../env';
 import { sessionDurableObjectName } from '../sessionScope';
 import { CloudflareComputerProvider } from './CloudflareComputerProvider';
+import type { CodeModeBridgeRegistry } from './codeModeBridge';
 import type { ComputerDO } from './ComputerDO';
 
 const NOT_SUPPORTED_MESSAGE = 'Daytona sandbox providers are not supported on the Cloudflare Workers runtime';
@@ -18,15 +19,24 @@ export interface WorkersSandboxIntegrationOptions {
   namespace: Pick<DurableObjectNamespace<ComputerDO>, 'get' | 'idFromName'>;
   defaultExecTimeoutSeconds: number;
   fileMaxBytesForDownload: number;
+  /**
+   * Where a turn's Code Mode channel is opened. Only the object that runs turns serves one, so the
+   * HTTP app leaves it unset and its providers report Code Mode as unsupported.
+   */
+  codeModeRegistry: CodeModeBridgeRegistry | undefined;
 }
 
 /** The deploy-configured integration, shared by the HTTP app and the session Durable Object. */
-export function workersSandboxIntegrationFromEnv(env: Pick<Env, 'COMPUTER_DO'>): SandboxIntegration {
+export function workersSandboxIntegrationFromEnv(params: {
+  env: Pick<Env, 'COMPUTER_DO'>;
+  codeModeRegistry?: CodeModeBridgeRegistry | undefined;
+}): SandboxIntegration {
   return createWorkersSandboxIntegration({
     backend: configuration.TRUEFORGE_SANDBOX_BACKEND,
-    namespace: env.COMPUTER_DO,
+    namespace: params.env.COMPUTER_DO,
     defaultExecTimeoutSeconds: configuration.SANDBOX_EXEC_TIMEOUT_SECONDS,
     fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
+    codeModeRegistry: params.codeModeRegistry,
   });
 }
 
@@ -60,6 +70,7 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
         sandboxId,
         defaultExecTimeoutSeconds: options.defaultExecTimeoutSeconds,
         fileMaxBytesForDownload: options.fileMaxBytesForDownload,
+        codeModeRegistry: options.codeModeRegistry,
       });
     },
     // The container image ships with the deploy, so an enabled workspace is never mid-build.

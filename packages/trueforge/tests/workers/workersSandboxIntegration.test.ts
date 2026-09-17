@@ -64,6 +64,7 @@ function computerProvider(computer: ComputerWorkspace): CloudflareComputerProvid
     sandboxId: SANDBOX_ID,
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024,
+    codeModeRegistry: undefined,
   });
 }
 
@@ -111,6 +112,7 @@ function build(backend: 'cloudflare-computer' | undefined) {
     namespace: env.COMPUTER_DO,
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024,
+    codeModeRegistry: undefined,
   });
 }
 

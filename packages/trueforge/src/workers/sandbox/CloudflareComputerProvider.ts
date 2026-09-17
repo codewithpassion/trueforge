@@ -11,6 +11,8 @@ import {
   SandboxNotAvailableError,
   SandboxPathIsDirectoryError,
 } from '@truefoundry/trueforge-core/core/sandbox/SandboxErrors';
+import { CloudflareComputerCodeModeTransport } from './CloudflareComputerCodeModeTransport';
+import type { CodeModeBridgeRegistry } from './codeModeBridge';
 import type { ComputerWorkspace } from './ComputerDO';
 import {
   COMPUTER_GIT_CREDENTIALS_PATH,
@@ -41,6 +43,8 @@ export interface CloudflareComputerProviderOptions {
   sandboxId: string;
   defaultExecTimeoutSeconds: number;
   fileMaxBytesForDownload: number;
+  /** Absent on a runtime that serves no Code Mode bridge, which is what turns the feature off. */
+  codeModeRegistry: CodeModeBridgeRegistry | undefined;
 }
 
 function errorMessage(error: unknown): string {
@@ -65,19 +69,21 @@ async function readAll(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
  */
 export class CloudflareComputerProvider implements SandboxProvider {
   readonly type = CLOUDFLARE_COMPUTER_PROVIDER_TYPE;
-  // Phase 7c gives the sandbox a channel back to the host dispatcher; until then MCP tools are
-  // only reachable directly, not from inside a command.
-  readonly supportsCodeMode = false;
+  /** Only a runtime that serves the Code Mode bridge can offer it; the HTTP app cannot. */
+  readonly supportsCodeMode: boolean;
   readonly #computer: ComputerWorkspace;
   readonly #sandboxId: string;
   readonly #defaultExecTimeoutSeconds: number;
   readonly #fileMaxBytesForDownload: number;
+  readonly #codeModeRegistry: CodeModeBridgeRegistry | undefined;
 
   constructor(options: CloudflareComputerProviderOptions) {
     this.#computer = options.computer;
     this.#sandboxId = options.sandboxId;
     this.#defaultExecTimeoutSeconds = options.defaultExecTimeoutSeconds;
     this.#fileMaxBytesForDownload = options.fileMaxBytesForDownload;
+    this.#codeModeRegistry = options.codeModeRegistry;
+    this.supportsCodeMode = options.codeModeRegistry !== undefined;
   }
 
   buildImage(): Promise<SandboxBuild> {
@@ -185,9 +191,17 @@ export class CloudflareComputerProvider implements SandboxProvider {
     }
   }
 
-  /** Unreachable while `supportsCodeMode` is false; kept so a regression there fails loudly. */
   createCodeModeTransport(): CodeModeTransport {
-    throw new Error('Code Mode is not available on the Cloudflare Computer sandbox');
+    const registry = this.#codeModeRegistry;
+    if (registry === undefined) {
+      // `supportsCodeMode` already told the caller this; the guard is what narrows the field.
+      throw new Error('Code Mode needs a runtime that serves the sandbox bridge, and this one does not');
+    }
+    return new CloudflareComputerCodeModeTransport({
+      registry,
+      // A Code Mode call runs inside an exec, so it cannot be allowed to outlive one.
+      maxRequestTimeoutSeconds: this.#defaultExecTimeoutSeconds,
+    });
   }
 
   /**

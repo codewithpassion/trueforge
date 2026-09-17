@@ -22,6 +22,7 @@ function provider(name: string) {
     sandboxId: name,
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 64,
+    codeModeRegistry: undefined,
   });
 }
 

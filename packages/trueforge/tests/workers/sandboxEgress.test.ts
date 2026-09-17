@@ -1,5 +1,6 @@
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { CODE_MODE_BRIDGE_URL } from '../../src/workers/sandbox/codeModeBridge';
 
 /**
  * The gateway is reached the way the container backend reaches it: from inside `ComputerDO`, through
@@ -69,5 +70,63 @@ describe('the workspace Durable Object identity the gateway routes on', () => {
     );
     // `WorkspaceProxy` wakes this object by id string, so routing must not depend on how it woke.
     expect(reached).toBe('tenant-7:session-43');
+  });
+});
+
+describe('the Code Mode hostname', () => {
+  function gateway(state: DurableObjectState, sessionDurableObjectName: string | undefined) {
+    return state.exports.SandboxEgressGateway({ props: { sessionDurableObjectName } });
+  }
+
+  function dispatchRequest(init?: RequestInit): Request {
+    return new Request(CODE_MODE_BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'list_tools', server: 'demo' }),
+      ...init,
+    });
+  }
+
+  it('never leaves the machine, even with no token on it', async () => {
+    const answered = await inComputerDO('tenant-1:code-mode-anon', async state => {
+      const response = await gateway(state, 'tenant-1:code-mode-anon').fetch(dispatchRequest());
+      return { status: response.status, body: await response.text() };
+    });
+
+    // 599 would mean it reached the outbound service, which stands in for the internet here.
+    expect(answered.status).toBe(401);
+    expect(answered.body).toContain('bearer token');
+  });
+
+  it('refuses a token no turn of that session opened', async () => {
+    const answered = await inComputerDO('tenant-1:code-mode-token', async state => {
+      const response = await gateway(state, 'tenant-1:code-mode-token').fetch(
+        dispatchRequest({ headers: { authorization: 'Bearer not-a-real-token' } }),
+      );
+      return { status: response.status, body: await response.text() };
+    });
+
+    expect(answered.status).toBe(401);
+    expect(answered.body).toContain('not open for this session');
+  });
+
+  it('refuses anything but a POST', async () => {
+    const status = await inComputerDO('tenant-1:code-mode-get', async state => {
+      const response = await gateway(state, 'tenant-1:code-mode-get').fetch(new Request(CODE_MODE_BRIDGE_URL));
+      return response.status;
+    });
+
+    expect(status).toBe(405);
+  });
+
+  it('refuses outright when the workspace cannot name its session', async () => {
+    const status = await inComputerDO('tenant-1:code-mode-nameless', async state => {
+      const response = await gateway(state, undefined).fetch(
+        dispatchRequest({ headers: { authorization: 'Bearer anything' } }),
+      );
+      return response.status;
+    });
+
+    expect(status).toBe(503);
   });
 });
