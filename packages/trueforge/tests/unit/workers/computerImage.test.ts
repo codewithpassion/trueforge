@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const packageDir = path.join(__dirname, '../../..');
 const dockerfile = readFileSync(path.join(packageDir, 'workers/computer.Dockerfile'), 'utf8');
+const entrypoint = readFileSync(path.join(packageDir, 'workers/computer-entrypoint.sh'), 'utf8');
 
 interface BaseImage {
   /** Everything before `@sha256:` — what the version and URI pins are compared against. */
@@ -58,5 +59,26 @@ describe('workers/computer.Dockerfile', () => {
 
   it('mounts the workspace where the provider expects it', () => {
     expect(dockerfile).toContain('ENV MOUNT_POINT=/workspace');
+  });
+
+  it('starts through the entrypoint that trusts the egress CA', () => {
+    expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/trueforge-entrypoint"]');
+    expect(dockerfile).toContain('COPY computer-entrypoint.sh /usr/local/bin/trueforge-entrypoint');
+  });
+});
+
+describe('workers/computer-entrypoint.sh', () => {
+  it('installs the CA Cloudflare mints for intercepted HTTPS into the system trust store', () => {
+    expect(entrypoint).toContain('/etc/cloudflare/certs/cloudflare-containers-ca.crt');
+    expect(entrypoint).toContain('/usr/local/share/ca-certificates/cloudflare-containers-ca.crt');
+    expect(entrypoint).toContain('update-ca-certificates');
+  });
+
+  it('becomes computerd, so nothing is left between the platform and the runtime', () => {
+    expect(entrypoint).toContain('exec /usr/local/bin/computerd "$@"');
+  });
+
+  it('starts anyway when no CA appears, because direct egress needs none', () => {
+    expect(entrypoint).not.toContain('exit 1');
   });
 });

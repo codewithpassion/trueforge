@@ -87,8 +87,9 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
     this.#backend = new CloudflareContainerBackend({
       container: () => this,
       workspace: { binding: COMPUTER_DO_BINDING, id: ctx.id.toString() },
-      // Phase 7d replaces this with an `http-gateway` allowlist.
-      egress: { mode: 'direct' },
+      // Every outbound request the container makes arrives at the gateway with its original URL, so
+      // Code Mode gets an address inside the Worker and the rest of egress stays reviewable.
+      egress: { mode: 'http-gateway', gateway: ctx.exports.SandboxEgressGateway },
     });
     this.#workspace = new Workspace({
       storage: workspaceStorage(ctx.storage),

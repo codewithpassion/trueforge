@@ -9,6 +9,7 @@ import { SCHEDULER_INSTANCE_NAME } from './SchedulerDO';
 // WorkerEntrypoint re-exported at the Worker's top level.
 export { WorkspaceProxy } from '@cloudflare/computer';
 export { ComputerDO } from './sandbox/ComputerDO';
+export { SandboxEgressGateway } from './sandbox/sandboxEgressGateway';
 export { SchedulerDO } from './SchedulerDO';
 export { SessionDO } from './SessionDO';
 
