@@ -79,7 +79,11 @@ delivers events, whatever the allowlist says.
 
 ## 3. Connect it in TrueForge
 
-Create the integration through the API:
+Open **Integrations** from the icon beside Settings, fill in the workspace and agent, paste both
+credentials, and connect. The page then shows the request URL for step 1. Editing later leaves the
+credential fields blank: blank keeps what is stored, and a new value rotates it.
+
+The same thing over the API:
 
 ```bash
 curl -X POST "$PUBLIC_BASE_URL/api/v1/settings/integrations" \
@@ -122,6 +126,9 @@ In an allowed channel, mention the bot:
 The agent answers in a thread under your message. Reply in that thread — mentioning the bot again —
 and the same session continues.
 
+Then send the bot a direct message, and mention it in one. Both should produce exactly one reply:
+Slack delivers a mention inside a DM as two events, and only one of them may start a turn.
+
 ## What to expect
 
 - **Threads are sessions.** Anything posted in the thread that mentions the bot continues the
@@ -138,6 +145,8 @@ and the same session continues.
 - **Slack retries are safe.** Slack re-sends an event when an acknowledgement is slow; the same
   event never starts a second turn.
 - **Mentioning the bot in a DM is fine.** Slack delivers that twice, and only one copy runs.
+- **Files are noted, not read.** A message that is only an attachment is ignored, because the agent
+  has no way to open it yet.
 
 ## Who the bot acts as
 

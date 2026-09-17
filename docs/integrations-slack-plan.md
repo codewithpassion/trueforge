@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation.
 
-Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4) and the settings UI section, which waits on an `integrationCatalog` port in `@truefoundry/assistant-ui-runtime`. Phases I3 and I4 are proposed.
+Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4). Connecting a workspace is a host page in `packages/frontend`; folding it into the Settings drawer needs an `integrationCatalog` slot on `CatalogServer` in `@truefoundry/assistant-ui-runtime`, whose slots are fixed. Phases I3 and I4 are proposed.
 
 Goal: let people talk to TrueForge agents from Slack, and let agents and schedules post results back to Slack. Build a small integrations layer first, then ship Slack as its first channel. It must run on both the Node deploy and the Workers deploy.
 
@@ -79,11 +79,11 @@ New tables, with the migration paired across Kysely SQLite and Postgres and D1 `
 - **`integration_event`:** `integration_id`, `event_id`, `received_at`.
   - Unique on (`integration_id`, `event_id`) for replay and retry dedupe.
   - Rows older than 24 hours are pruned by the `SchedulerDO` alarm on Workers and by the controller on Node.
-- **`integration_delivery`,** the outbox: `id`, `integration_id`, `conversation_key`, `turn_id`, `status` (`pending` | `sending` | `sent` | `failed`), `attempts`, `last_error`, `created_at`, `updated_at`.
+- **`integration_delivery`,** the outbox: `id`, `integration_id`, `conversation_key`, `turn_id`, `status` (`pending` | `sending` | `sent` | `failed`), `attempts`, `last_error`, `created_at`, `updated_at`, `next_attempt_at`.
   - Unique on `turn_id`, so a turn delivers at most once per conversation.
   - `pending` to `sending` is one guarded write and is the exactly-once gate: several callers can read the same owed row, but only the one that changes it posts to the channel.
   - `attempts` and the partial index on the unsettled statuses exist for the I2 retry sweep; I1 counts the one attempt and settles the row.
-  - The index covers `sending` as well as `pending`, because a process that stops between the claim and the post strands a row there; I2 reclaims a `sending` row whose `updated_at` is older than its delivery timeout and retries it.
+  - The index covers `sending` as well as `pending`, because a process that stops between the claim and the post strands a row there. `next_attempt_at` (added in I2) is when a row is next owed — a backoff for `pending`, a deadline to finish in for `sending` — so the sweep reads due rows in due order instead of deriving two rules from `updated_at`.
 
 Writes that go together use the conditional-chain rule on D1 (port plan Section 4.2). Examples: the dedupe insert plus the session get-or-create, and the outbox row plus turn start.
 
