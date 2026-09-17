@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. It follows `docs/cloudflare-workers-port-plan.md`, which shipped Phases 0 to 5 with code execution disabled.
 
-Status: proposed on 2026-09-16. Phases 7a and 7b are complete; 7c (Code Mode) is next. Section 8 records what 7a steps 1 to 8 found, Section 9 the 7a live acceptance test, Section 10 the Section 6 verdict, and Section 11 Phase 7b: skills, plus the two must-fixes 7a left behind. Section 12 records the settings surface that replaced the deploy-var-only switch.
+Status: proposed on 2026-09-16. Phases 7a and 7b are complete; 7c (Code Mode) is built and deployed but its live acceptance test has not run. Section 8 records what 7a steps 1 to 8 found, Section 9 the 7a live acceptance test, Section 10 the Section 6 verdict, Section 11 Phase 7b: skills plus the two must-fixes 7a left behind, Section 12 the settings surface that replaced the deploy-var-only switch, and Section 13 Phase 7c: Code Mode, its design note and what is still open.
 
 Goal: restore code execution on the Workers deploy with a Cloudflare-native sandbox provider, starting with a time-boxed spike on Cloudflare Computer (`@cloudflare/computer`). The spike decides whether Computer, or the Cloudflare Sandbox SDK as the fallback, backs a new `SandboxProvider`.
 
@@ -171,6 +171,8 @@ Code Mode needs a channel from the sandbox's `mcp_client.py` back to the host di
    - Pick one in a short design note appended here. The Opus review covers the security of the egress route, since no other tenant's session may be reachable.
 2. Implement it behind the existing interface, and keep `CodeModeNatsTransport` for the Node providers.
 3. **Live test:** an agent with Code Mode and one MCP server runs a script that calls two tools and returns a value.
+
+The design note and the results are Section 13; the egress route won.
 
 ### Phase 7d: hardening
 
@@ -409,3 +411,72 @@ Section 3's "the provider is deploy-configured, not settings-configured" and the
 - The settings UI shows the built-in provider with an **Enable** action that opens no form, the existing status line, and **Disable**. No Daytona card appears on Workers.
 
 **Why the UI DTO has zeros.** `@truefoundry/assistant-ui-runtime`'s `SandboxConfig` requires the four Daytona interval numbers and `CreateSandboxRequest` requires an `apiKey`. Rather than patch the package for one credential-free provider, the adapter maps the built-in entry to zeros and an empty key, and the settings section never shows those fields for it. Patch the runtime package only if a second credential-free provider arrives.
+
+## 13. Phase 7c: Code Mode over the container's egress
+
+Built on a worktree branch off `feat/cloudflare-workers-port`.
+
+### The design (7c.1)
+
+Of the two candidates in Phase 7c, the egress route won. A relay behind capnweb would have meant a second protocol inside the container and a second thing to keep alive for a turn; the egress route reuses a path Computer already builds.
+
+```
+container ──http://code-mode.trueforge.internal/dispatch──►  (egress interception)
+                                                             │
+                                                    WorkspaceProxy ──► ComputerDO.fetch
+                                                             │
+                                               SandboxEgressGateway  (host match)
+                                                    │                │
+                                       Code Mode ───┘                └─── everything else: fetch(request)
+                                                    ▼
+                                    SessionDO(tenant:session).dispatchCodeMode
+                                                    ▼
+                                            CodeModeDispatcher
+```
+
+**Egress mode.** `ComputerDO` moves from `egress: { mode: 'direct' }` to `{ mode: 'http-gateway', gateway }`. Computer then asks the platform to intercept all outbound HTTP and all outbound HTTPS, and hands each request to the gateway with its **original URL** — host, path and query intact. `http-gateway` also turns off direct internet, so nothing leaves the container except through the gateway.
+
+**The gateway.** `SandboxEgressGateway` is a `WorkerEntrypoint` exported at the Worker's top level, so `ctx.exports` resolves it, and it satisfies `WorkspaceEgressPolicy.gateway` with no cast. One hostname, `code-mode.trueforge.internal`, is Code Mode; every other request is `fetch(request)`, unchanged. That hostname resolves nowhere publicly, which is the point: it is answered before anything leaves the machine, the same way Computer's own `computer.internal` is.
+
+**Which session it may reach.** The gateway's props carry `sessionDurableObjectName`, and `ComputerDO` sets it from `ctx.id.name` — the workspace's own name, which is `tenant_id:session_id`. Nothing in the request can change it: a path, a header or a body naming another session is ignored, and a workspace that cannot name itself gets 503 rather than a guess. `tests/workers/sandboxEgress.test.ts` drives both, including a cold object woken by id string, which is how `WorkspaceProxy` reaches it.
+
+**The token.** `CodeModeBridgeRegistry` lives in `SessionDO`. The transport opens a channel when a turn starts Code Mode, gets a random token back, hands it to the sandbox as `TFY_CM_HTTP_TOKEN`, and closes the channel when the turn ends. A token the registry does not hold is refused with 401 before any dispatcher is consulted. The two controls are independent: the DO name decides which session answers, the token decides which turn of it.
+
+**Timeouts.** `TFY_CM_REQUEST_TIMEOUT_SECONDS` is capped at `SANDBOX_EXEC_TIMEOUT_SECONDS`, which is itself capped at two thirds of the 840 s alarm pass, so the client gives up before the command waiting on it is killed and long before the pass ends. The host side gives up at the same bound, so a hung MCP server cannot hold the alarm.
+
+**Nothing throws across RPC.** `SessionDO.dispatchCodeMode` returns either a refusal (`status` plus `message`) or the dispatcher's reply **already serialized**: `CodeModeReply.result` is `unknown`, which the Workers RPC types cannot carry. The request crosses as text for the same reason, which also puts parsing and validation in one place.
+
+**The client.** `mcp_client.py` picks its bridge from the environment: `TFY_CM_HTTP_URL` plus `TFY_CM_HTTP_TOKEN` for HTTP, `TFY_NATS_URL` plus `TFY_NATS_SUBJECT_PREFIX` for NATS. The HTTP path is `urllib.request` on a worker thread — standard library only — and retries only a refused connection or an unresolvable host, because those prove nothing was delivered; a timeout, a reset, or any HTTP status is reported, never retried, so a non-idempotent tool cannot double-execute. NATS is untouched for the Node providers.
+
+**The image.** `http-gateway` means Cloudflare terminates the container's TLS with a certificate authority it mints per container at start time, which cannot be baked into an image. `workers/computer.Dockerfile` therefore starts through `workers/computer-entrypoint.sh`, which copies `/etc/cloudflare/certs/cloudflare-containers-ca.crt` into the trust store, runs `update-ca-certificates`, points `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` at the bundle for certifi users, and `exec`s `computerd`. A failure to install the CA is a warning, not an exit, because a container that never starts is reported only as "Container failed to start". Checked by running the entrypoint in the built image against a test CA: the certificate lands in the system bundle and Python's default context sees it. The image needs nothing else — it already carries `mcp` 1.29.0 and `pydantic` 2.12.5, the versions the client's inline dependency header names.
+
+**NATS stays out.** `supervisor` and `nats-server` are still unstarted in this image, and `CodeModeNatsTransport` is untouched.
+
+### What is verified, and where
+
+| Claim                                                                                                         | Verified by                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The gateway forwards a non-Code-Mode request with host, path, method and body intact                          | `tests/workers/sandboxEgress.test.ts`                                                                                                                             |
+| A workspace carries its `tenant:session` name whether addressed by name or woken cold by id string            | `tests/workers/sandboxEgress.test.ts`                                                                                                                             |
+| A request naming another session is answered by the workspace's own session                                   | `tests/workers/sandboxEgress.test.ts`                                                                                                                             |
+| No token, a token no turn opened, a non-POST, a nameless workspace: all refused                               | `tests/workers/sandboxEgress.test.ts`                                                                                                                             |
+| A turn opens a channel, the dispatcher answers for that turn's MCP servers only, the token dies with the turn | `tests/workers/sandboxTurn.test.ts`                                                                                                                               |
+| Registry and transport: token lifecycle, malformed requests, the dispatch timeout                             | `tests/workers/codeModeBridge.test.ts`                                                                                                                            |
+| The Python client's HTTP mode: URL, bearer token, body, trace headers, retry policy, mode selection           | `packages/trueforge-core/tests/core/sandbox/scripts/mcp_client_http_test.py`, run in the built image by `pnpm --filter @truefoundry/trueforge test:sandbox-image` |
+| The entrypoint installs the egress CA and becomes `computerd`                                                 | `tests/unit/workers/computerImage.test.ts`, plus a run in the built image                                                                                         |
+
+Local containers still do not start on this machine (Section 8), so **nothing above exercises a real container**. Whether the gateway sees real container traffic, and whether ordinary HTTPS survives interception, is the live deploy's to answer.
+
+### Live test (7c.3): not yet run
+
+Deployed as Worker version `9e10a572-3299-4712-8976-e2ed03b65838` with the gate — the egress switch, the pass-through gateway and the CA entrypoint — on 2026-09-18. The remote D1 migration `0003_delivery_next_attempt.sql` applied first (5 commands, 1.46 ms). `/healthz` answers 200 and `/api/v1/capabilities` answers 401 unauthenticated. The container image rebuilt and pushed as `trueforge-computerdo@sha256:59d23276…`; `enableInternet` flips with the egress mode, so existing containers relaunch on their next command.
+
+The acceptance run did not happen: the deploy's own session had expired, and re-establishing it stops at a Clerk OAuth consent screen, which an agent must not click. The list to run, once someone has clicked Allow:
+
+1. From inside a sandbox, timed with `curl -w '%{time_total}'`: `curl https://example.com`, `curl http://example.com`, and `python3 -c "urllib.request.urlopen('https://example.com')"` — the last one checks the system CA path the skill downloader uses.
+2. `curl http://code-mode.trueforge.internal/dispatch` with no token, ten times, for the round trip; the gateway answers 401 without leaving the machine.
+3. A skill download, which is a `git clone` over intercepted HTTPS.
+4. Agent `smoke-codemode` with the sandbox, Code Mode and the `context7` MCP server: a streaming turn and a non-streaming turn where a script calls two tools and returns a value.
+5. From the tail: round-trip latency per dispatcher call, alarm wall and CPU, and any exception.
+
+If HTTPS does not survive interception, the fallback needs no new protocol: Computer routes `computer.internal` to `ComputerDO.fetch` in **every** egress mode, so the same client, token, registry and dispatcher work with `egress: { mode: 'direct' }` and a path match in `ComputerDO.fetch` ahead of `backend.handleFetch`. Only the host match moves.
