@@ -50,3 +50,4 @@ service-account*.json
 .vscode
 
 .certs/
+__pycache__/

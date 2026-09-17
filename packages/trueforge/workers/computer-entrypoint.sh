@@ -17,15 +17,16 @@ while [ ! -s "$CA_SOURCE" ] && [ "$attempt" -lt 30 ]; do
   sleep 0.1
 done
 
+# Tested inside the `if`, so a container that cannot trust the CA still starts with broken HTTPS
+# rather than not starting at all, which the platform only reports as "Container failed to start".
 if [ -s "$CA_SOURCE" ]; then
-  cp "$CA_SOURCE" "$CA_TARGET"
-  if update-ca-certificates >/dev/null 2>&1; then
+  if cp "$CA_SOURCE" "$CA_TARGET" && update-ca-certificates >/dev/null 2>&1; then
     # certifi users (requests, httpx) read neither the system store nor each other's.
     REQUESTS_CA_BUNDLE="$CA_BUNDLE"
     SSL_CERT_FILE="$CA_BUNDLE"
     export REQUESTS_CA_BUNDLE SSL_CERT_FILE
   else
-    echo 'trueforge: update-ca-certificates failed; HTTPS from the sandbox will not verify' >&2
+    echo 'trueforge: could not trust the Cloudflare egress CA; HTTPS from the sandbox will not verify' >&2
   fi
 else
   # Direct egress is not intercepted and needs no extra CA, so this is only worth a note.

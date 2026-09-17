@@ -55,6 +55,7 @@
     "test:store:sqlite": "jest --config jest.store.sqlite.config.cjs",
     "test:store:d1": "vitest run --config tests/db/d1/vitest.config.ts",
     "test:workers": "pnpm run build:gen && vitest run --config tests/workers/vitest.config.ts",
+    "test:sandbox-image": "bash scripts/test-sandbox-image.sh",
     "workers:types": "node scripts/worker-types.mjs",
     "build:workers-assets": "pnpm --filter frontend build && cross-env NODE_OPTIONS=--conditions=trueforge-dev tsx scripts/build-workers-assets.ts",
     "d1:migrate:local": "bunx wrangler@4.131.2 d1 migrations apply DB --local --config wrangler.jsonc",

@@ -9,9 +9,12 @@ import sys
 import json
 import time
 import base64
+import socket
 import asyncio
 import logging
 import argparse
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -21,8 +24,8 @@ from mcp.types import CallToolResult, TextContent, Tool
 
 logger = logging.getLogger(__name__)
 
-_NATS_REQUEST_MAX_ATTEMPTS = 3
-_NATS_RETRY_BACKOFF_MS = 250
+_REQUEST_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_MS = 250
 
 _nats_url = os.environ.get("TFY_NATS_URL")
 _nats_subject_prefix = os.environ.get("TFY_NATS_SUBJECT_PREFIX")
@@ -34,11 +37,21 @@ if bool(_nats_url) != bool(_nats_subject_prefix):
         f"TFY_NATS_SUBJECT_PREFIX={'set' if _nats_subject_prefix else 'unset'}"
     ) from None
 
-_nats_trace_headers: dict[str, str] = {}
+# HTTP bridge: the sandbox has no NATS server, and its outbound HTTP is routed back to the host.
+_http_url = os.environ.get("TFY_CM_HTTP_URL")
+_http_token = os.environ.get("TFY_CM_HTTP_TOKEN")
+if bool(_http_url) != bool(_http_token):
+    raise RuntimeError(
+        "TFY_CM_HTTP_URL and TFY_CM_HTTP_TOKEN must be set together; "
+        f"got TFY_CM_HTTP_URL={'set' if _http_url else 'unset'}, "
+        f"TFY_CM_HTTP_TOKEN={'set' if _http_token else 'unset'}"
+    ) from None
+
+_trace_headers: dict[str, str] = {}
 if _traceparent := os.environ.get("TFY_TRACEPARENT"):
-    _nats_trace_headers["traceparent"] = _traceparent
+    _trace_headers["traceparent"] = _traceparent
 if _tracestate := os.environ.get("TFY_TRACESTATE"):
-    _nats_trace_headers["tracestate"] = _tracestate
+    _trace_headers["tracestate"] = _tracestate
 
 
 class _ToolsCache(BaseModel):
@@ -47,7 +60,7 @@ class _ToolsCache(BaseModel):
 
 
 class _BridgeReply(BaseModel):
-    """NATS bridge reply envelope. `result` is left untyped — operation-specific callers
+    """Code Mode bridge reply envelope. `result` is left untyped — operation-specific callers
     (Tool / CallToolResult) validate the payload; this model only validates the envelope."""
 
     ok: bool
@@ -107,19 +120,86 @@ def _write_tools_cache(server: str, tools: list[Tool]) -> None:
         logger.exception("_write_tools_cache")
 
 
-def _require_nats_subject() -> str:
-    if not _NATS_SUBJECT or not _nats_url:
-        raise RuntimeError(
-            "NATS bridge setup failed; NATS bridge is required for MCP from Code Mode. "
-            "Try again."
-        ) from None
-    return _NATS_SUBJECT
+def _request_timeout() -> float:
+    return float(os.environ["TFY_CM_REQUEST_TIMEOUT_SECONDS"])
+
+
+def _unwrap_reply(raw: str, where: str) -> Any:
+    """Validate the bridge envelope and turn a not-ok reply into the error the caller should see."""
+    try:
+        reply = _BridgeReply.model_validate_json(raw)
+    except ValidationError as e:
+        raise RuntimeError(f"Code Mode reply on '{where}' is malformed: {e}") from None
+    if reply.ok:
+        return reply.result
+    # A well-formed reply means the transport worked; `source` says who's at fault.
+    if reply.source == "caller":
+        raise RuntimeError(f"Invalid MCP request on '{where}': {reply.error}") from None
+    if reply.source == "transport":
+        raise RuntimeError(f"Code Mode transport error on '{where}': {reply.error}") from None
+    raise RuntimeError(f"Internal MCP error on '{where}': {reply.error}") from None
+
+
+async def _bridge_request(payload: dict[str, Any]) -> Any:
+    """Send one Code Mode request over whichever bridge this sandbox was given."""
+    if _http_url and _http_token:
+        return await asyncio.to_thread(_http_request_sync, payload)
+    if _NATS_SUBJECT and _nats_url:
+        return await _nats_request(_NATS_SUBJECT, payload)
+    raise RuntimeError(
+        "Code Mode bridge setup failed; a bridge is required for MCP from Code Mode. Try again."
+    ) from None
+
+
+def _http_request_sync(payload: dict[str, Any]) -> Any:
+    """POST one request to the host bridge and unwrap { ok, result|error }.
+
+    Only a connection that never opened is retried, so a non-idempotent tool cannot double-execute:
+    a refused connection or an unresolvable host proves nothing was delivered, while a timeout, a
+    reset, or any HTTP status means the request may already have reached a handler.
+    """
+    url = _http_url
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={
+            "content-type": "application/json",
+            "authorization": f"Bearer {_http_token}",
+            **_trace_headers,
+        },
+        method="POST",
+    )
+    timeout = _request_timeout()
+
+    last_connect_error = "unknown error"
+    for attempt in range(1, _REQUEST_MAX_ATTEMPTS + 1):
+        if attempt > 1:
+            time.sleep(_RETRY_BACKOFF_MS / 1000)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read().decode()
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace").strip()
+            raise RuntimeError(
+                f"Code Mode bridge on '{url}' refused the request with HTTP {e.code}: {detail or e.reason}"
+            ) from None
+        except urllib.error.URLError as e:
+            if not isinstance(e.reason, (ConnectionRefusedError, socket.gaierror)):
+                raise RuntimeError(f"Code Mode request on '{url}' failed: {e.reason}") from None
+            last_connect_error = f"connect to {url} failed: {e.reason}"
+            continue
+        except Exception as e:
+            raise RuntimeError(f"Code Mode request on '{url}' failed: {e}") from None
+        return _unwrap_reply(raw, url)
+    raise RuntimeError(
+        f"Code Mode bridge on '{url}' is unreachable after {_REQUEST_MAX_ATTEMPTS} attempts: {last_connect_error}"
+    ) from None
 
 
 async def _fetch_tools(server: str) -> list[Tool]:
-    result = await _nats_request(_require_nats_subject(), {"op": "list_tools", "server": server})
+    result = await _bridge_request({"op": "list_tools", "server": server})
     if not isinstance(result, dict):
-        raise RuntimeError(f"NATS list_tools '{server}' returned unexpected shape: {result!r}") from None
+        raise RuntimeError(f"Code Mode list_tools '{server}' returned unexpected shape: {result!r}") from None
     return [Tool.model_validate(t) for t in result.get("tools", [])]
 
 
@@ -142,14 +222,14 @@ async def _nats_request(subject: str, payload: dict[str, Any]) -> Any:
     from nats.errors import NoRespondersError
 
     data = json.dumps(payload).encode()
-    request_timeout = float(os.environ["TFY_CM_REQUEST_TIMEOUT_SECONDS"])
+    request_timeout = _request_timeout()
 
     # Phase 1: establish a connection, retrying only connect failures.
     nc = None
     last_connect_error = "unknown error"
-    for attempt in range(1, _NATS_REQUEST_MAX_ATTEMPTS + 1):
+    for attempt in range(1, _REQUEST_MAX_ATTEMPTS + 1):
         if attempt > 1:
-            await asyncio.sleep(_NATS_RETRY_BACKOFF_MS / 1000)
+            await asyncio.sleep(_RETRY_BACKOFF_MS / 1000)
         try:
             nc = await nats.connect(_nats_url)
             break
@@ -157,21 +237,21 @@ async def _nats_request(subject: str, payload: dict[str, Any]) -> Any:
             last_connect_error = f"connect to NATS at {_nats_url} failed: {e}"
     if nc is None:
         raise RuntimeError(
-            f"NATS connect failed for '{subject}' after {_NATS_REQUEST_MAX_ATTEMPTS} attempts: {last_connect_error}"
+            f"NATS connect failed for '{subject}' after {_REQUEST_MAX_ATTEMPTS} attempts: {last_connect_error}"
         ) from None
 
     # Phase 2: request over the established connection, retrying only NoRespondersError.
     try:
         last_transport_error = "unknown error"
-        for attempt in range(1, _NATS_REQUEST_MAX_ATTEMPTS + 1):
+        for attempt in range(1, _REQUEST_MAX_ATTEMPTS + 1):
             if attempt > 1:
-                await asyncio.sleep(_NATS_RETRY_BACKOFF_MS / 1000)
+                await asyncio.sleep(_RETRY_BACKOFF_MS / 1000)
             try:
                 msg = await nc.request(
                     subject,
                     data,
                     timeout=request_timeout,
-                    headers=_nats_trace_headers or None,
+                    headers=_trace_headers or None,
                 )
             except NoRespondersError as e:
                 # Server confirms no subscriber — never delivered, safe to retry.
@@ -180,20 +260,9 @@ async def _nats_request(subject: str, payload: dict[str, Any]) -> Any:
             except Exception as e:
                 # Timeout / other: the tool may already have run, so we must not retry.
                 raise RuntimeError(f"NATS request '{subject}' failed: {e}") from None
-            try:
-                reply = _BridgeReply.model_validate_json(msg.data.decode())
-            except ValidationError as e:
-                raise RuntimeError(f"NATS reply on '{subject}' is malformed: {e}") from None
-            if not reply.ok:
-                # A well-formed reply means the transport worked; `source` says who's at fault.
-                if reply.source == "caller":
-                    raise RuntimeError(f"Invalid MCP request on '{subject}': {reply.error}") from None
-                if reply.source == "transport":
-                    raise RuntimeError(f"Code Mode transport error on '{subject}': {reply.error}") from None
-                raise RuntimeError(f"Internal MCP error on '{subject}': {reply.error}") from None
-            return reply.result
+            return _unwrap_reply(msg.data.decode(), subject)
         raise RuntimeError(
-            f"NATS bridge has no responder for '{subject}' after {_NATS_REQUEST_MAX_ATTEMPTS} attempts: {last_transport_error}"
+            f"NATS bridge has no responder for '{subject}' after {_REQUEST_MAX_ATTEMPTS} attempts: {last_transport_error}"
         ) from None
     finally:
         try:
@@ -273,14 +342,13 @@ async def call_tool(server: str, tool: str, body: dict[str, Any]) -> Any:
     if _enable_agent_approvals:
         await _ensure_non_destructive(server, tool)
 
-    raw = await _nats_request(
-        _require_nats_subject(),
+    raw = await _bridge_request(
         {"op": "call_tool", "server": server, "tool": tool, "arguments": body},
     )
     try:
         result = CallToolResult.model_validate(raw)
     except Exception as e:
-        raise RuntimeError(f"NATS call_tool reply for '{server}/{tool}' is malformed: {e}") from None
+        raise RuntimeError(f"Code Mode call_tool reply for '{server}/{tool}' is malformed: {e}") from None
 
     return _project_call_tool_result(server, tool, result)
 
