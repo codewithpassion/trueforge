@@ -66,6 +66,8 @@ async function openChannelInSession(session_id: string): Promise<string> {
       store: d1Persistence().sandboxProviderStore,
       logger,
       sessionId: session_id,
+      computer_id: undefined,
+      turn_id: null,
     });
     if (provider === undefined) {
       throw new Error('expected the built-in provider once the tenant enabled it');

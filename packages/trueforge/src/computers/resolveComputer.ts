@@ -4,6 +4,7 @@
  */
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { SandboxUsability, SandboxUsabilityReason } from '../sandbox/integration';
+import type { ComputerRelayStatus } from './protocol';
 import { RemoteComputerProvider } from './RemoteComputerProvider';
 import { computerHomeDirectory, type ComputersService } from './service';
 
@@ -113,15 +114,32 @@ export async function buildRemoteComputerProvider({
   if (computer === undefined || computer.status === 'revoked') {
     return undefined;
   }
+  const relay = computers.relay(computerId);
+  // The relay holds what the machine said when it connected. The row is a mirror written a minute
+  // behind, so asking the relay is what keeps the very first turn after a connect from building
+  // its paths out of nulls. A relay that cannot answer leaves the row as the best we have.
+  let live: ComputerRelayStatus | undefined;
+  try {
+    live = await relay.status();
+  } catch (error) {
+    logger.debug('Could not read a computer relay; using the stored machine facts', {
+      computer_id: computerId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  const hello = live?.hello ?? null;
   return new RemoteComputerProvider({
-    relay: computers.relay(computerId),
+    relay,
     computerId,
     computerName: computer.name,
     tenantId,
     sessionId,
     turnId,
-    home: computerHomeDirectory({ os: computer.os, runAsUser: computer.run_as_user }),
-    capabilities: computer.capabilities,
+    home: computerHomeDirectory({
+      os: hello?.os ?? computer.os,
+      runAsUser: hello?.run_as_user ?? computer.run_as_user,
+    }),
+    capabilities: hello?.capabilities ?? computer.capabilities,
     defaultExecTimeoutSeconds,
     fileMaxBytesForDownload,
     store: computers.store,

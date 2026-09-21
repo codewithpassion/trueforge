@@ -33,10 +33,14 @@ function stubIntegration(localSupport?: LocalSandboxSupportResult): SandboxInteg
   return { ...createNodeSandboxIntegration({ localSupport }), resolveSandboxUsability: mockUsability };
 }
 
-const NOT_USABLE: SandboxUsability = { usable: false, status: undefined };
+const NOT_USABLE: SandboxUsability = { usable: false, status: undefined, reason: undefined };
 
 /** A stored provider whose build reached `status`; only `ready` can run a turn. */
-const usabilityFor = (status: SandboxBuildStatus): SandboxUsability => ({ usable: status === 'ready', status });
+const usabilityFor = (status: SandboxBuildStatus): SandboxUsability => ({
+  usable: status === 'ready',
+  status,
+  reason: undefined,
+});
 
 const ISSUER = 'https://issuer.example.com';
 const AUDIENCE = 'harness-client';
@@ -86,6 +90,7 @@ describe('capabilities routers', () => {
         logger: silentLogger,
         resolveRequestContext,
         sandboxIntegration: options.sandboxIntegration,
+        computers: undefined,
       }),
       authenticator,
     );
@@ -106,6 +111,7 @@ describe('capabilities routers', () => {
           reason: 'Skills run in a sandbox, which is not configured.',
         },
         settings: { enabled: true },
+        computers: { enabled: false },
       },
     });
   });
@@ -124,6 +130,7 @@ describe('capabilities routers', () => {
           reason: 'Skills run in a sandbox, which this server does not support.',
         },
         settings: { enabled: true },
+        computers: { enabled: false },
       },
     });
     expect(mockUsability).not.toHaveBeenCalled();
@@ -131,7 +138,7 @@ describe('capabilities routers', () => {
 
   it('reports sandbox + skill enabled when local fallback is supported and no image status exists', async () => {
     disableOidcAuth();
-    mockUsability.mockResolvedValue({ usable: true, status: undefined });
+    mockUsability.mockResolvedValue({ usable: true, status: undefined, reason: undefined });
     const router = makeRouter({ sandboxIntegration: stubIntegration(LOCAL_SUPPORTED) });
 
     const response = await router.request('/');
@@ -141,6 +148,7 @@ describe('capabilities routers', () => {
         sandbox: { enabled: true },
         skill: { enabled: true },
         settings: { enabled: true },
+        computers: { enabled: false },
       },
     });
   });
@@ -157,6 +165,7 @@ describe('capabilities routers', () => {
         sandbox: { enabled: true },
         skill: { enabled: true },
         settings: { enabled: true },
+        computers: { enabled: false },
       },
     });
   });
@@ -175,6 +184,7 @@ describe('capabilities routers', () => {
         sandbox: { enabled: true },
         skill: { enabled: false, reason: 'Skills are not available on this server.' },
         settings: { enabled: true },
+        computers: { enabled: false },
       },
     });
   });
@@ -291,6 +301,7 @@ describe('capabilities routers', () => {
           logger: silentLogger,
           resolveRequestContext,
           sandboxIntegration: stubIntegration(),
+          computers: undefined,
         }),
         new OidcAuthenticator(),
       );
@@ -307,6 +318,7 @@ describe('capabilities routers', () => {
             reason: 'Skills run in a sandbox, which is not configured.',
           },
           settings: { enabled: true },
+          computers: { enabled: false },
         },
       });
 
@@ -322,6 +334,7 @@ describe('capabilities routers', () => {
             reason: 'Skills run in a sandbox, which is not configured.',
           },
           settings: { enabled: false },
+          computers: { enabled: false },
         },
       });
     });

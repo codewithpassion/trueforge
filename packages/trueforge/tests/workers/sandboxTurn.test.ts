@@ -55,6 +55,7 @@ function sandboxIntegration(options?: {
   const computer = options?.computer;
   return createWorkersSandboxIntegration({
     backend: 'cloudflare-computer',
+    computers: undefined,
     namespace:
       computer === undefined
         ? env.COMPUTER_DO
@@ -174,6 +175,7 @@ describe('a turn with the sandbox enabled and an MCP server', () => {
       validateAgentSpec({
         spec: sandboxSpec(providerName),
         tenant_id: TENANT_ID,
+        agent_name: undefined,
         modelProviderStore: stores.modelProviderStore,
         mcpServerStore: stores.mcpServerStore,
         skillStore: stores.skillStore,

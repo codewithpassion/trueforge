@@ -7,6 +7,7 @@ import { env } from 'cloudflare:workers';
 import { RemoteComputerProvider } from '../../src/computers/RemoteComputerProvider';
 import { MAX_IN_FLIGHT_EXEC, MAX_QUEUE_DEPTH } from '../../src/computers/protocol';
 import type { ComputersService } from '../../src/computers/service';
+import { createConsoleLogger } from '../../src/workers/logger';
 import { migrateDatabase, TENANT_ID } from './harness';
 import {
   computersApp,
@@ -14,6 +15,7 @@ import {
   PUBLIC_BASE_URL,
   settle,
   testComputersService,
+  waitFor,
 } from './remoteComputerClient';
 
 const OTHER_TENANT = 'someone-else';
@@ -26,12 +28,7 @@ async function digestHex(bytes: Buffer): Promise<string> {
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-const silentLogger = {
-  debug: () => undefined,
-  info: () => undefined,
-  warn: () => undefined,
-  error: () => undefined,
-};
+const silentLogger = createConsoleLogger({ level: 'error', bindings: { component: 'computers-test' } });
 
 interface CreatedComputer {
   computerId: string;
@@ -436,17 +433,13 @@ describe('concurrency', () => {
     const created = await createComputer({ app, name: uniqueName('cap') });
     const { credential } = await enroll({ app, code: created.enrollmentCode });
 
-    const held: { id: string; reply: () => void }[] = [];
-    let concurrent = 0;
-    let peak = 0;
+    let reached = 0;
     const client = await FakeComputerClient.connect({
       app,
       credential: credential ?? '',
       options: {
-        onRequest: frame => {
-          concurrent += 1;
-          peak = Math.max(peak, concurrent);
-          held.push({ id: String(frame['id']), reply: () => undefined });
+        onRequest: () => {
+          reached += 1;
           return undefined;
         },
       },
@@ -456,12 +449,19 @@ describe('concurrency', () => {
     const provider = providerFor({ computers, computerId: created.computerId, sessionId: 'session-cap' });
     const sandboxId = `${created.computerId}/session-cap`;
     const running = Array.from({ length: MAX_IN_FLIGHT_EXEC + 1 }, () =>
-      provider.exec({ sandboxId, command: 'sleep 1', timeoutSeconds: 1 }),
+      provider.exec({ sandboxId, command: 'sleep 1', timeoutSeconds: 30 }),
     );
-    await settle(20);
+    await waitFor(() => reached >= MAX_IN_FLIGHT_EXEC);
+    await settle(10);
     // Only the cap reaches the machine; the extra one is still waiting for a slot.
-    expect(peak).toBe(MAX_IN_FLIGHT_EXEC);
-    await Promise.all(running);
+    expect(reached).toBe(MAX_IN_FLIGHT_EXEC);
+
+    client.releaseHeld(OK_EXEC);
+    // The fifth starts only once a slot comes free.
+    await waitFor(() => reached === MAX_IN_FLIGHT_EXEC + 1);
+    client.releaseHeld(OK_EXEC);
+    const results = await Promise.all(running);
+    expect(results.every(result => result.success)).toBe(true);
     client.close();
   });
 
@@ -480,15 +480,20 @@ describe('concurrency', () => {
     const provider = providerFor({ computers, computerId: created.computerId, sessionId: 'session-queue' });
     const sandboxId = `${created.computerId}/session-queue`;
     const filling = Array.from({ length: MAX_IN_FLIGHT_EXEC + MAX_QUEUE_DEPTH }, () =>
-      provider.exec({ sandboxId, command: 'sleep 1', timeoutSeconds: 1 }),
+      provider.exec({ sandboxId, command: 'sleep 1', timeoutSeconds: 30 }),
     );
-    await settle(20);
-    const overflow = await provider.exec({ sandboxId, command: 'one too many', timeoutSeconds: 1 });
+    await waitFor(() => client.held.length >= MAX_IN_FLIGHT_EXEC);
+    await settle(10);
+    const overflow = await provider.exec({ sandboxId, command: 'one too many', timeoutSeconds: 30 });
     expect(overflow.success).toBe(false);
     if (!overflow.success) {
       expect(overflow.error).toContain('queued');
     }
-    await Promise.all(filling);
+    // Drain the backlog rather than waiting out every relay deadline.
+    client.answerWith(() => OK_EXEC);
+    client.releaseHeld(OK_EXEC);
+    const results = await Promise.all(filling);
+    expect(results.every(result => result.success)).toBe(true);
     client.close();
   });
 });

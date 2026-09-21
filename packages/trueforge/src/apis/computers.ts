@@ -6,7 +6,7 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import type { Context, Hono } from 'hono';
+import type { Context } from 'hono';
 import type { ResolveRequestContext } from '../auth/identity';
 import {
   buildDockerCommand,
@@ -380,7 +380,7 @@ export function createComputerMachineRouter(deps: {
  * the typed router cannot describe, so it is registered as a plain route on the app.
  */
 export function registerComputerConnectRoute(input: {
-  app: Hono;
+  app: OpenAPIHono;
   path: string;
   computers: ComputersService | undefined;
   logger: Logger;

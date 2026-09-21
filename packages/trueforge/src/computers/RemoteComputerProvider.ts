@@ -44,6 +44,10 @@ export function computerIdFromSandboxRef(sandboxId: string): string | undefined 
 /** A reset relay rejects the RPC instead of answering; the caller must still read it as offline. */
 const INTERRUPTED_MESSAGE = 'The connection to the computer was interrupted';
 
+/** Client error codes the sandbox contract has its own classes for. Kept apart on purpose. */
+const CLIENT_ERROR_NOT_FOUND = 'not_found';
+const CLIENT_ERROR_IS_A_DIRECTORY = 'is_a_directory';
+
 /** A user's machine is not built from an image, so there is nothing to wait for. */
 const READY_BUILD: SandboxBuild = { status: 'ready', reason: null, metadata: null };
 
@@ -379,23 +383,20 @@ export class RemoteComputerProvider implements SandboxProvider {
     }
   }
 
-  /** Maps a failed file op onto the error classes the download route already answers. */
+  /**
+   * Maps a failed file op onto the error classes the download route already answers. The relay
+   * reports a client's `{code, message}` as `bad_request` with the code in front of the message.
+   * A file that is too large never gets here: its size comes back with the first chunk.
+   */
   #fileFailure({ outcome, path }: { outcome: Extract<RequestOutcome, { ok: false }>; path: string }): Error {
     if (outcome.reason !== 'bad_request') {
       return new SandboxOfflineError(outcome.message);
     }
-    if (outcome.message.startsWith('not_found:')) {
+    if (outcome.message.startsWith(`${CLIENT_ERROR_NOT_FOUND}:`)) {
       return new SandboxFileNotFoundError(path);
     }
-    if (outcome.message.startsWith('is_directory:')) {
+    if (outcome.message.startsWith(`${CLIENT_ERROR_IS_A_DIRECTORY}:`)) {
       return new SandboxPathIsDirectoryError(path);
-    }
-    if (outcome.message.startsWith('too_large:')) {
-      return new SandboxFileTooLargeError(
-        path,
-        this.#options.fileMaxBytesForDownload,
-        this.#options.fileMaxBytesForDownload,
-      );
     }
     return new SandboxOfflineError(outcome.message);
   }

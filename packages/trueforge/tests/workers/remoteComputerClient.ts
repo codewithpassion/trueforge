@@ -11,9 +11,16 @@ import {
   registerComputerConnectRoute,
 } from '../../src/apis/computers';
 import type { RequestContext } from '../../src/auth/identity';
-import { HEARTBEAT_PING, PROTOCOL_VERSION, type HelloMessage } from '../../src/computers/protocol';
+import {
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_PING,
+  HEARTBEAT_PONG,
+  PROTOCOL_VERSION,
+  type HelloMessage,
+} from '../../src/computers/protocol';
 import type { ComputersService } from '../../src/computers/service';
 import { workersComputersService } from '../../src/workers/computersService';
+import { createConsoleLogger } from '../../src/workers/logger';
 import { TENANT_ID, USER_REF } from './harness';
 
 export const PUBLIC_BASE_URL = 'https://trueforge.test';
@@ -45,7 +52,7 @@ export function computersApp({
   dockerImage?: string;
 }) {
   const app = new OpenAPIHono();
-  const logger = console;
+  const logger = createConsoleLogger({ level: 'error', bindings: { component: 'computers-test' } });
   registerComputerConnectRoute({ app, path: '/api/v1/computers/connect', computers, logger });
   app.route('/api/v1/computers', createComputerMachineRouter({ computers, logger }));
   app.route(
@@ -71,14 +78,22 @@ export interface FakeClientOptions {
 /** A connected machine. `close()` drops the socket the way killing the process would. */
 export class FakeComputerClient {
   readonly received: Record<string, unknown>[] = [];
+  /** Requests the handler chose not to answer, so a test can settle them when it is ready. */
+  readonly held: string[] = [];
   readonly #socket: WebSocket;
-  readonly #options: FakeClientOptions;
+  #onRequest: FakeClientOptions['onRequest'];
+  readonly #heartbeat: ReturnType<typeof setInterval>;
 
   private constructor(socket: WebSocket, options: FakeClientOptions) {
     this.#socket = socket;
-    this.#options = options;
+    this.#onRequest = options.onRequest;
+    // The contract says the client heartbeats; without it the relay's staleness check fires
+    // twenty-five seconds after connect and a slow test looks like a suspended laptop.
+    this.#heartbeat = setInterval(() => {
+      socket.send(HEARTBEAT_PING);
+    }, HEARTBEAT_INTERVAL_MS / 2);
     socket.addEventListener('message', event => {
-      if (typeof event.data !== 'string' || event.data === HEARTBEAT_PING) {
+      if (typeof event.data !== 'string' || event.data === HEARTBEAT_PONG) {
         return;
       }
       const parsed: unknown = JSON.parse(event.data);
@@ -87,11 +102,25 @@ export class FakeComputerClient {
       }
       const frame: Record<string, unknown> = { ...parsed };
       this.received.push(frame);
-      const result = this.#options.onRequest?.(frame);
-      if (result !== undefined) {
-        socket.send(JSON.stringify({ id: parsed.id, result }));
+      const result = this.#onRequest?.(frame);
+      if (result === undefined) {
+        this.held.push(parsed.id);
+        return;
       }
+      socket.send(JSON.stringify({ id: parsed.id, result }));
     });
+  }
+
+  /** Swaps the handler, so a test can stop holding requests once it has asserted. */
+  answerWith(onRequest: FakeClientOptions['onRequest']): void {
+    this.#onRequest = onRequest;
+  }
+
+  /** Answers everything the handler held back, so a test never waits out a relay deadline. */
+  releaseHeld(result: Record<string, unknown>): void {
+    for (const id of this.held.splice(0)) {
+      this.#socket.send(JSON.stringify({ id, result }));
+    }
   }
 
   static async connect({
@@ -140,8 +169,20 @@ export class FakeComputerClient {
   }
 
   close(code = 1000): void {
+    clearInterval(this.#heartbeat);
     this.#socket.close(code, 'test');
   }
+}
+
+/** Waits for a condition rather than a fixed number of ticks, so a slow round trip is not a flake. */
+export async function waitFor(condition: () => boolean, attempts = 200): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (condition()) {
+      return;
+    }
+    await settle(2);
+  }
+  throw new Error('condition never became true');
 }
 
 /** Lets the runtime deliver frames both ways before the test asserts. */

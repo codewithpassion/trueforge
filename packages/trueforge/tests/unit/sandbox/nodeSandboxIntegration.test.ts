@@ -47,7 +47,13 @@ describe('createNodeSandboxIntegration', () => {
     await migrateSqliteToLatest(db);
     const store = new SqliteSandboxProviderStore(db);
     const usability = (localSupport: LocalSandboxSupportResult | undefined) =>
-      createNodeSandboxIntegration({ localSupport }).resolveSandboxUsability({ store, tenant_id: TENANT, logger });
+      createNodeSandboxIntegration({ localSupport }).resolveSandboxUsability({
+        store,
+        tenant_id: TENANT,
+        logger,
+        computer_id: undefined,
+        agent_name: undefined,
+      });
 
     await expect(usability(undefined)).resolves.toEqual({ usable: false, status: undefined });
     await expect(usability({ supported: false, reason: 'no bubblewrap' })).resolves.toEqual({
@@ -67,7 +73,15 @@ describe('createNodeSandboxIntegration', () => {
       const store = await storeWith({ type: 'cloudflare-computer' });
       const integration = createNodeSandboxIntegration({ localSupport: undefined });
 
-      await expect(integration.resolveSandboxUsability({ store, tenant_id: TENANT, logger })).resolves.toEqual({
+      await expect(
+        integration.resolveSandboxUsability({
+          store,
+          tenant_id: TENANT,
+          logger,
+          computer_id: undefined,
+          agent_name: undefined,
+        }),
+      ).resolves.toEqual({
         usable: false,
         status: undefined,
       });
@@ -79,7 +93,15 @@ describe('createNodeSandboxIntegration', () => {
       const store = await storeWith({ type: 'cloudflare-computer' });
       const integration = createNodeSandboxIntegration({ localSupport: LOCAL_SUPPORTED });
 
-      await expect(integration.resolveSandboxUsability({ store, tenant_id: TENANT, logger })).resolves.toEqual({
+      await expect(
+        integration.resolveSandboxUsability({
+          store,
+          tenant_id: TENANT,
+          logger,
+          computer_id: undefined,
+          agent_name: undefined,
+        }),
+      ).resolves.toEqual({
         usable: true,
         status: undefined,
       });
@@ -96,7 +118,15 @@ describe('createNodeSandboxIntegration', () => {
     });
     const integration = createNodeSandboxIntegration({ localSupport: undefined });
 
-    await expect(integration.resolveSandboxUsability({ store, tenant_id: TENANT, logger })).resolves.toEqual({
+    await expect(
+      integration.resolveSandboxUsability({
+        store,
+        tenant_id: TENANT,
+        logger,
+        computer_id: undefined,
+        agent_name: undefined,
+      }),
+    ).resolves.toEqual({
       usable: true,
       status: 'ready',
     });
@@ -107,7 +137,15 @@ describe('createNodeSandboxIntegration', () => {
       status_reason: null,
       build_metadata: null,
     });
-    await expect(integration.resolveSandboxUsability({ store, tenant_id: TENANT, logger })).resolves.toEqual({
+    await expect(
+      integration.resolveSandboxUsability({
+        store,
+        tenant_id: TENANT,
+        logger,
+        computer_id: undefined,
+        agent_name: undefined,
+      }),
+    ).resolves.toEqual({
       usable: false,
       status: 'pending',
     });

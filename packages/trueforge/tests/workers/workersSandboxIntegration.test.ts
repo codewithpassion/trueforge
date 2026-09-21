@@ -69,7 +69,15 @@ function computerProvider(computer: ComputerWorkspace): CloudflareComputerProvid
 }
 
 function storeInput() {
-  return { tenant_id: TENANT_ID, sessionId: 'session-1', store: d1Persistence().sandboxProviderStore, logger };
+  return {
+    tenant_id: TENANT_ID,
+    sessionId: 'session-1',
+    store: d1Persistence().sandboxProviderStore,
+    logger,
+    computer_id: undefined,
+    turn_id: null,
+    agent_name: undefined,
+  };
 }
 
 /** Turning the built-in sandbox on is what a tenant does from Settings. */
@@ -97,6 +105,7 @@ async function validateSandboxSpec(sandboxIntegration: SandboxIntegration): Prom
       config: { sandbox: { enabled: true, file_downloads: false } },
     }),
     tenant_id: TENANT_ID,
+    agent_name: undefined,
     modelProviderStore: stores.modelProviderStore,
     mcpServerStore: stores.mcpServerStore,
     skillStore: stores.skillStore,
@@ -109,6 +118,7 @@ async function validateSandboxSpec(sandboxIntegration: SandboxIntegration): Prom
 function build(backend: 'cloudflare-computer' | undefined) {
   return createWorkersSandboxIntegration({
     backend,
+    computers: undefined,
     namespace: env.COMPUTER_DO,
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024,
@@ -300,6 +310,7 @@ describe('GET /capabilities agrees with the spec validator on the real Workers i
         logger,
         resolveRequestContext,
         sandboxIntegration,
+        computers: undefined,
       }),
     );
     const body: unknown = await (await router.request('/')).json();

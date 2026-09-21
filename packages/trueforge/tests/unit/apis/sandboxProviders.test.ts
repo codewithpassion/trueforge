@@ -90,7 +90,9 @@ function workersIntegration(backendAvailable: boolean): SandboxIntegration {
     isDaytonaSettingsSupported: () => false,
     isCloudflareComputerSettingsSupported: () => backendAvailable,
     resolveSandboxUsability: async input =>
-      (await isEnabled(input)) ? { usable: true, status: 'ready' } : { usable: false, status: undefined },
+      (await isEnabled(input))
+        ? { usable: true, status: 'ready', reason: undefined }
+        : { usable: false, status: undefined, reason: undefined },
     checkSnapshotStatus: async input => ((await isEnabled(input)) ? SANDBOX_READY_STATUS : undefined),
   };
 }
