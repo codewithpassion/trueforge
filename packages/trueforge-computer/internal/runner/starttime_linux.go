@@ -34,3 +34,13 @@ func processStartTime(pid int) (uint64, bool) {
 	}
 	return value, true
 }
+
+// processCmdline reads the leader's argv, a second check that the pid still runs what we
+// started rather than something that merely began at the same tick.
+func processCmdline(pid int) (string, bool) {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil {
+		return "", false
+	}
+	return strings.ReplaceAll(strings.TrimRight(string(raw), "\x00"), "\x00", " "), true
+}

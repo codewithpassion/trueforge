@@ -1,8 +1,8 @@
 package runner_test
 
 import (
-	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func newTestRunner(t *testing.T, options runner.Options) *runner.Runner {
 // goroutine where Fatalf is not allowed.
 func run(t *testing.T, r *runner.Runner, id string, command string, timeout time.Duration) protocol.ExecResult {
 	t.Helper()
-	result, err := r.Run(context.Background(), id, protocol.ExecRequest{
+	result, err := r.Run(id, protocol.ExecRequest{
 		Command:   command,
 		TimeoutMS: timeout.Milliseconds(),
 	})
@@ -134,7 +135,7 @@ func TestCancelKillsTheGroup(t *testing.T) {
 	r := newTestRunner(t, runner.Options{})
 	done := make(chan protocol.ExecResult, 1)
 	go func() {
-		result, err := r.Run(context.Background(), "slow", protocol.ExecRequest{
+		result, err := r.Run("slow", protocol.ExecRequest{
 			Command:   "sleep 60",
 			TimeoutMS: 60_000,
 		})
@@ -208,7 +209,7 @@ func TestQueueFullIsRefused(t *testing.T) {
 	go func() { run(t, r, "waiting", "true", 20*time.Second) }()
 	waitFor(t, 5*time.Second, func() bool { return r.Queued() == 1 })
 
-	_, err := r.Run(context.Background(), "overflow", protocol.ExecRequest{Command: "true", TimeoutMS: 1000})
+	_, err := r.Run("overflow", protocol.ExecRequest{Command: "true", TimeoutMS: 1000})
 	if !errors.Is(err, runner.ErrQueueFull) {
 		t.Fatalf("error = %v, want ErrQueueFull", err)
 	}
@@ -247,11 +248,25 @@ func TestDuplicateRequestIDIsRefused(t *testing.T) {
 	go func() { run(t, r, "same", "sleep 3", 20*time.Second) }()
 	waitFor(t, 5*time.Second, func() bool { return r.InFlight() == 1 })
 
-	_, err := r.Run(context.Background(), "same", protocol.ExecRequest{Command: "true", TimeoutMS: 1000})
+	_, err := r.Run("same", protocol.ExecRequest{Command: "true", TimeoutMS: 1000})
 	if !errors.Is(err, runner.ErrDuplicateID) {
 		t.Fatalf("error = %v, want ErrDuplicateID", err)
 	}
 	r.Cancel("same")
+}
+
+// The relay decides the deadline, so the machine keeps its own ceiling on it: without one a
+// single request holds a slot for as long as the server feels like.
+func TestTheServersDeadlineIsCapped(t *testing.T) {
+	r := newTestRunner(t, runner.Options{MaxTimeout: 500 * time.Millisecond})
+	started := time.Now()
+	result := run(t, r, "a", "sleep 30", time.Hour)
+	if result.ExitCode != runner.ExitTimedOut {
+		t.Fatalf("exit code = %d, want %d", result.ExitCode, runner.ExitTimedOut)
+	}
+	if elapsed := time.Since(started); elapsed > 15*time.Second {
+		t.Fatalf("the cap did not apply: took %s", elapsed)
+	}
 }
 
 func TestRequestCwdAndDefaultCwd(t *testing.T) {
@@ -261,7 +276,7 @@ func TestRequestCwdAndDefaultCwd(t *testing.T) {
 		t.Fatalf("default cwd = %q, want %q", got, resolved(t, fallback))
 	}
 	elsewhere := t.TempDir()
-	result, err := r.Run(context.Background(), "b", protocol.ExecRequest{
+	result, err := r.Run("b", protocol.ExecRequest{
 		Command:   "pwd",
 		Cwd:       &elsewhere,
 		TimeoutMS: 5000,
@@ -279,7 +294,7 @@ func TestRequestCwdAndDefaultCwd(t *testing.T) {
 func TestEnvironmentIsScrubbed(t *testing.T) {
 	t.Setenv("TRUEFORGE_MACHINE_CREDENTIAL", "super-secret")
 	r := newTestRunner(t, runner.Options{})
-	result, err := r.Run(context.Background(), "a", protocol.ExecRequest{
+	result, err := r.Run("a", protocol.ExecRequest{
 		Command:   "env",
 		Env:       map[string]string{"FROM_REQUEST": "yes", "BAD=KEY": "dropped"},
 		TimeoutMS: 5000,
@@ -332,6 +347,49 @@ func TestSweepKillsGroupsLeftBehind(t *testing.T) {
 	}
 	if countRecords(t, stateDir) != 0 {
 		t.Fatal("the record outlived the sweep")
+	}
+}
+
+// A pid is recycled within hours. A record that cannot be positively identified — no start
+// time, or one that no longer matches — must be dropped, not acted on: killing a group we
+// merely cannot rule out means SIGKILLing whatever else this user is running.
+func TestSweepNeverKillsOnExistenceAlone(t *testing.T) {
+	stateDir := t.TempDir()
+	recordsDir := filepath.Join(stateDir, "running")
+	if err := os.MkdirAll(recordsDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// A live group of our own, standing in for whatever later reused the pid.
+	marker := filepath.Join(t.TempDir(), "innocent")
+	bystander := exec.Command("/bin/sh", "-c", "sleep 2; touch "+marker)
+	bystander.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := bystander.Start(); err != nil {
+		t.Fatalf("start the bystander: %v", err)
+	}
+	pgid := bystander.Process.Pid
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_ = bystander.Wait()
+	})
+
+	for name, record := range map[string]string{
+		// No start time at all: the old code killed on existence.
+		"no-start-time.json": fmt.Sprintf(`{"pgid":%d,"request_id":"a","command":"x"}`, pgid),
+		// A start time that belongs to a process that is gone.
+		"stale-start-time.json": fmt.Sprintf(`{"pgid":%d,"request_id":"b","command":"x","start_time":1}`, pgid),
+	} {
+		if err := os.WriteFile(filepath.Join(recordsDir, name), []byte(record), 0o600); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+		if killed := runner.Sweep(stateDir, discardLogger()); killed != 0 {
+			t.Fatalf("%s: swept %d groups, want 0", name, killed)
+		}
+	}
+
+	time.Sleep(3 * time.Second)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the sweep killed a process it could not identify: %v", err)
 	}
 }
 

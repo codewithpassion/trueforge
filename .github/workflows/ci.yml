@@ -250,6 +250,12 @@ jobs:
       - name: Test
         run: pnpm "test:${{ matrix.package }}"
 
+      # cgo is available on the runner, so the race detector is cheap here; the ordinary
+      # build stays CGO_ENABLED=0 because the release binaries are static.
+      - name: Race detector
+        if: matrix.package == 'trueforge-computer'
+        run: pnpm --filter @truefoundry/trueforge-computer test:race
+
   chart-checks:
     name: Helm Chart
     needs: detect-changes

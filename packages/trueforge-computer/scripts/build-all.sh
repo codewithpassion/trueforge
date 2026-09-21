@@ -12,16 +12,23 @@ if [ -z "$version" ]; then
   exit 1
 fi
 
+rm -rf "$package_dir/bin"
 mkdir -p "$package_dir/bin"
 targets=("linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64")
 
+# The name is the contract with the server's /install.sh, which fetches
+# <release_base>/latest/trueforge-computer_<os>_<arch>.
 for target in "${targets[@]}"; do
   goos="${target%%/*}"
   goarch="${target##*/}"
-  output="bin/trueforge-computer-${goos}-${goarch}"
+  output="bin/trueforge-computer_${goos}_${goarch}"
   echo "building $output (version $version)"
   GOOS="$goos" GOARCH="$goarch" bash "$package_dir/scripts/go.sh" \
     go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "$output" ./cmd/trueforge-computer
 done
 
+# The installer verifies against this when it is present.
+( cd "$package_dir/bin" && sha256sum trueforge-computer_* > SHA256SUMS )
+
 ls -l "$package_dir/bin"
+cat "$package_dir/bin/SHA256SUMS"

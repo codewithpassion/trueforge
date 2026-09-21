@@ -2,7 +2,6 @@ package agent_test
 
 import (
 	"bufio"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -40,11 +39,14 @@ func newHarness(t *testing.T, options policy.Options) *harness {
 	if options.Workdir == "" {
 		options.Workdir = workdir
 	}
+	// The daemon always tells the policy where its state lives, so the tests do too.
+	options.StateDir = stateDir
+	options.SessionsDir = workdir
 	rules, err := policy.New(options)
 	if err != nil {
 		t.Fatalf("policy: %v", err)
 	}
-	log, err := audit.Open(stateDir)
+	log, err := audit.Open(stateDir, audit.Options{})
 	if err != nil {
 		t.Fatalf("audit: %v", err)
 	}
@@ -55,7 +57,7 @@ func newHarness(t *testing.T, options policy.Options) *harness {
 		Logger:     discardLogger(),
 	})
 	return &harness{
-		agent:    agent.New(rules, commands, files.NewTransfers(files.Options{}), log, discardLogger()),
+		agent:    agent.New(rules, commands, files.NewTransfers(files.Options{ResolveWrite: rules.CheckWrite}), log, discardLogger()),
 		stateDir: stateDir,
 		workdir:  options.Workdir,
 	}
@@ -73,7 +75,7 @@ func (h *harness) dispatch(t *testing.T, id string, op string, body map[string]a
 	if err != nil {
 		t.Fatalf("encode request: %v", err)
 	}
-	answer := h.agent.Dispatch(context.Background(), protocol.Envelope{ID: id, Op: op}, frame)
+	answer := h.agent.Dispatch(protocol.Envelope{ID: id, Op: op}, frame)
 	var reply protocol.Reply
 	if err := json.Unmarshal(answer, &reply); err != nil {
 		t.Fatalf("decode reply: %v", err)
@@ -262,7 +264,7 @@ func TestCancelStopsARunningCommand(t *testing.T) {
 			"id": "slow", "op": protocol.OpExec, "command": "sleep 30",
 			"cwd": nil, "env": map[string]string{}, "timeout_ms": 60000,
 		})
-		answer := h.agent.Dispatch(context.Background(), protocol.Envelope{ID: "slow", Op: protocol.OpExec}, frame)
+		answer := h.agent.Dispatch(protocol.Envelope{ID: "slow", Op: protocol.OpExec}, frame)
 		var reply protocol.Reply
 		_ = json.Unmarshal(answer, &reply)
 		done <- reply
@@ -320,6 +322,166 @@ func TestDroppedReplyIsAudited(t *testing.T) {
 	}
 }
 
+// A socket drop must not kill work that is already under way. The session used to bound the
+// command's context, so a 4408, a laptop waking or a relay deploy SIGKILLed every in-flight
+// exec — and the plan promises the opposite: the registry outlives any one socket.
+func TestACommandSurvivesADisconnectAndACancelOnTheNextSocket(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	marker := filepath.Join(t.TempDir(), "finished")
+
+	done := make(chan protocol.Reply, 1)
+	go func() {
+		frame, _ := json.Marshal(map[string]any{
+			"id": "long", "op": protocol.OpExec, "command": "sleep 2; touch " + marker,
+			"cwd": nil, "env": map[string]string{}, "timeout_ms": 60000,
+		})
+		answer := h.agent.Dispatch(protocol.Envelope{ID: "long", Op: protocol.OpExec}, frame)
+		var reply protocol.Reply
+		_ = json.Unmarshal(answer, &reply)
+		done <- reply
+	}()
+	time.Sleep(400 * time.Millisecond)
+
+	// Everything a reconnect does to the agent.
+	h.agent.OnDisconnect()
+
+	select {
+	case reply := <-done:
+		result := execResultOf(t, reply)
+		if result.ExitCode != 0 {
+			t.Fatalf("the disconnect killed the command: exit %d", result.ExitCode)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the command never finished")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the command did not run to completion: %v", err)
+	}
+}
+
+func TestACancelOnTheNextSocketReachesACommandTheLastOneStarted(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	done := make(chan protocol.Reply, 1)
+	go func() {
+		frame, _ := json.Marshal(map[string]any{
+			"id": "long", "op": protocol.OpExec, "command": "sleep 60",
+			"cwd": nil, "env": map[string]string{}, "timeout_ms": 120000,
+		})
+		answer := h.agent.Dispatch(protocol.Envelope{ID: "long", Op: protocol.OpExec}, frame)
+		var reply protocol.Reply
+		_ = json.Unmarshal(answer, &reply)
+		done <- reply
+	}()
+	time.Sleep(400 * time.Millisecond)
+
+	h.agent.OnDisconnect()
+	cancelReply := h.dispatch(t, "c1", protocol.OpCancel, map[string]any{"target_id": "long"})
+	var cancelled protocol.CancelResult
+	if err := json.Unmarshal(cancelReply.Result, &cancelled); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !cancelled.Cancelled {
+		t.Fatal("a cancel after the reconnect did not find the command")
+	}
+	select {
+	case reply := <-done:
+		if result := execResultOf(t, reply); result.ExitCode != runner.ExitKilled {
+			t.Fatalf("exit code = %d", result.ExitCode)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the cancelled command never returned")
+	}
+}
+
+// Prepare claims the id on the read loop, so a cancel on the very next frame cannot be
+// answered "unknown" while the command it names starts anyway.
+func TestACancelThatOvertakesItsExecStillCounts(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	if err := h.agent.Prepare(protocol.Envelope{ID: "racy", Op: protocol.OpExec}); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	cancelReply := h.dispatch(t, "c1", protocol.OpCancel, map[string]any{"target_id": "racy"})
+	var cancelled protocol.CancelResult
+	if err := json.Unmarshal(cancelReply.Result, &cancelled); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !cancelled.Cancelled {
+		t.Fatal("a cancel for a reserved but unstarted command reported nothing to cancel")
+	}
+
+	marker := filepath.Join(t.TempDir(), "should-not-exist")
+	frame, _ := json.Marshal(map[string]any{
+		"id": "racy", "op": protocol.OpExec, "command": "touch " + marker,
+		"cwd": nil, "env": map[string]string{}, "timeout_ms": 10000,
+	})
+	answer := h.agent.Dispatch(protocol.Envelope{ID: "racy", Op: protocol.OpExec}, frame)
+	var reply protocol.Reply
+	if err := json.Unmarshal(answer, &reply); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	result := execResultOf(t, reply)
+	if result.ExitCode != runner.ExitKilled {
+		t.Fatalf("exit code = %d, want %d", result.ExitCode, runner.ExitKilled)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the cancelled command ran anyway")
+	}
+}
+
+// An environment variable the shell or an interpreter executes would let an allowed command
+// run something else entirely, so the request is refused rather than quietly stripped.
+func TestEnvironmentInjectionIsRefusedNotStripped(t *testing.T) {
+	h := newHarness(t, policy.Options{Allow: []string{`git (status|fetch)`}})
+	for _, name := range []string{"LD_PRELOAD", "GIT_SSH_COMMAND", "PATH", "BASH_ENV"} {
+		reply := h.dispatch(t, "r-"+name, protocol.OpExec, map[string]any{
+			"command": "git status", "cwd": nil,
+			"env":        map[string]string{name: "/tmp/evil"},
+			"timeout_ms": 5000,
+		})
+		if reply.Error == nil || reply.Error.Code != protocol.ErrDenied {
+			t.Fatalf("%s was accepted: %+v", name, reply)
+		}
+		if !strings.Contains(reply.Error.Message, name) {
+			t.Fatalf("the refusal for %s does not name it: %s", name, reply.Error.Message)
+		}
+	}
+	// The allowed command still works without the injected variable.
+	if reply := h.dispatch(t, "ok", protocol.OpExec, map[string]any{
+		"command": "git status", "cwd": nil, "env": map[string]string{}, "timeout_ms": 5000,
+	}); reply.Error != nil {
+		t.Fatalf("the allowed command was refused: %+v", reply.Error)
+	}
+}
+
+// Even with no allow or deny list, the loader variables are refused: nothing on this side
+// runs before the dynamic linker does.
+func TestLoaderVariablesAreRefusedOnAnUnconstrainedComputer(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	reply := h.dispatch(t, "r1", protocol.OpExec, map[string]any{
+		"command": "true", "cwd": nil,
+		"env":        map[string]string{"LD_PRELOAD": "/tmp/evil.so"},
+		"timeout_ms": 5000,
+	})
+	if reply.Error == nil || reply.Error.Code != protocol.ErrDenied {
+		t.Fatalf("LD_PRELOAD was accepted: %+v", reply)
+	}
+}
+
+// The state directory holds the credential and the records the next sweep kills by. Reaching
+// it is refused in the default, unconfined mode too.
+func TestTheStateDirectoryIsNotReachableByDefault(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	for _, path := range []string{"credential", "config.json", filepath.Join("running", "999.json")} {
+		reply := h.dispatch(t, "r-"+path, protocol.OpFileGet, map[string]any{
+			"path": filepath.Join(h.stateDir, path), "offset": 0, "max_bytes": protocol.ChunkBytes,
+		})
+		if reply.Error == nil || reply.Error.Code != protocol.ErrDenied {
+			t.Fatalf("%s was readable: %+v", path, reply)
+		}
+	}
+}
+
 func TestUnknownOpIsAnswered(t *testing.T) {
 	h := newHarness(t, policy.Options{})
 	reply := h.dispatch(t, "r1", "teleport", map[string]any{})
@@ -330,8 +492,7 @@ func TestUnknownOpIsAnswered(t *testing.T) {
 
 func TestMalformedBodyIsAnswered(t *testing.T) {
 	h := newHarness(t, policy.Options{})
-	answer := h.agent.Dispatch(context.Background(),
-		protocol.Envelope{ID: "r1", Op: protocol.OpExec},
+	answer := h.agent.Dispatch(protocol.Envelope{ID: "r1", Op: protocol.OpExec},
 		[]byte(`{"id":"r1","op":"exec","timeout_ms":"not a number"}`))
 	var reply protocol.Reply
 	if err := json.Unmarshal(answer, &reply); err != nil {

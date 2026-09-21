@@ -42,28 +42,87 @@ const (
 	OutcomeReplyDropped = "reply_dropped"
 )
 
+// Rotation keeps the log from growing without bound on a busy machine. It is size based and
+// deliberately small: this is a local record, not a shipping pipeline.
+const (
+	DefaultMaxBytes = 8 << 20
+	DefaultKeep     = 3
+)
+
+type Options struct {
+	// MaxBytes is the size at which the log is rotated.
+	MaxBytes int64
+	// Keep is how many rotated files are retained beside the live one.
+	Keep int
+}
+
 type Log struct {
-	mu   sync.Mutex
-	file *os.File
+	options Options
+	path    string
+
+	mu    sync.Mutex
+	file  *os.File
+	bytes int64
 }
 
 // Open creates the log with owner-only permissions. A machine can be shared, and the command
 // lines an agent ran are not for every local user to read.
-func Open(stateDir string) (*Log, error) {
+func Open(stateDir string, options Options) (*Log, error) {
+	if options.MaxBytes <= 0 {
+		options.MaxBytes = DefaultMaxBytes
+	}
+	if options.Keep < 0 {
+		options.Keep = DefaultKeep
+	}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", stateDir, err)
 	}
 	path := filepath.Join(stateDir, FileName)
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	log := &Log{options: options, path: path}
+	if err := log.openFile(); err != nil {
+		return nil, err
+	}
+	return log, nil
+}
+
+func (l *Log) openFile() error {
+	file, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
+		return fmt.Errorf("open %s: %w", l.path, err)
 	}
 	// An existing log may predate this rule, or have been created with a wider umask.
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("restrict %s: %w", path, err)
+		return fmt.Errorf("restrict %s: %w", l.path, err)
 	}
-	return &Log{file: file}, nil
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return fmt.Errorf("stat %s: %w", l.path, err)
+	}
+	l.file = file
+	l.bytes = info.Size()
+	return nil
+}
+
+// rotate renames the live log aside and starts a new one. The caller holds the lock.
+func (l *Log) rotate() error {
+	if err := l.file.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", l.path, err)
+	}
+	// Shift the kept files down, dropping the oldest.
+	_ = os.Remove(fmt.Sprintf("%s.%d", l.path, l.options.Keep))
+	for index := l.options.Keep - 1; index >= 1; index-- {
+		_ = os.Rename(fmt.Sprintf("%s.%d", l.path, index), fmt.Sprintf("%s.%d", l.path, index+1))
+	}
+	if l.options.Keep >= 1 {
+		if err := os.Rename(l.path, l.path+".1"); err != nil {
+			return fmt.Errorf("rotate %s: %w", l.path, err)
+		}
+	} else if err := os.Remove(l.path); err != nil {
+		return fmt.Errorf("remove %s: %w", l.path, err)
+	}
+	return l.openFile()
 }
 
 func (l *Log) Close() error {
@@ -83,9 +142,18 @@ func (l *Log) Record(entry Entry) error {
 	if err != nil {
 		return fmt.Errorf("encode audit entry: %w", err)
 	}
+	line := append(encoded, '\n')
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if _, err := l.file.Write(append(encoded, '\n')); err != nil {
+	if l.bytes+int64(len(line)) > l.options.MaxBytes {
+		if err := l.rotate(); err != nil {
+			return err
+		}
+	}
+	written, err := l.file.Write(line)
+	l.bytes += int64(written)
+	if err != nil {
 		return fmt.Errorf("write audit entry: %w", err)
 	}
 	return nil

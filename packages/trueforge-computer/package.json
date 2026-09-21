@@ -12,6 +12,7 @@
     "fmt": "bash scripts/go.sh gofmt -w .",
     "fmt:check": "bash scripts/fmt-check.sh",
     "test": "bash scripts/go.sh go test ./...",
+    "test:race": "bash scripts/test-race.sh",
     "tidy": "bash scripts/go.sh go mod tidy",
     "vet": "bash scripts/go.sh go vet ./..."
   }

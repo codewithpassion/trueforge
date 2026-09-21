@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestChunkedRoundTrip(t *testing.T) {
 		if final {
 			expected = &digest
 		}
-		result, err := transfers.Put(chunkRequest("x", target, seq, payload[offset:end], final, expected), target)
+		result, err := transfers.Put(chunkRequest("x", target, seq, payload[offset:end], final, expected))
 		if err != nil {
 			t.Fatalf("put chunk %d: %v", seq, err)
 		}
@@ -71,7 +72,7 @@ func TestChunkedRoundTrip(t *testing.T) {
 	var downloaded bytes.Buffer
 	var offset int64
 	for {
-		result, err := files.Get(protocol.FileGetRequest{Path: target, Offset: offset, MaxBytes: protocol.ChunkBytes}, target)
+		result, err := files.Get(protocol.FileGetRequest{Path: target, Offset: offset, MaxBytes: protocol.ChunkBytes}, target, 0)
 		if err != nil {
 			t.Fatalf("get at %d: %v", offset, err)
 		}
@@ -101,7 +102,7 @@ func TestDigestMismatchIsRejectedAndTheFileRemoved(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "f.bin")
 	transfers := files.NewTransfers(files.Options{})
 	wrong := hexDigest([]byte("something else"))
-	_, err := transfers.Put(chunkRequest("x", target, 0, []byte("payload"), true, &wrong), target)
+	_, err := transfers.Put(chunkRequest("x", target, 0, []byte("payload"), true, &wrong))
 	if !errors.Is(err, files.ErrBadRequest) {
 		t.Fatalf("error = %v, want ErrBadRequest", err)
 	}
@@ -114,7 +115,7 @@ func TestOversizedChunkIsRefused(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "f.bin")
 	transfers := files.NewTransfers(files.Options{})
 	oversized := make([]byte, protocol.ChunkBytes+1)
-	_, err := transfers.Put(chunkRequest("x", target, 0, oversized, false, nil), target)
+	_, err := transfers.Put(chunkRequest("x", target, 0, oversized, false, nil))
 	if !errors.Is(err, files.ErrBadRequest) {
 		t.Fatalf("error = %v, want ErrBadRequest", err)
 	}
@@ -148,7 +149,7 @@ func TestPipelinedChunksArriveInAnyOrder(t *testing.T) {
 			if final {
 				expected = &digest
 			}
-			_, err := transfers.Put(chunkRequest("x", target, seq, pieces[seq], final, expected), target)
+			_, err := transfers.Put(chunkRequest("x", target, seq, pieces[seq], final, expected))
 			results[seq] = err
 		}()
 		// A short stagger makes the out-of-order arrival deterministic rather than lucky.
@@ -178,13 +179,13 @@ func TestPipelinedChunksArriveInAnyOrder(t *testing.T) {
 func TestARedeliveredChunkIsIdempotent(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "f.bin")
 	transfers := files.NewTransfers(files.Options{})
-	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("aa"), false, nil), target); err != nil {
+	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("aa"), false, nil)); err != nil {
 		t.Fatalf("first chunk: %v", err)
 	}
-	if _, err := transfers.Put(chunkRequest("x", target, 1, []byte("bb"), false, nil), target); err != nil {
+	if _, err := transfers.Put(chunkRequest("x", target, 1, []byte("bb"), false, nil)); err != nil {
 		t.Fatalf("second chunk: %v", err)
 	}
-	result, err := transfers.Put(chunkRequest("x", target, 0, []byte("aa"), false, nil), target)
+	result, err := transfers.Put(chunkRequest("x", target, 0, []byte("aa"), false, nil))
 	if err != nil {
 		t.Fatalf("redelivered chunk: %v", err)
 	}
@@ -193,7 +194,7 @@ func TestARedeliveredChunkIsIdempotent(t *testing.T) {
 	}
 	payload := []byte("aabbcc")
 	digest := hexDigest(payload)
-	if _, err := transfers.Put(chunkRequest("x", target, 2, []byte("cc"), true, &digest), target); err != nil {
+	if _, err := transfers.Put(chunkRequest("x", target, 2, []byte("cc"), true, &digest)); err != nil {
 		t.Fatalf("final chunk: %v", err)
 	}
 	written, err := os.ReadFile(target)
@@ -210,10 +211,10 @@ func TestARedeliveredChunkIsIdempotent(t *testing.T) {
 func TestAChunkWhosePredecessorNeverArrivesGivesUp(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "f.bin")
 	transfers := files.NewTransfers(files.Options{WaitTimeout: 100 * time.Millisecond})
-	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("a"), false, nil), target); err != nil {
+	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("a"), false, nil)); err != nil {
 		t.Fatalf("first chunk: %v", err)
 	}
-	_, err := transfers.Put(chunkRequest("x", target, 2, []byte("c"), false, nil), target)
+	_, err := transfers.Put(chunkRequest("x", target, 2, []byte("c"), false, nil))
 	if !errors.Is(err, files.ErrBadRequest) {
 		t.Fatalf("error = %v, want ErrBadRequest", err)
 	}
@@ -230,12 +231,12 @@ func TestAChunkWhosePredecessorNeverArrivesGivesUp(t *testing.T) {
 func TestAbandonWakesAWaitingChunk(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "f.bin")
 	transfers := files.NewTransfers(files.Options{WaitTimeout: time.Hour})
-	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("a"), false, nil), target); err != nil {
+	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("a"), false, nil)); err != nil {
 		t.Fatalf("first chunk: %v", err)
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := transfers.Put(chunkRequest("x", target, 2, []byte("c"), false, nil), target)
+		_, err := transfers.Put(chunkRequest("x", target, 2, []byte("c"), false, nil))
 		done <- err
 	}()
 	time.Sleep(200 * time.Millisecond)
@@ -256,7 +257,7 @@ func TestAbandonWakesAWaitingChunk(t *testing.T) {
 func TestATransferCannotOpenBeyondTheWindow(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "f.bin")
 	transfers := files.NewTransfers(files.Options{Window: 4})
-	_, err := transfers.Put(chunkRequest("x", target, 9, []byte("a"), false, nil), target)
+	_, err := transfers.Put(chunkRequest("x", target, 9, []byte("a"), false, nil))
 	if !errors.Is(err, files.ErrBadRequest) {
 		t.Fatalf("error = %v, want ErrBadRequest", err)
 	}
@@ -268,7 +269,7 @@ func TestATransferCannotOpenBeyondTheWindow(t *testing.T) {
 func TestAbandonClosesOpenTransfers(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "f.bin")
 	transfers := files.NewTransfers(files.Options{})
-	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("a"), false, nil), target); err != nil {
+	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("a"), false, nil)); err != nil {
 		t.Fatalf("first chunk: %v", err)
 	}
 	transfers.Abandon()
@@ -288,7 +289,7 @@ func TestGetWindowIsClampedToTheChunkSize(t *testing.T) {
 	if err := os.WriteFile(target, payload, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	result, err := files.Get(protocol.FileGetRequest{Path: target, Offset: 0, MaxBytes: 16 << 20}, target)
+	result, err := files.Get(protocol.FileGetRequest{Path: target, Offset: 0, MaxBytes: 16 << 20}, target, 0)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -304,14 +305,204 @@ func TestGetWindowIsClampedToTheChunkSize(t *testing.T) {
 	}
 }
 
+// An upload that fails must not have destroyed what was already there. Writing the
+// destination directly would truncate it on chunk zero and delete it on a digest mismatch.
+func TestAFailedUploadLeavesTheOriginalIntact(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "important.txt")
+	original := []byte("the file that was already here")
+	if err := os.WriteFile(target, original, 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	transfers := files.NewTransfers(files.Options{})
+	wrong := hexDigest([]byte("something else"))
+	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("replacement"), true, &wrong)); !errors.Is(err, files.ErrBadRequest) {
+		t.Fatalf("error = %v, want ErrBadRequest", err)
+	}
+	survived, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(survived) != string(original) {
+		t.Fatalf("a failed upload changed the file: %q", survived)
+	}
+	if leftovers := tempFilesIn(t, filepath.Dir(target)); len(leftovers) != 0 {
+		t.Fatalf("temporary files were left behind: %v", leftovers)
+	}
+}
+
+// An abandoned transfer is the same story: nothing was renamed, so nothing is lost.
+func TestAnAbandonedUploadLeavesTheOriginalIntact(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "important.txt")
+	if err := os.WriteFile(target, []byte("original"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	transfers := files.NewTransfers(files.Options{})
+	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("partial"), false, nil)); err != nil {
+		t.Fatalf("first chunk: %v", err)
+	}
+	transfers.Abandon()
+	survived, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(survived) != "original" {
+		t.Fatalf("an abandoned upload changed the file: %q", survived)
+	}
+	if leftovers := tempFilesIn(t, filepath.Dir(target)); len(leftovers) != 0 {
+		t.Fatalf("temporary files were left behind: %v", leftovers)
+	}
+}
+
+// A command running on this machine can plant a symlink between the policy check and the
+// write. The upload must not follow it back out of the working directory.
+func TestASymlinkAtTheDestinationIsRefused(t *testing.T) {
+	root := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "authorized_keys")
+	if err := os.WriteFile(secret, []byte("original key"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	target := filepath.Join(root, "innocent.txt")
+	if err := os.Symlink(secret, target); err != nil {
+		t.Skipf("symlinks are not available here: %v", err)
+	}
+	transfers := files.NewTransfers(files.Options{})
+	digest := hexDigest([]byte("attacker key"))
+	_, err := transfers.Put(chunkRequest("x", target, 0, []byte("attacker key"), true, &digest))
+	if !errors.Is(err, files.ErrNotRegular) {
+		t.Fatalf("error = %v, want ErrNotRegular", err)
+	}
+	survived, err := os.ReadFile(secret)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(survived) != "original key" {
+		t.Fatalf("the upload was written through the symlink: %q", survived)
+	}
+}
+
+// A symlink swapped in after the transfer opened is caught by the re-check at commit time.
+func TestASymlinkSwappedInMidTransferIsRefused(t *testing.T) {
+	root := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "authorized_keys")
+	if err := os.WriteFile(secret, []byte("original key"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	target := filepath.Join(root, "upload.txt")
+
+	transfers := files.NewTransfers(files.Options{})
+	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("attacker "), false, nil)); err != nil {
+		t.Fatalf("first chunk: %v", err)
+	}
+	// The window the check-then-open race lives in.
+	if err := os.Symlink(secret, target); err != nil {
+		t.Skipf("symlinks are not available here: %v", err)
+	}
+	digest := hexDigest([]byte("attacker key"))
+	if _, err := transfers.Put(chunkRequest("x", target, 1, []byte("key"), true, &digest)); !errors.Is(err, files.ErrNotRegular) {
+		t.Fatalf("error = %v, want ErrNotRegular", err)
+	}
+	survived, err := os.ReadFile(secret)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(survived) != "original key" {
+		t.Fatalf("the upload reached the symlink's target: %q", survived)
+	}
+}
+
+// A device or a FIFO has no end; digesting one never returns and opening one can block.
+func TestNonRegularFilesAreRefusedForDownload(t *testing.T) {
+	if _, err := os.Stat("/dev/zero"); err != nil {
+		t.Skip("/dev/zero is not available here")
+	}
+	_, err := files.Get(protocol.FileGetRequest{Path: "/dev/zero"}, "/dev/zero", 0)
+	if !errors.Is(err, files.ErrNotRegular) {
+		t.Fatalf("error = %v, want ErrNotRegular", err)
+	}
+	if _, _, err := files.Digest("/dev/zero"); !errors.Is(err, files.ErrNotRegular) {
+		t.Fatalf("Digest error = %v, want ErrNotRegular", err)
+	}
+}
+
+func TestUploadingOntoANonRegularFileIsRefused(t *testing.T) {
+	if _, err := os.Stat("/dev/null"); err != nil {
+		t.Skip("/dev/null is not available here")
+	}
+	transfers := files.NewTransfers(files.Options{})
+	_, err := transfers.Put(chunkRequest("x", "/dev/null", 0, []byte("x"), false, nil))
+	if !errors.Is(err, files.ErrNotRegular) {
+		t.Fatalf("error = %v, want ErrNotRegular", err)
+	}
+}
+
+func TestSizeCapsApplyBothWays(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "big.bin")
+	transfers := files.NewTransfers(files.Options{MaxFileBytes: 8})
+	_, err := transfers.Put(chunkRequest("x", target, 0, []byte("more than eight bytes"), false, nil))
+	if !errors.Is(err, files.ErrTooLarge) {
+		t.Fatalf("upload error = %v, want ErrTooLarge", err)
+	}
+
+	existing := filepath.Join(directory, "existing.bin")
+	if err := os.WriteFile(existing, make([]byte, 64), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := files.Get(protocol.FileGetRequest{Path: existing}, existing, 8); !errors.Is(err, files.ErrTooLarge) {
+		t.Fatalf("download error = %v, want ErrTooLarge", err)
+	}
+}
+
+// Each open transfer can park a window of decoded chunks, so the number of them is bounded.
+func TestOpenTransfersAreCapped(t *testing.T) {
+	directory := t.TempDir()
+	transfers := files.NewTransfers(files.Options{MaxOpen: 2})
+	for index := range 2 {
+		target := filepath.Join(directory, "f"+string(rune('a'+index)))
+		if _, err := transfers.Put(chunkRequest("t"+string(rune('a'+index)), target, 0, []byte("x"), false, nil)); err != nil {
+			t.Fatalf("transfer %d: %v", index, err)
+		}
+	}
+	_, err := transfers.Put(chunkRequest("overflow", filepath.Join(directory, "fz"), 0, []byte("x"), false, nil))
+	if !errors.Is(err, files.ErrTooManyTransfers) {
+		t.Fatalf("error = %v, want ErrTooManyTransfers", err)
+	}
+}
+
+// The policy owns the path decision; the transfer asks it, and asks again before the rename.
+func TestTheResolverCanRefuseAPath(t *testing.T) {
+	refusal := errors.New("nope")
+	transfers := files.NewTransfers(files.Options{
+		ResolveWrite: func(string) (string, error) { return "", refusal },
+	})
+	if _, err := transfers.Put(chunkRequest("x", "/anywhere", 0, []byte("x"), false, nil)); !errors.Is(err, refusal) {
+		t.Fatalf("error = %v, want the resolver's refusal", err)
+	}
+}
+
+func tempFilesIn(t *testing.T, directory string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatalf("read %s: %v", directory, err)
+	}
+	var leftovers []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".trueforge-upload-") {
+			leftovers = append(leftovers, entry.Name())
+		}
+	}
+	return leftovers
+}
+
 // The two are distinguishable on purpose: the server maps each to its own sandbox error.
 func TestGetRefusesADirectoryAndAMissingFileDistinguishably(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := files.Get(protocol.FileGetRequest{Path: dir}, dir); !errors.Is(err, files.ErrIsDirectory) {
+	if _, err := files.Get(protocol.FileGetRequest{Path: dir}, dir, 0); !errors.Is(err, files.ErrIsDirectory) {
 		t.Fatalf("directory error = %v, want ErrIsDirectory", err)
 	}
 	missing := filepath.Join(dir, "nope")
-	if _, err := files.Get(protocol.FileGetRequest{Path: missing}, missing); !errors.Is(err, os.ErrNotExist) {
+	if _, err := files.Get(protocol.FileGetRequest{Path: missing}, missing, 0); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing-file error = %v, want os.ErrNotExist", err)
 	}
 }
@@ -320,7 +511,7 @@ func TestUploadedFileIsOwnerOnly(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "f.bin")
 	transfers := files.NewTransfers(files.Options{})
 	digest := hexDigest([]byte("x"))
-	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("x"), true, &digest), target); err != nil {
+	if _, err := transfers.Put(chunkRequest("x", target, 0, []byte("x"), true, &digest)); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	info, err := os.Stat(target)

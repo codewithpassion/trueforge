@@ -54,15 +54,17 @@ const (
 
 // Error codes carried back in a reply. The relay forwards them verbatim.
 const (
-	ErrBadRequest   = "bad_request"
-	ErrOpFailed     = "op_failed"
-	ErrQueueFull    = "queue_full"
-	ErrDenied       = "denied"
-	ErrReadOnly     = "read_only"
-	ErrFrameTooBig  = "frame_too_large"
-	ErrUnknownOp    = "unknown_op"
-	ErrNotFound     = "not_found"
-	ErrIsADirectory = "is_a_directory"
+	ErrBadRequest     = "bad_request"
+	ErrOpFailed       = "op_failed"
+	ErrQueueFull      = "queue_full"
+	ErrDenied         = "denied"
+	ErrReadOnly       = "read_only"
+	ErrFrameTooBig    = "frame_too_large"
+	ErrUnknownOp      = "unknown_op"
+	ErrNotFound       = "not_found"
+	ErrIsADirectory   = "is_a_directory"
+	ErrTooLarge       = "too_large"
+	ErrNotRegularFile = "not_a_regular_file"
 )
 
 // Capabilities are the tools the server needs before it will mount skills.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 
 func TestRecordsAreOneJSONLinePerOperation(t *testing.T) {
 	stateDir := t.TempDir()
-	log, err := audit.Open(stateDir)
+	log, err := audit.Open(stateDir, audit.Options{})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestLogIsOwnerOnly(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	log, err := audit.Open(stateDir)
+	log, err := audit.Open(stateDir, audit.Options{})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestLogIsOwnerOnly(t *testing.T) {
 
 func TestLongCommandIsTruncated(t *testing.T) {
 	stateDir := t.TempDir()
-	log, err := audit.Open(stateDir)
+	log, err := audit.Open(stateDir, audit.Options{})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -99,6 +100,46 @@ func TestEntryCarriesNoEnvironment(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(string(encoded)), "env") {
 		t.Fatalf("the entry shape has an environment field: %s", encoded)
+	}
+}
+
+// The log is append-only and a busy machine runs a lot of commands; without rotation it is
+// the one file on this computer that grows forever.
+func TestLogRotatesAndKeepsABoundedHistory(t *testing.T) {
+	stateDir := t.TempDir()
+	log, err := audit.Open(stateDir, audit.Options{MaxBytes: 512, Keep: 2})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	for index := range 60 {
+		if err := log.Record(audit.Entry{Op: "exec", RequestID: strconv.Itoa(index), Command: strings.Repeat("x", 60)}); err != nil {
+			t.Fatalf("record %d: %v", index, err)
+		}
+	}
+	if err := log.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	live := filepath.Join(stateDir, audit.FileName)
+	info, err := os.Stat(live)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Size() > 512 {
+		t.Fatalf("the live log is %d bytes, over the rotation size", info.Size())
+	}
+	for _, kept := range []string{live + ".1", live + ".2"} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Fatalf("%s is missing: %v", kept, err)
+		}
+	}
+	if _, err := os.Stat(live + ".3"); err == nil {
+		t.Fatal("more files were kept than asked for")
+	}
+	// The newest entry is in the live file, which is what makes tailing it useful.
+	lines := readLines(t, live)
+	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], `"request_id":"59"`) {
+		t.Fatalf("the last entry is not in the live log: %v", lines)
 	}
 }
 

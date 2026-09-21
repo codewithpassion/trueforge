@@ -28,7 +28,10 @@ func TestURLDerivation(t *testing.T) {
 	for input, want := range map[string]string{
 		"https://trueforge.example.com":  "https://trueforge.example.com/api/v1/computers/enroll",
 		"https://trueforge.example.com/": "https://trueforge.example.com/api/v1/computers/enroll",
-		"http://127.0.0.1:8787":          "http://127.0.0.1:8787/api/v1/computers/enroll",
+		// Plaintext to this machine is the development case and stays allowed.
+		"http://127.0.0.1:8787": "http://127.0.0.1:8787/api/v1/computers/enroll",
+		// A websocket scheme names the same server; the enrollment call is still HTTP.
+		"wss://trueforge.example.com": "https://trueforge.example.com/api/v1/computers/enroll",
 	} {
 		got, err := enroll.URL(input)
 		if err != nil {
@@ -38,10 +41,28 @@ func TestURLDerivation(t *testing.T) {
 			t.Fatalf("URL(%q) = %q, want %q", input, got, want)
 		}
 	}
-	for _, bad := range []string{"", "trueforge.example.com", "wss://example.com"} {
+	for _, bad := range []string{"", "trueforge.example.com", "http://trueforge.example.com"} {
 		if _, err := enroll.URL(bad); err == nil {
 			t.Fatalf("URL(%q) was accepted", bad)
 		}
+	}
+}
+
+// A 307 or 308 re-sends the body, so following a redirect would hand the single-use code to
+// wherever the first server pointed — including, on an https-to-http hop, the network.
+func TestRedirectsAreRefused(t *testing.T) {
+	final := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"data":{"computer_id":"c","machine_credential":"m"}}`))
+	}))
+	defer final.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, final.URL+enroll.Path, http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	_, err := enroll.Do(context.Background(), enroll.DefaultClient(), redirector.URL, enroll.Request{EnrollmentCode: "code"})
+	if !errors.Is(err, enroll.ErrRedirected) {
+		t.Fatalf("error = %v, want ErrRedirected", err)
 	}
 }
 

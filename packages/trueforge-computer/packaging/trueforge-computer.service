@@ -12,6 +12,9 @@ User=trueforge
 Group=trueforge
 
 Environment=TRUEFORGE_STATE_DIR=/var/lib/trueforge-computer
+# A 0600 file owned by root holding TRUEFORGE_URL, and TRUEFORGE_ENROLL_CODE for the first
+# boot only. Keeping the code out of the unit file keeps it out of ps and out of git.
+EnvironmentFile=-/etc/trueforge-computer.env
 ExecStart=/usr/local/bin/trueforge-computer run
 
 Restart=always

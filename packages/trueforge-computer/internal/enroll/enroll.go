@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"trueforge.dev/computer/internal/serverurl"
 )
 
 // Path is the unauthenticated enrollment endpoint.
@@ -66,7 +68,7 @@ func Do(ctx context.Context, client *http.Client, baseURL string, request Reques
 	httpRequest.Header.Set("Accept", "application/json")
 
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = DefaultClient()
 	}
 	httpResponse, err := client.Do(httpRequest)
 	if err != nil {
@@ -96,17 +98,26 @@ func Do(ctx context.Context, client *http.Client, baseURL string, request Reques
 	return decoded.Data, nil
 }
 
-// URL builds the enrollment endpoint from the base URL the operator gave.
+// URL builds the enrollment endpoint from the base URL the operator gave, refusing plaintext
+// to anything but this machine.
 func URL(baseURL string) (string, error) {
-	trimmed := strings.TrimSuffix(strings.TrimSpace(baseURL), "/")
-	if trimmed == "" {
-		return "", errors.New("a server URL is required")
-	}
-	if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
-		return "", fmt.Errorf("the server URL %q must start with http:// or https://", baseURL)
-	}
-	return trimmed + Path, nil
+	return serverurl.HTTP(baseURL, Path)
 }
+
+// DefaultClient refuses redirects. A 307 or 308 re-sends the body, so a redirect would hand
+// the single-use enrollment code to whatever the first server named — including, on an
+// https-to-http hop, the network.
+func DefaultClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			return fmt.Errorf("%w: %s redirected to %s", ErrRedirected, via[0].URL.Redacted(), request.URL.Redacted())
+		},
+	}
+}
+
+// ErrRedirected is its own error because the operator's fix is to use the final URL.
+var ErrRedirected = errors.New("the enrollment endpoint redirected, which would resend the code elsewhere")
 
 // summarise keeps an unexpected error body short enough to log without flooding it.
 func summarise(raw []byte) string {

@@ -16,20 +16,21 @@ import (
 	"trueforge.dev/computer/internal/policy"
 	"trueforge.dev/computer/internal/protocol"
 	"trueforge.dev/computer/internal/runner"
+	"trueforge.dev/computer/internal/serverurl"
 	"trueforge.dev/computer/internal/state"
 )
 
-// patternList collects a repeatable flag, because one regex per flag reads better in a unit
-// file than one flag holding a delimiter that a regex may contain.
-type patternList []string
+// nameList collects a repeatable flag, because one value per flag reads better in a unit file
+// than one flag holding a delimiter that a value may contain.
+type nameList []string
 
-func (p *patternList) String() string { return strings.Join(*p, ", ") }
+func (n *nameList) String() string { return strings.Join(*n, ", ") }
 
-func (p *patternList) Set(value string) error {
+func (n *nameList) Set(value string) error {
 	if strings.TrimSpace(value) == "" {
-		return errors.New("an empty pattern matches everything; remove the flag instead")
+		return errors.New("an empty value is not useful here; remove the flag instead")
 	}
-	*p = append(*p, value)
+	*n = append(*n, value)
 	return nil
 }
 
@@ -37,6 +38,7 @@ func runServe(args []string) int {
 	set := flag.NewFlagSet("run", flag.ContinueOnError)
 	url := set.String("url", os.Getenv(state.EnvURL), "base URL of the TrueForge server; defaults to the enrolled one")
 	code := set.String("code", os.Getenv(state.EnvEnrollCode), "enrollment code to use when this computer is not enrolled yet")
+	codeStdin := set.Bool("code-stdin", false, "read the enrollment code from standard input")
 	name := set.String("name", "", "hostname to report instead of this machine's own")
 	stateDir := set.String("state-dir", state.DefaultDir(), "where the credential, config and audit log are kept")
 	workdir := set.String("workdir", "", "root for the per-session directories; defaults to <state-dir>/sessions")
@@ -45,10 +47,15 @@ func runServe(args []string) int {
 	workdirOnly := set.Bool("workdir-only", false, "refuse file operations outside the working directory")
 	maxConcurrent := set.Int("max-concurrent", 4, "how many commands may run at once")
 	maxQueue := set.Int("max-queue", 32, "how many commands may wait for a slot")
+	maxExecSeconds := set.Int("max-exec-seconds", 1800, "longest deadline this computer will honour for one command")
+	maxFileBytes := set.Int64("max-file-bytes", 256<<20, "largest file this computer will send or receive")
 	logFormat := set.String("log-format", "json", "json or text")
-	var allow, deny patternList
-	set.Var(&allow, "allow", "regular expression a command must match; repeatable, and an empty list allows everything")
+	auditMaxBytes := set.Int64("audit-max-bytes", audit.DefaultMaxBytes, "size at which the audit log is rotated")
+	auditKeep := set.Int("audit-keep", audit.DefaultKeep, "how many rotated audit logs to keep")
+	var allow, deny, allowEnv nameList
+	set.Var(&allow, "allow", "regular expression a command must match in full; repeatable, and an empty list allows everything")
 	set.Var(&deny, "deny", "regular expression a command must not match; repeatable, and checked before --allow")
+	set.Var(&allowEnv, "allow-env", "environment variable the server may set even on a constrained computer; repeatable")
 
 	if err := set.Parse(args); err != nil {
 		return exitUsage
@@ -66,16 +73,23 @@ func runServe(args []string) int {
 	ctx, stop := notifyContext()
 	defer stop()
 
-	config, credential, err := ensureEnrolled(ctx, *stateDir, *url, *code, *name, *logFormat)
+	enrollment := &enrollFlags{url: *url, code: *code, codeStdin: *codeStdin, name: *name, stateDir: *stateDir, logFormat: *logFormat}
+	if err := enrollment.resolveCode(os.Stdin); err != nil {
+		logger.Error(err.Error())
+		return exitUsage
+	}
+	config, credential, err := ensureEnrolled(ctx, enrollment)
 	if err != nil {
-		if errors.Is(err, state.ErrNotEnrolled) {
+		switch {
+		case errors.Is(err, state.ErrNotEnrolled):
 			logger.Error(errNotEnrolled.Error())
 			return exitUsage
+		case errors.Is(err, serverurl.ErrInsecure):
+			logger.Error(err.Error())
+			return exitUsage
+		default:
+			return fail(logger, "could not start", err)
 		}
-		if errors.Is(err, conn.ErrRevoked) {
-			return exitRevoked
-		}
-		return fail(logger, "could not start", err)
 	}
 
 	sessions := *workdir
@@ -90,14 +104,17 @@ func runServe(args []string) int {
 		ReadOnly:    *readOnly,
 		Allow:       allow,
 		Deny:        deny,
+		AllowEnv:    allowEnv,
 		WorkdirOnly: *workdirOnly,
 		Workdir:     sessions,
+		StateDir:    *stateDir,
+		SessionsDir: sessions,
 	})
 	if err != nil {
 		return fail(logger, "the local policy is not usable", err)
 	}
 
-	log, err := audit.Open(*stateDir)
+	log, err := audit.Open(*stateDir, audit.Options{MaxBytes: *auditMaxBytes, Keep: *auditKeep})
 	if err != nil {
 		return fail(logger, "could not open the audit log", err)
 	}
@@ -110,15 +127,21 @@ func runServe(args []string) int {
 	}
 
 	commands := runner.New(runner.Options{
+		BaseContext:   ctx,
 		MaxConcurrent: *maxConcurrent,
 		MaxQueue:      *maxQueue,
+		MaxTimeout:    time.Duration(*maxExecSeconds) * time.Second,
 		DefaultCwd:    sessions,
 		StateDir:      *stateDir,
 		Logger:        logger,
 	})
 	defer commands.Shutdown()
 
-	worker := agent.New(rules, commands, files.NewTransfers(files.Options{}), log, logger)
+	transfers := files.NewTransfers(files.Options{
+		ResolveWrite: rules.CheckWrite,
+		MaxFileBytes: *maxFileBytes,
+	})
+	worker := agent.New(rules, commands, transfers, log, logger)
 	hello := protocol.Hello{
 		Type:            "hello",
 		ProtocolVersion: protocol.Version,
@@ -135,11 +158,17 @@ func runServe(args []string) int {
 		Credential:     credential,
 		Hello:          hello,
 		Dispatch:       worker.Dispatch,
+		Prepare:        worker.Prepare,
+		OnRefused:      worker.OnRefused,
 		OnDisconnect:   worker.OnDisconnect,
 		OnReplyDropped: worker.OnReplyDropped,
 		Logger:         logger,
 	})
 	if err != nil {
+		if errors.Is(err, serverurl.ErrInsecure) {
+			logger.Error(err.Error())
+			return exitUsage
+		}
 		return fail(logger, "could not prepare the connection", err)
 	}
 
@@ -154,6 +183,9 @@ func runServe(args []string) int {
 		"workdir_only", *workdirOnly,
 		"allow_patterns", len(allow),
 		"deny_patterns", len(deny),
+		"allow_env", len(allowEnv),
+		"max_exec_seconds", *maxExecSeconds,
+		"max_file_bytes", *maxFileBytes,
 		"capabilities", hello.Capabilities)
 
 	err = client.Run(ctx)
@@ -173,15 +205,20 @@ func runServe(args []string) int {
 // ensureEnrolled loads the stored credential, or exchanges a code for one. The container
 // one-liner passes the same code on every restart, so a code presented by an already-enrolled
 // computer is ignored rather than spent.
-func ensureEnrolled(ctx context.Context, stateDir string, url string, code string, name string, logFormat string) (state.Config, string, error) {
-	credential, err := state.ReadCredential(stateDir)
+func ensureEnrolled(ctx context.Context, flags *enrollFlags) (state.Config, string, error) {
+	credential, err := state.ReadCredential(flags.stateDir)
 	if err == nil {
-		config, configErr := state.LoadConfig(stateDir)
+		scrubCode(flags)
+		config, configErr := state.LoadConfig(flags.stateDir)
 		if configErr != nil && !errors.Is(configErr, state.ErrNotEnrolled) {
 			return state.Config{}, "", configErr
 		}
-		if override := strings.TrimSuffix(strings.TrimSpace(url), "/"); override != "" {
-			config.URL = override
+		if strings.TrimSpace(flags.url) != "" {
+			canonical, urlErr := serverurl.Canonical(flags.url)
+			if urlErr != nil {
+				return state.Config{}, "", urlErr
+			}
+			config.URL = canonical
 		}
 		if config.URL == "" {
 			return state.Config{}, "", errors.New("no server URL is stored and none was given; pass --url")
@@ -191,23 +228,17 @@ func ensureEnrolled(ctx context.Context, stateDir string, url string, code strin
 	if !errors.Is(err, state.ErrNotEnrolled) {
 		return state.Config{}, "", err
 	}
-	if strings.TrimSpace(code) == "" {
+	if strings.TrimSpace(flags.code) == "" {
 		return state.Config{}, "", state.ErrNotEnrolled
 	}
 
 	enrollCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	result, err := performEnrollment(enrollCtx, &enrollFlags{
-		url:       url,
-		code:      code,
-		name:      name,
-		stateDir:  stateDir,
-		logFormat: logFormat,
-	})
+	result, err := performEnrollment(enrollCtx, flags)
 	if err != nil {
 		return state.Config{}, "", fmt.Errorf("enroll: %w", err)
 	}
-	config, err := state.LoadConfig(stateDir)
+	config, err := state.LoadConfig(flags.stateDir)
 	if err != nil {
 		return state.Config{}, "", err
 	}

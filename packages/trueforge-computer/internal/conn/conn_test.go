@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 
 	"trueforge.dev/computer/internal/conn"
 	"trueforge.dev/computer/internal/protocol"
+	"trueforge.dev/computer/internal/serverurl"
 )
 
 func discardLogger() *slog.Logger {
@@ -100,7 +102,7 @@ func (r *recorder) recorded() []time.Duration {
 func newClient(t *testing.T, relay *fakeRelay, sleep func(context.Context, time.Duration) error, dispatch conn.Dispatcher) *conn.Client {
 	t.Helper()
 	if dispatch == nil {
-		dispatch = func(_ context.Context, head protocol.Envelope, _ []byte) []byte {
+		dispatch = func(head protocol.Envelope, _ []byte) []byte {
 			return protocol.EncodeError(head.ID, protocol.ErrUnknownOp, "not implemented in this test")
 		}
 	}
@@ -205,12 +207,16 @@ func TestRevokedIsTerminalAndNeverRetries(t *testing.T) {
 		_ = socket.Close(protocol.CloseRevoked, "revoked")
 	})
 	slept := 0
+	// A budget rather than an unbounded loop: if 4401 is ever misclassified as transient this
+	// test must fail, not hang.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	client := newClient(t, relay, func(context.Context, time.Duration) error {
 		slept++
 		return nil
 	}, nil)
 
-	err := client.Run(context.Background())
+	err := client.Run(ctx)
 	if !errors.Is(err, conn.ErrRevoked) {
 		t.Fatalf("run returned %v, want ErrRevoked", err)
 	}
@@ -287,7 +293,7 @@ func TestUnauthorizedUpgradeRetriesSlowly(t *testing.T) {
 	client, err := conn.New(conn.Options{
 		BaseURL:    server.URL,
 		Credential: "mc_secret",
-		Dispatch:   func(context.Context, protocol.Envelope, []byte) []byte { return nil },
+		Dispatch:   func(protocol.Envelope, []byte) []byte { return nil },
 		Logger:     discardLogger(),
 		Sleep:      sleeps.sleep,
 		Jitter:     func(n int64) int64 { return n / 2 },
@@ -330,7 +336,7 @@ func TestRequestIsAnsweredOnItsSocket(t *testing.T) {
 			}
 		}
 	})
-	dispatch := func(_ context.Context, head protocol.Envelope, _ []byte) []byte {
+	dispatch := func(head protocol.Envelope, _ []byte) []byte {
 		encoded, err := protocol.EncodeOK(head.ID, protocol.CancelResult{Cancelled: false})
 		if err != nil {
 			return protocol.EncodeError(head.ID, protocol.ErrOpFailed, err.Error())
@@ -377,7 +383,7 @@ func TestOversizedReplyIsRefusedNotSent(t *testing.T) {
 			}
 		}
 	})
-	dispatch := func(_ context.Context, head protocol.Envelope, _ []byte) []byte {
+	dispatch := func(head protocol.Envelope, _ []byte) []byte {
 		oversized := make([]byte, protocol.MaxFrameBytes+1024)
 		for index := range oversized {
 			oversized[index] = 'a'
@@ -428,11 +434,156 @@ func TestHalfOpenSocketIsClosedByTheHeartbeatCheck(t *testing.T) {
 	}
 }
 
+// One goroutine per inbound frame is unbounded by construction, and a frame can be a quarter
+// of a megabyte. Past the cap the client refuses rather than accepting work it cannot do.
+func TestFramesBeyondTheHandlerCapAreRefused(t *testing.T) {
+	const requests = 6
+	replies := make(chan protocol.Reply, requests)
+	relay := newFakeRelay(t, func(_ *testing.T, r *fakeRelay, socket *websocket.Conn) {
+		r.recordHello(socket)
+		for index := range requests {
+			frame := fmt.Sprintf(`{"id":"req-%d","op":"exec","command":"x","cwd":null,"env":{},"timeout_ms":60000}`, index)
+			if err := socket.Write(context.Background(), websocket.MessageText, []byte(frame)); err != nil {
+				return
+			}
+		}
+		for {
+			_, payload, err := socket.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if string(payload) == protocol.HeartbeatPing {
+				continue
+			}
+			var reply protocol.Reply
+			if json.Unmarshal(payload, &reply) == nil && reply.ID != "" {
+				replies <- reply
+			}
+		}
+	})
+
+	release := make(chan struct{})
+	dispatch := func(head protocol.Envelope, _ []byte) []byte {
+		<-release
+		encoded, err := protocol.EncodeOK(head.ID, protocol.CancelResult{Cancelled: true})
+		if err != nil {
+			return protocol.EncodeError(head.ID, protocol.ErrOpFailed, err.Error())
+		}
+		return encoded
+	}
+	client, err := conn.New(conn.Options{
+		BaseURL:           relay.server.URL,
+		Credential:        "mc",
+		Dispatch:          dispatch,
+		Logger:            discardLogger(),
+		MaxHandlers:       2,
+		HeartbeatInterval: 50 * time.Millisecond,
+		ReadDeadline:      5 * time.Second,
+		Sleep:             func(context.Context, time.Duration) error { return nil },
+		Jitter:            func(n int64) int64 { return n / 2 },
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = client.Run(ctx) }()
+
+	// Two frames occupy the handlers; the rest come straight back as queue_full.
+	refused := 0
+	deadline := time.After(15 * time.Second)
+	for refused < requests-2 {
+		select {
+		case reply := <-replies:
+			if reply.Error == nil || reply.Error.Code != protocol.ErrQueueFull {
+				t.Fatalf("reply = %+v, want queue_full", reply)
+			}
+			refused++
+		case <-deadline:
+			t.Fatalf("only %d frames were refused", refused)
+		}
+	}
+	close(release)
+}
+
+// Prepare runs on the read loop; when it refuses, the frame is answered and never dispatched.
+func TestAFrameThatPrepareRefusesIsNotDispatched(t *testing.T) {
+	answered := make(chan protocol.Reply, 1)
+	relay := newFakeRelay(t, func(_ *testing.T, r *fakeRelay, socket *websocket.Conn) {
+		r.recordHello(socket)
+		frame := `{"id":"dup","op":"exec","command":"x","cwd":null,"env":{},"timeout_ms":1000}`
+		if err := socket.Write(context.Background(), websocket.MessageText, []byte(frame)); err != nil {
+			return
+		}
+		for {
+			_, payload, err := socket.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if string(payload) == protocol.HeartbeatPing {
+				continue
+			}
+			var reply protocol.Reply
+			if json.Unmarshal(payload, &reply) == nil && reply.ID != "" {
+				answered <- reply
+				_ = socket.Close(protocol.CloseRevoked, "done")
+				return
+			}
+		}
+	})
+
+	dispatched := make(chan struct{}, 1)
+	client, err := conn.New(conn.Options{
+		BaseURL:    relay.server.URL,
+		Credential: "mc",
+		Dispatch: func(protocol.Envelope, []byte) []byte {
+			dispatched <- struct{}{}
+			return nil
+		},
+		Prepare:           func(protocol.Envelope) error { return errors.New("already running") },
+		Logger:            discardLogger(),
+		HeartbeatInterval: 50 * time.Millisecond,
+		ReadDeadline:      5 * time.Second,
+		Sleep:             func(context.Context, time.Duration) error { return nil },
+		Jitter:            func(n int64) int64 { return n / 2 },
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	go func() { _ = client.Run(context.Background()) }()
+
+	select {
+	case reply := <-answered:
+		if reply.Error == nil || reply.Error.Code != protocol.ErrBadRequest {
+			t.Fatalf("reply = %+v", reply)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the refused frame was never answered")
+	}
+	select {
+	case <-dispatched:
+		t.Fatal("a frame Prepare refused was dispatched anyway")
+	default:
+	}
+}
+
+// Plaintext to a real host would put the bearer credential on the wire in the clear.
+func TestPlaintextToARemoteHostIsRefused(t *testing.T) {
+	_, err := conn.New(conn.Options{
+		BaseURL:    "http://trueforge.example.com",
+		Credential: "mc",
+		Dispatch:   func(protocol.Envelope, []byte) []byte { return nil },
+	})
+	if !errors.Is(err, serverurl.ErrInsecure) {
+		t.Fatalf("error = %v, want ErrInsecure", err)
+	}
+}
+
 func TestNewRefusesIncompleteOptions(t *testing.T) {
 	base := conn.Options{
 		BaseURL:    "https://example.com",
 		Credential: "c",
-		Dispatch:   func(context.Context, protocol.Envelope, []byte) []byte { return nil },
+		Dispatch:   func(protocol.Envelope, []byte) []byte { return nil },
 	}
 	withoutDispatch := base
 	withoutDispatch.Dispatch = nil

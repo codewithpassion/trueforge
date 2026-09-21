@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	"trueforge.dev/computer/internal/protocol"
@@ -254,6 +256,43 @@ func TestReplyBranchesAreExclusive(t *testing.T) {
 	}
 	if _, present := failureFields["result"]; present {
 		t.Fatal("an error reply carried a result key")
+	}
+}
+
+// The fixture is the list the server maps against, so adding a code without publishing it
+// fails here rather than reaching the server as an unrecognised string.
+func TestErrorCodeFixtureMatchesTheConstants(t *testing.T) {
+	declared := []string{
+		protocol.ErrBadRequest,
+		protocol.ErrDenied,
+		protocol.ErrFrameTooBig,
+		protocol.ErrIsADirectory,
+		protocol.ErrNotRegularFile,
+		protocol.ErrNotFound,
+		protocol.ErrOpFailed,
+		protocol.ErrQueueFull,
+		protocol.ErrReadOnly,
+		protocol.ErrTooLarge,
+		protocol.ErrUnknownOp,
+	}
+	sort.Strings(declared)
+
+	var fixture struct {
+		Codes []string `json:"codes"`
+	}
+	if err := json.Unmarshal(readFixture(t, "error_codes.json"), &fixture); err != nil {
+		t.Fatalf("decode the fixture: %v", err)
+	}
+	published := append([]string(nil), fixture.Codes...)
+	sort.Strings(published)
+
+	if !reflect.DeepEqual(declared, published) {
+		t.Fatalf("the published codes have drifted\n declared: %v\npublished: %v", declared, published)
+	}
+	for _, code := range published {
+		if code == "" || code != strings.ToLower(code) {
+			t.Fatalf("error codes are lower snake_case; %q is not", code)
+		}
 	}
 }
 

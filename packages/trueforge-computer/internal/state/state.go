@@ -64,11 +64,25 @@ func ConfigPath(dir string) string     { return filepath.Join(dir, ConfigFileNam
 func CredentialPath(dir string) string { return filepath.Join(dir, CredentialFileName) }
 func SessionsDir(dir string) string    { return filepath.Join(dir, SessionsDirName) }
 
-// Ensure creates the state directory with owner-only permissions; a shared machine's other
-// users have no business reading what is in it.
+// Ensure creates the state directory with owner-only permissions and tightens one that
+// already exists: MkdirAll leaves an existing 0755 directory alone, and this one holds the
+// machine credential. A directory owned by somebody else is refused outright.
 func Ensure(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create the state directory %s: %w", dir, err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("stat the state directory %s: %w", dir, err)
+	}
+	if owner, known := ownerUID(info); known && owner != os.Getuid() {
+		return fmt.Errorf("the state directory %s belongs to uid %d, not to uid %d; refusing to keep this computer's credential somewhere another user controls",
+			dir, owner, os.Getuid())
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return fmt.Errorf("restrict the state directory %s: %w", dir, err)
+		}
 	}
 	return nil
 }

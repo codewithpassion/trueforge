@@ -3,12 +3,12 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"trueforge.dev/computer/internal/audit"
@@ -34,17 +34,34 @@ func New(rules *policy.Policy, commands *runner.Runner, transfers *files.Transfe
 }
 
 // OnDisconnect drops the uploads that were mid-flight. The server restarts a transfer from
-// chunk zero after a reconnect, so a half-written file is only a leak.
+// chunk zero after a reconnect, so a half-written temporary file is only a leak.
 func (a *Agent) OnDisconnect() {
 	a.transfers.Abandon()
 }
 
+// Prepare claims an exec's request id on the read loop, before the frame is handed to a
+// goroutine. Without it a cancel on the next frame can be answered "unknown" while the
+// command it names starts anyway.
+func (a *Agent) Prepare(head protocol.Envelope) error {
+	if head.Op != protocol.OpExec {
+		return nil
+	}
+	return a.runner.Reserve(head.ID)
+}
+
+// OnRefused releases a claim for a frame that will not be dispatched after all.
+func (a *Agent) OnRefused(head protocol.Envelope) {
+	if head.Op == protocol.OpExec {
+		a.runner.Release(head.ID)
+	}
+}
+
 // Dispatch answers one request. It always returns a frame: a request the relay is waiting on
 // must never be met with silence.
-func (a *Agent) Dispatch(ctx context.Context, head protocol.Envelope, frame []byte) []byte {
+func (a *Agent) Dispatch(head protocol.Envelope, frame []byte) []byte {
 	switch head.Op {
 	case protocol.OpExec:
-		return a.exec(ctx, head, frame)
+		return a.exec(head, frame)
 	case protocol.OpCancel:
 		return a.cancel(head, frame)
 	case protocol.OpFilePut:
@@ -57,16 +74,18 @@ func (a *Agent) Dispatch(ctx context.Context, head protocol.Envelope, frame []by
 	}
 }
 
-func (a *Agent) exec(ctx context.Context, head protocol.Envelope, frame []byte) []byte {
+func (a *Agent) exec(head protocol.Envelope, frame []byte) []byte {
 	var request protocol.ExecRequest
 	if err := json.Unmarshal(frame, &request); err != nil {
+		a.runner.Release(head.ID)
 		return a.fail(head, protocol.ErrBadRequest, fmt.Errorf("decode exec: %w", err))
 	}
 	cwd := ""
 	if request.Cwd != nil {
 		cwd = *request.Cwd
 	}
-	if err := a.policy.CheckExec(request.Command); err != nil {
+	deny := func(err error) []byte {
+		a.runner.Release(head.ID)
 		a.record(audit.Entry{
 			Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeDenied,
 			Command: request.Command, Cwd: cwd, Error: err.Error(),
@@ -75,8 +94,21 @@ func (a *Agent) exec(ctx context.Context, head protocol.Envelope, frame []byte) 
 		return protocol.EncodeError(head.ID, protocol.ErrDenied, err.Error())
 	}
 
+	if err := a.policy.CheckExec(request.Command); err != nil {
+		return deny(err)
+	}
+	// A variable the shell or an interpreter executes would let an allowed command run
+	// something else entirely, so the request is refused rather than quietly stripped: the
+	// command may well depend on what was asked for.
+	accepted, refused := a.policy.FilterEnv(request.Env)
+	if len(refused) > 0 {
+		return deny(fmt.Errorf("%w: this computer does not accept the environment variable(s) %s from the server; add --allow-env to permit one",
+			policy.ErrDenied, strings.Join(refused, ", ")))
+	}
+	request.Env = accepted
+
 	startedAt := time.Now()
-	result, err := a.runner.Run(ctx, head.ID, request)
+	result, err := a.runner.Run(head.ID, request)
 	if err != nil {
 		code := protocol.ErrOpFailed
 		if errors.Is(err, runner.ErrQueueFull) {
@@ -120,30 +152,24 @@ func (a *Agent) filePut(head protocol.Envelope, frame []byte) []byte {
 	if err := json.Unmarshal(frame, &request); err != nil {
 		return a.fail(head, protocol.ErrBadRequest, fmt.Errorf("decode file_put: %w", err))
 	}
-	resolved, err := a.policy.CheckWrite(request.Path)
+	// The path is resolved and policed inside the transfer, which re-checks it again just
+	// before the rename; the two are up to a minute apart.
+	result, err := a.transfers.Put(request)
 	if err != nil {
-		a.record(audit.Entry{
-			Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeDenied,
-			Path: request.Path, Error: err.Error(),
-		})
-		code := protocol.ErrDenied
-		if a.policy.ReadOnly() {
-			code = protocol.ErrReadOnly
+		code := codeForFileError(err, a.policy.ReadOnly())
+		outcome := audit.OutcomeError
+		if code == protocol.ErrDenied || code == protocol.ErrReadOnly {
+			outcome = audit.OutcomeDenied
 		}
-		return protocol.EncodeError(head.ID, code, err.Error())
-	}
-	result, err := a.transfers.Put(request, resolved)
-	if err != nil {
-		code := codeForFileError(err)
 		a.record(audit.Entry{
-			Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeError,
-			Path: resolved, Error: err.Error(),
+			Op: head.Op, RequestID: head.ID, Outcome: outcome,
+			Path: request.Path, Error: err.Error(),
 		})
 		return protocol.EncodeError(head.ID, code, err.Error())
 	}
 	a.record(audit.Entry{
 		Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeOK,
-		Path: resolved, Bytes: result.BytesWritten,
+		Path: request.Path, Bytes: result.BytesWritten,
 	})
 	return a.ok(head, result)
 }
@@ -161,9 +187,9 @@ func (a *Agent) fileGet(head protocol.Envelope, frame []byte) []byte {
 		})
 		return protocol.EncodeError(head.ID, protocol.ErrDenied, err.Error())
 	}
-	result, err := files.Get(request, resolved)
+	result, err := files.Get(request, resolved, a.transfers.MaxFileBytes())
 	if err != nil {
-		code := codeForFileError(err)
+		code := codeForFileError(err, a.policy.ReadOnly())
 		a.record(audit.Entry{
 			Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeError,
 			Path: resolved, Error: err.Error(),
@@ -179,12 +205,23 @@ func (a *Agent) fileGet(head protocol.Envelope, frame []byte) []byte {
 
 // codeForFileError names the failure precisely enough that the server can map it to the
 // right sandbox error rather than one opaque failure.
-func codeForFileError(err error) string {
+func codeForFileError(err error, readOnly bool) string {
 	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return protocol.ErrNotFound
+	case errors.Is(err, policy.ErrDenied):
+		if readOnly {
+			return protocol.ErrReadOnly
+		}
+		return protocol.ErrDenied
+	case errors.Is(err, files.ErrTooManyTransfers):
+		return protocol.ErrQueueFull
+	case errors.Is(err, files.ErrTooLarge):
+		return protocol.ErrTooLarge
 	case errors.Is(err, files.ErrIsDirectory):
 		return protocol.ErrIsADirectory
+	case errors.Is(err, files.ErrNotRegular):
+		return protocol.ErrNotRegularFile
+	case errors.Is(err, os.ErrNotExist):
+		return protocol.ErrNotFound
 	case errors.Is(err, files.ErrBadRequest):
 		return protocol.ErrBadRequest
 	default:

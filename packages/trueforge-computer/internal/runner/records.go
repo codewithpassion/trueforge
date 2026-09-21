@@ -20,9 +20,10 @@ type groupRecord struct {
 	RequestID string `json:"request_id"`
 	Command   string `json:"command"`
 	StartedAt string `json:"started_at"`
-	// StartTime is the kernel's start tick for the group leader, which distinguishes the
-	// process we started from a later one that reused its pid. Zero where unavailable.
+	// StartTime is the kernel's start tick for the group leader and Cmdline is its argv.
+	// Together with the pid they identify the process we started; a pid alone is recycled.
 	StartTime uint64 `json:"start_time"`
+	Cmdline   string `json:"cmdline"`
 }
 
 type records struct {
@@ -38,12 +39,14 @@ func (r *records) add(pgid int, requestID string, command string) error {
 		return fmt.Errorf("create %s: %w", r.dir, err)
 	}
 	startTime, _ := processStartTime(pgid)
+	cmdline, _ := processCmdline(pgid)
 	encoded, err := json.Marshal(groupRecord{
 		PGID:      pgid,
 		RequestID: requestID,
 		Command:   truncate(command, 4096),
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
 		StartTime: startTime,
+		Cmdline:   cmdline,
 	})
 	if err != nil {
 		return fmt.Errorf("encode group record: %w", err)
@@ -62,6 +65,9 @@ func (r *records) path(pgid int) string {
 // Sweep kills the process groups left behind by a previous run and clears their records. It
 // returns how many groups it signalled.
 func Sweep(stateDir string, logger *slog.Logger) int {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	store := newRecords(stateDir)
 	entries, err := os.ReadDir(store.dir)
 	if err != nil {
@@ -82,7 +88,13 @@ func Sweep(stateDir string, logger *slog.Logger) int {
 			_ = os.Remove(path)
 			continue
 		}
-		if !stillOurs(record) {
+		identified, reason := stillOurs(record)
+		if !identified {
+			// Anything short of a positive identification is left alone. A pid is recycled
+			// within hours, and killing a group we merely cannot rule out means SIGKILLing
+			// whatever else this user happens to be running.
+			logger.Warn("not reaping a recorded process group: it can no longer be identified",
+				"pgid", record.PGID, "request_id", record.RequestID, "reason", reason)
 			_ = os.Remove(path)
 			continue
 		}
@@ -95,21 +107,30 @@ func Sweep(stateDir string, logger *slog.Logger) int {
 	return killed
 }
 
-// stillOurs decides whether the recorded group is the one we started. Where the kernel's start
-// tick is readable the check is exact; elsewhere it is existence only, which can in principle
-// match a recycled pid.
-func stillOurs(record groupRecord) bool {
+// stillOurs decides whether the recorded group is the one we started. It answers yes only on
+// a positive match of the kernel's start tick and the leader's argv; "the pid exists" is not
+// evidence, because pids are reused.
+func stillOurs(record groupRecord) (bool, string) {
 	if syscall.Kill(-record.PGID, 0) != nil {
-		return false
+		return false, "the process group is gone"
 	}
 	if record.StartTime == 0 {
-		return true
+		return false, "no start time was recorded for it"
 	}
 	current, ok := processStartTime(record.PGID)
 	if !ok {
-		return true
+		return false, "this platform cannot read the process start time"
 	}
-	return current == record.StartTime
+	if current != record.StartTime {
+		return false, "the pid has been reused by a newer process"
+	}
+	if record.Cmdline != "" {
+		cmdline, readable := processCmdline(record.PGID)
+		if readable && cmdline != record.Cmdline {
+			return false, "the pid now runs a different command"
+		}
+	}
+	return true, ""
 }
 
 func killGroup(pgid int) {

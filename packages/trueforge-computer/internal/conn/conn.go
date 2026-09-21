@@ -10,14 +10,13 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 
 	"trueforge.dev/computer/internal/protocol"
+	"trueforge.dev/computer/internal/serverurl"
 )
 
 // ErrRevoked ends the loop for good; the caller turns it into exit code 3.
@@ -32,26 +31,45 @@ const (
 	// resets the backoff step.
 	defaultStableAfter = 60 * time.Second
 	// The read limit is generous but finite: a relay that sends more than this is broken, and
-	// the client should not try to buffer it.
+	// the client should not try to buffer it. Exceeding it closes the socket rather than
+	// letting one frame decide how much memory this process uses.
 	readLimitBytes = 8 << 20
 	writeTimeout   = 30 * time.Second
+	// defaultMaxHandlers bounds the frames being worked on at once. One goroutine per inbound
+	// frame is unbounded by construction, and a frame can be a quarter of a megabyte.
+	defaultMaxHandlers = 64
+	// refusalWriteTimeout keeps a queue_full refusal from holding the read loop for long.
+	refusalWriteTimeout = 5 * time.Second
 )
 
 // Dispatcher answers one request frame. It returns the bytes to write back, or nil to say
-// nothing at all.
-type Dispatcher func(ctx context.Context, head protocol.Envelope, frame []byte) []byte
+// nothing at all. It takes no context on purpose: a request's work is bounded by the daemon's
+// life, not by the socket it arrived on, so a reconnect does not kill it.
+type Dispatcher func(head protocol.Envelope, frame []byte) []byte
+
+// Preparer runs synchronously on the read loop, before the frame is handed to a goroutine, so
+// a cancel arriving on the very next frame cannot overtake the request it names.
+type Preparer func(head protocol.Envelope) error
 
 type Options struct {
 	BaseURL    string
 	Credential string
 	Hello      protocol.Hello
 	Dispatch   Dispatcher
+	// Prepare claims the request id before the work is scheduled. A failure is answered and
+	// the frame is not dispatched.
+	Prepare Preparer
 	// OnDisconnect runs after every session ends, so half-finished uploads can be dropped.
 	OnDisconnect func()
 	// OnReplyDropped runs when an answer could not be written because its socket had closed.
 	// The work is already done and its outcome is now unknown to the server.
 	OnReplyDropped func(head protocol.Envelope, cause error)
-	Logger         *slog.Logger
+	// OnRefused releases whatever Prepare claimed for a frame that will not be dispatched.
+	OnRefused func(head protocol.Envelope)
+	// MaxHandlers bounds the frames being worked on at once; beyond it the client answers
+	// queue_full rather than starting a goroutine per frame.
+	MaxHandlers int
+	Logger      *slog.Logger
 
 	DialTimeout       time.Duration
 	HeartbeatInterval time.Duration
@@ -67,6 +85,8 @@ type Client struct {
 	options Options
 	dialURL string
 	logger  *slog.Logger
+	// handlers is a counting semaphore over the frames being worked on at once.
+	handlers chan struct{}
 
 	// writeMu serialises frame writes: handlers answer from their own goroutines.
 	writeMu sync.Mutex
@@ -113,35 +133,28 @@ func New(options Options) (*Client, error) {
 	if options.OnReplyDropped == nil {
 		options.OnReplyDropped = func(protocol.Envelope, error) {}
 	}
-	return &Client{options: options, dialURL: dialURL, logger: options.Logger}, nil
+	if options.Prepare == nil {
+		options.Prepare = func(protocol.Envelope) error { return nil }
+	}
+	if options.OnRefused == nil {
+		options.OnRefused = func(protocol.Envelope) {}
+	}
+	if options.MaxHandlers <= 0 {
+		options.MaxHandlers = defaultMaxHandlers
+	}
+	return &Client{
+		options:  options,
+		dialURL:  dialURL,
+		logger:   options.Logger,
+		handlers: make(chan struct{}, options.MaxHandlers),
+	}, nil
 }
 
 // DialURL turns a base URL into the WebSocket endpoint. The credential travels in a header,
-// never in the URL, so it cannot end up in an access log.
+// never in the URL, so it cannot end up in an access log; plaintext is refused for anything
+// but this machine, because the header would then cross the network in the clear.
 func DialURL(baseURL string) (string, error) {
-	trimmed := strings.TrimSuffix(strings.TrimSpace(baseURL), "/")
-	if trimmed == "" {
-		return "", errors.New("a server URL is required")
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil {
-		return "", fmt.Errorf("parse the server URL %q: %w", baseURL, err)
-	}
-	switch parsed.Scheme {
-	case "https", "wss":
-		parsed.Scheme = "wss"
-	case "http", "ws":
-		parsed.Scheme = "ws"
-	default:
-		return "", fmt.Errorf("the server URL %q must be http(s) or ws(s)", baseURL)
-	}
-	if parsed.Host == "" {
-		return "", fmt.Errorf("the server URL %q has no host", baseURL)
-	}
-	parsed.Path = strings.TrimSuffix(parsed.Path, "/") + ConnectPath
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String(), nil
+	return serverurl.WebSocket(baseURL, ConnectPath)
 }
 
 // Run dials until the context ends or the credential is revoked.
@@ -248,7 +261,46 @@ func (c *Client) session(parent context.Context) error {
 			}
 			continue
 		}
-		go c.handle(ctx, socket, payload)
+		c.accept(ctx, socket, payload)
+	}
+}
+
+// accept runs on the read loop. It claims the request id and a worker slot synchronously, so
+// a cancel cannot overtake the exec it names and a flood of frames cannot start a goroutine
+// each, then hands the work off.
+func (c *Client) accept(session context.Context, socket *websocket.Conn, payload []byte) {
+	var head protocol.Envelope
+	if err := json.Unmarshal(payload, &head); err != nil || head.ID == "" {
+		c.logger.Warn("dropping a frame that is not a request", "error", errorText(err))
+		return
+	}
+	if err := c.options.Prepare(head); err != nil {
+		c.refuse(session, socket, head, protocol.ErrBadRequest, err.Error())
+		return
+	}
+	select {
+	case c.handlers <- struct{}{}:
+	default:
+		// Refusing on the read loop is the backpressure: the alternative is to keep accepting
+		// work this computer has already said it cannot do.
+		c.logger.Warn("refusing a frame: too many are already being handled", "id", head.ID, "op", head.Op)
+		c.options.OnRefused(head)
+		c.refuse(session, socket, head, protocol.ErrQueueFull,
+			fmt.Sprintf("this computer is already handling %d requests", c.options.MaxHandlers))
+		return
+	}
+	go func() {
+		defer func() { <-c.handlers }()
+		c.handle(session, socket, head, payload)
+	}()
+}
+
+// refuse answers a frame that will not be dispatched, on the read loop.
+func (c *Client) refuse(session context.Context, socket *websocket.Conn, head protocol.Envelope, code string, message string) {
+	writeCtx, cancel := context.WithTimeout(session, refusalWriteTimeout)
+	defer cancel()
+	if err := c.write(writeCtx, socket, protocol.EncodeError(head.ID, code, message)); err != nil {
+		c.options.OnReplyDropped(head, err)
 	}
 }
 
@@ -278,16 +330,13 @@ func (c *Client) heartbeat(ctx context.Context, socket *websocket.Conn, pong <-c
 	}
 }
 
-// handle answers one request on the socket it arrived on. A reply whose socket has closed is
-// dropped rather than written to a newer one, so the relay never sees an answer it cannot
-// match; the relay may reissue the request, which makes every op at-least-once.
-func (c *Client) handle(ctx context.Context, socket *websocket.Conn, payload []byte) {
-	var head protocol.Envelope
-	if err := json.Unmarshal(payload, &head); err != nil || head.ID == "" {
-		c.logger.Warn("dropping a frame that is not a request", "error", errorText(err))
-		return
-	}
-	answer := c.options.Dispatch(ctx, head, payload)
+// handle answers one request on the socket it arrived on. The work is bounded by the daemon's
+// context, not the session's, so a reconnect does not kill a command that is already running;
+// the reply, by contrast, belongs to this socket. A reply whose socket has closed is dropped
+// rather than written to a newer one, so the relay never sees an answer it cannot match; the
+// relay may reissue the request, which makes every op at-least-once.
+func (c *Client) handle(session context.Context, socket *websocket.Conn, head protocol.Envelope, payload []byte) {
+	answer := c.options.Dispatch(head, payload)
 	if answer == nil {
 		return
 	}
@@ -298,7 +347,7 @@ func (c *Client) handle(ctx context.Context, socket *websocket.Conn, payload []b
 		answer = protocol.EncodeError(head.ID, protocol.ErrFrameTooBig,
 			fmt.Sprintf("the reply is %d bytes, over the %d frame limit", len(answer), protocol.MaxFrameBytes))
 	}
-	if err := c.write(ctx, socket, answer); err != nil {
+	if err := c.write(session, socket, answer); err != nil {
 		c.options.OnReplyDropped(head, err)
 	}
 }
