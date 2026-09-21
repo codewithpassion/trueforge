@@ -2,13 +2,14 @@ import type { AgentSpec, SessionHandle } from '@truefoundry/trueforge-core/agent
 import type { VercelAIProviderConfig } from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
 import type { RemoteMcpHeaders } from '@truefoundry/trueforge-core/core/mcp/RemoteMCP';
 import type { AgentDefinition, ModelParams } from '@truefoundry/trueforge-core/core/runtime/AgentDefinition';
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { ISkillStore } from '../db/skillStore';
-import type { SandboxIntegration } from '../sandbox/integration';
+import type { SandboxIntegration, SandboxUsability } from '../sandbox/integration';
 import type { ReasoningEffort } from '../schemas/modelProvider';
 import type { SandboxBuildStatus } from '../schemas/sandboxProvider';
 
@@ -189,6 +190,33 @@ function sandboxNotUsableMessage({
 }
 
 /**
+ * Checking a Daytona build can take a 60 s timeout and then throw. That is the provider being
+ * unreachable, not a bad spec, so it is a 503 the caller can retry rather than a generic 500.
+ * `GET /capabilities` answers the same outage with the sandbox reported disabled.
+ */
+async function resolveSandboxUsabilityOrThrow({
+  sandboxIntegration,
+  sandboxProviderStore,
+  tenant_id,
+  logger,
+}: {
+  sandboxIntegration: SandboxIntegration;
+  sandboxProviderStore: ISandboxProviderStore;
+  tenant_id: string;
+  logger: Logger;
+}): Promise<SandboxUsability> {
+  try {
+    return await sandboxIntegration.resolveSandboxUsability({ store: sandboxProviderStore, tenant_id, logger });
+  } catch (error) {
+    logger.error('Sandbox image status check failed while validating an agent spec', extractErrorLogFields(error));
+    throw new HTTPException(503, {
+      message: 'sandbox provider is unreachable — could not check its image build status; retry shortly',
+      cause: error,
+    });
+  }
+}
+
+/**
  * Cross-checks an AgentSpec against configured models / MCP / skills and
  * sandbox capability. Throws HTTPException(422) for semantic failures.
  * Skills must exist in the skill store (git name) or pass SFY resolve (registry FQN).
@@ -261,7 +289,7 @@ export async function validateAgentSpec({
     const usability =
       sandboxIntegration === undefined
         ? undefined
-        : await sandboxIntegration.resolveSandboxUsability({ store: sandboxProviderStore, tenant_id, logger });
+        : await resolveSandboxUsabilityOrThrow({ sandboxIntegration, sandboxProviderStore, tenant_id, logger });
     if (usability?.usable !== true) {
       throw new HTTPException(422, {
         message: sandboxNotUsableMessage({ hasSkills, status: usability?.status }),

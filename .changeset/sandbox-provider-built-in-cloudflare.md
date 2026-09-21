@@ -10,4 +10,9 @@ The built-in Cloudflare sandbox can now be turned on from Settings. On a Workers
 
 `DELETE /api/v1/settings/sandbox-providers` is new, so a configured provider can be removed. It is also what backs the settings section's "Remove" action on Node, which until now had no route behind it. Removing a provider deletes the stored credentials; sandboxes already running in the provider account are left to that provider's own auto-stop and auto-delete schedule.
 
-"Is a sandbox usable?" is answered in one place. `GET /api/v1/capabilities` and the agent-spec validator both call the runtime sandbox port, so neither can admit what the other refuses. One behaviour change falls out of that: a spec with `sandbox.enabled` is now rejected while the provider's image build is pending or failed, instead of being accepted and then failing at turn time.
+"Is a sandbox usable?" is answered in one place. `GET /api/v1/capabilities` and the agent-spec validator both call the runtime sandbox port, so neither can admit what the other refuses.
+
+Two behaviour changes fall out of that, both on agent and session create/update of a spec with `sandbox.enabled` or skills:
+
+- The image build must be ready. A `pending` build answers 422 "the sandbox image is still being prepared — retry shortly", and a `failed` build answers 422 until the provider is saved again — which blocks saving any edit to an existing sandbox or skills agent, not just new ones. Previously such a spec was accepted and the turn failed instead.
+- A provider that cannot be reached to check its build now answers 503 naming the sandbox provider as unreachable, instead of a generic 500. A Daytona outage can take up to 60 seconds to surface this way.

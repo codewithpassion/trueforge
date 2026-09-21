@@ -30,6 +30,7 @@ import {
   withGatewayMetadataHeaders,
   X_TFY_METADATA,
 } from '../../../src/runtime/sessionResources';
+import type { SandboxIntegration } from '../../../src/sandbox/integration';
 import type { LocalSandboxSupportResult } from '../../../src/sandbox/local/provider/LocalSandboxProvider';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import type { ReasoningEffort } from '../../../src/schemas/modelProvider';
@@ -499,6 +500,37 @@ describe('validateAgentSpec', () => {
    * "is a sandbox configured" from different places. Both now go through the integration, so
    * this pins them together on the runtime where they drifted.
    */
+  /**
+   * A Daytona outage makes the build check time out after 60 s. That is the provider being
+   * unreachable, not a bad spec, so it must not reach the handler as a generic 500.
+   */
+  it('answers 503 naming the provider when the build check throws', async () => {
+    const stores = await setup();
+    const unreachable = new Error('sandbox getImageBuildStatus timed out after 60000ms');
+    const sandboxIntegration: SandboxIntegration = {
+      ...stores.sandboxIntegration,
+      resolveSandboxUsability: () => Promise.reject(unreachable),
+    };
+
+    const thrown = await validateAgentSpec({
+      spec: AgentSpecSchema.parse({
+        model: { name: 'test-provider/test-model' },
+        instructions: 'test',
+        config: { sandbox: { enabled: true } },
+      }),
+      tenant_id: 'default',
+      ...stores,
+      sandboxIntegration,
+    }).catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(HTTPException);
+    expect(thrown).toMatchObject({
+      status: 503,
+      message: expect.stringContaining('sandbox provider is unreachable'),
+      cause: unreachable,
+    } satisfies Partial<HTTPException>);
+  });
+
   describe('agreement with GET /capabilities on the real Node integration', () => {
     async function bothAnswers(
       stores: Awaited<ReturnType<typeof setup>>,
