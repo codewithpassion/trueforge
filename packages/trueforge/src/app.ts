@@ -13,7 +13,12 @@ import { createAgentsRouter } from './apis/agents';
 import { createAuthRouter } from './apis/auth';
 import { createCapabilitiesRouter } from './apis/capabilities';
 import { createCatalogRouter } from './apis/catalog';
-import { createComputerMachineRouter, createComputersRouter, registerComputerConnectRoute } from './apis/computers';
+import {
+  COMPUTERS_UNSUPPORTED,
+  createComputerMachineRouter,
+  createComputersRouter,
+  registerComputerConnectRoute,
+} from './apis/computers';
 import { createIntegrationEventsRouter } from './apis/integrationEvents';
 import { createMcpOAuthRouter } from './apis/mcpOAuth';
 import { createMcpServersRouter } from './apis/mcpServers';
@@ -263,6 +268,10 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
   app.get('/healthz', c => c.json({ status: 'ok', version: PACKAGE_VERSION }));
 
   app.get('/install.sh', c => {
+    // Nothing to install against on a runtime that cannot hold a machine's socket.
+    if (deps.computers === undefined) {
+      return c.json({ error: { message: COMPUTERS_UNSUPPORTED } }, 404);
+    }
     if (configuration.REMOTE_COMPUTER_RELEASE_BASE_URL === '') {
       return c.json({ error: { message: INSTALL_SCRIPT_UNCONFIGURED } }, 503);
     }

@@ -19,6 +19,7 @@ import { computersApp, FakeComputerClient, PUBLIC_BASE_URL, settle } from './rem
 const logger = createConsoleLogger({ level: 'error', bindings: { component: 'computer-turn-test' } });
 
 const OK_EXEC = { exit_code: 0, stdout: '', stderr: '', bytes_total: 0, truncated: false, duration_ms: 1 };
+const OTHER_TENANT = 'someone-else';
 /** Distinctive enough that finding it in the turn proves it came off the machine. */
 const UNAME_OUTPUT = 'Linux office-box 6.1.0 #1 SMP x86_64 GNU/Linux\n';
 
@@ -208,16 +209,57 @@ describe('a turn on a remote computer', () => {
     client.close();
   });
 
-  it('refuses a computer that belongs to another tenant at turn time', async () => {
-    const { computerId, client } = await onlineComputer(unique('other-tenant-box'));
-    const agentName = unique('other-tenant-agent');
-    const sessionId = `computer-turn-tenant-${newId()}`;
+  it('refuses a revoked computer at turn time', async () => {
+    const { computerId, client } = await onlineComputer(unique('revoked-box'));
+    const agentName = unique('revoked-agent');
+    const sessionId = `computer-turn-revoked-${newId()}`;
     const { stores, computers } = await agentOnComputer({ computerId, agentName, sessionId, allowed: true });
-    // Move the machine out of this tenant's reach; the session's spec still names it.
     await computers.store.revokeComputer({ tenant_id: TENANT_ID, computer_id: computerId });
 
     await expect(runTurn({ sessionId, stores })).rejects.toThrow(/revoked/);
     client.close();
+  });
+
+  it('refuses a computer that belongs to another tenant, at validation and at turn time', async () => {
+    // Enrolled by, and granted to, a different tenant entirely.
+    const computers = workersComputersService(env);
+    const foreignApp = computersApp({ computers, tenantId: OTHER_TENANT });
+    const created = await foreignApp.fetch(
+      new Request(`${PUBLIC_BASE_URL}/api/v1/computers`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: unique('foreign-box') }),
+      }),
+      env,
+    );
+    expect(created.status).toBe(201);
+    const computerId = (await created.json<{ data: { computer: { id: string } } }>()).data.computer.id;
+    const agentName = unique('foreign-agent');
+    await computers.store.putAgentAccess({
+      tenant_id: OTHER_TENANT,
+      computer_id: computerId,
+      agent_names: [agentName],
+    });
+
+    // This tenant's agent names it anyway. A tenant-scoped read is all that stands between them,
+    // and a computer it cannot see reads exactly like one that does not exist.
+    const sessionId = `computer-turn-foreign-${newId()}`;
+    const { stores, providerName } = await agentOnComputer({ computerId, agentName, sessionId, allowed: false });
+
+    await expect(
+      validateAgentSpec({
+        spec: computerSpec({ providerName, computerId }),
+        tenant_id: TENANT_ID,
+        agent_name: agentName,
+        modelProviderStore: stores.modelProviderStore,
+        mcpServerStore: stores.mcpServerStore,
+        skillStore: stores.skillStore,
+        sandboxProviderStore: stores.sandboxProviderStore,
+        sandboxIntegration: computerIntegration(),
+        logger,
+      }),
+    ).rejects.toThrow(/Unknown computer/);
+    await expect(runTurn({ sessionId, stores })).rejects.toThrow(/Unknown computer/);
   });
 
   it('still starts when the machine is offline, and fails the command with the reason', async () => {

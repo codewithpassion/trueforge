@@ -554,11 +554,6 @@ export class RemoteComputerDO extends DurableObject {
     return closed;
   }
 
-  /** Lets a re-enrolled machine connect again after its computer row was un-revoked. */
-  async clearRevoked(): Promise<void> {
-    await this.#saveMeta({ revoked: false });
-  }
-
   /** Called after the computer row is deleted, so no relay state outlives the machine. */
   async destroy(): Promise<void> {
     this.#closeSockets('deleted');

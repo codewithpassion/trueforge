@@ -32,6 +32,19 @@ function createInput(overrides: Partial<CreateComputerInput> = {}): CreateComput
 }
 
 /** ULIDs are 26 characters and sort by time; these differ only in their last two. */
+/** Presence is only ever written for a machine that has already enrolled. */
+async function enrol(store: IComputerStore): Promise<void> {
+  await store.redeemEnrollment({
+    code_hash: 'hash_code_one',
+    credential_hash: 'hash_cred_one',
+    hostname: 'workshop.local',
+    os: 'darwin',
+    arch: 'arm64',
+    agent_version: '1.2.3',
+    now: isoIn(0),
+  });
+}
+
 function auditId(sequence: number): string {
   return `01J8Z000000000000000000${String(sequence).padStart(3, '0')}`;
 }
@@ -381,6 +394,7 @@ export function runComputerStoreContractSuite(getStore: () => IComputerStore): v
   it('recordPresence writes the status, last seen instant and hello facts', async () => {
     const store = getStore();
     await store.createComputer(createInput());
+    await enrol(store);
     const seenAt = isoIn(0);
 
     await store.recordPresence({
@@ -408,6 +422,7 @@ export function runComputerStoreContractSuite(getStore: () => IComputerStore): v
   it('recordPresence leaves the stored facts alone for a null instant and an absent hello', async () => {
     const store = getStore();
     await store.createComputer(createInput());
+    await enrol(store);
     const seenAt = isoIn(0);
     await store.recordPresence({
       computer_id: 'cmp_one',
@@ -441,6 +456,7 @@ export function runComputerStoreContractSuite(getStore: () => IComputerStore): v
   it('recordPresence never resurrects a revoked computer', async () => {
     const store = getStore();
     await store.createComputer(createInput());
+    await enrol(store);
     await store.revokeComputer({ tenant_id: TENANT, computer_id: 'cmp_one' });
 
     await store.recordPresence({
@@ -453,6 +469,29 @@ export function runComputerStoreContractSuite(getStore: () => IComputerStore): v
     const present = await store.getComputerById('cmp_one');
     expect(present?.status).toBe('revoked');
     expect(present?.last_seen_at).toBeNull();
+  });
+
+  it('recordPresence leaves a rotated computer pending rather than calling it offline', async () => {
+    const store = getStore();
+    await store.createComputer(createInput());
+    await enrol(store);
+    await store.rotateComputer({
+      tenant_id: TENANT,
+      computer_id: 'cmp_one',
+      code_hash: 'rotated-code-hash',
+      code_expires_at: isoIn(15),
+    });
+
+    // The alarm of the socket the rotation closed fires a minute later and must not overwrite
+    // `pending`: the machine is waiting to be enrolled again, not unreachable.
+    await store.recordPresence({
+      computer_id: 'cmp_one',
+      status: 'offline',
+      last_seen_at: isoIn(0),
+      hello: undefined,
+    });
+
+    expect((await store.getComputerById('cmp_one'))?.status).toBe('pending');
   });
 
   it('putAgentAccess replaces the whole allowlist and returns it sorted', async () => {

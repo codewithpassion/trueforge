@@ -37,7 +37,8 @@ import { newId } from '../utils/id';
 
 /** Said for a computer in another tenant too, so a probe cannot tell the two apart. */
 const NOT_FOUND = 'No such computer';
-const UNSUPPORTED = 'Remote computers are not available on this server';
+/** Said by every computer route, and by `/install.sh`, on a runtime that cannot hold their sockets. */
+export const COMPUTERS_UNSUPPORTED = 'Remote computers are not available on this server';
 /** Every enrollment and connect failure answers with exactly this. */
 const UNAUTHORIZED = 'Unauthorized';
 
@@ -102,7 +103,7 @@ export function createComputersRouter(deps: ComputersRouterDeps) {
   const listHandler: RouteHandler<typeof listComputersRoute> = async c => {
     const { computers } = deps;
     if (computers === undefined) {
-      return c.json({ error: { message: UNSUPPORTED } }, 404);
+      return c.json({ error: { message: COMPUTERS_UNSUPPORTED } }, 404);
     }
     const tenantId = deps.resolveRequestContext(c).tenant_id;
     const records = await computers.store.listComputers(tenantId);
@@ -112,7 +113,7 @@ export function createComputersRouter(deps: ComputersRouterDeps) {
   const createHandler: RouteHandler<typeof createComputerRoute> = async c => {
     const { computers } = deps;
     if (computers === undefined) {
-      return c.json({ error: { message: UNSUPPORTED } }, 404);
+      return c.json({ error: { message: COMPUTERS_UNSUPPORTED } }, 404);
     }
     const body = c.req.valid('json');
     const requestContext = deps.resolveRequestContext(c);
@@ -350,7 +351,7 @@ export function createComputerMachineRouter(deps: {
   const enrollHandler: RouteHandler<typeof enrollComputerRoute> = async c => {
     const { computers } = deps;
     if (computers === undefined) {
-      return c.json({ error: { message: UNSUPPORTED } }, 404);
+      return c.json({ error: { message: COMPUTERS_UNSUPPORTED } }, 404);
     }
     const body = c.req.valid('json');
     const credential = mintSecret();
@@ -389,7 +390,7 @@ export function registerComputerConnectRoute(input: {
     const { computers } = input;
     const unauthorized = (): Response => c.json({ error: { message: UNAUTHORIZED } }, 401);
     if (computers === undefined) {
-      return c.json({ error: { message: UNSUPPORTED } }, 404);
+      return c.json({ error: { message: COMPUTERS_UNSUPPORTED } }, 404);
     }
     if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
       return c.json({ error: { message: 'Expected a WebSocket upgrade' } }, 426);

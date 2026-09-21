@@ -295,6 +295,9 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
       .set(patch)
       .where('id', '=', input.computer_id)
       .where('status', '<>', 'revoked')
+      // A machine with no credential is waiting to be enrolled, not offline. Without this the
+      // alarm of the socket a rotation just closed would overwrite `pending` a minute later.
+      .where('credential_hash', 'is not', null)
       .execute();
   }
 
