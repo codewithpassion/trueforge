@@ -50,6 +50,8 @@ jobs:
               - 'packages/trueforge/**'
               # Throwaway Phase 8a spike: not in any tsconfig, not built, not published.
               - '!packages/trueforge/spikes/**'
+              # The server's schemas are held to the client's golden frames, read from there.
+              - 'packages/trueforge-computer/testdata/**'
               - 'package.json'
               - 'pnpm-workspace.yaml'
               - 'tsconfig.base.json'

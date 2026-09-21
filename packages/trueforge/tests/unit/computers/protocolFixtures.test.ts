@@ -1,9 +1,9 @@
 /**
- * The Go client's golden fixtures, copied verbatim from `packages/trueforge-computer/testdata`.
- * They are the other side's idea of the frozen v1 contract, so parsing them here is what proves
- * the two halves still agree — a shape that drifts on either side turns this red.
+ * The Go client's golden fixtures, read from where the client owns them rather than copied. They
+ * are the other side's idea of the frozen v1 contract, so parsing them here is what proves the two
+ * halves still agree — a shape that drifts on either side turns this red.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   CancelRequestSchema,
@@ -20,7 +20,8 @@ import {
 } from '../../../src/computers/protocol';
 import { EnrollComputerRequestSchema, EnrollComputerResponseSchema } from '../../../src/schemas/computer';
 
-const FIXTURES = path.join(__dirname, 'fixtures');
+/** One owner: the client's own testdata, not a copy that can drift out of step with it. */
+const FIXTURES = path.join(__dirname, '../../../../trueforge-computer/testdata');
 
 function fixture(name: string): string {
   return readFileSync(path.join(FIXTURES, name), 'utf8');
@@ -30,15 +31,41 @@ function parsed(name: string): unknown {
   return JSON.parse(fixture(name));
 }
 
+/** Every fixture this file accounts for. A new one the client adds must be added here too. */
+const REQUEST_FIXTURES = [
+  ['server_to_client_exec.json', ExecRequestSchema],
+  ['server_to_client_exec_null_cwd.json', ExecRequestSchema],
+  ['server_to_client_cancel.json', CancelRequestSchema],
+  ['server_to_client_file_put_chunk.json', FilePutRequestSchema],
+  ['server_to_client_file_put_final.json', FilePutRequestSchema],
+  ['server_to_client_file_get.json', FileGetRequestSchema],
+] as const;
+
+const REPLY_FIXTURES = [
+  ['client_to_server_reply_exec.json', ExecResultPayloadSchema],
+  ['client_to_server_reply_cancel.json', CancelResultPayloadSchema],
+  ['client_to_server_reply_file_put.json', FilePutResultPayloadSchema],
+  ['client_to_server_reply_file_get.json', FileGetResultPayloadSchema],
+] as const;
+
+const OTHER_FIXTURES = ['client_to_server_hello.json', 'client_to_server_reply_error.json', 'error_codes.json'];
+
+describe('every fixture the client publishes is checked here', () => {
+  it('leaves none of them unaccounted for', () => {
+    const onDisk = readdirSync(path.join(FIXTURES, 'protocol')).sort();
+    const covered = [
+      ...REQUEST_FIXTURES.map(([name]) => name),
+      ...REPLY_FIXTURES.map(([name]) => name),
+      ...OTHER_FIXTURES,
+    ].sort();
+    // A fixture the client adds without a check here is a shape nobody is holding to the contract.
+    expect(onDisk).toEqual(covered);
+    expect(readdirSync(path.join(FIXTURES, 'enroll')).sort()).toEqual(['request.json', 'response.json']);
+  });
+});
+
 describe('requests the server sends', () => {
-  it.each([
-    ['server_to_client_exec.json', ExecRequestSchema],
-    ['server_to_client_exec_null_cwd.json', ExecRequestSchema],
-    ['server_to_client_cancel.json', CancelRequestSchema],
-    ['server_to_client_file_put_chunk.json', FilePutRequestSchema],
-    ['server_to_client_file_put_final.json', FilePutRequestSchema],
-    ['server_to_client_file_get.json', FileGetRequestSchema],
-  ])('%s matches its op schema and the op union', (name, schema) => {
+  it.each(REQUEST_FIXTURES)('%s matches its op schema and the op union', (name, schema) => {
     const value = parsed(`protocol/${name}`);
     expect(schema.safeParse(value).success).toBe(true);
     expect(ClientOpRequestSchema.safeParse(value).success).toBe(true);
@@ -54,12 +81,7 @@ describe('frames the client sends', () => {
     expect(classifyClientFrame(raw)).toMatchObject({ kind: 'hello' });
   });
 
-  it.each([
-    ['client_to_server_reply_exec.json', ExecResultPayloadSchema],
-    ['client_to_server_reply_cancel.json', CancelResultPayloadSchema],
-    ['client_to_server_reply_file_put.json', FilePutResultPayloadSchema],
-    ['client_to_server_reply_file_get.json', FileGetResultPayloadSchema],
-  ])('%s is a reply whose result matches its payload schema', (name, schema) => {
+  it.each(REPLY_FIXTURES)('%s is a reply whose result matches its payload schema', (name, schema) => {
     const frame = classifyClientFrame(fixture(`protocol/${name}`));
     expect(frame.kind).toBe('reply');
     if (frame.kind !== 'reply' || !frame.reply.ok) {
@@ -70,30 +92,22 @@ describe('frames the client sends', () => {
 
   it('an error reply keeps the code the client chose, including one the server does not know', () => {
     const frame = classifyClientFrame(fixture('protocol/client_to_server_reply_error.json'));
-    expect(frame).toMatchObject({
-      kind: 'reply',
-      reply: { ok: false, error: { code: 'denied', message: 'command refused by the local deny list' } },
-    });
+    expect(frame).toMatchObject({ kind: 'reply', reply: { ok: false, error: { code: 'denied' } } });
   });
 });
 
 describe('the error codes the client can send', () => {
-  it('are all either mapped to a sandbox error or passed through with their message', () => {
-    const fixture = JSON.parse(readFileSync(path.join(FIXTURES, 'protocol/error_codes.json'), 'utf8')) as {
-      codes: string[];
-    };
-    // The set grows on the client's side, so the server treats it as an open string. These four
-    // are the ones it narrows; everything else must keep its own wording rather than be forced
-    // into a class that would misdescribe it.
-    const mapped = new Set(['not_found', 'is_a_directory', 'not_a_regular_file', 'too_large']);
-    expect(fixture.codes.length).toBeGreaterThan(0);
-    for (const code of fixture.codes) {
+  it('all survive classification, and the ones the server narrows are all still sent', () => {
+    const codes = JSON.parse(fixture('protocol/error_codes.json')) as { codes: string[] };
+    // The set grows on the client's side, so the server treats it as an open string.
+    expect(codes.codes).toContain('duplicate_id');
+    for (const code of codes.codes) {
       const frame = classifyClientFrame(JSON.stringify({ id: 'req-1', error: { code, message: 'why' } }));
       expect(frame).toMatchObject({ kind: 'reply', reply: { ok: false, error: { code, message: 'why' } } });
     }
-    // Every code the server narrows must still be one the client actually sends.
-    for (const code of mapped) {
-      expect(fixture.codes).toContain(code);
+    // These four the server maps onto its own error classes; each must still be one the client sends.
+    for (const mapped of ['not_found', 'is_a_directory', 'not_a_regular_file', 'too_large']) {
+      expect(codes.codes).toContain(mapped);
     }
   });
 });

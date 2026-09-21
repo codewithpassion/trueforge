@@ -1,8 +1,0 @@
-{
-  "id": "req-01HQ8",
-  "op": "exec",
-  "command": "echo hi",
-  "cwd": null,
-  "env": {},
-  "timeout_ms": 30000
-}

@@ -1,7 +1,0 @@
-{
-  "id": "req-01HQC",
-  "error": {
-    "code": "denied",
-    "message": "command refused by the local deny list"
-  }
-}
