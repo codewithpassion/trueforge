@@ -1,0 +1,225 @@
+diff --git a/dist/server/index.d.ts b/dist/server/index.d.ts
+index 9da26ff4021a3c6ecd0b5d5aba3c73cf2e1288c0..0241557d47e432aca44eaa6148147a48a37c625b 100644
+--- a/dist/server/index.d.ts
++++ b/dist/server/index.d.ts
+@@ -15,3 +15,4 @@ declare function isEventDelta(event: TurnStreamingEvent): event is DeltaEvents;
+ declare function mergeEventDelta(base: TurnEvent, delta: DeltaEvents): void;
+ 
+ export { DeltaEvents, TurnEvent, TurnStreamingEvent, isEventDelta, mergeEventDelta };
++export type { CreateIntegrationRequest, IntegrationAuthInput, IntegrationBase, IntegrationCatalogServer, IntegrationSetupManifest, IntegrationStatus, UpdateIntegrationRequest } from '../types-hS8TQqBP.js';
+diff --git a/dist/types-hS8TQqBP.d.ts b/dist/types-hS8TQqBP.d.ts
+index bddf93d1f4ad64c3df464ec48e884fc6f586e816..f0af4b6d5c55a4fae2e60bb937ac5d6241cc7158 100644
+--- a/dist/types-hS8TQqBP.d.ts
++++ b/dist/types-hS8TQqBP.d.ts
+@@ -883,18 +883,83 @@ type AgentSkill = SkillSelectorEntry;
+ type ConnectorState = ConnectorSelectorEntry;
+ type AgentLibraryEntry = AgentSelectorEntry;
+ type SearchAgentsParams = SearchAgentSelectorParams;
++/** Whether a channel integration still needs the credentials its app issues. */
++type IntegrationStatus = 'pending' | 'connected';
++/** One channel connection in settings. Credentials are never read back. */
++interface IntegrationBase {
++    id: string;
++    /** Channel type (e.g. `"slack"`). */
++    type: string;
++    status: IntegrationStatus;
++    /** Name the bot shows in the channel. */
++    botDisplayName: string;
++    /** Agent that answers messages arriving on this channel. */
++    defaultAgentName: string;
++    /** Allowlist; an empty list allows no channel. */
++    allowedChannelIds: string[];
++    allowDirectMessages: boolean;
++    /** Channel-side workspace, known once the integration is connected. */
++    externalAccountId?: string;
++}
++/** Credentials the channel's app issues after it is installed. */
++interface IntegrationAuthInput {
++    botToken: string;
++    signingSecret: string;
++}
++interface CreateIntegrationRequest {
++    type: string;
++    botDisplayName: string;
++    defaultAgentName: string;
++    allowedChannelIds: string[];
++    allowDirectMessages: boolean;
++}
++interface UpdateIntegrationRequest {
++    id: string;
++    botDisplayName: string;
++    defaultAgentName: string;
++    allowedChannelIds: string[];
++    allowDirectMessages: boolean;
++    /** Omit to keep the stored credentials; send both to connect or rotate. */
++    auth?: IntegrationAuthInput;
++}
++/** What the host pastes into the channel's app builder to create the app. */
++interface IntegrationSetupManifest {
++    /** URL the channel posts events to. */
++    requestUrl: string;
++    /** App manifest document, ready to copy. */
++    manifestJson: string;
++    /** Where the channel's app builder accepts the manifest. */
++    createAppUrl: string;
++}
++/**
++ * Channel integrations (Slack and the like): create one, read the app manifest it
++ * needs, then save the credentials the installed app issues.
++ */
++interface IntegrationCatalogServer<TIntegration extends IntegrationBase = IntegrationBase, TCreate extends CreateIntegrationRequest = CreateIntegrationRequest, TUpdate extends UpdateIntegrationRequest = UpdateIntegrationRequest, TSetup extends IntegrationSetupManifest = IntegrationSetupManifest> {
++    listIntegrations(): Promise<TIntegration[]>;
++    createIntegration(req: TCreate): Promise<TIntegration>;
++    updateIntegration(req: TUpdate): Promise<TIntegration>;
++    deleteIntegration(req: {
++        id: string;
++    }): Promise<void>;
++    getIntegrationSetupManifest(req: {
++        id: string;
++    }): Promise<TSetup>;
++}
+ /**
+  * Settings management aggregate — modelCatalog + connectorCatalog + optional
+- * skill and sandbox catalogs.
++ * skill, sandbox and integration catalogs.
+  * Hosts may pass the whole object to an app shell, or a focused sub-port to a page.
+  */
+-interface CatalogServer<TModelCatalog extends ModelCatalogServer = ModelCatalogServer, TConnectorCatalog extends ConnectorCatalogServer = ConnectorCatalogServer, TSkillCatalog extends SkillCatalogServer = SkillCatalogServer, TSandboxCatalog extends SandboxCatalogServer = SandboxCatalogServer> {
++interface CatalogServer<TModelCatalog extends ModelCatalogServer = ModelCatalogServer, TConnectorCatalog extends ConnectorCatalogServer = ConnectorCatalogServer, TSkillCatalog extends SkillCatalogServer = SkillCatalogServer, TSandboxCatalog extends SandboxCatalogServer = SandboxCatalogServer, TIntegrationCatalog extends IntegrationCatalogServer = IntegrationCatalogServer> {
+     modelCatalog: TModelCatalog;
+     connectorCatalog: TConnectorCatalog;
+     /** Optional — omit when the host has no skills settings surface. */
+     skillCatalog?: TSkillCatalog;
+     /** Optional — omit when the host has no sandboxes settings surface. */
+     sandboxCatalog?: TSandboxCatalog;
++    /** Optional — omit when the host has no channel-integrations settings surface. */
++    integrationCatalog?: TIntegrationCatalog;
+ }
+ /**
+  * Published agent identity + spec for the agent-detail Overview (read-only).
+@@ -1142,3 +1207,4 @@ type AgentUIServerPort<TChat extends AgentChatServer = AgentChatServer, TBuilder
+ type AgentUIServer = AgentUIServerPort;
+ 
+ export type { ConnectorConfigBase as $, AgentSpec as A, AgentSessionsServer as B, AgentSkill as C, AgentUIServer as D, AgentUIServerPort as E, ApprovalDecision as F, AuthenticateConnectorRequest as G, CatalogServer as H, CodeSnippet as I, CodeSnippetSampleCode as J, ConnectorAuth as K, ConnectorAuthApiKey as L, McpAuthRequiredEvent as M, ConnectorAuthNone as N, ConnectorAuthOAuth as O, ConnectorAuthPublic as P, ConnectorAuthPublicApiKey as Q, ConnectorAuthPublicNone as R, Session as S, TurnEvent as T, UserToolResponseEvent as U, ConnectorAuthPublicOAuth as V, ConnectorAuthType as W, ConnectorAuthenticationResult as X, ConnectorBase as Y, ConnectorCatalogEntry as Z, ConnectorCatalogServer as _, AgentChatServer as a, SessionEventItem as a$, ConnectorSelectorEntry as a0, ConnectorState as a1, CreateConnectorRequest as a2, CreateModelProviderRequest as a3, CreateSandboxProviderRequest as a4, CreateSandboxRequest as a5, CreateScheduleRequest as a6, CreateScheduleRunRequest as a7, CreateSessionRequest as a8, CreateSkillRequest as a9, PermissionResourceType as aA, PermissionsServer as aB, PreviousTurnIdInput as aC, ProviderEntry as aD, ProviderType as aE, RegistrySkill as aF, ResourcePermission as aG, SandboxBase as aH, SandboxCatalogEntry as aI, SandboxCatalogServer as aJ, SandboxConfig as aK, SandboxCreatedEvent as aL, SandboxProviderBase as aM, SandboxProviderCatalogEntry as aN, SandboxProviderConfig as aO, SandboxProviderListEntry as aP, SandboxSnapshotSyncStatus as aQ, SaveAgentRequest as aR, SaveAgentResult as aS, Schedule as aT, ScheduleRun as aU, ScheduleRunStatus as aV, ScheduleServer as aW, ScheduleStatus as aX, SearchAgentSelectorParams as aY, SearchAgentsParams as aZ, SelectRegistrySkillRequest as a_, CreateSkillRequestBase as aa, CreatedBySubject as ab, DefinedSkill as ac, GithubSkill as ad, ImportGithubSkillRequest as ae, ListPermissionsRequest as af, ListPermissionsResponse as ag, ListResult as ah, ListSchedulesParams as ai, ListSessionEventsParams as aj, ListSessionsOrder as ak, ListSessionsParams as al, McpServerMount as am, McpToolSelection as an, Model as ao, ModelCatalogServer as ap, ModelEntry as aq, ModelMessageEvent as ar, ModelParams as as, ModelProperties as at, ModelProviderBase as au, ModelProviderCatalogEntry as av, ModelProviderConfigBase as aw, ModelSelection as ax, ModelSelectorEntry as ay, PageParams as az, ThreadCreatedEvent as b, SessionListEntry as b0, SessionListMetrics as b1, SkillBase as b2, SkillCatalogEntry as b3, SkillCatalogServer as b4, SkillConfigBase as b5, SkillMount as b6, SkillSelectorEntry as b7, ToolApprovalRequiredEvent as b8, ToolBase as b9, ToolInfo as bA, ToolResponseEvent as bB, TurnCreatedEvent as bC, TurnDoneEvent as bD, TurnStateCancelled as bE, TurnStateError as bF, TurnStateRunning as bG, UserMessageContent as bH, ToolCall as ba, ToolResponseRequiredEvent as bb, TurnDoneMetrics as bc, TurnState as bd, TurnStateDone as be, TurnStreamData as bf, TurnStreamingEvent as bg, UpdateConnectorRequest as bh, UpdateModelProviderRequest as bi, UpdateSandboxProviderRequest as bj, UpdateSandboxRequest as bk, UpdateScheduleRequest as bl, UpdateSessionRequest as bm, UserMessage as bn, DeltaEvents as bo, ActionRequiredEvent as bp, AgentInfo as bq, AgentParent as br, ChunkDeltaToolCall as bs, McpInitializeEvent as bt, McpServerAuthInfo as bu, ModelMessageContentPart as bv, ModelMessageDeltaEvent as bw, ThreadDoneEvent as bx, ToolCallFunction as by, ToolCallRef as bz, UserToolApprovalEvent as c, Turn as d, TurnInputItem as e, AgentBuilderCapabilitiesResponse as f, AgentBuilderServer as g, AgentCapabilityConfig as h, AgentCompactionConfig as i, AgentContextManagementConfig as j, AgentDetail as k, AgentInputTokensCompactionTrigger as l, AgentLibraryEntry as m, AgentMetricChartData as n, AgentMetricChartDataRequest as o, AgentMetricChartDefinition as p, AgentMetricChartType as q, AgentMetricGraph as r, AgentMetricGraphLine as s, AgentMetricMeter as t, AgentMetricPoint as u, AgentMetricRangeRequest as v, AgentMetricsServer as w, AgentRuntimeConfig as x, AgentSandboxConfig as y, AgentSelectorEntry as z };
++export type { CreateIntegrationRequest, IntegrationAuthInput, IntegrationBase, IntegrationCatalogServer, IntegrationSetupManifest, IntegrationStatus, UpdateIntegrationRequest };
+diff --git a/src/server/index.ts b/src/server/index.ts
+index 5c7c55ba5dd34d08e9c989cbcf5ec3cf2314f9d5..ccceba7b26a205f08f451eaa3d3e15003ff7c2c8 100644
+--- a/src/server/index.ts
++++ b/src/server/index.ts
+@@ -100,6 +100,13 @@ export type {
+     CreateSandboxProviderRequest,
+     UpdateSandboxProviderRequest,
+     SandboxCatalogServer,
++    IntegrationStatus,
++    IntegrationBase,
++    IntegrationAuthInput,
++    CreateIntegrationRequest,
++    UpdateIntegrationRequest,
++    IntegrationSetupManifest,
++    IntegrationCatalogServer,
+     CatalogServer,
+     AgentDetail,
+     CodeSnippetSampleCode,
+diff --git a/src/server/types.ts b/src/server/types.ts
+index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..9f604f94521bc96586a8d4b689c9fc5d6234b85a 100644
+--- a/src/server/types.ts
++++ b/src/server/types.ts
+@@ -830,9 +830,80 @@ export type ConnectorState = ConnectorSelectorEntry;
+ export type AgentLibraryEntry = AgentSelectorEntry;
+ export type SearchAgentsParams = SearchAgentSelectorParams;
+ 
++/** Whether a channel integration still needs the credentials its app issues. */
++export type IntegrationStatus = 'pending' | 'connected';
++
++/** One channel connection in settings. Credentials are never read back. */
++export interface IntegrationBase {
++  id: string;
++  /** Channel type (e.g. `"slack"`). */
++  type: string;
++  status: IntegrationStatus;
++  /** Name the bot shows in the channel. */
++  botDisplayName: string;
++  /** Agent that answers messages arriving on this channel. */
++  defaultAgentName: string;
++  /** Allowlist; an empty list allows no channel. */
++  allowedChannelIds: string[];
++  allowDirectMessages: boolean;
++  /** Channel-side workspace, known once the integration is connected. */
++  externalAccountId?: string;
++}
++
++/** Credentials the channel's app issues after it is installed. */
++export interface IntegrationAuthInput {
++  botToken: string;
++  signingSecret: string;
++}
++
++export interface CreateIntegrationRequest {
++  type: string;
++  botDisplayName: string;
++  defaultAgentName: string;
++  allowedChannelIds: string[];
++  allowDirectMessages: boolean;
++}
++
++export interface UpdateIntegrationRequest {
++  id: string;
++  botDisplayName: string;
++  defaultAgentName: string;
++  allowedChannelIds: string[];
++  allowDirectMessages: boolean;
++  /** Omit to keep the stored credentials; send both to connect or rotate. */
++  auth?: IntegrationAuthInput;
++}
++
++/** What the host pastes into the channel's app builder to create the app. */
++export interface IntegrationSetupManifest {
++  /** URL the channel posts events to. */
++  requestUrl: string;
++  /** App manifest document, ready to copy. */
++  manifestJson: string;
++  /** Where the channel's app builder accepts the manifest. */
++  createAppUrl: string;
++}
++
++/**
++ * Channel integrations (Slack and the like): create one, read the app manifest it
++ * needs, then save the credentials the installed app issues.
++ */
++export interface IntegrationCatalogServer<
++  TIntegration extends IntegrationBase = IntegrationBase,
++  TCreate extends CreateIntegrationRequest = CreateIntegrationRequest,
++  TUpdate extends UpdateIntegrationRequest = UpdateIntegrationRequest,
++  TSetup extends IntegrationSetupManifest = IntegrationSetupManifest,
++> {
++  listIntegrations(): Promise<TIntegration[]>;
++  createIntegration(req: TCreate): Promise<TIntegration>;
++  updateIntegration(req: TUpdate): Promise<TIntegration>;
++  deleteIntegration(req: { id: string }): Promise<void>;
++  getIntegrationSetupManifest(req: { id: string }): Promise<TSetup>;
++}
++
+ /**
+  * Settings management aggregate — modelCatalog + connectorCatalog + optional
+- * skill and sandbox catalogs.
++ * skill, sandbox and integration catalogs.
+  * Hosts may pass the whole object to an app shell, or a focused sub-port to a page.
+  */
+ export interface CatalogServer<
+@@ -840,6 +911,7 @@ export interface CatalogServer<
+   TConnectorCatalog extends ConnectorCatalogServer = ConnectorCatalogServer,
+   TSkillCatalog extends SkillCatalogServer = SkillCatalogServer,
+   TSandboxCatalog extends SandboxCatalogServer = SandboxCatalogServer,
++  TIntegrationCatalog extends IntegrationCatalogServer = IntegrationCatalogServer,
+ > {
+   modelCatalog: TModelCatalog;
+   connectorCatalog: TConnectorCatalog;
+@@ -847,6 +919,8 @@ export interface CatalogServer<
+   skillCatalog?: TSkillCatalog;
+   /** Optional — omit when the host has no sandboxes settings surface. */
+   sandboxCatalog?: TSandboxCatalog;
++  /** Optional — omit when the host has no channel-integrations settings surface. */
++  integrationCatalog?: TIntegrationCatalog;
+ }
+ 
+ // ---------------------------------------------------------------------------
