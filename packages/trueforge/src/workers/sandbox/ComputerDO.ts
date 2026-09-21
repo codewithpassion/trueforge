@@ -147,12 +147,21 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
 
   /**
    * The container's entrypoint installs the egress CA in the background once it appears; this makes
-   * sure it has before the first command, and says so in the log when it has not, because the
-   * command itself would only see a certificate error. Retried on every command until it succeeds.
+   * sure it has before the first command, and after the container has exited, and says so in the
+   * log when it has not, because the command itself would only see a certificate error. Retried on
+   * every command until it succeeds.
    */
   async #trustEgressCa(): Promise<void> {
     if (this.#egressCaTrusted) {
-      return;
+      // An exit is cleared when a container starts, so one on record means the trusted container
+      // has gone and the next is a new one with a CA of its own.
+      const exited = await this.getWorkspaceContainer()
+        .exitInfo()
+        .catch(() => null);
+      if (exited === null) {
+        return;
+      }
+      this.#egressCaTrusted = false;
     }
     try {
       using handle = await this.#workspace.runtime.exec(
