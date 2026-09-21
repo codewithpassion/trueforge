@@ -2320,6 +2320,56 @@
         ],
         "type": "object"
       },
+      "IntegrationDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "decided_at": {
+            "description": "ISO 8601 time the decision was recorded.",
+            "type": "string"
+          },
+          "decided_by_display_name": {
+            "description": "Channel-side display name at the time.",
+            "type": "string"
+          },
+          "decided_by_id": {
+            "description": "Channel-side user id of whoever decided.",
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/IntegrationDecisionOutcome"
+          },
+          "id": {
+            "description": "Immutable decision id.",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "Session that held the turn.",
+            "type": "string"
+          },
+          "turn_id": {
+            "description": "Turn the decision settled.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "turn_id",
+          "session_id",
+          "decided_by_id",
+          "decided_by_display_name",
+          "decision",
+          "decided_at"
+        ],
+        "type": "object"
+      },
+      "IntegrationDecisionOutcome": {
+        "description": "Whether the tool call was allowed or denied.",
+        "enum": [
+          "allow",
+          "deny"
+        ],
+        "type": "string"
+      },
       "IntegrationManifest": {
         "additionalProperties": false,
         "description": "Channel connection document. Credentials are redacted on read.",
@@ -2503,6 +2553,20 @@
           "data": {
             "items": {
               "$ref": "#/components/schemas/AvailableSkill"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ListIntegrationDecisionsResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationDecision"
             },
             "type": "array"
           }
@@ -9999,6 +10063,55 @@
           "integrations"
         ],
         "x-fern-sdk-method-name": "get_app_manifest"
+      }
+    },
+    "/api/v1/settings/integrations/{integration_id}/decisions": {
+      "get": {
+        "description": "Recent tool approvals settled from the channel, newest first, with who decided and when. Read-only. Answering a question is not recorded, because anyone in the conversation may.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListIntegrationDecisionsResponse"
+                }
+              }
+            },
+            "description": "Recent decisions for this integration."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          }
+        },
+        "summary": "List tool approvals decided from the channel",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "list_decisions"
       }
     },
     "/api/v1/settings/mcp-servers": {

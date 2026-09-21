@@ -3,7 +3,12 @@ import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/err
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { createdBySubjectFromRequestContext, type ResolveRequestContext } from '../auth/identity';
-import { IntegrationConflictError, type IIntegrationStore, type IntegrationRecord } from '../db/integrationStore';
+import {
+  IntegrationConflictError,
+  type IIntegrationStore,
+  type IntegrationDecisionRecord,
+  type IntegrationRecord,
+} from '../db/integrationStore';
 import type { WithTransaction } from '../db/transaction';
 import { slackAuthTest, type SlackAuthTest } from '../integrations/slack/api';
 import {
@@ -18,6 +23,7 @@ import {
   deleteIntegrationRoute,
   getIntegrationAppManifestRoute,
   getIntegrationRoute,
+  listIntegrationDecisionsRoute,
   listIntegrationsRoute,
   putIntegrationRoute,
 } from '../routes/integrationRoutes';
@@ -26,6 +32,7 @@ import {
   integrationStatus,
   type CreateIntegrationRequest,
   type Integration,
+  type IntegrationDecision,
   type IntegrationManifest,
   type UpdateIntegrationRequest,
 } from '../schemas/integration';
@@ -36,6 +43,9 @@ import {
   resolveStoredSecretValue,
   toRedactedSecretValue,
 } from '../utils/secretRedaction';
+
+/** A settings surface shows a recent window, not the whole history. */
+const INTEGRATION_DECISIONS_PAGE_LIMIT = 50;
 
 const CREDENTIALS_REQUIRED_MESSAGE =
   'Integration credentials are required; send real values when the channel account changes';
@@ -149,6 +159,19 @@ function withoutClaimedIdentity(manifest: IntegrationManifest): IntegrationManif
   delete stripped.team_id;
   delete stripped.bot_user_id;
   return stripped;
+}
+
+/** The tenant and integration are already in the path, so the row is narrowed on the way out. */
+function toWireDecision(record: IntegrationDecisionRecord): IntegrationDecision {
+  return {
+    id: record.id,
+    turn_id: record.turn_id,
+    session_id: record.session_id,
+    decided_by_id: record.decided_by_id,
+    decided_by_display_name: record.decided_by_display_name,
+    decision: record.decision,
+    decided_at: record.decided_at,
+  };
 }
 
 function toWireIntegration(record: IntegrationRecord): Integration {
@@ -356,6 +379,22 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
     );
   };
 
+  const decisionsHandler: RouteHandler<typeof listIntegrationDecisionsRoute> = async c => {
+    const { integration_id: integrationId } = c.req.valid('param');
+    const requestContext = deps.resolveRequestContext(c);
+    const store = deps.resolveIntegrationStore(c);
+    const record = await store.getIntegration({ tenant_id: requestContext.tenant_id, id: integrationId });
+    if (record === undefined) {
+      return c.json({ error: { message: `Integration not found: ${integrationId}` } }, 404);
+    }
+    const decisions = await store.listDecisions({
+      tenant_id: requestContext.tenant_id,
+      integration_id: integrationId,
+      limit: INTEGRATION_DECISIONS_PAGE_LIMIT,
+    });
+    return c.json({ data: decisions.map(toWireDecision) }, 200);
+  };
+
   const deleteHandler: RouteHandler<typeof deleteIntegrationRoute> = async c => {
     const { integration_id: integrationId } = c.req.valid('param');
     const requestContext = deps.resolveRequestContext(c);
@@ -368,6 +407,7 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
   router.openapi(createIntegrationRoute, createHandler);
   router.openapi(getIntegrationRoute, getHandler);
   router.openapi(getIntegrationAppManifestRoute, appManifestHandler);
+  router.openapi(listIntegrationDecisionsRoute, decisionsHandler);
   router.openapi(putIntegrationRoute, putHandler);
   router.openapi(deleteIntegrationRoute, deleteHandler);
   return router;

@@ -138,8 +138,15 @@ Answering a question is not gated, whether by clicking an option button or by re
 thread: anyone who can already post there could have asked the question, so anyone there can
 answer it. Only **Approve** and **Deny** need the list.
 
-Who decided is recorded on the session as well as in the thread, so it survives an edit to the
-Slack message.
+Who approved or denied is recorded on the TrueForge side as well as in the thread, so it
+survives an edit to the Slack message:
+
+```bash
+curl "$PUBLIC_BASE_URL/api/v1/settings/integrations/$ID/decisions" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Answers to questions are not recorded, because anyone in the thread may give one.
 
 Find a Slack user id under the person's profile → **More** → **Copy member ID**.
 

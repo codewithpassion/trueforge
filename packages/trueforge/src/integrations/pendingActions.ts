@@ -21,13 +21,24 @@ export const PENDING_ACTION_EVENT_SCAN = 50;
 /** Argument keys whose value is never shown; matching is on the key, so the value is never read. */
 const SECRET_ARGUMENT_KEY =
   /(token|secret|password|passphrase|credential|api[-_]?key|apikey|auth|cookie|private[-_]?key|session[-_]?id|signature|bearer)/i;
-/** Values that look like a credential whatever they are called: `Bearer …`, `sk-…`, a JWT, a long opaque blob. */
-const SECRET_VALUE = /^(bearer\s|basic\s|sk-|xox[abprs]-|ghp_|gh[pousr]_|eyJ[\w-]+\.[\w-]+\.)/i;
-/** A hex digest or key: nothing a person types into a tool argument looks like this. */
-const HEX_SECRET = /^[0-9a-f]{32,}$/i;
+/**
+ * Credential formats, matched **anywhere** in the value: `key:sk-…` and a header line pasted as
+ * a value are as much a leak as a value that starts with one.
+ */
+const SECRET_VALUE = [
+  /(bearer|basic)\s+\S+/i,
+  /\bsk-[A-Za-z0-9_-]{8,}/,
+  /\bxox[abprs]-[A-Za-z0-9-]{8,}/,
+  /\bgh[pousr]_[A-Za-z0-9]{8,}/,
+  /\beyJ[\w-]{4,}\.[\w-]{4,}\.[\w-]{4,}/,
+  /\b[0-9a-f]{32,}\b/i,
+];
+/** Query parameters whose value is a credential however the URL is spelled. */
+const SECRET_QUERY_PARAM =
+  /^(key|token|secret|password|passwd|signature|sig|auth|authorization|access[-_]?token|refresh[-_]?token|api[-_]?key|apikey|client[-_]?secret|session)$/i;
+const REDACTED = '[redacted]';
 /** Long enough, and mixed enough, to be a generated credential rather than a name or a path. */
 const OPAQUE_MIN_LENGTH = 24;
-const REDACTED = '[redacted]';
 /** Longest one argument value may be before it is cut. */
 const ARGUMENT_VALUE_MAX = 120;
 /** Longest the whole summary may be; Block Kit text is capped far above this. */
@@ -77,30 +88,61 @@ function truncate(value: string, max: number): string {
 }
 
 /**
- * A credential in a format the prefix list does not know. Deliberately narrow: an approval
+ * A credential in a format the list above does not know. Deliberately narrow: an approval
  * message's argument line is what the approver decides on, so a path, a URL, a filename or a
- * hyphenated slug must survive it. Anything with a separator (`/`, `:`) is one of those, and
- * an all-lowercase name is not a generated key — what is left is a hex digest or a long
- * string mixing both cases with digits.
+ * hyphenated slug must survive it. Anything with a separator is one of those, and an
+ * all-lowercase name is not a generated key — what is left is a long string mixing both cases
+ * with digits. Hex digests are caught by the list, which matches them anywhere.
  */
 function looksOpaque(value: string): boolean {
-  if (HEX_SECRET.test(value)) {
-    return true;
-  }
   if (value.length < OPAQUE_MIN_LENGTH || /[\s/:]/.test(value)) {
     return false;
   }
   return /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value);
 }
 
+/**
+ * A URL keeps its shape but loses its credentials: the host and path are what an approver
+ * reads, while userinfo and credential-shaped query parameters are never theirs to see.
+ * Returns undefined when the value is not a URL, so a plain string falls through.
+ */
+function redactUrl(value: string): string | undefined {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim())) {
+    return undefined;
+  }
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return undefined;
+  }
+  const hadUserinfo = url.username.length > 0 || url.password.length > 0;
+  url.username = '';
+  url.password = '';
+  let hadSecretParam = false;
+  for (const name of [...url.searchParams.keys()]) {
+    if (SECRET_QUERY_PARAM.test(name)) {
+      hadSecretParam = true;
+      url.searchParams.set(name, REDACTED);
+    }
+  }
+  return hadUserinfo || hadSecretParam ? url.toString() : value;
+}
+
 function secretValue(value: string): boolean {
-  return SECRET_VALUE.test(value.trim()) || looksOpaque(value);
+  const trimmed = value.trim();
+  return SECRET_VALUE.some(pattern => pattern.test(trimmed)) || looksOpaque(trimmed);
 }
 
 /** Depth-first, so a credential nested under a harmless key is redacted too. */
 function summarizeValue(input: { value: unknown; depth: number }): string {
   const { value, depth } = input;
   if (typeof value === 'string') {
+    // A URL is cleaned rather than hidden; anything else carrying a credential goes entirely.
+    const url = redactUrl(value);
+    if (url !== undefined) {
+      return truncate(url, ARGUMENT_VALUE_MAX);
+    }
     return secretValue(value) ? REDACTED : truncate(value, ARGUMENT_VALUE_MAX);
   }
   if (typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) {

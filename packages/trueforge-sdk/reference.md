@@ -3590,6 +3590,69 @@ await client.settings.integrations.getAppManifest("integration_id");
 </dl>
 </details>
 
+<details><summary><code>client.settings.integrations.<a href="/src/api/resources/settings/resources/integrations/client/Client.ts">listDecisions</a>(integration_id) -> TrueForge.ListIntegrationDecisionsResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+Recent tool approvals settled from the channel, newest first, with who decided and when. Read-only. Answering a question is not recorded, because anyone in the conversation may.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+await client.settings.integrations.listDecisions("integration_id");
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**integration_id:** `string` — Immutable integration id.
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**requestOptions:** `IntegrationsClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
 ## Settings McpServers
 <details><summary><code>client.settings.mcpServers.<a href="/src/api/resources/settings/resources/mcpServers/client/Client.ts">list</a>() -> TrueForge.ListMcpServersResponse</code></summary>
 <dl>

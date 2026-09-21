@@ -323,7 +323,6 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
       agentStore: deps.agentStore,
       scheduleStore: deps.scheduleStore,
-      sessionStore: deps.sessionStore,
       turnSkillsResolverStore: deps.turnSkillsResolverStore,
       logger: deps.logger,
     }),

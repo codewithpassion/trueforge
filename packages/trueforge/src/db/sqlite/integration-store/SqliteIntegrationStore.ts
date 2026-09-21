@@ -14,13 +14,16 @@ import {
   type GetIntegrationInput,
   type GetPendingDeliveryInput,
   type IIntegrationStore,
+  type IntegrationDecisionRecord,
   type IntegrationDeliveryRecord,
   type IntegrationRecord,
+  type ListIntegrationDecisionsInput,
   type ListIntegrationsInput,
   type ListRetryableDeliveriesInput,
   type MarkDeliveryFailedInput,
   type MarkDeliverySentInput,
   type PruneIntegrationEventsInput,
+  type RecordIntegrationDecisionInput,
   type RecordIntegrationEventInput,
   type ReleaseDeliveryInput,
   type UpdateIntegrationInput,
@@ -77,6 +80,18 @@ const DELIVERY_COLUMNS = [
   'created_at',
   'updated_at',
   'next_attempt_at',
+] as const;
+
+const DECISION_COLUMNS = [
+  'id',
+  'tenant_id',
+  'integration_id',
+  'turn_id',
+  'session_id',
+  'decided_by_id',
+  'decided_by_display_name',
+  'decision',
+  'decided_at',
 ] as const;
 
 export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database>> {
@@ -375,6 +390,33 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .where('status', 'in', ['pending', 'sending'])
       .returning([...DELIVERY_COLUMNS])
       .executeTakeFirst();
+  }
+
+  /** The caller holds the turn's guarded resume row, so `ON CONFLICT DO NOTHING` only ever
+   * absorbs a replay of the same decision rather than losing a different one. */
+  async recordDecision(input: RecordIntegrationDecisionInput, transaction?: Kysely<Database>): Promise<void> {
+    const db = transaction ?? this.#db;
+    await db
+      .insertInto('integration_decision')
+      .values({ ...input, decided_at: nowIso() })
+      .onConflict(oc => oc.doNothing())
+      .execute();
+  }
+
+  async listDecisions(
+    input: ListIntegrationDecisionsInput,
+    transaction?: Kysely<Database>,
+  ): Promise<IntegrationDecisionRecord[]> {
+    const db = transaction ?? this.#db;
+    return await db
+      .selectFrom('integration_decision')
+      .select([...DECISION_COLUMNS])
+      .where('tenant_id', '=', input.tenant_id)
+      .where('integration_id', '=', input.integration_id)
+      .orderBy('decided_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(input.limit)
+      .execute();
   }
 
   async releaseDelivery(

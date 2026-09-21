@@ -227,6 +227,31 @@ export const GetIntegrationAppManifestResponseSchema = z
   .object({ data: IntegrationAppManifestSchema })
   .openapi('GetIntegrationAppManifestResponse');
 
+/** What a tool approval was settled as. Answering a question is not recorded: anyone in the
+ * conversation may do it, so it identifies nobody. */
+export const IntegrationDecisionOutcomeSchema = z
+  .enum(['allow', 'deny'])
+  .describe('Whether the tool call was allowed or denied.')
+  .openapi('IntegrationDecisionOutcome');
+
+/** One tool approval settled from the channel. Read-only: nothing but the channel writes these. */
+export const IntegrationDecisionSchema = z
+  .object({
+    id: z.string().describe('Immutable decision id.'),
+    turn_id: z.string().describe('Turn the decision settled.'),
+    session_id: z.string().describe('Session that held the turn.'),
+    decided_by_id: z.string().describe('Channel-side user id of whoever decided.'),
+    decided_by_display_name: z.string().describe('Channel-side display name at the time.'),
+    decision: IntegrationDecisionOutcomeSchema,
+    decided_at: z.string().describe('ISO 8601 time the decision was recorded.'),
+  })
+  .strict()
+  .openapi('IntegrationDecision');
+
+export const ListIntegrationDecisionsResponseSchema = z
+  .object({ data: z.array(IntegrationDecisionSchema) })
+  .openapi('ListIntegrationDecisionsResponse');
+
 export const GetIntegrationResponseSchema = z.object({ data: IntegrationSchema }).openapi('GetIntegrationResponse');
 
 export const ListIntegrationsResponseSchema = z
@@ -237,6 +262,7 @@ export const DeleteIntegrationResponseSchema = z.object({}).openapi('DeleteInteg
 
 export type IntegrationType = z.infer<typeof IntegrationTypeSchema>;
 export type IntegrationNotificationOutcome = z.infer<typeof IntegrationNotificationOutcomeSchema>;
+export type IntegrationDecision = z.infer<typeof IntegrationDecisionSchema>;
 export type IntegrationNotificationRule = z.infer<typeof IntegrationNotificationRuleSchema>;
 export type IntegrationStatus = z.infer<typeof IntegrationStatusSchema>;
 export type SlackIntegrationAuth = z.infer<typeof SlackIntegrationAuthSchema>;

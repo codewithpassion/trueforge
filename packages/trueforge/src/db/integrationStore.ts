@@ -43,6 +43,46 @@ export interface IntegrationEventRecord {
 }
 
 /**
+ * Who settled one held turn from the channel, and how. Its own table because the dedupe log it
+ * would otherwise share is pruned at 24 hours, and an audit record must outlive that.
+ */
+export interface IntegrationDecisionRecord {
+  id: string;
+  tenant_id: string;
+  integration_id: string;
+  /** The held turn this settled; one decision per turn, like the guard row that admits it. */
+  turn_id: string;
+  session_id: string;
+  /** Channel-side user id of whoever decided. */
+  decided_by_id: string;
+  decided_by_display_name: string;
+  decision: IntegrationDecisionOutcome;
+  /** ISO-8601 UTC instant. */
+  decided_at: string;
+}
+
+/** Only a tool approval is recorded; answering a question is open to the whole conversation. */
+export type IntegrationDecisionOutcome = 'allow' | 'deny';
+
+export interface RecordIntegrationDecisionInput {
+  id: string;
+  tenant_id: string;
+  integration_id: string;
+  turn_id: string;
+  session_id: string;
+  decided_by_id: string;
+  decided_by_display_name: string;
+  decision: IntegrationDecisionOutcome;
+}
+
+export interface ListIntegrationDecisionsInput {
+  tenant_id: string;
+  integration_id: string;
+  /** Newest first; the settings surface shows a recent window, not the whole history. */
+  limit: number;
+}
+
+/**
  * `pending` is owed, `sending` is claimed by one caller, `sent` and `failed` are terminal.
  * The `pending` -> `sending` transition is the exactly-once gate: two callers can both read a
  * pending row, but only one claim changes a row.
@@ -301,6 +341,15 @@ export interface IIntegrationStore<TTransaction = never> {
     input: ClaimDeliveryForRetryInput,
     transaction?: TTransaction,
   ): Promise<IntegrationDeliveryRecord | undefined>;
+  // --- integration_decision ---
+  /**
+   * Records who settled a held turn. At most one row per turn: the caller already holds the
+   * turn's guarded resume row, so a second writer cannot reach this.
+   */
+  recordDecision(input: RecordIntegrationDecisionInput, transaction?: TTransaction): Promise<void>;
+  /** This integration's recent decisions, newest first. Read-only; nothing else writes them. */
+  listDecisions(input: ListIntegrationDecisionsInput, transaction?: TTransaction): Promise<IntegrationDecisionRecord[]>;
+
   /** Puts a claimed row back in `pending` so the sweep can retry it after its backoff. */
   releaseDelivery(
     input: ReleaseDeliveryInput,

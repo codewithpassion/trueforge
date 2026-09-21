@@ -15,15 +15,11 @@ export function escapeSlackText(text: string): string {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
-function escapeForSlack(text: string): string {
-  return escapeSlackText(text);
-}
-
 /** Fenced blocks first, then inline spans, so a backtick inside a fence is not treated as a span. */
 function liftCode(text: string): { text: string; spans: string[] } {
   const spans: string[] = [];
   const lift = (match: string): string => {
-    spans.push(escapeForSlack(match));
+    spans.push(escapeSlackText(match));
     return `${PLACEHOLDER_MARK}${String(spans.length - 1)}${PLACEHOLDER_MARK}`;
   };
   const withoutFences = text.replaceAll(/```[\s\S]*?```/g, lift);
@@ -40,7 +36,7 @@ function restoreCode(input: { text: string; spans: string[] }): string {
 /** Converts a Markdown answer to Slack mrkdwn. Tables and images lose their layout. */
 export function toMrkdwn(markdown: string): string {
   const lifted = liftCode(markdown.replaceAll('\r\n', '\n'));
-  let text = escapeForSlack(lifted.text);
+  let text = escapeSlackText(lifted.text);
 
   // Blockquotes: Slack uses the same `>` the escape above turned into an entity.
   text = text.replaceAll(/^(\s*)&gt;\s?/gm, '$1> ');

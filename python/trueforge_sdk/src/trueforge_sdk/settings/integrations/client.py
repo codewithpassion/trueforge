@@ -8,6 +8,7 @@ from ...types.delete_integration_response import DeleteIntegrationResponse
 from ...types.get_integration_app_manifest_response import GetIntegrationAppManifestResponse
 from ...types.get_integration_response import GetIntegrationResponse
 from ...types.integration_manifest import IntegrationManifest
+from ...types.list_integration_decisions_response import ListIntegrationDecisionsResponse
 from ...types.list_integrations_response import ListIntegrationsResponse
 from .raw_client import AsyncRawIntegrationsClient, RawIntegrationsClient
 
@@ -241,6 +242,40 @@ class IntegrationsClient:
         )
         """
         _response = self._raw_client.get_app_manifest(integration_id=integration_id, request_options=request_options)
+        return _response.data
+
+    def list_decisions(
+        self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> ListIntegrationDecisionsResponse:
+        """
+        Recent tool approvals settled from the channel, newest first, with who decided and when. Read-only. Answering a question is not recorded, because anyone in the conversation may.
+
+        Parameters
+        ----------
+        integration_id : str
+            Immutable integration id.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        ListIntegrationDecisionsResponse
+            Recent decisions for this integration.
+
+        Examples
+        --------
+        from trueforge_sdk import TrueForge
+
+        client = TrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+        client.settings.integrations.list_decisions(
+            integration_id="integration_id",
+        )
+        """
+        _response = self._raw_client.list_decisions(integration_id=integration_id, request_options=request_options)
         return _response.data
 
 
@@ -518,6 +553,50 @@ class AsyncIntegrationsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.get_app_manifest(
+            integration_id=integration_id, request_options=request_options
+        )
+        return _response.data
+
+    async def list_decisions(
+        self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> ListIntegrationDecisionsResponse:
+        """
+        Recent tool approvals settled from the channel, newest first, with who decided and when. Read-only. Answering a question is not recorded, because anyone in the conversation may.
+
+        Parameters
+        ----------
+        integration_id : str
+            Immutable integration id.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        ListIntegrationDecisionsResponse
+            Recent decisions for this integration.
+
+        Examples
+        --------
+        import asyncio
+
+        from trueforge_sdk import AsyncTrueForge
+
+        client = AsyncTrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+
+
+        async def main() -> None:
+            await client.settings.integrations.list_decisions(
+                integration_id="integration_id",
+            )
+
+
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.list_decisions(
             integration_id=integration_id, request_options=request_options
         )
         return _response.data

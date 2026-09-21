@@ -153,7 +153,6 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
     },
     integrationStore,
     sessions,
-    sessionStore,
     agentStore,
     turnExecutor: executor,
     // The recording executor ignores these; the real stores keep the shape honest.
@@ -656,7 +655,7 @@ describe('IntegrationRouter.resume', () => {
     expect(harness.executor.starts).toHaveLength(1);
   });
 
-  it('records who decided on the session, not only in a message Slack admins can edit', async () => {
+  it('records who decided where no tenant user can rewrite it', async () => {
     harness = await createHarness();
     const { turn_id } = await heldTurn({ held: 'approval' });
 
@@ -665,17 +664,48 @@ describe('IntegrationRouter.resume', () => {
       interaction: interaction({ turn_id, decision: { type: 'approval', approved: false } }),
     });
 
+    const decisions = await harness.integrationStore.listDecisions({
+      tenant_id: TENANT,
+      integration_id: harness.integration.id,
+      limit: 10,
+    });
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      turn_id,
+      decided_by_id: 'U0ADMIN',
+      decided_by_display_name: 'Admin',
+      decision: 'deny',
+    });
+
+    // Session metadata is PATCHable by any tenant user, so nothing about the decision lives
+    // there: only the sender the thread opened with.
     const session = await harness.sessions.getByExternalId({
       tenant_id: TENANT,
       external_id: inboundEvent().conversation_key,
     });
-    expect(session?.record.metadata).toMatchObject({
-      'integration.decided_by_id': 'U0ADMIN',
-      'integration.decided_by_name': 'Admin',
-      'integration.decision': 'tool_approval:deny',
+    expect(Object.keys(session?.record.metadata ?? {})).toEqual(['integration.sender_id', 'integration.sender_name']);
+  });
+
+  it('records nothing for an answer, which anyone in the thread may give', async () => {
+    harness = await createHarness();
+    const { turn_id } = await heldTurn({ held: 'question' });
+
+    await harness.router.resume({
+      integration: harness.integration,
+      interaction: interaction({
+        turn_id,
+        tool_call_id: QUESTION_CALL_ID,
+        decision: { type: 'answer', text: 'production' },
+      }),
     });
-    // The sender the thread started with is still there; metadata is merged, not replaced.
-    expect(session?.record.metadata).toMatchObject({ 'integration.sender_id': 'U0HUMAN' });
+
+    expect(
+      await harness.integrationStore.listDecisions({
+        tenant_id: TENANT,
+        integration_id: harness.integration.id,
+        limit: 10,
+      }),
+    ).toEqual([]);
   });
 
   it('records the reply owed for the resumed turn', async () => {

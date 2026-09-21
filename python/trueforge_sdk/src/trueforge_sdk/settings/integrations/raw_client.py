@@ -23,6 +23,7 @@ from ...types.delete_integration_response import DeleteIntegrationResponse
 from ...types.get_integration_app_manifest_response import GetIntegrationAppManifestResponse
 from ...types.get_integration_response import GetIntegrationResponse
 from ...types.integration_manifest import IntegrationManifest
+from ...types.list_integration_decisions_response import ListIntegrationDecisionsResponse
 from ...types.list_integrations_response import ListIntegrationsResponse
 from ...types.request_error_response import RequestErrorResponse
 from pydantic import ValidationError
@@ -467,6 +468,60 @@ class RawIntegrationsClient:
             )
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    def list_decisions(
+        self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[ListIntegrationDecisionsResponse]:
+        """
+        Recent tool approvals settled from the channel, newest first, with who decided and when. Read-only. Answering a question is not recorded, because anyone in the conversation may.
+
+        Parameters
+        ----------
+        integration_id : str
+            Immutable integration id.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[ListIntegrationDecisionsResponse]
+            Recent decisions for this integration.
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            f"api/v1/settings/integrations/{encode_path_param(integration_id)}/decisions",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    ListIntegrationDecisionsResponse,
+                    construct_type(
+                        type_=ListIntegrationDecisionsResponse,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        except ValidationError as e:
+            raise ParsingError(
+                status_code=_response.status_code, headers=dict(_response.headers), body=_response.json(), cause=e
+            )
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
 
 class AsyncRawIntegrationsClient:
     def __init__(self, *, client_wrapper: AsyncClientWrapper):
@@ -886,6 +941,60 @@ class AsyncRawIntegrationsClient:
                 )
             if _response.status_code == 500:
                 raise InternalServerError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        except ValidationError as e:
+            raise ParsingError(
+                status_code=_response.status_code, headers=dict(_response.headers), body=_response.json(), cause=e
+            )
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def list_decisions(
+        self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[ListIntegrationDecisionsResponse]:
+        """
+        Recent tool approvals settled from the channel, newest first, with who decided and when. Read-only. Answering a question is not recorded, because anyone in the conversation may.
+
+        Parameters
+        ----------
+        integration_id : str
+            Immutable integration id.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[ListIntegrationDecisionsResponse]
+            Recent decisions for this integration.
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            f"api/v1/settings/integrations/{encode_path_param(integration_id)}/decisions",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    ListIntegrationDecisionsResponse,
+                    construct_type(
+                        type_=ListIntegrationDecisionsResponse,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 404:
+                raise NotFoundError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,

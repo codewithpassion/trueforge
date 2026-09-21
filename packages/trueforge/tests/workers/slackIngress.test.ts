@@ -75,7 +75,6 @@ function ingressApp() {
       resolveMcpServerStore: () => persistence.resolveMcpServerStore(REQUEST_CONTEXT),
       resolveSandboxProviderStore: () => persistence.resolveSandboxProviderStore(REQUEST_CONTEXT),
       agentStore: persistence.agentStore,
-      sessionStore: persistence.sessionStore,
       scheduleStore: persistence.scheduleStore,
       turnSkillsResolverStore: persistence.turnSkillsResolverStore,
       logger: createConsoleLogger({ level: 'error', bindings: {} }),

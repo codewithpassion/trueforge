@@ -13,20 +13,23 @@ import {
   type GetIntegrationInput,
   type GetPendingDeliveryInput,
   type IIntegrationStore,
+  type IntegrationDecisionRecord,
   type IntegrationDeliveryRecord,
   type IntegrationRecord,
+  type ListIntegrationDecisionsInput,
   type ListIntegrationsInput,
   type ListRetryableDeliveriesInput,
   type MarkDeliveryFailedInput,
   type MarkDeliverySentInput,
   type PruneIntegrationEventsInput,
+  type RecordIntegrationDecisionInput,
   type RecordIntegrationEventInput,
   type ReleaseDeliveryInput,
   type UpdateIntegrationInput,
 } from '../../integrationStore';
 import { isUniqueViolation } from '../client';
 import { json, now } from '../sqlExpressions';
-import type { Database, IntegrationDeliveryTable, IntegrationTable } from '../types';
+import type { Database, IntegrationDecisionTable, IntegrationDeliveryTable, IntegrationTable } from '../types';
 
 /** Re-validates both persisted documents, so a row written under an older schema cannot leak through. */
 function toRecord(row: Selectable<IntegrationTable>): IntegrationRecord {
@@ -57,6 +60,10 @@ function toDeliveryRecord(row: Selectable<IntegrationDeliveryTable>): Integratio
     updated_at: row.updated_at.toISOString(),
     next_attempt_at: row.next_attempt_at.toISOString(),
   };
+}
+
+function toDecisionRecord(row: Selectable<IntegrationDecisionTable>): IntegrationDecisionRecord {
+  return { ...row, decided_at: row.decided_at.toISOString() };
 }
 
 export class PostgresIntegrationStore implements IIntegrationStore<Transaction<Database>> {
@@ -360,6 +367,33 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
       .returningAll()
       .executeTakeFirst();
     return row === undefined ? undefined : toDeliveryRecord(row);
+  }
+
+  /** The caller holds the turn's guarded resume row, so a conflict can only be a replay. */
+  async recordDecision(input: RecordIntegrationDecisionInput, transaction?: Transaction<Database>): Promise<void> {
+    const db = transaction ?? this.#db;
+    await db
+      .insertInto('integration_decision')
+      .values({ ...input, decided_at: now() })
+      .onConflict(oc => oc.doNothing())
+      .execute();
+  }
+
+  async listDecisions(
+    input: ListIntegrationDecisionsInput,
+    transaction?: Transaction<Database>,
+  ): Promise<IntegrationDecisionRecord[]> {
+    const db = transaction ?? this.#db;
+    const rows = await db
+      .selectFrom('integration_decision')
+      .selectAll()
+      .where('tenant_id', '=', input.tenant_id)
+      .where('integration_id', '=', input.integration_id)
+      .orderBy('decided_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(input.limit)
+      .execute();
+    return rows.map(toDecisionRecord);
   }
 
   async releaseDelivery(

@@ -9,6 +9,9 @@ import { sql, type Kysely } from 'kysely';
  * the same run somewhere else, so "one delivery per turn" becomes "one per integration, turn
  * and conversation". That also breaks the assumption that the conversation key names the
  * session the turn belongs to, which the retry sweep relied on, hence `session_external_id`.
+ *
+ * `integration_decision` lands here too: who approved a tool call has to outlive the 24-hour
+ * dedupe log and must not sit anywhere a tenant user can rewrite it.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`SET LOCAL lock_timeout = '5s'`.execute(db);
@@ -28,6 +31,36 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     CREATE UNIQUE INDEX integration_delivery_target_uq
       ON integration_delivery (integration_id, turn_id, conversation_key)
   `.execute(db);
+
+  // Who settled a held turn, kept apart from `integration_event` because that log is pruned at
+  // 24 hours and an audit record must outlive it.
+  await db.schema
+    .createTable('integration_decision')
+    .addColumn('id', 'text', col => col.notNull())
+    .addColumn('tenant_id', 'text', col => col.notNull())
+    .addColumn('integration_id', 'text', col => col.notNull().references('integration.id').onDelete('cascade'))
+    .addColumn('turn_id', 'text', col => col.notNull())
+    .addColumn('session_id', 'text', col => col.notNull())
+    .addColumn('decided_by_id', 'text', col => col.notNull())
+    .addColumn('decided_by_display_name', 'text', col => col.notNull())
+    .addColumn('decision', sql`varchar(16)`, col => col.notNull())
+    .addColumn('decided_at', 'timestamptz', col => col.notNull())
+    .addPrimaryKeyConstraint('integration_decision_pkey', ['id'])
+    .execute();
+
+  // One decision per held turn, matching the guarded resume row that admits one settler.
+  await db.schema
+    .createIndex('integration_decision_turn_uq')
+    .on('integration_decision')
+    .columns(['integration_id', 'turn_id'])
+    .unique()
+    .execute();
+
+  await db.schema
+    .createIndex('integration_decision_list_idx')
+    .on('integration_decision')
+    .columns(['tenant_id', 'integration_id', 'decided_at'])
+    .execute();
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
@@ -38,4 +71,5 @@ export async function down(db: Kysely<unknown>): Promise<void> {
       ON integration_delivery (turn_id)
   `.execute(db);
   await sql`ALTER TABLE integration_delivery DROP COLUMN session_external_id`.execute(db);
+  await db.schema.dropTable('integration_decision').ifExists().cascade().execute();
 }

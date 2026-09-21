@@ -116,7 +116,6 @@ function workersRouter(stores: Stores) {
   const router = new IntegrationRouter({
     integrationStore: stores.integrationStore,
     sessions: new Sessions({ sessionStore: stores.sessionStore }),
-    sessionStore: stores.sessionStore,
     agentStore: stores.agentStore,
     turnExecutor,
     resolveTurnStores: () => ({

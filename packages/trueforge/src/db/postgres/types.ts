@@ -33,7 +33,7 @@ import type {
 } from '../../schemas/sandboxProvider';
 import type { ScheduleManifest, ScheduleRunStatus, ScheduleStatus } from '../../schemas/schedule';
 import type { SkillManifest } from '../../schemas/skill';
-import type { IntegrationDeliveryStatus } from '../integrationStore';
+import type { IntegrationDecisionOutcome, IntegrationDeliveryStatus } from '../integrationStore';
 import type { OAuthClient, OAuthPendingAuthorizationData, OAuthServer, OAuthToken } from '../mcpServerStore';
 
 /**
@@ -577,6 +577,27 @@ export interface IntegrationDeliveryTable {
   next_attempt_at: Date;
 }
 
+/**
+ * Who settled a held turn from the channel. Its own table because `integration_event` is
+ * pruned at 24 hours and this must outlive that.
+ * PRIMARY KEY (id)
+ * CREATE UNIQUE INDEX integration_decision_turn_uq ON integration_decision (integration_id, turn_id)
+ * FK (integration_id) -> integration(id) ON DELETE CASCADE
+ */
+export interface IntegrationDecisionTable {
+  /** application-generated (ulid) */
+  id: string;
+  tenant_id: string;
+  integration_id: string;
+  turn_id: string;
+  session_id: string;
+  decided_by_id: string;
+  decided_by_display_name: string;
+  /** `allow` | `deny` — varchar(16) */
+  decision: IntegrationDecisionOutcome;
+  decided_at: Date;
+}
+
 export interface Database {
   session: SessionTable;
   turn: TurnTable;
@@ -596,4 +617,5 @@ export interface Database {
   integration: IntegrationTable;
   integration_event: IntegrationEventTable;
   integration_delivery: IntegrationDeliveryTable;
+  integration_decision: IntegrationDecisionTable;
 }

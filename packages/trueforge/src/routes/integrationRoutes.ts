@@ -10,6 +10,7 @@ import {
   DeleteIntegrationResponseSchema,
   GetIntegrationAppManifestResponseSchema,
   GetIntegrationResponseSchema,
+  ListIntegrationDecisionsResponseSchema,
   ListIntegrationsResponseSchema,
   UpdateIntegrationRequestSchema,
 } from '../schemas/integration';
@@ -173,6 +174,29 @@ export const getIntegrationAppManifestRoute = createRoute({
     500: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'Server misconfiguration (e.g. PUBLIC_BASE_URL unset).',
+    },
+  },
+});
+
+export const listIntegrationDecisionsRoute = createRoute({
+  method: 'get',
+  path: '/{integration_id}/decisions',
+  tags: [OpenApiTag.INTEGRATIONS],
+  summary: 'List tool approvals decided from the channel',
+  description:
+    'Recent tool approvals settled from the channel, newest first, with who decided and when. ' +
+    'Read-only. Answering a question is not recorded, because anyone in the conversation may.',
+  'x-fern-sdk-group-name': ['settings', 'integrations'],
+  'x-fern-sdk-method-name': 'list_decisions',
+  request: { params: IntegrationIdParamsSchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ListIntegrationDecisionsResponseSchema } },
+      description: 'Recent decisions for this integration.',
+    },
+    404: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Integration not found.',
     },
   },
 });

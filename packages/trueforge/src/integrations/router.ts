@@ -1,4 +1,4 @@
-import type { ISessionStore, SessionHandle, Sessions, TurnInputItem } from '@truefoundry/trueforge-core/agent-session';
+import type { SessionHandle, Sessions, TurnInputItem } from '@truefoundry/trueforge-core/agent-session';
 import { EventType } from '@truefoundry/trueforge-core/core/events/schema';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
@@ -55,8 +55,6 @@ export interface IntegrationRouterDeps<TTransaction> {
   turnExecutor: TurnExecutor;
   /** Stores bound to the integration's creator for the conversation's agent. */
   resolveTurnStores: (agent: AgentRecord) => TurnStores;
-  /** Writes who decided onto the session; the store is the only place that outlives Slack. */
-  sessionStore: Pick<ISessionStore, 'updateSession'>;
   notifier: TurnCompletionNotifier<TTransaction>;
   /**
    * Runs the post-start delivery flush outside the acknowledgement the channel is waiting on
@@ -83,16 +81,6 @@ function senderMetadata(sender: InboundSender): Record<string, string> {
 /** A denial names who denied it, because that is the only record the agent ever sees. */
 function denialReason(sender: InboundSender): string {
   return `Denied by ${sender.display_name} (${sender.id}) from the channel.`;
-}
-
-/** Short, fixed vocabulary, because it is read back out of session metadata. */
-function decisionMetadataValue(interaction: InboundInteraction): string {
-  const { decision } = interaction;
-  return decision.type === 'approval'
-    ? decision.approved
-      ? 'tool_approval:allow'
-      : 'tool_approval:deny'
-    : 'tool_response:answered';
 }
 
 /** The line that replaces the buttons, so the thread shows who decided and what. */
@@ -317,7 +305,7 @@ export class IntegrationRouter<TTransaction> {
       });
       return { type: 'turn_failed', failure: started.failure };
     }
-    await this.#recordDecider({ session, interaction });
+    await this.#recordDecision({ integration, session, interaction });
     return {
       type: 'resumed',
       turn_id: started.turn_id,
@@ -327,30 +315,36 @@ export class IntegrationRouter<TTransaction> {
   }
 
   /**
-   * Keeps who decided on the session, not only in a Slack message a workspace admin can edit.
-   * Metadata is a full replace, and the guard row means at most one resume per turn, so the
-   * merge cannot race itself. Best-effort: a decision that was taken must not be undone by a
-   * bookkeeping failure.
+   * Keeps who approved where no tenant user can rewrite it: session metadata is PATCHable by
+   * anyone in the tenant, so it is not a record of anything. Best-effort — a decision that was
+   * applied must not be undone by a bookkeeping failure.
+   *
+   * Only an approval is recorded. Answering a question is open to everyone in the
+   * conversation, so who clicked identifies nobody and is not worth keeping.
    */
-  async #recordDecider(input: { session: SessionHandle; interaction: InboundInteraction }): Promise<void> {
-    const { session, interaction } = input;
+  async #recordDecision(input: {
+    integration: IntegrationRecord;
+    session: SessionHandle;
+    interaction: InboundInteraction;
+  }): Promise<void> {
+    const { integration, interaction } = input;
+    if (interaction.decision.type !== 'approval') {
+      return;
+    }
     try {
-      await this.#deps.sessionStore.updateSession({
-        tenant_id: session.tenant_id,
-        session_id: session.session_id,
-        agent: undefined,
-        title: undefined,
-        metadata: {
-          ...session.record.metadata,
-          'integration.decided_by_id': interaction.sender.id.slice(0, METADATA_VALUE_MAX_LENGTH),
-          'integration.decided_by_name': interaction.sender.display_name.slice(0, METADATA_VALUE_MAX_LENGTH),
-          'integration.decided_at': new Date().toISOString(),
-          'integration.decision': decisionMetadataValue(interaction),
-        },
+      await this.#deps.integrationStore.recordDecision({
+        id: newId(),
+        tenant_id: integration.tenant_id,
+        integration_id: integration.id,
+        turn_id: interaction.turn_id,
+        session_id: input.session.session_id,
+        decided_by_id: interaction.sender.id.slice(0, METADATA_VALUE_MAX_LENGTH),
+        decided_by_display_name: interaction.sender.display_name.slice(0, METADATA_VALUE_MAX_LENGTH),
+        decision: interaction.decision.approved ? 'allow' : 'deny',
       });
     } catch (error) {
-      this.#deps.logger.warn('Integration decision was applied but not recorded on the session', {
-        integrationId: interaction.integration_id,
+      this.#deps.logger.warn('Integration decision was applied but not recorded', {
+        integrationId: integration.id,
         turnId: interaction.turn_id,
         ...extractErrorLogFields(error),
       });

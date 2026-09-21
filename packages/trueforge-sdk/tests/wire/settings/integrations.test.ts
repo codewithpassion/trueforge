@@ -814,4 +814,65 @@ describe("IntegrationsClient", () => {
             return await client.settings.integrations.getAppManifest("integration_id");
         }).rejects.toThrow(TrueForgeTypes.InternalServerError);
     });
+
+    test("list_decisions (1)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = {
+            data: [
+                {
+                    decided_at: "decided_at",
+                    decided_by_display_name: "decided_by_display_name",
+                    decided_by_id: "decided_by_id",
+                    decision: "allow",
+                    id: "id",
+                    session_id: "session_id",
+                    turn_id: "turn_id",
+                },
+            ],
+        };
+
+        server
+            .mockEndpoint()
+            .get("/api/v1/settings/integrations/integration_id/decisions")
+            .respondWith()
+            .statusCode(200)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        const response = await client.settings.integrations.listDecisions("integration_id");
+        expect(response).toEqual({
+            data: [
+                {
+                    decidedAt: "decided_at",
+                    decidedByDisplayName: "decided_by_display_name",
+                    decidedById: "decided_by_id",
+                    decision: "allow",
+                    id: "id",
+                    sessionId: "session_id",
+                    turnId: "turn_id",
+                },
+            ],
+        });
+    });
+
+    test("list_decisions (2)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .get("/api/v1/settings/integrations/integration_id/decisions")
+            .respondWith()
+            .statusCode(404)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.settings.integrations.listDecisions("integration_id");
+        }).rejects.toThrow(TrueForgeTypes.NotFoundError);
+    });
 });

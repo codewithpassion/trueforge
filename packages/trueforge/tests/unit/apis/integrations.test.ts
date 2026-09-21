@@ -154,7 +154,6 @@ async function createIngress(options: { adapters: IntegrationAdapterRegistry; pe
       }),
     resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
     agentStore,
-    sessionStore,
     scheduleStore: { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) },
     turnSkillsResolverStore: new SqliteSkillStore(db),
     logger: winston.createLogger({ silent: true }),
@@ -507,6 +506,59 @@ describe('settings integrations router', () => {
     expect(await deleted.json()).toEqual({});
     expect((await harness.settings.request(`/${data.id}`, { method: 'DELETE' })).status).toBe(200);
     expect(await (await harness.settings.request('/')).json()).toEqual({ data: [] });
+  });
+});
+
+describe('the decisions an integration recorded', () => {
+  it('lists them newest first, and never a question answer', async () => {
+    const { db, integrationStore, settings } = await createHarness();
+    try {
+      const created = await integrationStore.createIntegration({
+        id: newId(),
+        tenant_id: TENANT,
+        type: 'slack',
+        external_account_id: 'T0TEAM',
+        manifest: manifest(),
+        created_by_subject: CREATED_BY,
+      });
+      await integrationStore.recordDecision({
+        id: 'dec-1',
+        tenant_id: TENANT,
+        integration_id: created.id,
+        turn_id: 'turn-1',
+        session_id: 'session-1',
+        decided_by_id: 'U0ADMIN',
+        decided_by_display_name: 'Admin One',
+        decision: 'deny',
+      });
+
+      const response = await settings.request(`/${created.id}/decisions`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        data: [
+          {
+            id: 'dec-1',
+            turn_id: 'turn-1',
+            session_id: 'session-1',
+            decided_by_id: 'U0ADMIN',
+            decided_by_display_name: 'Admin One',
+            decision: 'deny',
+            decided_at: expect.any(String),
+          },
+        ],
+      });
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('answers 404 for an integration this tenant does not have', async () => {
+    const { db, settings } = await createHarness();
+    try {
+      expect((await settings.request('/missing/decisions')).status).toBe(404);
+    } finally {
+      await db.destroy();
+    }
   });
 });
 

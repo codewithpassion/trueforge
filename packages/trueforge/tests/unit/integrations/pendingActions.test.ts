@@ -131,6 +131,26 @@ describe('summarizeToolArguments', () => {
     expect(summarizeToolArguments(JSON.stringify({ note: value }))).toBe('note: [redacted]');
   });
 
+  // Each of these survived a prefix-anchored rule that skipped anything with a separator.
+  it('redacts a credential that is not at the start of the value', () => {
+    expect(summarizeToolArguments(JSON.stringify({ note: 'key:sk-live-abcdef012345' }))).toBe('note: [redacted]');
+    expect(summarizeToolArguments(JSON.stringify({ header: 'Authorization: Bearer abc.def' }))).toBe(
+      'header: [redacted]',
+    );
+  });
+
+  it('strips the credentials out of a URL but keeps the rest readable', () => {
+    expect(summarizeToolArguments(JSON.stringify({ target: 'https://user:pass@host.test/deploy' }))).toBe(
+      'target: https://host.test/deploy',
+    );
+    const withKey = summarizeToolArguments(
+      JSON.stringify({ target: 'https://api.example.com/v2/deploy?api_key=sk-live-abcdef&env=prod' }),
+    );
+    expect(withKey).toContain('https://api.example.com/v2/deploy');
+    expect(withKey).toContain('env=prod');
+    expect(withKey).not.toContain('sk-live');
+  });
+
   it('redacts an unknown credential format that is long and mixed', () => {
     expect(summarizeToolArguments(JSON.stringify({ note: 'Xk29fQpLm4RtZa81BvNw55' + 'Qq7' }))).toBe('note: [redacted]');
     expect(summarizeToolArguments(JSON.stringify({ note: 'a3f5c9e1b7d2408695facbde1234567890abcdef' }))).toBe(

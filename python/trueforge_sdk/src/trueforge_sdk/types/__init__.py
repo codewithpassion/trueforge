@@ -98,6 +98,8 @@ if typing.TYPE_CHECKING:
     from .input_tokens_compaction_trigger import InputTokensCompactionTrigger
     from .integration import Integration
     from .integration_app_manifest import IntegrationAppManifest
+    from .integration_decision import IntegrationDecision
+    from .integration_decision_outcome import IntegrationDecisionOutcome
     from .integration_manifest import IntegrationManifest
     from .integration_notification_outcome import IntegrationNotificationOutcome
     from .integration_notification_rule import IntegrationNotificationRule
@@ -108,6 +110,7 @@ if typing.TYPE_CHECKING:
     from .list_available_mcp_servers_response import ListAvailableMcpServersResponse
     from .list_available_models_response import ListAvailableModelsResponse
     from .list_available_skills_response import ListAvailableSkillsResponse
+    from .list_integration_decisions_response import ListIntegrationDecisionsResponse
     from .list_integrations_response import ListIntegrationsResponse
     from .list_mcp_server_tools_response import ListMcpServerToolsResponse
     from .list_mcp_servers_response import ListMcpServersResponse
@@ -347,6 +350,8 @@ _dynamic_imports: typing.Dict[str, str] = {
     "InputTokensCompactionTrigger": ".input_tokens_compaction_trigger",
     "Integration": ".integration",
     "IntegrationAppManifest": ".integration_app_manifest",
+    "IntegrationDecision": ".integration_decision",
+    "IntegrationDecisionOutcome": ".integration_decision_outcome",
     "IntegrationManifest": ".integration_manifest",
     "IntegrationNotificationOutcome": ".integration_notification_outcome",
     "IntegrationNotificationRule": ".integration_notification_rule",
@@ -357,6 +362,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "ListAvailableMcpServersResponse": ".list_available_mcp_servers_response",
     "ListAvailableModelsResponse": ".list_available_models_response",
     "ListAvailableSkillsResponse": ".list_available_skills_response",
+    "ListIntegrationDecisionsResponse": ".list_integration_decisions_response",
     "ListIntegrationsResponse": ".list_integrations_response",
     "ListMcpServerToolsResponse": ".list_mcp_server_tools_response",
     "ListMcpServersResponse": ".list_mcp_servers_response",
@@ -620,6 +626,8 @@ __all__ = [
     "InputTokensCompactionTrigger",
     "Integration",
     "IntegrationAppManifest",
+    "IntegrationDecision",
+    "IntegrationDecisionOutcome",
     "IntegrationManifest",
     "IntegrationNotificationOutcome",
     "IntegrationNotificationRule",
@@ -630,6 +638,7 @@ __all__ = [
     "ListAvailableMcpServersResponse",
     "ListAvailableModelsResponse",
     "ListAvailableSkillsResponse",
+    "ListIntegrationDecisionsResponse",
     "ListIntegrationsResponse",
     "ListMcpServerToolsResponse",
     "ListMcpServersResponse",

@@ -27,6 +27,12 @@ interaction cannot settle — an approval plus a question, say — is not offere
 Everything a model produced is escaped before it reaches a block, argument summaries redact
 credentials recursively and by value shape, and non-JSON arguments are never shown.
 
+Who approved or denied is recorded in a new `integration_decision` table, one row per held turn,
+readable through `GET /api/v1/settings/integrations/{integration_id}/decisions`. It is its own
+table because the dedupe log is pruned at 24 hours, and it is not session metadata because any
+tenant user can rewrite that. Answers to questions are not recorded: anyone in the thread may
+give one.
+
 Schema: `integration_delivery` is now unique on `(integration_id, turn_id, conversation_key)`
 rather than `turn_id`, so one turn can owe a message to several channels and two integrations
 can each owe the same one, and it carries `session_external_id` because a rule's channel no

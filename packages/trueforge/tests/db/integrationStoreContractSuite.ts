@@ -412,6 +412,93 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     expect((await store.getPendingDelivery(target(second.id)))?.id).toBe(`del-${second.id}`);
   });
 
+  it('records a decision per held turn and lists them newest first', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    const decision = (turnId: string, outcome: 'allow' | 'deny') => ({
+      id: `dec-${turnId}`,
+      tenant_id: TENANT,
+      integration_id: created.id,
+      turn_id: turnId,
+      session_id: 'session-1',
+      decided_by_id: 'U0ADMIN',
+      decided_by_display_name: 'Admin One',
+      decision: outcome,
+    });
+
+    await store.recordDecision(decision('turn-1', 'allow'));
+    await store.recordDecision(decision('turn-2', 'deny'));
+
+    // Two decisions on two turns both survive; the record is per turn, not a latest-wins field.
+    const listed = await store.listDecisions({ tenant_id: TENANT, integration_id: created.id, limit: 10 });
+    expect(listed).toHaveLength(2);
+    expect(listed.map(row => row.turn_id).sort()).toEqual(['turn-1', 'turn-2']);
+    expect(listed.find(row => row.turn_id === 'turn-1')).toMatchObject({
+      decided_by_id: 'U0ADMIN',
+      decided_by_display_name: 'Admin One',
+      decision: 'allow',
+    });
+    expect(listed[0]?.decided_at).toMatch(ISO_UTC);
+  });
+
+  it('keeps one decision per turn, so a replay cannot rewrite who decided', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    const base = {
+      tenant_id: TENANT,
+      integration_id: created.id,
+      turn_id: 'turn-1',
+      session_id: 'session-1',
+      decision: 'allow' as const,
+    };
+
+    await store.recordDecision({ ...base, id: 'dec-1', decided_by_id: 'U0FIRST', decided_by_display_name: 'First' });
+    await store.recordDecision({ ...base, id: 'dec-2', decided_by_id: 'U0SECOND', decided_by_display_name: 'Second' });
+
+    const listed = await store.listDecisions({ tenant_id: TENANT, integration_id: created.id, limit: 10 });
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.decided_by_id).toBe('U0FIRST');
+  });
+
+  it('scopes decisions to one tenant and one integration', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await store.recordDecision({
+      id: 'dec-1',
+      tenant_id: TENANT,
+      integration_id: created.id,
+      turn_id: 'turn-1',
+      session_id: 'session-1',
+      decided_by_id: 'U0ADMIN',
+      decided_by_display_name: 'Admin One',
+      decision: 'allow',
+    });
+
+    expect(await store.listDecisions({ tenant_id: 'other-tenant', integration_id: created.id, limit: 10 })).toEqual([]);
+    expect(await store.listDecisions({ tenant_id: TENANT, integration_id: 'other-integration', limit: 10 })).toEqual(
+      [],
+    );
+  });
+
+  it('drops decisions with the integration they belong to', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    await store.recordDecision({
+      id: 'dec-1',
+      tenant_id: TENANT,
+      integration_id: created.id,
+      turn_id: 'turn-1',
+      session_id: 'session-1',
+      decided_by_id: 'U0ADMIN',
+      decided_by_display_name: 'Admin One',
+      decision: 'allow',
+    });
+
+    await store.deleteIntegration({ tenant_id: TENANT, id: created.id });
+
+    expect(await store.listDecisions({ tenant_id: TENANT, integration_id: created.id, limit: 10 })).toEqual([]);
+  });
+
   it('concurrent enqueues for one turn write exactly one outbox row', async () => {
     const store = getStore();
     const created = await store.createIntegration(createInput());
