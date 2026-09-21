@@ -457,7 +457,7 @@ container ──http://code-mode.trueforge.internal/dispatch──►  (egress i
 `workers/trust-egress-ca.sh`, installed as `trueforge-trust-egress-ca`, now does the install. It waits up to the number of seconds it is given, copies `/etc/cloudflare/certs/cloudflare-containers-ca.crt` into the trust store, runs `update-ca-certificates`, and writes a marker only on success, so running it again costs nothing. It can run from two places:
 
 - The entrypoint starts it in the background with 120 s, then `exec`s `computerd`, so startup never waits.
-- `ComputerDO` runs it before the first command with 5 s. If the CA is still missing, it logs an error naming the exit code and retries on the next command. A certificate failure therefore has a cause in the Durable Object log, not only in the command's stderr.
+- `ComputerDO` runs it before the first command with 5 s, and again before the next command after the container host has recorded an exit, because a restarted container has a CA of its own. If the CA is still missing, it logs an error naming the exit code and retries on the next command. A certificate failure therefore has a cause in the Durable Object log, not only in the command's stderr.
 
 Every command also gets `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `PIP_CERT` and `NODE_EXTRA_CA_CERTS`, all pointing at the system bundle. They come from one constant, `COMPUTER_TLS_TRUST_ENV`, and are applied on top of the caller's env, so no caller can unset them. The entrypoint used to export two of these into `computerd`'s own environment, which exec children may never inherit, and it set nothing for Node.
 
@@ -508,8 +508,8 @@ Check these first, in this order. None of them can be seen without a real contai
 1. **CA timing.** The first command after a cold start is the likeliest to hit HTTPS before the CA is installed. Look for `does not trust the Cloudflare egress CA` from `ComputerDO` in the tail. If the error appears, run `ls -la /etc/cloudflare/certs/` in the sandbox and look at the exit code the log gives.
 2. **Trust stores.** `curl`, `git`, `pip` and Python `urllib` each read a different setting. Probe each of them once over HTTPS, not only `curl`.
 3. **Exec env.** Run `env | grep -E 'SSL_CERT_FILE|NODE_EXTRA_CA_CERTS'` inside a command to confirm the trust env reaches exec children. If it is missing there, it is missing for every tool.
-4. **The workspace's own name.** Routing depends on `ctx.id.name` for a `ComputerDO` that `WorkspaceProxy` woke by id. The Workers tests show it is set, but only in workerd. If it is undefined live, every Code Mode call gets 503, and the tail shows `cannot name its session`.
-5. **Same-zone fetches.** A request from the sandbox to the Worker's own custom domain goes through the gateway's `fetch`, which may fail as a same-zone loop (Cloudflare error 1042) instead of passing through. Probe it once.
+4. **The workspace's own name.** Routing depends on `ctx.id.name` whichever way the live deploy wakes `ComputerDO`: by a named stub, by id from `WorkspaceProxy` when the container calls back, or by an alarm. The Workers tests show it only for a named stub and a cold wake by id string, and only in workerd. If it is undefined live, every Code Mode call gets 503, and the tail shows `cannot name its session`.
+5. **Same-zone fetches.** A request from the sandbox to the Worker's own custom domain goes through the gateway's `fetch`, which may fail as a same-zone loop (Cloudflare error 1042) instead of passing through. Probe it with `curl -sS https://trueforge.rockyshoreslabs.io/healthz` from inside the sandbox.
 
 The acceptance run stopped again before its first probe: the agent running it had no permission to drive the signed-in browser, and every probe needs an authenticated session. Nothing below has been measured. The list stays in its two-pass order.
 
