@@ -68,6 +68,12 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'tsconfig.base.json'
               - '.github/workflows/ci.yml'
+            trueforge-computer:
+              - 'packages/trueforge-computer/**'
+              - 'package.json'
+              - 'pnpm-workspace.yaml'
+              - 'tsconfig.base.json'
+              - '.github/workflows/ci.yml'
             store:
               - 'packages/trueforge/src/db/**'
               - 'packages/trueforge/tests/db/**'
@@ -99,6 +105,7 @@ jobs:
           TRUEFORGE: ${{ steps.filter.outputs.trueforge }}
           FRONTEND: ${{ steps.filter.outputs.frontend }}
           TRUEFORGE_UI: ${{ steps.filter.outputs['trueforge-ui'] }}
+          TRUEFORGE_COMPUTER: ${{ steps.filter.outputs['trueforge-computer'] }}
         run: |
           node <<'EOF' >> "$GITHUB_OUTPUT"
           const changedPackages = [];
@@ -106,6 +113,7 @@ jobs:
           if (process.env.TRUEFORGE === 'true') changedPackages.push('trueforge');
           if (process.env.FRONTEND === 'true') changedPackages.push('frontend');
           if (process.env.TRUEFORGE_UI === 'true') changedPackages.push('trueforge-ui');
+          if (process.env.TRUEFORGE_COMPUTER === 'true') changedPackages.push('trueforge-computer');
           console.log(`list=${JSON.stringify(changedPackages)}`);
           EOF
 
@@ -226,6 +234,15 @@ jobs:
         with:
           node-version: '24'
           cache: 'pnpm'
+
+      # trueforge-computer is a Go module. The runner's toolchain is used directly; the
+      # package's scripts fall back to a golang container only where Go is absent.
+      - name: Setup Go
+        if: matrix.package == 'trueforge-computer'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: packages/trueforge-computer/go.mod
+          cache-dependency-path: packages/trueforge-computer/go.sum
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

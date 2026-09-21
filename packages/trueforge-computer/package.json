@@ -1,0 +1,18 @@
+{
+  "name": "@truefoundry/trueforge-computer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Go daemon that connects a machine you own to TrueForge, so an agent's commands run there.",
+  "license": "MIT",
+  "scripts": {
+    "build": "bash scripts/build-all.sh",
+    "build:local": "bash scripts/go.sh go build -trimpath -o bin/trueforge-computer ./cmd/trueforge-computer",
+    "check": "pnpm run vet && pnpm run fmt:check && pnpm run test",
+    "docker:build": "docker build -t trueforge-computer:local .",
+    "fmt": "bash scripts/go.sh gofmt -w .",
+    "fmt:check": "bash scripts/fmt-check.sh",
+    "test": "bash scripts/go.sh go test ./...",
+    "tidy": "bash scripts/go.sh go mod tidy",
+    "vet": "bash scripts/go.sh go vet ./..."
+  }
+}

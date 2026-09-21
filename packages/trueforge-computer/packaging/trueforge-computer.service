@@ -1,0 +1,39 @@
+[Unit]
+Description=TrueForge remote computer agent
+Documentation=https://github.com/truefoundry/trueforge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# A dedicated unprivileged account. Everything an agent runs here runs as this user, so give
+# it only what you are willing to let an agent reach.
+User=trueforge
+Group=trueforge
+
+Environment=TRUEFORGE_STATE_DIR=/var/lib/trueforge-computer
+ExecStart=/usr/local/bin/trueforge-computer run
+
+Restart=always
+RestartSec=5s
+
+# The daemon's commands run in their own process groups inside this unit's cgroup. Killing the
+# cgroup is what stops a restart from leaving them running: a plain SIGTERM to the main process
+# leaves its children reparented to PID 1 with nobody to collect them.
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+
+# The state directory holds the machine credential at mode 0600; systemd creates it 0700.
+StateDirectory=trueforge-computer
+StateDirectoryMode=0700
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectControlGroups=true
+ProtectKernelTunables=true
+
+[Install]
+WantedBy=multi-user.target
