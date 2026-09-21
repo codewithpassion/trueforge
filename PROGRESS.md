@@ -4,6 +4,41 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 23 — The built-in Cloudflare sandbox is now selectable from Settings (2026-09-21)
+
+**Goal:** Let a tenant turn the Workers deploy's Cloudflare Computer sandbox on from Settings instead of by redeploying, and stop Settings offering a Daytona card that cannot work there.
+
+**What we did:**
+
+- Split availability from enablement. `TRUEFORGE_SANDBOX_BACKEND=cloudflare-computer` now means the built-in provider is _available_ on this deploy; a tenant _enables_ it by storing a sandbox-provider record of the new manifest type `cloudflare-computer`, which carries no credentials and nothing to tune. Both must hold, or the sandbox reads as off.
+- `SandboxProviderManifest` and the catalog wire type became real `z.discriminatedUnion('type', …)`s over Daytona and the new variant, and the store's jsonb union gained the same member additively — no migration, existing Daytona rows keep working on Node. `sandbox-catalog.yaml` stays Daytona-only; the built-in entry is synthesized by the catalog route.
+- `GET /api/v1/catalogs/sandbox-providers` now answers for the runtime it is running on: the Daytona presets only where `isDaytonaSettingsSupported()`, the built-in entry only where `isCloudflareComputerSettingsSupported()`, an empty list otherwise. Node is unchanged.
+- One answer to "is a sandbox configured": `SandboxIntegration.isSandboxConfigured({ store, tenant_id })`. The capability endpoint, `validateAgentSpec`, and turn-time `resolveProvider` / `checkSnapshotStatus` all go through it. `isSandboxUsableWithoutStoredRecord()` is `false` on Workers again.
+- `DELETE /api/v1/settings/sandbox-providers` is new, so a tenant can disable. It is also what finally puts a route behind the Node settings UI's "Remove" button: `createSandboxProviderCatalog` had shipped with `deleteSandboxProvider` omitted and a comment reading "Delete omitted (no BE route)".
+- UI: the built-in provider enables in one click — no form, no API key — keeps the same status line as any configured provider, and reads **Enable** / **Disable** where Daytona reads **Configure** / **Remove**. Daytona keeps its form and its Update action.
+- Regenerated OpenAPI and both SDKs for the union and the new `DELETE`; two changesets (`@truefoundry/trueforge`, `@truefoundry/trueforge-ui`; `changeset:sdk-regen` was a no-op, the SDK changeset was already pending). `docs/deploy/cloudflare.mdx` documents the two-step turn-on, and the sandbox plan gained Section 12, which strikes through Section 3's "deploy-configured, not settings-configured" and the non-goal it rested on.
+- Green: typecheck clean; `test:trueforge` 745, `test:trueforge-core` 445, `test:trueforge-ui` 1420, `test:frontend` 37, `test:workers` 116, `test:store:sqlite` 233, `test:store:d1` 257, `test:store:local` (Postgres) 233. `openapi:write` leaves both copies identical, `sdk:generate` exits 0, eslint 0 errors (2 pre-existing `DropdownMenu.tsx` warnings), `workers:check` builds. Both key fixes were mutation-checked: reverting `validateAgentSpec` to row presence fails only the "record outlives the deploy var" case, and letting `isEnabledForTenant` answer from the var alone fails the enable/disable case.
+
+**Lessons learned:**
+
+- One symptom, three independent bugs. The settings router gated every verb on `isDaytonaSettingsSupported()`; the catalog route served `sandbox-catalog.yaml` verbatim regardless of runtime; and the Workers integration answered `checkSnapshotStatus` and `isSandboxUsableWithoutStoredRecord` from the deploy var alone, so capabilities reported a sandbox Settings could neither show nor change. Fixing any one of them alone would have left the page broken.
+- Third cycle on the same flag: Cycle 17 wrote it as `isLocalFallbackEnabled: () => false`, Cycle 18's live acceptance test found that rejects every sandbox-enabled agent spec, Cycle 19 renamed it to `isSandboxUsableWithoutStoredRecord` (`3e59dad0`). And making the stored record authoritative here immediately re-opened Cycle 18's drift in the _other_ direction: a record left behind by a deploy that had since dropped the var made the validator say "configured" while capabilities said "off". Renaming buys a cycle; a single source (`isSandboxConfigured`) buys the property.
+- A boolean helper does not narrow. `isNodeRunnableManifest` returning `boolean` left `record.manifest` as the full union after the early return, so the Daytona call failed to compile — and with `as` escapes banned there is no shortcut. It had to be a type predicate. Same family: the `PUT` handler returning `saved.manifest` types as `StoredSandboxProviderManifest` (which includes `truefoundry`) and fails the response schema; return the validated request manifest.
+- Widening the manifest into a union rippled through every Daytona helper (`toDaytonaSandboxProviderInput`, `createDaytonaProvider`, `toDaytonaSandboxProvider`, and `toSandboxProviderFromRecord`'s return type). In `providerUtils.ts` the new schema type collides with the core class of the same name, hence the `DaytonaSandboxProviderConfig` import alias.
+- `.openapi()` metadata rides through `.omit()`, so naming the Daytona object would have leaked its component name into the credential-free catalog entry. The shared fields live in an unnamed `DAYTONA_SANDBOX_PROVIDER_SHAPE` spread into two separately named schemas.
+- Two test traps cost real time. Mounting `createCapabilitiesRouter` bare gives `SyntaxError: Unexpected token 'I', "Internal S"...` because `resolveRequestContext` needs the auth middleware. And `expect(screen.queryByLabelText(/API key/)).toBeNull()` fails even when no form opened, because `ConfigureSandboxForm` is always mounted and jsdom does not hide a `<dialog>` without `open` — assert on the `open` attribute and on the recorded request instead.
+- `@truefoundry/assistant-ui-runtime`'s `SandboxConfig` requires the four Daytona interval numbers and `CreateSandboxRequest` requires an `apiKey`, so the adapter maps the built-in entry to zeros and an empty key and the section never renders those fields. A deliberate dent, recorded in Section 12: widen the shared package only if a second credential-free provider arrives.
+
+**Avoid next time:**
+
+- Don't express "is X configured?" as a parameterless boolean on a runtime port when the answer depends on tenant state. Make it a query that takes the store, and route every caller through it.
+- Don't let a catalog endpoint answer from a static file when the runtime decides what can run. A catalog is part of the runtime's contract, not a constant.
+- A deploy variable says "this feature is available here", not "this tenant wants it". Conflating them leaves nothing to show in Settings, no way to turn the feature off, and a capability endpoint that can only report a redeploy.
+- Don't cover only the happy transition. "Off before, on after" passed under the buggy row-presence validator; the case that caught it was the record that outlives the deploy var.
+- Reach for a type predicate before reaching for a cast — a `boolean` helper silently pushes you toward the `as` the repo bans.
+- Grep for unused _exports_ after widening a schema; `noUnusedLocals` does not catch them. An exported `CatalogDaytonaSandboxProvider` alias nothing imported stayed green through typecheck, lint and every test until `1ecedc94` removed it.
+- Don't leave a UI action wired to a port method with no backend route. `deleteSandboxProvider` sat omitted behind an explanatory comment, and the Remove button was dead the whole time.
+
 ## Cycle 20 — Phase I2: Slack messaging (2026-09-17)
 
 **Goal:** Ship the Slack adapter from Phase I2 of `docs/integrations-slack-plan.md` so a Slack workspace can talk to an agent on both runtimes, up to but not including the live workspace test. Then close a review round of three must-fixes and five should-fixes, and add the page for connecting a workspace.
