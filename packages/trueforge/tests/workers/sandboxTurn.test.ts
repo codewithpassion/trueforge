@@ -117,9 +117,15 @@ async function runSandboxTurn(params: {
   sessionId: string;
   scenario: string;
   sandboxIntegration: ReturnType<typeof sandboxIntegration>;
+  /** Whether the tenant has turned the built-in provider on in Settings. */
+  enabled: boolean;
 }) {
   const { stores } = await createSandboxSession({ sessionId: params.sessionId, scenario: params.scenario });
-  await enableBuiltInSandbox();
+  if (params.enabled) {
+    await enableBuiltInSandbox();
+  } else {
+    await stores.sandboxProviderStore.deleteSandboxProvider(TENANT_ID);
+  }
   const session = await new Sessions({ sessionStore: stores.sessionStore }).get({
     tenant_id: TENANT_ID,
     session_id: params.sessionId,
@@ -185,6 +191,7 @@ describe('a turn with the sandbox enabled and an MCP server', () => {
     const finished = await runSandboxTurn({
       sessionId: `sandbox-mcp-${newId()}`,
       scenario: 'text',
+      enabled: true,
       sandboxIntegration: sandboxIntegration(),
     });
 
@@ -200,6 +207,7 @@ describe('a turn with the sandbox enabled and an MCP server', () => {
       sessionId: `sandbox-code-mode-${newId()}`,
       // The model asks for one sandbox command, which is where a turn gets its Code Mode channel.
       scenario: 'sandbox',
+      enabled: true,
       sandboxIntegration: sandboxIntegration({ codeModeRegistry, computer }),
     });
     expect(finished?.state.status).toBe('done');
@@ -231,6 +239,7 @@ describe('a turn with the sandbox enabled and an MCP server', () => {
     await runSandboxTurn({
       sessionId: `sandbox-code-mode-closed-${newId()}`,
       scenario: 'sandbox',
+      enabled: true,
       sandboxIntegration: sandboxIntegration({ codeModeRegistry, computer }),
     });
 
@@ -242,5 +251,23 @@ describe('a turn with the sandbox enabled and an MCP server', () => {
     });
 
     expect(afterTurn).toMatchObject({ ok: false, status: 401 });
+  });
+
+  // Code Mode rides on the provider, so a runtime that serves the bridge still offers none until
+  // the tenant enables the built-in sandbox.
+  it('opens no Code Mode channel while the built-in provider is disabled', async () => {
+    const codeModeRegistry = new CodeModeBridgeRegistry();
+    const computer = new CodeModeProbeComputer(codeModeRegistry);
+
+    await expect(
+      runSandboxTurn({
+        sessionId: `sandbox-code-mode-disabled-${newId()}`,
+        scenario: 'sandbox',
+        enabled: false,
+        sandboxIntegration: sandboxIntegration({ codeModeRegistry, computer }),
+      }),
+    ).rejects.toThrow(/no sandbox provider configured/);
+    expect(computer.execCalls).toHaveLength(0);
+    expect(computer.replies).toHaveLength(0);
   });
 });
