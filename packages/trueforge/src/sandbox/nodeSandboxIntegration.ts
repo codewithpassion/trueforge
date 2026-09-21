@@ -35,7 +35,12 @@ export function createNodeSandboxIntegration({
     configuration.RUNTIME === 'standalone' && localSupport?.supported === true;
 
   return {
-    resolveProvider: async ({ tenant_id, store, logger, sessionId }) => {
+    resolveProvider: async ({ tenant_id, store, logger, sessionId, computer_id }) => {
+      // Remote computers ship on Workers first; this runtime has no relay to reach a machine
+      // through, so an agent that names one gets nothing rather than the tenant's own sandbox.
+      if (computer_id !== undefined) {
+        return undefined;
+      }
       const record = await store.getSandboxProvider(tenant_id);
       const stored = record === undefined ? undefined : toSandboxProviderFromRecord({ record, tenant_id, logger });
       if (stored !== undefined) {
@@ -52,13 +57,16 @@ export function createNodeSandboxIntegration({
         logger,
       });
     },
-    resolveSandboxUsability: async ({ store, tenant_id, logger }) => {
+    resolveSandboxUsability: async ({ store, tenant_id, logger, computer_id }) => {
+      if (computer_id !== undefined) {
+        return { usable: false, status: undefined, reason: 'computers_disabled' };
+      }
       // A build that is pending or failed is not usable yet, and the turn would reject it anyway.
       const refreshed = await checkSnapshotStatus({ store, tenant_id, logger });
       if (refreshed !== undefined) {
-        return { usable: refreshed.status === 'ready', status: refreshed.status };
+        return { usable: refreshed.status === 'ready', status: refreshed.status, reason: undefined };
       }
-      return { usable: isLocalFallbackUsable(), status: undefined };
+      return { usable: isLocalFallbackUsable(), status: undefined, reason: undefined };
     },
     isSkillMountingSupported: () => true,
     isDaytonaSettingsSupported: () => true,

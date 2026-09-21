@@ -131,6 +131,10 @@ export const downloadSandboxFileRoute = createRoute({
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'Sandbox infrastructure error.',
     },
+    503: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'The machine backing this sandbox is offline; retry when it reconnects.',
+    },
   },
 });
 

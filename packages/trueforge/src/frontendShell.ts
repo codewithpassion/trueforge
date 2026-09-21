@@ -3,8 +3,11 @@
 /** Vite writes this into the production shell. Must not appear in JS identifiers. */
 export const SHELL_BASE_TOKEN = '%%TRUEFORGE_BASE_PATH%%';
 
-/** Routes the server answers itself; never served from the build. /api covers every version below it. */
-export const SERVER_PATH_PREFIXES = ['/api', '/healthz'];
+/**
+ * Routes the server answers itself; never served from the build. /api covers every version below it.
+ * `/install.sh` is here because it is a generated script, not a built asset.
+ */
+export const SERVER_PATH_PREFIXES = ['/api', '/healthz', '/install.sh'];
 
 export function isServerPath(pathname: string): boolean {
   return SERVER_PATH_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));

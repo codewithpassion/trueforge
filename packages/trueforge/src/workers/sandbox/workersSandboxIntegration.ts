@@ -1,10 +1,13 @@
 import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import { SkillMounter } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { HTTPException } from 'hono/http-exception';
+import { buildRemoteComputerProvider, resolveComputerUsability } from '../../computers/resolveComputer';
+import type { ComputersService } from '../../computers/service';
 import configuration from '../../config';
 import type { ISandboxProviderStore } from '../../db/sandboxProviderStore';
 import type { SandboxIntegration } from '../../sandbox/integration';
 import { SANDBOX_READY_STATUS } from '../../schemas/sandboxProvider';
+import { workersComputersService } from '../computersService';
 import type { Env } from '../env';
 import { sessionDurableObjectName } from '../sessionScope';
 import { CloudflareComputerProvider } from './CloudflareComputerProvider';
@@ -16,6 +19,8 @@ const NOT_SUPPORTED_MESSAGE = 'Daytona sandbox providers are not supported on th
 export interface WorkersSandboxIntegrationOptions {
   /** Unset means code execution stays off, which is the phase 5 behaviour. */
   backend: 'cloudflare-computer' | undefined;
+  /** Remote computers. Undefined on a runtime that cannot reach their relays. */
+  computers: ComputersService | undefined;
   /** Narrowed to what the provider uses, so a test can stand a workspace in without a container. */
   namespace: { idFromName(name: string): DurableObjectId; get(id: DurableObjectId): ComputerWorkspace };
   defaultExecTimeoutSeconds: number;
@@ -29,11 +34,12 @@ export interface WorkersSandboxIntegrationOptions {
 
 /** The deploy-configured integration, shared by the HTTP app and the session Durable Object. */
 export function workersSandboxIntegrationFromEnv(params: {
-  env: Pick<Env, 'COMPUTER_DO'>;
+  env: Pick<Env, 'COMPUTER_DO' | 'DB' | 'REMOTE_COMPUTER_DO'>;
   codeModeRegistry?: CodeModeBridgeRegistry | undefined;
 }): SandboxIntegration {
   return createWorkersSandboxIntegration({
     backend: configuration.TRUEFORGE_SANDBOX_BACKEND,
+    computers: workersComputersService(params.env),
     namespace: params.env.COMPUTER_DO,
     defaultExecTimeoutSeconds: configuration.SANDBOX_EXEC_TIMEOUT_SECONDS,
     fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
@@ -61,7 +67,23 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
   }
 
   return {
-    resolveProvider: async ({ tenant_id, store, sessionId }) => {
+    resolveProvider: async ({ tenant_id, store, sessionId, computer_id, turn_id, logger }) => {
+      // Checked before the built-in sandbox, so a tenant that never turned that on still gets its
+      // computers. The caller has already cleared the agent through resolveSandboxUsability.
+      if (computer_id !== undefined) {
+        return options.computers === undefined
+          ? undefined
+          : await buildRemoteComputerProvider({
+              computers: options.computers,
+              tenantId: tenant_id,
+              computerId: computer_id,
+              sessionId,
+              turnId: turn_id,
+              defaultExecTimeoutSeconds: options.defaultExecTimeoutSeconds,
+              fileMaxBytesForDownload: options.fileMaxBytesForDownload,
+              logger,
+            });
+      }
       if (!(await isEnabledForTenant({ store, tenant_id }))) {
         return undefined;
       }
@@ -75,8 +97,21 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
       });
     },
     // The container image ships with the deploy, so an enabled workspace is never mid-build.
-    resolveSandboxUsability: async input =>
-      (await isEnabledForTenant(input)) ? { usable: true, status: 'ready' } : { usable: false, status: undefined },
+    resolveSandboxUsability: async input => {
+      if (input.computer_id !== undefined) {
+        return await resolveComputerUsability({
+          computers: options.computers,
+          selection: {
+            tenant_id: input.tenant_id,
+            computer_id: input.computer_id,
+            agent_name: input.agent_name,
+          },
+        });
+      }
+      return (await isEnabledForTenant(input))
+        ? { usable: true, status: 'ready', reason: undefined }
+        : { usable: false, status: undefined, reason: undefined };
+    },
     // The container image is the release sandbox image, so the skill downloader has the python3,
     // pydantic and git it needs; skills follow the workspace.
     isSkillMountingSupported: () => options.backend !== undefined,

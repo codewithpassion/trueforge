@@ -1,0 +1,130 @@
+/**
+ * The one place that decides whether an agent may use a computer. Spec validation, the capability
+ * endpoint and the turn all ask through here, so none of them can admit what another refuses.
+ */
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
+import type { SandboxUsability, SandboxUsabilityReason } from '../sandbox/integration';
+import { RemoteComputerProvider } from './RemoteComputerProvider';
+import { computerHomeDirectory, type ComputersService } from './service';
+
+function refuse(reason: SandboxUsability['reason']): SandboxUsability {
+  return { usable: false, status: undefined, reason };
+}
+
+/** What a caller is told when a computer cannot run this agent's work. */
+export function computerNotUsableMessage({
+  computerId,
+  reason,
+}: {
+  computerId: string;
+  reason: SandboxUsabilityReason | undefined;
+}): string {
+  switch (reason) {
+    case 'unknown_computer':
+    case undefined:
+      return `Unknown computer "${computerId}"`;
+    case 'computer_revoked':
+      return `Computer "${computerId}" has been revoked`;
+    case 'agent_not_allowed':
+      return `This agent is not allowed to use computer "${computerId}" — an admin grants access per computer`;
+    case 'inline_agent':
+      return 'Only a saved agent can run on a computer, because access is granted by agent name';
+    case 'computers_disabled':
+      return 'Remote computers are not available on this server';
+    case 'computer_offline':
+      return `Computer "${computerId}" is offline`;
+  }
+}
+
+export interface ComputerSelection {
+  computer_id: string;
+  /** `undefined` is an inline agent, `null` a reference row with no name snapshot. */
+  agent_name: string | null | undefined;
+  tenant_id: string;
+}
+
+/**
+ * An agent may use a computer when the computer is in its tenant, is not revoked, and the agent is
+ * on its allowlist. Being offline is not a refusal — a machine someone owns is asleep most of the
+ * time — so it comes back `usable` with a reason the turn reports instead.
+ */
+export async function resolveComputerUsability({
+  computers,
+  selection,
+}: {
+  computers: ComputersService | undefined;
+  selection: ComputerSelection;
+}): Promise<SandboxUsability> {
+  if (computers === undefined) {
+    return refuse('computers_disabled');
+  }
+  // An inline spec has no name to put on an allowlist, so it can never be granted a machine.
+  if (selection.agent_name === undefined || selection.agent_name === null) {
+    return refuse('inline_agent');
+  }
+  const computer = await computers.store.getComputer({
+    tenant_id: selection.tenant_id,
+    computer_id: selection.computer_id,
+  });
+  // A computer in another tenant reads exactly like one that does not exist.
+  if (computer === undefined) {
+    return refuse('unknown_computer');
+  }
+  if (computer.status === 'revoked') {
+    return refuse('computer_revoked');
+  }
+  const allowed = await computers.store.isAgentAllowed({
+    tenant_id: selection.tenant_id,
+    computer_id: selection.computer_id,
+    agent_name: selection.agent_name,
+  });
+  if (!allowed) {
+    return refuse('agent_not_allowed');
+  }
+  return computer.status === 'online'
+    ? { usable: true, status: 'ready', reason: undefined }
+    : { usable: true, status: 'ready', reason: 'computer_offline' };
+}
+
+/**
+ * Builds the provider for a computer the caller has already had cleared. Returns undefined when the
+ * computer is gone, so the caller answers the same way it does for a missing sandbox provider.
+ */
+export async function buildRemoteComputerProvider({
+  computers,
+  tenantId,
+  computerId,
+  sessionId,
+  turnId,
+  defaultExecTimeoutSeconds,
+  fileMaxBytesForDownload,
+  logger,
+}: {
+  computers: ComputersService;
+  tenantId: string;
+  computerId: string;
+  sessionId: string;
+  turnId: string | null;
+  defaultExecTimeoutSeconds: number;
+  fileMaxBytesForDownload: number;
+  logger: Logger;
+}): Promise<RemoteComputerProvider | undefined> {
+  const computer = await computers.store.getComputer({ tenant_id: tenantId, computer_id: computerId });
+  if (computer === undefined || computer.status === 'revoked') {
+    return undefined;
+  }
+  return new RemoteComputerProvider({
+    relay: computers.relay(computerId),
+    computerId,
+    computerName: computer.name,
+    tenantId,
+    sessionId,
+    turnId,
+    home: computerHomeDirectory({ os: computer.os, runAsUser: computer.run_as_user }),
+    capabilities: computer.capabilities,
+    defaultExecTimeoutSeconds,
+    fileMaxBytesForDownload,
+    store: computers.store,
+    logger,
+  });
+}

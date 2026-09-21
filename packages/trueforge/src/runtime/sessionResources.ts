@@ -5,6 +5,7 @@ import type { AgentDefinition, ModelParams } from '@truefoundry/trueforge-core/c
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
+import { computerNotUsableMessage } from '../computers/resolveComputer';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
@@ -199,14 +200,24 @@ async function resolveSandboxUsabilityOrThrow({
   sandboxProviderStore,
   tenant_id,
   logger,
+  computer_id,
+  agent_name,
 }: {
   sandboxIntegration: SandboxIntegration;
   sandboxProviderStore: ISandboxProviderStore;
   tenant_id: string;
   logger: Logger;
+  computer_id: string | undefined;
+  agent_name: string | null | undefined;
 }): Promise<SandboxUsability> {
   try {
-    return await sandboxIntegration.resolveSandboxUsability({ store: sandboxProviderStore, tenant_id, logger });
+    return await sandboxIntegration.resolveSandboxUsability({
+      store: sandboxProviderStore,
+      tenant_id,
+      logger,
+      computer_id,
+      agent_name,
+    });
   } catch (error) {
     logger.error('Sandbox image status check failed while validating an agent spec', extractErrorLogFields(error));
     throw new HTTPException(503, {
@@ -224,6 +235,7 @@ async function resolveSandboxUsabilityOrThrow({
 export async function validateAgentSpec({
   spec,
   tenant_id,
+  agent_name,
   modelProviderStore,
   mcpServerStore,
   skillStore,
@@ -233,6 +245,11 @@ export async function validateAgentSpec({
 }: {
   spec: AgentSpec;
   tenant_id: string;
+  /**
+   * The saved agent this spec will belong to, or undefined for an inline spec. Only a named agent
+   * can be granted a computer, because access is kept per agent name.
+   */
+  agent_name: string | undefined;
   modelProviderStore: IModelProviderStore;
   mcpServerStore: IMcpServerStore;
   skillStore: ISkillStore;
@@ -283,16 +300,27 @@ export async function validateAgentSpec({
 
   const wantsSandbox = spec.config.sandbox.enabled;
   const hasSkills = requestedSkills.length > 0;
-  if (wantsSandbox || hasSkills) {
+  const computerId = spec.config.sandbox.computer_id;
+  if (wantsSandbox || hasSkills || computerId !== undefined) {
     // Without an integration a stored record is unusable, so it does not count as configured.
     // Same question GET /capabilities asks, so a spec is never admitted that a turn then rejects.
     const usability =
       sandboxIntegration === undefined
         ? undefined
-        : await resolveSandboxUsabilityOrThrow({ sandboxIntegration, sandboxProviderStore, tenant_id, logger });
+        : await resolveSandboxUsabilityOrThrow({
+            sandboxIntegration,
+            sandboxProviderStore,
+            tenant_id,
+            logger,
+            computer_id: computerId,
+            agent_name,
+          });
     if (usability?.usable !== true) {
       throw new HTTPException(422, {
-        message: sandboxNotUsableMessage({ hasSkills, status: usability?.status }),
+        message:
+          computerId === undefined
+            ? sandboxNotUsableMessage({ hasSkills, status: usability?.status })
+            : computerNotUsableMessage({ computerId, reason: usability?.reason }),
       });
     }
   }

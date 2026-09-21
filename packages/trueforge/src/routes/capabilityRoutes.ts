@@ -23,11 +23,18 @@ const SettingsCapabilitySchema = z
   })
   .openapi('SettingsCapability');
 
+const ComputersCapabilitySchema = z
+  .object({
+    enabled: z.boolean().describe('Whether agents can be run on machines this tenant has enrolled.'),
+  })
+  .openapi('ComputersCapability');
+
 const CapabilitiesDataSchema = z
   .object({
     sandbox: SandboxCapabilitySchema,
     skill: SkillCapabilitySchema,
     settings: SettingsCapabilitySchema,
+    computers: ComputersCapabilitySchema,
   })
   .openapi('CapabilitiesData');
 

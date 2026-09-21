@@ -17,6 +17,8 @@ import { existingSandboxIdForProvider } from '@truefoundry/trueforge-core/core/s
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
+import { REMOTE_COMPUTER_PROVIDER_TYPE, RemoteComputerProvider } from '../computers/RemoteComputerProvider';
+import { computerNotUsableMessage } from '../computers/resolveComputer';
 import configuration, { isTrueFoundryModeEnabled } from '../config';
 import type { SandboxIntegration } from '../sandbox/integration';
 import type { ActiveTurnRegistry } from './activeTurns';
@@ -139,15 +141,37 @@ function createTurnResolver(
     mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
     // Stays wired without an integration so sandbox-enabled specs get the 422 below instead of running sandbox-less.
     sandboxProvider: async ({ spec, existingSandboxId, tracing }) => {
+      const computerId = spec.config.sandbox.computer_id;
+      // The allowlist is checked again here, not only at spec validation: access can be taken away
+      // between saving an agent and running it, and a session holds its spec across both.
+      if (computerId !== undefined && sandboxIntegration !== undefined) {
+        const usability = await sandboxIntegration.resolveSandboxUsability({
+          store: sandboxProviderStore,
+          tenant_id,
+          logger,
+          computer_id: computerId,
+          agent_name: session.agent.type === 'reference' ? session.agent.name : undefined,
+        });
+        if (!usability.usable) {
+          throw new HTTPException(422, {
+            message: computerNotUsableMessage({ computerId, reason: usability.reason }),
+          });
+        }
+      }
       const provider = await sandboxIntegration?.resolveProvider({
         tenant_id,
         store: sandboxProviderStore,
         logger,
         sessionId,
+        computer_id: computerId,
+        turn_id: turnId,
       });
       if (sandboxIntegration === undefined || provider === undefined) {
         throw new HTTPException(422, {
-          message: 'no sandbox provider configured — PUT /settings/sandbox-providers',
+          message:
+            computerId === undefined
+              ? 'no sandbox provider configured — PUT /settings/sandbox-providers'
+              : computerNotUsableMessage({ computerId, reason: 'unknown_computer' }),
         });
       }
       const carriedSandboxId = existingSandboxIdForProvider({
@@ -156,8 +180,13 @@ function createTurnResolver(
       });
       // A fresh Daytona sandbox is cloned from the release snapshot, so the build must be ready first.
       // Restoring an existing sandbox goes through daytona.get and never touches the snapshot.
-      // Local fallback has no image build.
-      if (carriedSandboxId === undefined && provider.type !== 'local') {
+      // Neither the local fallback nor a machine someone owns has an image build, and the stored
+      // record this asks about is not even theirs, so it would answer about the wrong sandbox.
+      if (
+        carriedSandboxId === undefined &&
+        provider.type !== 'local' &&
+        provider.type !== REMOTE_COMPUTER_PROVIDER_TYPE
+      ) {
         const status = await sandboxIntegration.checkSnapshotStatus({ store: sandboxProviderStore, tenant_id, logger });
         if (status?.status !== 'ready') {
           throw new HTTPException(422, {
@@ -169,6 +198,13 @@ function createTurnResolver(
         }
       }
       const skills = spec.skills ?? [];
+      // The downloader is a python3 script that clones with git, so a machine without both cannot
+      // mount a skill at all. Said here rather than failing halfway through the mount.
+      if (skills.length > 0 && provider instanceof RemoteComputerProvider && !provider.supportsSkills) {
+        throw new HTTPException(422, {
+          message: `Computer "${provider.computerName}" does not report python3 and git, which skills need`,
+        });
+      }
       const mountSkills =
         skills.length === 0
           ? []

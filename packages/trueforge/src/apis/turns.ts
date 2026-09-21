@@ -13,6 +13,8 @@ import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
 import type { Authorizer } from '../auth/authorizer';
 import type { ResolveRequestContext } from '../auth/identity';
+import { computerIdFromSandboxRef } from '../computers/RemoteComputerProvider';
+import { computerNotUsableMessage } from '../computers/resolveComputer';
 import configuration from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
@@ -227,14 +229,30 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
         return c.json({ error: { message: `Turn has no sandbox: ${turnId}` } }, 412);
       }
 
+      // This route has no agent spec, so the computer comes from the reference the turn stored.
+      // It still needs its own tenant check, which `resolveProvider` makes by reading the row
+      // scoped to this tenant: another tenant's computer resolves to nothing.
+      const computerId = computerIdFromSandboxRef(sandboxId);
       const provider = await deps.sandboxIntegration?.resolveProvider({
         tenant_id: requestContext.tenant_id,
         store: deps.resolveSandboxProviderStore(c),
         logger: deps.logger,
         sessionId,
+        computer_id: computerId,
+        turn_id: turnId,
       });
       if (provider === undefined) {
-        return c.json({ error: { message: 'No sandbox provider configured' } }, 412);
+        return c.json(
+          {
+            error: {
+              message:
+                computerId === undefined
+                  ? 'No sandbox provider configured'
+                  : computerNotUsableMessage({ computerId, reason: 'unknown_computer' }),
+            },
+          },
+          412,
+        );
       }
 
       // TODO: stream the body instead of buffering the whole file in memory.

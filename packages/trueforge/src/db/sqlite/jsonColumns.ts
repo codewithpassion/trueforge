@@ -27,6 +27,7 @@ const JSON_RESULT_COLUMNS = new Set([
   'auth_data',
   'created_by_subject',
   'source',
+  'capabilities',
 ]);
 
 /** Top-level row field only — `$[0]."body"`, not `$[0]."body"."content"`. */

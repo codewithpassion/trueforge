@@ -3,6 +3,7 @@ import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/err
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { hasAdminRole, type ResolveRequestContext } from '../auth/identity';
+import type { ComputersService } from '../computers/service';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { WithTransaction } from '../db/transaction';
 import { getCapabilitiesRoute } from '../routes/capabilityRoutes';
@@ -26,11 +27,14 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
   logger: Logger;
   resolveRequestContext: ResolveRequestContext;
   sandboxIntegration: SandboxIntegration | undefined;
+  /** Undefined on a runtime that cannot reach a machine's relay, which reports computers off. */
+  computers: ComputersService | undefined;
 }) {
   const router = new OpenAPIHono();
   router.openapi(getCapabilitiesRoute, async c => {
     const requestContext = deps.resolveRequestContext(c);
     const settingsEnabled = hasAdminRole(requestContext);
+    const computersEnabled = deps.computers !== undefined;
     const integration = deps.sandboxIntegration;
     if (integration === undefined) {
       return c.json(
@@ -39,6 +43,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
             sandbox: { enabled: false },
             skill: { enabled: false, reason: 'Skills run in a sandbox, which this server does not support.' },
             settings: { enabled: settingsEnabled },
+            computers: { enabled: computersEnabled },
           },
         },
         200,
@@ -46,12 +51,15 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
     }
     // The same question the agent-spec validator asks, so neither can admit what the other
     // refuses. Fail closed (disabled) if the status refresh throws.
-    let usability: SandboxUsability = { usable: false, status: undefined };
+    let usability: SandboxUsability = { usable: false, status: undefined, reason: undefined };
     try {
       usability = await integration.resolveSandboxUsability({
         store: deps.resolveSandboxProviderStore(c),
         tenant_id: requestContext.tenant_id,
         logger: deps.logger,
+        // This endpoint has no spec, so it can only answer about the tenant's own provider.
+        computer_id: undefined,
+        agent_name: undefined,
       });
     } catch (error) {
       deps.logger.warn('Sandbox image status check failed; reporting sandbox disabled', extractErrorLogFields(error));
@@ -71,6 +79,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
                   : skillDisabledReason(usability.status),
               },
           settings: { enabled: settingsEnabled },
+          computers: { enabled: computersEnabled },
         },
       },
       200,

@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import { McpServerWithAuthStore } from '../McpServerWithAuthStore';
 import { SqliteAgentStore } from './agent-store/SqliteAgentStore';
 import type { AtomicRunner } from './atomic';
+import { SqliteComputerStore } from './computer-store/SqliteComputerStore';
 import { SqliteIntegrationStore } from './integration-store/SqliteIntegrationStore';
 import { SqliteMcpServerStore } from './mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from './model-provider-store/SqliteModelProviderStore';
@@ -35,6 +36,7 @@ export function createSqliteStores({
     }),
     scheduleStore: new SqliteScheduleStore(db, atomic),
     integrationStore: new SqliteIntegrationStore(db, atomic),
+    computerStore: new SqliteComputerStore(db, atomic),
     agentStore: new SqliteAgentStore(db),
     modelProviderStore: new SqliteModelProviderStore(db),
     sandboxProviderStore: new SqliteSandboxProviderStore(db),

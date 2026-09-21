@@ -23,6 +23,7 @@ import type {
 import type { CurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
 import type { SandboxInfo } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import type { ColumnType, Generated, JSONColumnType } from 'kysely';
+import type { ComputerCapabilities } from '../../computers/protocol';
 import type { IntegrationManifest, IntegrationType } from '../../schemas/integration';
 import type { McpServerManifest } from '../../schemas/mcpServer';
 import type { ModelProviderManifest } from '../../schemas/modelProvider';
@@ -33,6 +34,7 @@ import type {
 } from '../../schemas/sandboxProvider';
 import type { ScheduleManifest, ScheduleRunStatus, ScheduleStatus } from '../../schemas/schedule';
 import type { SkillManifest } from '../../schemas/skill';
+import type { ComputerAuditOp, ComputerStatus } from '../computerStore';
 import type { IntegrationDecisionOutcome, IntegrationDeliveryStatus } from '../integrationStore';
 import type { OAuthClient, OAuthPendingAuthorizationData, OAuthServer, OAuthToken } from '../mcpServerStore';
 
@@ -598,6 +600,87 @@ export interface IntegrationDecisionTable {
   decided_at: Date;
 }
 
+/**
+ * A machine a tenant enrolled, and the credential it presents. Secrets are sha256 hex only.
+ * PRIMARY KEY (id)
+ * CREATE UNIQUE INDEX computer_name_uq ON computer (tenant_id, name)
+ * CREATE UNIQUE INDEX computer_credential_uq ON computer (credential_hash)
+ * CREATE INDEX computer_tenant_idx ON computer (tenant_id, created_at)
+ */
+export interface ComputerTable {
+  /** application-generated (ulid) */
+  id: string;
+  tenant_id: string;
+  name: string;
+  owner_subject: string;
+  /** `pending` | `online` | `offline` | `revoked` — varchar(16) */
+  status: ComputerStatus;
+  /** sha256 hex of the credential the machine presents; null until it enrolls */
+  credential_hash: string | null;
+  hostname: string | null;
+  os: string | null;
+  arch: string | null;
+  agent_version: string | null;
+  /** ComputerCapabilities document as reported by `hello`; null before the first connection */
+  capabilities: JSONColumnType<ComputerCapabilities | null, ComputerCapabilities | null, ComputerCapabilities | null>;
+  run_as_user: string | null;
+  require_approval: boolean;
+  last_seen_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/**
+ * Single-use enrollment codes, stored as sha256 hex.
+ * PRIMARY KEY (code_hash)
+ * CREATE INDEX computer_enrollment_computer_idx ON computer_enrollment (computer_id)
+ * FK (computer_id) -> computer(id) ON DELETE CASCADE
+ */
+export interface ComputerEnrollmentTable {
+  code_hash: string;
+  computer_id: string;
+  expires_at: Date;
+  /** Set when the code is burned; a non-null value can never be redeemed again */
+  used_at: Date | null;
+  created_at: Date;
+}
+
+/**
+ * Which agents may drive a computer.
+ * PRIMARY KEY (computer_id, agent_name)
+ * CREATE INDEX computer_agent_access_agent_idx ON computer_agent_access (agent_name)
+ * FK (computer_id) -> computer(id) ON DELETE CASCADE
+ */
+export interface ComputerAgentAccessTable {
+  computer_id: string;
+  agent_name: string;
+  created_at: Date;
+}
+
+/**
+ * What ran on a computer. `id` is a ULID, so `id DESC` is newest-first and paginates.
+ * PRIMARY KEY (id)
+ * CREATE INDEX computer_audit_list_idx ON computer_audit (tenant_id, computer_id, id DESC)
+ * CREATE INDEX computer_audit_created_idx ON computer_audit (created_at)
+ * FK (computer_id) -> computer(id) ON DELETE CASCADE
+ */
+export interface ComputerAuditTable {
+  /** application-generated (ulid); its order is the time order */
+  id: string;
+  computer_id: string;
+  tenant_id: string;
+  session_id: string | null;
+  turn_id: string | null;
+  /** `exec` | `file_put` | `file_get` — varchar(16) */
+  op: ComputerAuditOp;
+  /** the command, or the path for a file op */
+  command: string;
+  exit_code: number | null;
+  duration_ms: number;
+  bytes_out: number;
+  created_at: Date;
+}
+
 export interface Database {
   session: SessionTable;
   turn: TurnTable;
@@ -618,4 +701,8 @@ export interface Database {
   integration_event: IntegrationEventTable;
   integration_delivery: IntegrationDeliveryTable;
   integration_decision: IntegrationDecisionTable;
+  computer: ComputerTable;
+  computer_enrollment: ComputerEnrollmentTable;
+  computer_agent_access: ComputerAgentAccessTable;
+  computer_audit: ComputerAuditTable;
 }

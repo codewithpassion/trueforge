@@ -95,9 +95,6 @@ export const ClientOpRequestSchema = z.discriminatedUnion('op', [
 ]);
 export type ClientOpRequest = z.infer<typeof ClientOpRequestSchema>;
 
-export const EnvelopeSchema = z.intersection(ClientOpRequestSchema, z.object({ id: z.string() }));
-export type Envelope = z.infer<typeof EnvelopeSchema>;
-
 export const ExecResultPayloadSchema = z.object({
   exit_code: z.number(),
   stdout: z.string(),
@@ -194,26 +191,31 @@ function parseJson(raw: string): unknown {
   }
 }
 
-export function parseClientReply(raw: string): ClientReply | undefined {
-  const parsed = RawClientReplySchema.safeParse(parseJson(raw));
-  if (!parsed.success) {
-    return undefined;
-  }
-  if ('error' in parsed.data) {
-    return { ok: false, id: parsed.data.id, error: parsed.data.error };
-  }
-  return { ok: true, id: parsed.data.id, result_json: JSON.stringify(parsed.data.result) };
-}
+/**
+ * What arrived on the socket. A frame that claims to be a hello is never mistaken for a reply, even
+ * when this version cannot read it, so an unknown `protocol_version` is ignored rather than settling
+ * some request by accident.
+ */
+export type ClientFrame =
+  | { readonly kind: 'hello'; readonly hello: HelloMessage }
+  | { readonly kind: 'unreadable_hello' }
+  | { readonly kind: 'reply'; readonly reply: ClientReply }
+  | { readonly kind: 'ignore' };
 
-export function parseHello(raw: string): HelloMessage | undefined {
-  const parsed = HelloMessageSchema.safeParse(parseJson(raw));
-  return parsed.success ? parsed.data : undefined;
-}
-
-/** True for any frame that claims to be a hello, so a version mismatch is not mistaken for a reply. */
-export function looksLikeHello(raw: string): boolean {
+export function classifyClientFrame(raw: string): ClientFrame {
   const parsed = parseJson(raw);
-  return typeof parsed === 'object' && parsed !== null && 'type' in parsed && parsed.type === 'hello';
+  if (typeof parsed === 'object' && parsed !== null && 'type' in parsed && parsed.type === 'hello') {
+    const hello = HelloMessageSchema.safeParse(parsed);
+    return hello.success ? { kind: 'hello', hello: hello.data } : { kind: 'unreadable_hello' };
+  }
+  const reply = RawClientReplySchema.safeParse(parsed);
+  if (!reply.success) {
+    return { kind: 'ignore' };
+  }
+  if ('error' in reply.data) {
+    return { kind: 'reply', reply: { ok: false, id: reply.data.id, error: reply.data.error } };
+  }
+  return { kind: 'reply', reply: { ok: true, id: reply.data.id, result_json: JSON.stringify(reply.data.result) } };
 }
 
 export function parseExecResult(json: string): ExecResultPayload | undefined {

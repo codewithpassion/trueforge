@@ -11,11 +11,31 @@ import type {
   SandboxStatus,
 } from '../schemas/sandboxProvider';
 
+/**
+ * Why a sandbox cannot run, or why it can run but may still refuse at turn time. Without this the
+ * four remote-computer answers below are one boolean, and the caller cannot say which one it is.
+ */
+export const SANDBOX_USABILITY_REASONS = [
+  'unknown_computer',
+  'computer_revoked',
+  'agent_not_allowed',
+  'inline_agent',
+  'computers_disabled',
+  'computer_offline',
+] as const;
+export type SandboxUsabilityReason = (typeof SANDBOX_USABILITY_REASONS)[number];
+
 /** Whether a sandbox can run for a tenant now, and the build status behind that answer. */
 export interface SandboxUsability {
   usable: boolean;
   /** Undefined when no record this runtime can run is stored. */
   status: SandboxBuildStatus | undefined;
+  /**
+   * Undefined when the plain tenant provider answered. `computer_offline` is the only reason that
+   * still leaves `usable` true: a laptop is asleep most of the time, and refusing to save or start
+   * an agent for that would be wrong. Every other reason is a refusal.
+   */
+  reason: SandboxUsabilityReason | undefined;
 }
 
 /**
@@ -23,12 +43,19 @@ export interface SandboxUsability {
  * sandboxes, and then report sandbox features as unavailable.
  */
 export interface SandboxIntegration {
-  /** Provider for the tenant's stored record, else the local fallback when enabled. No network I/O. */
+  /**
+   * Provider for the agent's chosen remote computer, else the tenant's stored record, else the
+   * local fallback when enabled. No network I/O beyond reading the computer row.
+   */
   resolveProvider(input: {
     tenant_id: string;
     store: ISandboxProviderStore;
     logger: Logger;
     sessionId: string;
+    /** From `spec.config.sandbox.computer_id`; set means the tenant provider is bypassed. */
+    computer_id: string | undefined;
+    /** Recorded on every command the computer runs. Null off the turn path, e.g. file download. */
+    turn_id: string | null;
   }): Promise<SandboxProvider | undefined>;
   /**
    * Whether a sandbox can run for this tenant right now: a stored record this runtime can attach
@@ -40,6 +67,13 @@ export interface SandboxIntegration {
     store: ISandboxProviderStore;
     tenant_id: string;
     logger: Logger;
+    /** From `spec.config.sandbox.computer_id`; set means the computer is checked, not the provider. */
+    computer_id: string | undefined;
+    /**
+     * The saved agent this spec belongs to. `undefined` is an inline agent and `null` a reference
+     * row with no name snapshot; neither may use a computer, because there is nothing to allow.
+     */
+    agent_name: string | null | undefined;
   }): Promise<SandboxUsability>;
   /** Whether skills can be mounted into a sandbox on this runtime. */
   isSkillMountingSupported(): boolean;

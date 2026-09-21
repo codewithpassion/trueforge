@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
+  classifyClientFrame,
   CLOSE_REPLACED,
   CLOSE_REVOKED,
   CLOSE_STALE,
@@ -7,28 +8,27 @@ import {
   HEARTBEAT_PING,
   HEARTBEAT_PONG,
   type HelloMessage,
-  looksLikeHello,
   MAX_FRAME_BYTES,
   MAX_IN_FLIGHT_EXEC,
   MAX_QUEUE_DEPTH,
   offlineMessage,
-  parseClientReply,
-  parseHello,
   RELAY_GRACE_MS,
   type RequestOutcome,
   STALE_AFTER_MS,
   STALENESS_POLL_MS,
 } from '../computers/protocol';
 import type { IComputerStore } from '../db/computerStore';
-import { createD1Db } from '../db/d1/client';
-import { SqliteComputerStore } from '../db/sqlite/computer-store/SqliteComputerStore';
+import { workersComputerStore } from './computersService';
 import type { Env } from './env';
 
 /** Written by the alarm rather than per heartbeat, so a connected computer costs no D1 churn. */
 const LAST_SEEN_ALARM_MS = 60_000;
 
-/** Set by the connect route on the forwarded upgrade so the relay knows who owns it. */
-export const COMPUTER_ID_HEADER = 'x-trueforge-computer-id';
+/**
+ * Set by the connect route on the forwarded upgrade. The object's id already is the computer id;
+ * the name is carried so offline messages can say something a person recognises.
+ */
+export const COMPUTER_NAME_HEADER = 'x-trueforge-computer-name';
 export const COMPUTER_TENANT_HEADER = 'x-trueforge-computer-tenant';
 
 interface SocketAttachment {
@@ -159,11 +159,15 @@ export class RemoteComputerDO extends DurableObject<Env> {
       return new Response('Expected a WebSocket upgrade', { status: 426 });
     }
     const tenantId = request.headers.get(COMPUTER_TENANT_HEADER);
-    const computerName = request.headers.get(COMPUTER_ID_HEADER);
+    const computerName = request.headers.get(COMPUTER_NAME_HEADER);
     if (tenantId === null || computerName === null) {
       return new Response('Unauthorized', { status: 401 });
     }
     if (this.#meta.revoked) {
+      return new Response('Unauthorized', { status: 401 });
+    }
+    // A computer never changes hands, so the tenant this object first saw outranks the header.
+    if (this.#meta.tenant_id !== null && this.#meta.tenant_id !== tenantId) {
       return new Response('Unauthorized', { status: 401 });
     }
     const generation = this.#meta.generation + 1;
@@ -229,19 +233,20 @@ export class RemoteComputerDO extends DurableObject<Env> {
     if (typeof message !== 'string') {
       return;
     }
-    if (looksLikeHello(message)) {
-      const hello = parseHello(message);
-      if (hello !== undefined) {
-        this.#hello = hello;
-        this.ctx.waitUntil(this.ctx.storage.put('hello', hello));
-      }
-      // A hello this version cannot read is ignored: the contract has no close code for it.
+    const frame = classifyClientFrame(message);
+    if (frame.kind === 'hello') {
+      this.#hello = frame.hello;
+      this.ctx.waitUntil(this.ctx.storage.put('hello', frame.hello));
+      // One write per connect, not per heartbeat: without it the row has no run_as_user or
+      // capabilities for up to a minute, and the provider cannot derive the session directory.
+      this.ctx.waitUntil(this.#persistPresence({ status: 'online', lastSeenAt: Date.now() }));
       return;
     }
-    const reply = parseClientReply(message);
-    if (reply === undefined) {
+    // An unreadable hello is ignored rather than closed: the frozen contract has no code for it.
+    if (frame.kind !== 'reply') {
       return;
     }
+    const { reply } = frame;
     const entry = this.#pending.get(reply.id);
     if (entry === undefined) {
       return;
@@ -333,9 +338,10 @@ export class RemoteComputerDO extends DurableObject<Env> {
     if (op === undefined) {
       return refuse('bad_request', 'op_json must be a JSON object carrying a string `op`');
     }
+    // An oversized frame closes the socket and kills every other request on it, so it never leaves
+    // here. Counted in UTF-16 units, which only over-counts against a byte ceiling eight times larger.
     if (input.op_json.length > MAX_FRAME_BYTES) {
-      // An oversized frame closes the socket and kills every other request on it, so it never leaves here.
-      return refuse('bad_request', `A request frame of ${String(input.op_json.length)} bytes is too large to send`);
+      return refuse('bad_request', `A request frame of ${String(input.op_json.length)} units is too large to send`);
     }
     if (this.#meta.revoked) {
       return refuse('revoked', `Computer ${this.#name()} has been revoked`);
@@ -425,7 +431,7 @@ export class RemoteComputerDO extends DurableObject<Env> {
       return {
         ok: false,
         reason: 'bad_request',
-        message: `A request frame of ${String(frame.length)} bytes is too large to send`,
+        message: `A request frame of ${String(frame.length)} units is too large to send`,
         last_seen_at: this.#meta.last_seen_at,
         waited_ms: Date.now() - startedAt,
       };
@@ -559,6 +565,16 @@ export class RemoteComputerDO extends DurableObject<Env> {
     await this.#saveMeta({ revoked: false });
   }
 
+  /** Called after the computer row is deleted, so no relay state outlives the machine. */
+  async destroy(): Promise<void> {
+    this.#closeSockets('deleted');
+    this.#failPending({ reason: 'revoked', message: `Computer ${this.#name()} has been deleted` });
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.#meta = EMPTY_META;
+    this.#hello = null;
+  }
+
   status(): ComputerRelayStatus {
     const socket = this.#currentSocket();
     return {
@@ -633,6 +649,6 @@ export class RemoteComputerDO extends DurableObject<Env> {
   }
 
   #presenceStore(): IComputerStore {
-    return new SqliteComputerStore(createD1Db({ queryable: this.env.DB }));
+    return workersComputerStore(this.env);
   }
 }

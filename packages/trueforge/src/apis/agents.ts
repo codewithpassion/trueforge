@@ -66,6 +66,7 @@ async function validateManifest<TTransaction>({
   sandboxProviderStore,
   sandboxIntegration,
   tenant_id,
+  agent_name,
   logger,
 }: {
   spec: AgentSpec;
@@ -75,11 +76,14 @@ async function validateManifest<TTransaction>({
   sandboxProviderStore: ISandboxProviderStore<TTransaction>;
   sandboxIntegration: SandboxIntegration | undefined;
   tenant_id: string;
+  /** The saved agent's name; a computer's allowlist is keyed by it. */
+  agent_name: string;
   logger: Logger;
 }): Promise<AgentSpec> {
   await validateAgentSpec({
     spec,
     tenant_id,
+    agent_name,
     modelProviderStore,
     mcpServerStore,
     skillStore,
@@ -124,6 +128,7 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
       sandboxIntegration: deps.sandboxIntegration,
       tenant_id: requestContext.tenant_id,
+      agent_name: body.name,
       logger: deps.logger,
     });
     try {
@@ -230,6 +235,7 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
       sandboxIntegration: deps.sandboxIntegration,
       tenant_id: requestContext.tenant_id,
+      agent_name: existing.name,
       logger: deps.logger,
     });
     const record = await deps.resolveAgentStore(c).updateAgent({
