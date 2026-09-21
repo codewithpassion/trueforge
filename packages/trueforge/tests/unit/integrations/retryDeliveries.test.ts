@@ -19,6 +19,9 @@ import type { IntegrationManifest } from '../../../src/schemas/integration';
 import { newId } from '../../../src/utils/id';
 import { fakeChannelAdapter, type FakeChannelAdapter } from './fakeChannelAdapter';
 
+/** Notification rules only fire for schedule sessions, which these cases do not create. */
+const scheduleStore = { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) };
+
 const TENANT = 'default';
 const SESSION_ID = 's1';
 const TURN_ID = 'turn-1';
@@ -41,6 +44,8 @@ function manifest(): IntegrationManifest {
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
     auth: { bot_token: 'xoxb-test', signing_secret: 'sigsecret' },
   };
 }
@@ -100,6 +105,7 @@ async function createHarness(
     integration_id: integrationId,
     conversation_key: CONVERSATION_KEY,
     turn_id: TURN_ID,
+    session_external_id: CONVERSATION_KEY,
     next_attempt_at: options.dueAt ?? past(),
   });
 
@@ -108,7 +114,7 @@ async function createHarness(
   const deps = {
     integrationStore,
     sessions: new Sessions({ sessionStore }),
-    notifier: new TurnCompletionNotifier({ integrationStore, adapters: channel.adapters, logger }),
+    notifier: new TurnCompletionNotifier({ integrationStore, scheduleStore, adapters: channel.adapters, logger }),
     logger,
   };
 
@@ -149,7 +155,11 @@ describe('retryIntegrationDeliveries', () => {
 
   it('reclaims a claim whose deadline passed, and leaves one that still has time', async () => {
     harness = await createHarness();
-    await harness.integrationStore.claimDelivery({ turn_id: TURN_ID, next_attempt_at: soon(5 * 60_000) });
+    await harness.integrationStore.claimDelivery({
+      turn_id: TURN_ID,
+      conversation_key: CONVERSATION_KEY,
+      next_attempt_at: soon(5 * 60_000),
+    });
 
     await harness.sweep();
     expect(harness.channel.delivered).toEqual([]);
@@ -240,6 +250,7 @@ describe('retryIntegrationDeliveries', () => {
       integration_id: integration?.id ?? '',
       conversation_key: CONVERSATION_KEY,
       turn_id: 'turn-2',
+      session_external_id: CONVERSATION_KEY,
       // Due later than the first, so the pass reaches it second and the abort stops it there.
       next_attempt_at: past(1_000),
     });

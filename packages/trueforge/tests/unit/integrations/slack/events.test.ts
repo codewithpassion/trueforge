@@ -22,6 +22,8 @@ function manifest(overrides: Partial<ConnectedSlackIntegrationManifest> = {}): C
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
     auth: { bot_token: 'xoxb-test', signing_secret: 'sigsecret' },
     ...overrides,
   };

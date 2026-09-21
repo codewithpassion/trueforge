@@ -98,6 +98,7 @@ export function createController<TTransaction>(
         sessions: params.sessions,
         notifier: new TurnCompletionNotifier({
           integrationStore: params.integrationStore,
+          scheduleStore: params.scheduleStore,
           adapters: createIntegrationAdapters(),
           logger: params.logger,
         }),

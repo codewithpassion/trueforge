@@ -440,6 +440,7 @@ async function createNodeServerRuntime<TTransaction>(options: {
   const requestReplyRouter = new RequestReplyRouter();
   const notifier = new TurnCompletionNotifier({
     integrationStore: persistence.integrationStore,
+    scheduleStore,
     adapters: createIntegrationAdapters(),
     logger,
   });

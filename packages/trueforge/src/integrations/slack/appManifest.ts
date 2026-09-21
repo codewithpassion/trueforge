@@ -4,7 +4,7 @@
  * integration is created first and lends the manifest its id.
  */
 import { slackBotUserDisplayName } from '../../schemas/integration';
-import { SLACK_BOT_EVENT_SUBSCRIPTIONS, SLACK_BOT_SCOPES } from './appCapabilities';
+import { SLACK_BOT_EVENT_SUBSCRIPTIONS, SLACK_BOT_SCOPES, SLACK_INTERACTION_ACTION_IDS } from './appCapabilities';
 
 /** Where Slack accepts a pasted manifest. */
 export const SLACK_CREATE_APP_URL = 'https://api.slack.com/apps?new_app=1';
@@ -39,8 +39,14 @@ interface SlackAppManifestEventSubscriptions {
   bot_events: string[];
 }
 
+interface SlackAppManifestInteractivity {
+  is_enabled: boolean;
+  request_url: string;
+}
+
 interface SlackAppManifestSettings {
   event_subscriptions: SlackAppManifestEventSubscriptions;
+  interactivity: SlackAppManifestInteractivity;
   org_deploy_enabled: boolean;
   socket_mode_enabled: boolean;
   token_rotation_enabled: boolean;
@@ -59,11 +65,21 @@ export function slackEventsRequestUrl(input: { public_base_url: string; integrat
   return `${input.public_base_url}/api/v1/integrations/${input.integration_id}/events`;
 }
 
+/** Where Slack posts a button click for one integration. */
+export function slackInteractionsRequestUrl(input: { public_base_url: string; integration_id: string }): string {
+  return `${input.public_base_url}/api/v1/integrations/${input.integration_id}/interactions`;
+}
+
 /**
- * No `interactivity` block: buttons and approvals are not handled yet, and a request URL
- * Slack verifies for a feature that does not exist would only fail later.
+ * Interactivity is switched on because the adapter answers the actions in
+ * `SLACK_INTERACTION_ACTION_IDS`; an app generated with an empty list would advertise buttons
+ * nothing handles.
  */
-export function buildSlackAppManifest(input: { bot_display_name: string; request_url: string }): SlackAppManifest {
+export function buildSlackAppManifest(input: {
+  bot_display_name: string;
+  request_url: string;
+  interactions_request_url: string;
+}): SlackAppManifest {
   return {
     display_information: {
       name: input.bot_display_name,
@@ -79,6 +95,10 @@ export function buildSlackAppManifest(input: { bot_display_name: string; request
       event_subscriptions: {
         request_url: input.request_url,
         bot_events: Object.keys(SLACK_BOT_EVENT_SUBSCRIPTIONS),
+      },
+      interactivity: {
+        is_enabled: SLACK_INTERACTION_ACTION_IDS.length > 0,
+        request_url: input.interactions_request_url,
       },
       org_deploy_enabled: false,
       socket_mode_enabled: false,

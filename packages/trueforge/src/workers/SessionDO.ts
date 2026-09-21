@@ -150,6 +150,7 @@ export class SessionDO extends DurableObject {
 
     const notifier = new TurnCompletionNotifier({
       integrationStore: persistence.integrationStore,
+      scheduleStore: persistence.scheduleStore,
       adapters: createIntegrationAdapters(),
       logger: this.#logger,
     });

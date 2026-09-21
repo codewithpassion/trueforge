@@ -54,9 +54,14 @@ export interface IntegrationDeliveryRecord {
   id: string;
   tenant_id: string;
   integration_id: string;
+  /** Where the message goes. Unique with `turn_id`, so one turn posts once per conversation. */
   conversation_key: string;
-  /** Unique across the table, so a turn delivers at most once. */
   turn_id: string;
+  /**
+   * Session the turn belongs to. A notification rule posts a schedule's result to a channel the
+   * schedule's session was never keyed by, so the destination no longer names the source.
+   */
+  session_external_id: string;
   status: IntegrationDeliveryStatus;
   attempts: number;
   last_error: string | null;
@@ -152,16 +157,20 @@ export interface EnqueueIntegrationDeliveryInput {
   integration_id: string;
   conversation_key: string;
   turn_id: string;
+  session_external_id: string;
   /** When the sweep may take the row if the turn's own drain never delivers it. */
   next_attempt_at: Date;
 }
 
-export interface GetPendingDeliveryInput {
+/** One outbox row is identified by its turn and where that turn's result is owed. */
+export interface DeliveryTargetInput {
   turn_id: string;
+  conversation_key: string;
 }
 
-export interface ClaimDeliveryInput {
-  turn_id: string;
+export type GetPendingDeliveryInput = DeliveryTargetInput;
+
+export interface ClaimDeliveryInput extends DeliveryTargetInput {
   /** The deadline this claim has to finish in; past it the sweep treats the row as stranded. */
   next_attempt_at: Date;
 }
@@ -243,8 +252,8 @@ export interface IIntegrationStore<TTransaction = never> {
 
   // --- integration_delivery ---
   /**
-   * Adds the outbox row owed for one terminal turn. `enqueued` is false when the turn
-   * already has a row, or when the integration no longer exists.
+   * Adds the outbox row owed for one terminal turn in one conversation. `enqueued` is false
+   * when that pair already has a row, or when the integration no longer exists.
    */
   enqueueDelivery(input: EnqueueIntegrationDeliveryInput, transaction?: TTransaction): Promise<{ enqueued: boolean }>;
   /** The turn's outbox row while it is still owed; undefined once it is claimed, sent or failed. */

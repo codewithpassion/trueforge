@@ -70,6 +70,7 @@ const DELIVERY_COLUMNS = [
   'integration_id',
   'conversation_key',
   'turn_id',
+  'session_external_id',
   'status',
   'attempts',
   'last_error',
@@ -237,7 +238,10 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     return Number(result.numDeletedRows);
   }
 
-  /** Guarded write with the same shape as `recordEvent`: the parent must exist and the turn must be new. */
+  /**
+   * Guarded write with the same shape as `recordEvent`: the parent must exist and this turn
+   * must owe nothing to this conversation yet.
+   */
   async enqueueDelivery(
     input: EnqueueIntegrationDeliveryInput,
     transaction?: Kysely<Database>,
@@ -249,12 +253,14 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .columns([...DELIVERY_COLUMNS])
       .expression(
         sql`SELECT ${input.id}, i.tenant_id, i.id, ${input.conversation_key}, ${input.turn_id},
-            'pending', 0, NULL, ${timestamp}, ${timestamp}, ${input.next_attempt_at.toISOString()}
+            ${input.session_external_id}, 'pending', 0, NULL, ${timestamp}, ${timestamp},
+            ${input.next_attempt_at.toISOString()}
           FROM integration AS i
           WHERE i.id = ${input.integration_id}
             AND i.tenant_id = ${input.tenant_id}
             AND NOT EXISTS (
-              SELECT 1 FROM integration_delivery AS d WHERE d.turn_id = ${input.turn_id}
+              SELECT 1 FROM integration_delivery AS d
+              WHERE d.turn_id = ${input.turn_id} AND d.conversation_key = ${input.conversation_key}
             )`,
       )
       .onConflict(oc => oc.doNothing())
@@ -272,6 +278,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
       .selectFrom('integration_delivery')
       .select([...DELIVERY_COLUMNS])
       .where('turn_id', '=', input.turn_id)
+      .where('conversation_key', '=', input.conversation_key)
       .where('status', '=', 'pending')
       .executeTakeFirst();
   }
@@ -294,6 +301,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
         next_attempt_at: input.next_attempt_at.toISOString(),
       })
       .where('turn_id', '=', input.turn_id)
+      .where('conversation_key', '=', input.conversation_key)
       .where('status', '=', 'pending')
       .returning([...DELIVERY_COLUMNS])
       .executeTakeFirst();

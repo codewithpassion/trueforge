@@ -1,5 +1,12 @@
 import type { IntegrationAdapterRegistry } from '../../../src/integrations/registry';
-import type { ChannelAdapter, Delivery, DeliveryResult, InboundResult } from '../../../src/integrations/types';
+import type {
+  ChannelAdapter,
+  Delivery,
+  DeliveryResult,
+  InboundInteractionResult,
+  InboundResult,
+  InteractionOutcome,
+} from '../../../src/integrations/types';
 
 export interface FakeChannelAdapter {
   adapters: IntegrationAdapterRegistry;
@@ -10,6 +17,8 @@ export interface FakeChannelAdapter {
   signals: (AbortSignal | undefined)[];
   /** Every out-of-band line the adapter was asked to post, in order. */
   notices: string[];
+  /** Every interaction reply the adapter was asked to post, in order. */
+  settlements: InteractionOutcome[];
 }
 
 /**
@@ -20,9 +29,12 @@ export function fakeChannelAdapter(options: { deliver?: () => DeliveryResult } =
   const delivered: Delivery[] = [];
   const signals: (AbortSignal | undefined)[] = [];
   const notices: string[] = [];
+  const settlements: InteractionOutcome[] = [];
   const adapter: ChannelAdapter = {
     type: 'slack',
     receive: (): Promise<InboundResult> => Promise.resolve({ type: 'ignore', reason: 'fake adapter' }),
+    receiveInteraction: (): Promise<InboundInteractionResult> =>
+      Promise.resolve({ type: 'ignore', reason: 'fake adapter' }),
     deliver: input => {
       delivered.push(input.delivery);
       signals.push(input.signal);
@@ -32,6 +44,10 @@ export function fakeChannelAdapter(options: { deliver?: () => DeliveryResult } =
       notices.push(input.text);
       return Promise.resolve({ ok: true });
     },
+    settleInteraction: input => {
+      settlements.push(input.outcome);
+      return Promise.resolve({ ok: true });
+    },
   };
-  return { adapters: new Map([['slack', adapter]]), adapter, delivered, signals, notices };
+  return { adapters: new Map([['slack', adapter]]), adapter, delivered, signals, notices, settlements };
 }

@@ -3,7 +3,6 @@ import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/err
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { ControlLoop } from '../controller/Controller';
 import type { IIntegrationStore, IntegrationDeliveryRecord } from '../db/integrationStore';
-import { toSessionExternalId } from './conversationKey';
 import { buildDeliveryContent } from './deliveryContent';
 import { claimDeadlineAt, MAX_DELIVERY_ATTEMPTS } from './deliverySchedule';
 import type { TurnCompletionNotifier } from './TurnCompletionNotifier';
@@ -76,13 +75,15 @@ async function retryOneDelivery<TTransaction>(
       return;
     }
 
-    // The row names its conversation, not its session; the conversation key is the session's external id.
+    // A rule delivery posts to a channel the session was never keyed by, so the row carries the
+    // session it reports on rather than deriving it from where the message goes.
     const session = await sessions.getByExternalId({
       tenant_id: row.tenant_id,
-      external_id: await toSessionExternalId(row.conversation_key),
+      external_id: row.session_external_id,
     });
-    const turnState = session === undefined ? undefined : (await session.getTurn(row.turn_id))?.state;
-    if (turnState === undefined) {
+    const turn = session === undefined ? undefined : await session.getTurn(row.turn_id);
+    const turnState = turn?.state;
+    if (turn === undefined || turnState === undefined) {
       logger.warn('Integration delivery has no turn to report', { deliveryId: row.id, turnId: row.turn_id });
       const orphan = await integrationStore.claimDeliveryForRetry({
         id: row.id,
@@ -113,7 +114,7 @@ async function retryOneDelivery<TTransaction>(
     }
     await notifier.deliverClaimed({
       delivery: claimed,
-      content: buildDeliveryContent(turnState),
+      content: await buildDeliveryContent({ turn, turn_id: row.turn_id, state: turnState }),
       signal,
       now,
     });

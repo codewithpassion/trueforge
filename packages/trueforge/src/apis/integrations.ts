@@ -11,6 +11,7 @@ import {
   SLACK_CREATE_APP_URL,
   slackAppManifestJson,
   slackEventsRequestUrl,
+  slackInteractionsRequestUrl,
 } from '../integrations/slack/appManifest';
 import {
   createIntegrationRoute,
@@ -333,14 +334,20 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
       return c.json({ error: { message: 'PUBLIC_BASE_URL must be set to build the app manifest' } }, 500);
     }
     const requestUrl = slackEventsRequestUrl({ public_base_url: publicBaseUrl, integration_id: record.id });
+    const interactionsRequestUrl = slackInteractionsRequestUrl({
+      public_base_url: publicBaseUrl,
+      integration_id: record.id,
+    });
     const manifest = buildSlackAppManifest({
       bot_display_name: record.manifest.bot_display_name,
       request_url: requestUrl,
+      interactions_request_url: interactionsRequestUrl,
     });
     return c.json(
       {
         data: {
           request_url: requestUrl,
+          interactions_request_url: interactionsRequestUrl,
           manifest_json: slackAppManifestJson(manifest),
           create_app_url: SLACK_CREATE_APP_URL,
         },

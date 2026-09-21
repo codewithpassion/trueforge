@@ -1,6 +1,6 @@
 /**
  * Integration route definitions: admin CRUD at /api/v1/settings/integrations and the
- * channel ingress at /api/v1/integrations/{integration_id}/events.
+ * channel ingress at /api/v1/integrations/{integration_id}/{events,interactions}.
  * Handlers are registered in apis/integrations.ts and apis/integrationEvents.ts.
  */
 import { createRoute, z } from '@hono/zod-openapi';
@@ -223,6 +223,39 @@ export const postIntegrationEventsRoute = createRoute({
     422: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'The event cannot run: the bound agent is missing, or the turn could not start.',
+    },
+    501: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'No adapter is registered for this integration type.',
+    },
+  },
+});
+
+export const postIntegrationInteractionsRoute = createRoute({
+  method: 'post',
+  path: '/{integration_id}/interactions',
+  tags: [OpenApiTag.INTEGRATIONS],
+  summary: 'Receive a channel interaction',
+  description:
+    'Endpoint a channel posts button clicks to. The request is authenticated by the channel ' +
+    'signature in its own headers, not by a TrueForge credential.',
+  // Called by the channel with its own signature, never through the generated SDK.
+  'x-fern-ignore': true,
+  'x-excluded': true,
+  request: { params: IntegrationIdParamsSchema },
+  responses: {
+    200: { description: 'Interaction accepted, refused for this user, or ignored as already settled.' },
+    401: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'The channel signature did not verify.',
+    },
+    404: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Integration not found.',
+    },
+    409: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'The integration is still pending: its credentials have not been saved.',
     },
     501: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },

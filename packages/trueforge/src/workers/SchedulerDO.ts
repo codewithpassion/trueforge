@@ -116,6 +116,7 @@ export class SchedulerDO extends DurableObject {
           sessions: new Sessions({ sessionStore: persistence.sessionStore }),
           notifier: new TurnCompletionNotifier({
             integrationStore: persistence.integrationStore,
+            scheduleStore: persistence.scheduleStore,
             adapters: createIntegrationAdapters(),
             logger: this.#logger,
           }),

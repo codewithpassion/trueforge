@@ -4,10 +4,30 @@ import {
   type ConnectedSlackIntegrationManifest,
   type SlackIntegrationManifest,
 } from '../../schemas/integration';
-import type { ChannelAdapter, DeliveryContent, DeliveryResult, InboundResult } from '../types';
-import { postSlackMessage, type SlackFetch } from './api';
+import type {
+  ChannelAdapter,
+  DeliveryContent,
+  DeliveryResult,
+  InboundInteractionResult,
+  InboundResult,
+  InteractionOutcome,
+} from '../types';
+import { postSlackMessage, postSlackResponseUrl, type SlackFetch } from './api';
+import { buildApprovalMessage, buildQuestionMessage, buildSettledMessage, type SlackBlockMessage } from './blocks';
 import { chunkForSlack } from './chunk';
-import { decideSlackEvent, parseSlackConversationKey, SlackPayloadSchema, type SlackPayload } from './events';
+import {
+  decideSlackEvent,
+  parseSlackConversationKey,
+  SLACK_CHANNEL_THREAD_SENTINEL,
+  SlackPayloadSchema,
+  type SlackPayload,
+} from './events';
+import {
+  decideSlackInteraction,
+  readInteractionPayloadField,
+  SlackInteractionPayloadSchema,
+  type SlackInteractionPayload,
+} from './interactions';
 import { toMrkdwn } from './mrkdwn';
 import {
   SLACK_SIGNATURE_HEADER,
@@ -18,8 +38,18 @@ import {
 
 const NOT_CONNECTED_REASON = 'Slack credentials are not saved for this integration yet';
 
-function statusLine(content: Extract<DeliveryContent, { type: 'status' }>): string {
-  return content.detail;
+/** The one-line form of content that needs no blocks. */
+function plainText(content: DeliveryContent): string {
+  switch (content.type) {
+    case 'message':
+      return toMrkdwn(content.text);
+    case 'status':
+      return content.detail;
+    case 'approval_request':
+    case 'question':
+      // Unreachable: `blockMessageFor` covers both, and this keeps the switch exhaustive.
+      return content.intro;
+  }
 }
 
 type SlackPayloadParse =
@@ -44,8 +74,35 @@ function challengeResponse(challenge: string): InboundResult {
   return { type: 'respond', status: 200, content_type: 'text/plain; charset=utf-8', body: challenge };
 }
 
+function parseInteractionPayload(body: string): SlackInteractionPayload | undefined {
+  const field = readInteractionPayloadField(body);
+  if (field === undefined) {
+    return undefined;
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(field);
+  } catch {
+    return undefined;
+  }
+  const parsed = SlackInteractionPayloadSchema.safeParse(json);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Message body for a held turn; the fallback text is what a notification shows. */
+function blockMessageFor(content: DeliveryContent): SlackBlockMessage | undefined {
+  if (content.type === 'approval_request') {
+    return buildApprovalMessage({ turn_id: content.turn_id, intro: content.intro, approvals: content.approvals });
+  }
+  if (content.type === 'question') {
+    return buildQuestionMessage({ turn_id: content.turn_id, intro: content.intro, question: content.question });
+  }
+  return undefined;
+}
+
 /**
- * Slack messaging over the Events API and `chat.postMessage`.
+ * Slack messaging over the Events API and `chat.postMessage`, plus the interactive callbacks
+ * the approval and question buttons produce.
  *
  * Inbound requests are authenticated by the Slack signature alone, so nothing is read from the
  * body before it verifies, and the workspace in the payload must be the one the manifest names.
@@ -80,13 +137,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
       return this.#receivePending(body);
     }
 
-    const check: SlackSignatureCheck = await verifySlackSignature({
-      body,
-      timestamp: request.headers.get(SLACK_TIMESTAMP_HEADER),
-      signature: request.headers.get(SLACK_SIGNATURE_HEADER),
-      signingSecret,
-      nowMs: this.#now(),
-    });
+    const check = await this.#verify({ request, body, signingSecret });
     if (!check.valid) {
       return { type: 'rejected', reason: check.reason };
     }
@@ -106,6 +157,52 @@ export class SlackChannelAdapter implements ChannelAdapter {
       integrationId: input.integration_id,
       manifest: connected,
       payload: payload.payload,
+    });
+  }
+
+  /**
+   * Same verification as `receive`, over the raw form body Slack posts. A pending integration
+   * has nothing to verify with and no buttons in the wild, so it refuses every click.
+   */
+  async receiveInteraction(input: {
+    request: Request;
+    manifest: SlackIntegrationManifest;
+    integration_id: string;
+  }): Promise<InboundInteractionResult> {
+    const { request } = input;
+    const body = await request.text();
+    const signingSecret = input.manifest.auth?.signing_secret;
+    if (signingSecret === undefined) {
+      return { type: 'not_connected', reason: NOT_CONNECTED_REASON };
+    }
+
+    const check = await this.#verify({ request, body, signingSecret });
+    if (!check.valid) {
+      return { type: 'rejected', reason: check.reason };
+    }
+
+    const payload = parseInteractionPayload(body);
+    if (payload === undefined) {
+      return { type: 'ignore', reason: 'Unsupported Slack interaction payload' };
+    }
+    const connected = connectedSlackManifest(input.manifest);
+    if (connected === undefined) {
+      return { type: 'not_connected', reason: NOT_CONNECTED_REASON };
+    }
+    return decideSlackInteraction({
+      integrationId: input.integration_id,
+      manifest: connected,
+      payload,
+    });
+  }
+
+  #verify(input: { request: Request; body: string; signingSecret: string }): Promise<SlackSignatureCheck> {
+    return verifySlackSignature({
+      body: input.body,
+      timestamp: input.request.headers.get(SLACK_TIMESTAMP_HEADER),
+      signature: input.request.headers.get(SLACK_SIGNATURE_HEADER),
+      signingSecret: input.signingSecret,
+      nowMs: this.#now(),
     });
   }
 
@@ -130,11 +227,12 @@ export class SlackChannelAdapter implements ChannelAdapter {
     signal?: AbortSignal;
   }): Promise<DeliveryResult> {
     const { content } = input.delivery;
-    const text = content.type === 'message' ? toMrkdwn(content.text) : statusLine(content);
+    const blockMessage = blockMessageFor(content);
     return this.#post({
       manifest: input.manifest,
       conversationKey: input.delivery.conversation_key,
-      text,
+      text: blockMessage === undefined ? plainText(content) : blockMessage.text,
+      ...(blockMessage === undefined ? {} : { blocks: blockMessage.blocks }),
       signal: input.signal,
     });
   }
@@ -147,14 +245,37 @@ export class SlackChannelAdapter implements ChannelAdapter {
     return this.#post({ manifest: input.manifest, conversationKey: input.conversation_key, text: input.text });
   }
 
+  async settleInteraction(input: {
+    manifest: SlackIntegrationManifest;
+    reply_context: string;
+    outcome: InteractionOutcome;
+  }): Promise<DeliveryResult> {
+    const { outcome } = input;
+    // Only a recorded decision rewrites the message; a refusal must leave the buttons alone
+    // and reach nobody but the person who clicked.
+    const settled = outcome.type === 'recorded' ? buildSettledMessage(outcome.summary) : undefined;
+    const posted = await postSlackResponseUrl({
+      responseUrl: input.reply_context,
+      text: outcome.type === 'recorded' ? outcome.summary : outcome.reason,
+      ...(settled === undefined ? {} : { blocks: settled.blocks }),
+      responseType: settled === undefined ? 'ephemeral' : 'in_channel',
+      replaceOriginal: settled !== undefined,
+      ...(this.#fetch === undefined ? {} : { fetchImpl: this.#fetch }),
+    });
+    return posted.ok ? { ok: true } : { ok: false, error: posted.error };
+  }
+
   /**
    * Posts the text into its thread, split into messages Slack accepts. A chunk that fails stops
    * the rest: a retry repeats the chunks already posted, which reads better than a gap.
+   *
+   * Blocks are never split: a Block Kit message is one message by construction.
    */
   async #post(input: {
     manifest: SlackIntegrationManifest;
     conversationKey: string;
     text: string;
+    blocks?: readonly unknown[] | undefined;
     signal?: AbortSignal | undefined;
   }): Promise<DeliveryResult> {
     const connected: ConnectedSlackIntegrationManifest | undefined = connectedSlackManifest(input.manifest);
@@ -165,7 +286,8 @@ export class SlackChannelAdapter implements ChannelAdapter {
     if (conversation === undefined) {
       return { ok: false, error: `Not a Slack conversation key: ${input.conversationKey}` };
     }
-    const chunks = chunkForSlack(input.text);
+    const threadTs = conversation.thread_ts === SLACK_CHANNEL_THREAD_SENTINEL ? undefined : conversation.thread_ts;
+    const chunks = input.blocks === undefined ? chunkForSlack(input.text) : [input.text];
     if (chunks.length === 0) {
       return { ok: true };
     }
@@ -173,8 +295,9 @@ export class SlackChannelAdapter implements ChannelAdapter {
       const posted = await postSlackMessage({
         botToken: connected.auth.bot_token,
         channel: conversation.channel_id,
-        threadTs: conversation.thread_ts,
+        threadTs,
         text: chunk,
+        ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
         signal: input.signal,
         ...(this.#fetch === undefined ? {} : { fetchImpl: this.#fetch }),
       });

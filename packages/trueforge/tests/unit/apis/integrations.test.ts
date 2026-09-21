@@ -49,6 +49,8 @@ function manifest(overrides: Partial<IntegrationManifest> = {}): IntegrationMani
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
     auth: { bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET },
     ...overrides,
   };
@@ -63,6 +65,8 @@ function pendingManifest(overrides: Partial<IntegrationManifest> = {}): Integrat
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
     ...overrides,
   };
 }
@@ -145,6 +149,7 @@ async function createIngress(options: { adapters: IntegrationAdapterRegistry; pe
       }),
     resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
     agentStore,
+    scheduleStore: { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) },
     turnSkillsResolverStore: new SqliteSkillStore(db),
     logger: winston.createLogger({ silent: true }),
   });
@@ -159,8 +164,10 @@ function slackAdapter(receive: () => InboundResult): IntegrationAdapterRegistry 
   const adapter: ChannelAdapter = {
     type: 'slack',
     receive: () => Promise.resolve(receive()),
+    receiveInteraction: () => Promise.resolve({ type: 'ignore', reason: 'not used here' }),
     deliver: () => Promise.resolve({ ok: true }),
     notice: () => Promise.resolve({ ok: true }),
+    settleInteraction: () => Promise.resolve({ ok: true }),
   };
   return new Map([['slack', adapter]]);
 }
@@ -588,7 +595,12 @@ describe('integration events ingress', () => {
 
       const deliveries = await db.selectFrom('integration_delivery').selectAll().execute();
       expect(deliveries).toHaveLength(1);
-      expect(await integrationStore.getPendingDelivery({ turn_id: deliveries[0]?.turn_id ?? '' })).toBeDefined();
+      expect(
+        await integrationStore.getPendingDelivery({
+          turn_id: deliveries[0]?.turn_id ?? '',
+          conversation_key: deliveries[0]?.conversation_key ?? '',
+        }),
+      ).toBeDefined();
     } finally {
       await db.destroy();
     }

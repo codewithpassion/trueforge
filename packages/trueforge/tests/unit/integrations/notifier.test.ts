@@ -37,6 +37,9 @@ import { newId } from '../../../src/utils/id';
 import { ScriptedTurnSessions } from '../apis/scriptedSessions';
 import { fakeChannelAdapter } from './fakeChannelAdapter';
 
+/** Notification rules only fire for schedule sessions, which these cases do not create. */
+const scheduleStore = { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) };
+
 const TENANT = 'default';
 const SESSION_ID = 's1';
 const TURN_ID = 'turn-1';
@@ -58,6 +61,8 @@ function manifest(): IntegrationManifest {
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
     auth: { bot_token: 'xoxb-test', signing_secret: 'sigsecret' },
   };
 }
@@ -181,6 +186,7 @@ describe('TurnCompletionNotifier on Node', () => {
     const fake = fakeChannelAdapter();
     const notifier = new TurnCompletionNotifier({
       integrationStore: harness.integrationStore,
+      scheduleStore,
       adapters: fake.adapters,
       logger: createLogger({ silent: true }),
     });
@@ -190,6 +196,7 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      session_external_id: CONVERSATION_KEY,
       next_attempt_at: new Date(),
     });
 
@@ -197,7 +204,9 @@ describe('TurnCompletionNotifier on Node', () => {
 
     expect(fake.delivered).toHaveLength(1);
     expect(fake.delivered[0]).toMatchObject({ id: 'del-1', conversation_key: CONVERSATION_KEY, turn_id: TURN_ID });
-    expect(await harness.integrationStore.getPendingDelivery({ turn_id: TURN_ID })).toBeUndefined();
+    expect(
+      await harness.integrationStore.getPendingDelivery({ turn_id: TURN_ID, conversation_key: CONVERSATION_KEY }),
+    ).toBeUndefined();
 
     // Re-running the hook finds nothing pending, so the conversation is not answered twice.
     const session = await sessionHandle(harness);
@@ -213,6 +222,7 @@ describe('TurnCompletionNotifier on Node', () => {
     const fake = fakeChannelAdapter();
     const notifier = new TurnCompletionNotifier({
       integrationStore: harness.integrationStore,
+      scheduleStore,
       adapters: fake.adapters,
       logger: createLogger({ silent: true }),
     });
@@ -222,6 +232,7 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      session_external_id: CONVERSATION_KEY,
       next_attempt_at: new Date(),
     });
     // Finish the turn first so both callers get past the terminal-state check together.
@@ -249,6 +260,7 @@ describe('TurnCompletionNotifier on Node', () => {
     harness = await createHarness();
     const notifier = new TurnCompletionNotifier({
       integrationStore: harness.integrationStore,
+      scheduleStore,
       adapters: new Map(),
       logger: createLogger({ silent: true }),
     });
@@ -258,12 +270,15 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      session_external_id: CONVERSATION_KEY,
       next_attempt_at: new Date(),
     });
 
     await runTurn({ harness, notifier });
 
-    expect(await harness.integrationStore.getPendingDelivery({ turn_id: TURN_ID })).toBeUndefined();
+    expect(
+      await harness.integrationStore.getPendingDelivery({ turn_id: TURN_ID, conversation_key: CONVERSATION_KEY }),
+    ).toBeUndefined();
     const [row] = await harness.db.selectFrom('integration_delivery').selectAll().execute();
     expect(row).toMatchObject({ status: 'failed', attempts: 1, last_error: 'No adapter for integration type slack' });
   });
@@ -273,6 +288,7 @@ describe('TurnCompletionNotifier on Node', () => {
     const fake = fakeChannelAdapter({ deliver: () => ({ ok: false, error: 'channel rejected the message' }) });
     const notifier = new TurnCompletionNotifier({
       integrationStore: harness.integrationStore,
+      scheduleStore,
       adapters: fake.adapters,
       logger: createLogger({ silent: true }),
     });
@@ -282,6 +298,7 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      session_external_id: CONVERSATION_KEY,
       next_attempt_at: new Date(),
     });
 
@@ -296,6 +313,7 @@ describe('TurnCompletionNotifier on Node', () => {
     const fake = fakeChannelAdapter({ deliver: () => ({ ok: false, error: 'channel rejected the message' }) });
     const notifier = new TurnCompletionNotifier({
       integrationStore: harness.integrationStore,
+      scheduleStore,
       adapters: fake.adapters,
       logger: createLogger({ silent: true }),
     });
@@ -305,12 +323,14 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      session_external_id: CONVERSATION_KEY,
       next_attempt_at: new Date(),
     });
     // Burn every attempt but the last, the way repeated sweeps would.
     for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS - 1; attempt += 1) {
       const claimed = await harness.integrationStore.claimDelivery({
         turn_id: TURN_ID,
+        conversation_key: CONVERSATION_KEY,
         next_attempt_at: new Date(),
       });
       await harness.integrationStore.releaseDelivery({
@@ -336,6 +356,7 @@ describe('TurnCompletionNotifier on Node', () => {
     const fake = fakeChannelAdapter();
     const notifier = new TurnCompletionNotifier({
       integrationStore: harness.integrationStore,
+      scheduleStore,
       adapters: fake.adapters,
       logger: createLogger({ silent: true }),
     });
@@ -345,13 +366,16 @@ describe('TurnCompletionNotifier on Node', () => {
       integration_id: harness.integrationId,
       conversation_key: CONVERSATION_KEY,
       turn_id: TURN_ID,
+      session_external_id: CONVERSATION_KEY,
       next_attempt_at: new Date(),
     });
 
     await runTurn({ harness, notifier });
 
     expect(fake.delivered).toHaveLength(0);
-    expect(await harness.integrationStore.getPendingDelivery({ turn_id: TURN_ID })).toMatchObject({
+    expect(
+      await harness.integrationStore.getPendingDelivery({ turn_id: TURN_ID, conversation_key: CONVERSATION_KEY }),
+    ).toMatchObject({
       status: 'pending',
     });
   });

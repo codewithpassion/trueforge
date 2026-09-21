@@ -371,8 +371,8 @@ export interface IntegrationEventTable {
 /**
  * Outbox: the reply owed to one conversation for one terminal turn.
  * PRIMARY KEY (id)
- * CREATE UNIQUE INDEX integration_delivery_turn_uq ON integration_delivery (turn_id)
- * CREATE INDEX integration_delivery_pending_idx ON integration_delivery (updated_at) WHERE status IN ('pending', 'sending')
+ * CREATE UNIQUE INDEX integration_delivery_target_uq ON integration_delivery (turn_id, conversation_key)
+ * CREATE INDEX integration_delivery_due_idx ON integration_delivery (next_attempt_at) WHERE status IN ('pending', 'sending')
  */
 export interface IntegrationDeliveryTable {
   id: string;
@@ -380,6 +380,8 @@ export interface IntegrationDeliveryTable {
   integration_id: string;
   conversation_key: string;
   turn_id: string;
+  /** session the turn belongs to; the conversation key need not name it */
+  session_external_id: string;
   status: IntegrationDeliveryStatus;
   attempts: number;
   last_error: string | null;

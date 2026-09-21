@@ -18,6 +18,8 @@ function manifest(overrides: Partial<SlackIntegrationManifest> = {}): SlackInteg
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
     auth: { bot_token: 'xoxb-secret-token', signing_secret: SLACK_TEST_SIGNING_SECRET },
     ...overrides,
   };
@@ -71,6 +73,8 @@ function pendingManifest(): SlackIntegrationManifest {
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
   };
 }
 
@@ -147,6 +151,8 @@ describe('SlackChannelAdapter.receive', () => {
       allowed_channel_ids: ['C0GENERAL'],
       allow_direct_messages: true,
       reply_mode: 'thread',
+      approver_slack_user_ids: [],
+      notification_rules: [],
       auth: { bot_token: 'xoxb-secret-token', signing_secret: SLACK_TEST_SIGNING_SECRET },
     };
 

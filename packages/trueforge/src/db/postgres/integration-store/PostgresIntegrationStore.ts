@@ -49,6 +49,7 @@ function toDeliveryRecord(row: Selectable<IntegrationDeliveryTable>): Integratio
     integration_id: row.integration_id,
     conversation_key: row.conversation_key,
     turn_id: row.turn_id,
+    session_external_id: row.session_external_id,
     status: row.status,
     attempts: row.attempts,
     last_error: row.last_error,
@@ -222,6 +223,7 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
         'integration_id',
         'conversation_key',
         'turn_id',
+        'session_external_id',
         'status',
         'attempts',
         'last_error',
@@ -231,12 +233,13 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
       ])
       .expression(
         sql`SELECT ${input.id}, i.tenant_id, i.id, ${input.conversation_key}, ${input.turn_id},
-            'pending', 0, NULL, now(), now(), ${input.next_attempt_at}
+            ${input.session_external_id}, 'pending', 0, NULL, now(), now(), ${input.next_attempt_at}
           FROM integration AS i
           WHERE i.id = ${input.integration_id}
             AND i.tenant_id = ${input.tenant_id}
             AND NOT EXISTS (
-              SELECT 1 FROM integration_delivery AS d WHERE d.turn_id = ${input.turn_id}
+              SELECT 1 FROM integration_delivery AS d
+              WHERE d.turn_id = ${input.turn_id} AND d.conversation_key = ${input.conversation_key}
             )`,
       )
       .onConflict(oc => oc.doNothing())
@@ -254,6 +257,7 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
       .selectFrom('integration_delivery')
       .selectAll()
       .where('turn_id', '=', input.turn_id)
+      .where('conversation_key', '=', input.conversation_key)
       .where('status', '=', 'pending')
       .executeTakeFirst();
     return row === undefined ? undefined : toDeliveryRecord(row);
@@ -277,6 +281,7 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
         next_attempt_at: input.next_attempt_at,
       })
       .where('turn_id', '=', input.turn_id)
+      .where('conversation_key', '=', input.conversation_key)
       .where('status', '=', 'pending')
       .returningAll()
       .executeTakeFirst();

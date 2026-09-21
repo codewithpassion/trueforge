@@ -27,6 +27,9 @@ import { newId } from '../../../src/utils/id';
 import { fakeChannelAdapter, type FakeChannelAdapter } from './fakeChannelAdapter';
 import { RecordingTurnExecutor } from './recordingTurnExecutor';
 
+/** Notification rules only fire for schedule sessions, which these cases do not create. */
+const scheduleStore = { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) };
+
 const TENANT = 'default';
 const AGENT_NAME = 'support-bot';
 
@@ -46,6 +49,8 @@ function manifest(): IntegrationManifest {
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
     auth: { bot_token: 'xoxb-test', signing_secret: 'sigsecret' },
   };
 }
@@ -129,6 +134,7 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
     }),
     notifier: new TurnCompletionNotifier({
       integrationStore,
+      scheduleStore,
       adapters: channel.adapters,
       logger,
     }),
@@ -183,7 +189,10 @@ describe('IntegrationRouter', () => {
     if (routed.type !== 'started') {
       throw new Error('expected the turn to start');
     }
-    const delivery = await harness.integrationStore.getPendingDelivery({ turn_id: routed.turn_id });
+    const delivery = await harness.integrationStore.getPendingDelivery({
+      turn_id: routed.turn_id,
+      conversation_key: inboundEvent().conversation_key,
+    });
     expect(delivery).toMatchObject({
       integration_id: harness.integration.id,
       conversation_key: inboundEvent().conversation_key,
@@ -344,7 +353,12 @@ describe('IntegrationRouter', () => {
     }
 
     // route() returned without waiting on delivery; the row is still owed until the flush runs.
-    expect(await harness.integrationStore.getPendingDelivery({ turn_id: routed.turn_id })).toBeDefined();
+    expect(
+      await harness.integrationStore.getPendingDelivery({
+        turn_id: routed.turn_id,
+        conversation_key: inboundEvent().conversation_key,
+      }),
+    ).toBeDefined();
     await harness.flush();
   });
 });

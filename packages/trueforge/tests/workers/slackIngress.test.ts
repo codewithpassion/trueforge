@@ -53,6 +53,8 @@ function manifest(teamId: string): IntegrationManifest {
     allowed_channel_ids: [CHANNEL_ID],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
     auth: { bot_token: 'xoxb-workers-test', signing_secret: SLACK_TEST_SIGNING_SECRET },
   };
 }
@@ -73,6 +75,7 @@ function ingressApp() {
       resolveMcpServerStore: () => persistence.resolveMcpServerStore(REQUEST_CONTEXT),
       resolveSandboxProviderStore: () => persistence.resolveSandboxProviderStore(REQUEST_CONTEXT),
       agentStore: persistence.agentStore,
+      scheduleStore: persistence.scheduleStore,
       turnSkillsResolverStore: persistence.turnSkillsResolverStore,
       logger: createConsoleLogger({ level: 'error', bindings: {} }),
     }),

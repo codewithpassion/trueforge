@@ -34,8 +34,11 @@ export type SlackPostResult =
 export interface SlackPostMessageInput {
   botToken: string;
   channel: string;
-  threadTs: string;
+  /** Undefined posts at the top of the channel, which is what a notification rule wants. */
+  threadTs: string | undefined;
   text: string;
+  /** Block Kit payload; `text` stays as the notification fallback Slack requires. */
+  blocks?: readonly unknown[] | undefined;
   /** Caller's own deadline, such as the alarm pass budget; the request timeout applies as well. */
   signal?: AbortSignal | undefined;
   /** Test seam for the request timeout. */
@@ -161,6 +164,44 @@ export const slackAuthTest: SlackAuthTest = async input => {
   };
 };
 
+export interface SlackResponseUrlInput {
+  /** Slack's own short-lived reply URL, taken from a verified interaction payload. */
+  responseUrl: string;
+  text: string;
+  blocks?: readonly unknown[] | undefined;
+  /** `in_channel` with `replace_original` rewrites the message; `ephemeral` is seen by one person. */
+  responseType: 'in_channel' | 'ephemeral';
+  replaceOriginal: boolean;
+  fetchImpl?: SlackFetch | undefined;
+  timeoutMs?: number | undefined;
+}
+
+/**
+ * Answers a button click through the reply URL the click carried. No bot token is involved:
+ * the URL is the capability, which is why it is never logged and never leaves the adapter.
+ */
+export async function postSlackResponseUrl(input: SlackResponseUrlInput): Promise<SlackPostResult> {
+  const send = input.fetchImpl ?? fetch;
+  let response: Response;
+  try {
+    response = await send(input.responseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({
+        response_type: input.responseType,
+        replace_original: input.replaceOriginal,
+        text: input.text,
+        ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
+      }),
+      signal: AbortSignal.timeout(input.timeoutMs ?? SLACK_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    return abortFailure(error, undefined);
+  }
+  // A response URL answers `ok` as plain text, not JSON, so only the status is readable.
+  return response.ok ? { ok: true } : { ok: false, error: `Slack reply URL returned HTTP ${String(response.status)}` };
+}
+
 /**
  * Posts one message into a thread. The bot token only ever travels in the Authorization header —
  * failures are reported from Slack's own `error` code, never from the request.
@@ -169,7 +210,12 @@ export async function postSlackMessage(
   input: SlackPostMessageInput & { fetchImpl?: SlackFetch },
 ): Promise<SlackPostResult> {
   const send = input.fetchImpl ?? fetch;
-  const body = JSON.stringify({ channel: input.channel, thread_ts: input.threadTs, text: input.text });
+  const body = JSON.stringify({
+    channel: input.channel,
+    ...(input.threadTs === undefined ? {} : { thread_ts: input.threadTs }),
+    text: input.text,
+    ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
+  });
   const timeoutMs = input.timeoutMs ?? SLACK_FETCH_TIMEOUT_MS;
 
   for (let attempt = 0; ; attempt += 1) {

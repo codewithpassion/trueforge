@@ -7,6 +7,9 @@ import type { IntegrationManifest } from '../../src/schemas/integration';
 import { createConsoleLogger } from '../../src/workers/logger';
 import { d1Persistence, migrateDatabase, sessionStub, TENANT_ID, upsertMockProvider, USER_REF } from './harness';
 
+/** Notification rules only fire for schedule sessions, which these cases do not create. */
+const scheduleStore = { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) };
+
 /** Deliveries the fake Slack adapter was asked to post, from inside the Durable Object. */
 const delivered = vi.hoisted((): Delivery[] => []);
 
@@ -44,6 +47,8 @@ function manifest(): IntegrationManifest {
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: [],
+    notification_rules: [],
     auth: { bot_token: 'xoxb-test', signing_secret: 'sigsecret' },
   };
 }
@@ -113,6 +118,7 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
       integration_id: integrationId,
       conversation_key: conversationKey,
       turn_id: started.turn.id,
+      session_external_id: conversationKey,
       next_attempt_at: new Date(),
     });
 
@@ -125,7 +131,9 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
 
     const turn = await d1Persistence().sessionStore.getTurn({ session_id: sessionId, turn_id: started.turn.id });
     expect(turn?.state.status).toBe('done');
-    expect(await stores.integrationStore.getPendingDelivery({ turn_id: started.turn.id })).toBeUndefined();
+    expect(
+      await stores.integrationStore.getPendingDelivery({ turn_id: started.turn.id, conversation_key: conversationKey }),
+    ).toBeUndefined();
   });
 
   it('two flushes racing for one turn post exactly once on D1', async () => {
@@ -158,6 +166,7 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
       integration_id: integrationId,
       conversation_key: conversationKey,
       turn_id: started.turn.id,
+      session_external_id: conversationKey,
       next_attempt_at: new Date(),
     });
     const session = await new Sessions({ sessionStore: stores.sessionStore }).get({
@@ -169,6 +178,7 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
     }
     const notifier = new TurnCompletionNotifier({
       integrationStore: stores.integrationStore,
+      scheduleStore,
       adapters: createIntegrationAdapters(),
       logger: createConsoleLogger({ level: 'error', bindings: {} }),
     });
@@ -178,7 +188,9 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
     await Promise.all(Array.from({ length: 4 }, () => notifier.deliverForTurn({ session, turn_id: started.turn.id })));
 
     expect(delivered).toHaveLength(1);
-    expect(await stores.integrationStore.getPendingDelivery({ turn_id: started.turn.id })).toBeUndefined();
+    expect(
+      await stores.integrationStore.getPendingDelivery({ turn_id: started.turn.id, conversation_key: conversationKey }),
+    ).toBeUndefined();
   });
 
   it('leaves a turn no integration owns alone', async () => {

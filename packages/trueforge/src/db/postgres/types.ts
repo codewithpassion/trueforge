@@ -555,7 +555,7 @@ export interface IntegrationEventTable {
 /**
  * Outbox: the reply owed to one conversation for one terminal turn.
  * PRIMARY KEY (id)
- * CREATE UNIQUE INDEX integration_delivery_turn_uq ON integration_delivery (turn_id)
+ * CREATE UNIQUE INDEX integration_delivery_target_uq ON integration_delivery (turn_id, conversation_key)
  * FK (integration_id) -> integration(id) ON DELETE CASCADE
  */
 export interface IntegrationDeliveryTable {
@@ -565,6 +565,8 @@ export interface IntegrationDeliveryTable {
   integration_id: string;
   conversation_key: string;
   turn_id: string;
+  /** session the turn belongs to; the conversation key need not name it */
+  session_external_id: string;
   /** `pending` | `sent` | `failed` — varchar(16) */
   status: IntegrationDeliveryStatus;
   attempts: number;

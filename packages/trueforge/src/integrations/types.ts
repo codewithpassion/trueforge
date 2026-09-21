@@ -4,6 +4,7 @@
  */
 import type { TerminalTurnState } from '@truefoundry/trueforge-core/agent-session';
 import type { IntegrationManifest, IntegrationType } from '../schemas/integration';
+import type { PendingQuestion, PendingToolApproval } from './pendingActions';
 
 /** Who sent the inbound message, as the channel names them. */
 export interface InboundSender {
@@ -44,7 +45,11 @@ export type InboundResult =
 export type DeliveryContent =
   | { type: 'message'; text: string }
   /** The turn did not produce an answer; the channel posts a short status line instead. */
-  | { type: 'status'; state: TerminalTurnState['status']; detail: string };
+  | { type: 'status'; state: TerminalTurnState['status']; detail: string }
+  /** The turn is held on tool calls a person has to allow or deny. `intro` is the model's own narration, if any. */
+  | { type: 'approval_request'; turn_id: string; intro: string; approvals: readonly PendingToolApproval[] }
+  /** The turn is held on a question the agent asked. */
+  | { type: 'question'; turn_id: string; intro: string; question: PendingQuestion };
 
 /** One outbound message owed to a conversation. */
 export interface Delivery {
@@ -60,10 +65,53 @@ export type DeliveryResult =
   /** `retry_after_ms` is a pause the channel asked for; the outbox waits at least that long. */
   | { ok: false; error: string; retry_after_ms?: number };
 
+/** What a person chose on a message the channel posted for a paused turn. */
+export type InteractionDecision =
+  | { type: 'approval'; approved: boolean }
+  /** Free text or a chosen option; either way it becomes the tool's response. */
+  | { type: 'answer'; text: string };
+
+/** A verified click on one of those messages, reduced to what the layer needs. */
+export interface InboundInteraction {
+  integration_id: string;
+  conversation_key: string;
+  sender: InboundSender;
+  /** The paused turn the message named. The layer still checks the turn is really waiting. */
+  turn_id: string;
+  tool_call_id: string;
+  decision: InteractionDecision;
+  /**
+   * Channel-owned handle for answering this click. Opaque to the layer: only the adapter that
+   * produced it reads it, and it is never logged, because it can carry a capability URL.
+   */
+  reply_context: string;
+}
+
+export type InboundInteractionResult =
+  | { type: 'interaction'; interaction: InboundInteraction }
+  /** The sender may not decide this; `reply_context` tells them so without changing anything. */
+  | { type: 'refused_sender'; reason: string; reply_context: string }
+  | { type: 'ignore'; reason: string }
+  | { type: 'rejected'; reason: string }
+  | { type: 'not_connected'; reason: string };
+
+/** What the channel says once a click has been dealt with. */
+export type InteractionOutcome =
+  /** The decision was taken; the message the buttons were on is replaced by this line. */
+  | { type: 'recorded'; summary: string }
+  /** Nothing changed, and only the person who clicked hears about it. */
+  | { type: 'refused'; reason: string };
+
 export interface ChannelAdapter<TManifest extends IntegrationManifest = IntegrationManifest> {
   readonly type: IntegrationType;
   /** Verifies authenticity and returns the parsed event, a direct reply, or an ignore. Must finish well under 3 s. */
   receive(input: { request: Request; manifest: TManifest; integration_id: string }): Promise<InboundResult>;
+  /** Verifies a button click the same way `receive` verifies an event. Must finish well under 3 s. */
+  receiveInteraction(input: {
+    request: Request;
+    manifest: TManifest;
+    integration_id: string;
+  }): Promise<InboundInteractionResult>;
   /** Posts one message; idempotent per delivery id. `signal` is the caller's deadline, if it has one. */
   deliver(input: { manifest: TManifest; delivery: Delivery; signal?: AbortSignal }): Promise<DeliveryResult>;
   /**
@@ -71,4 +119,10 @@ export interface ChannelAdapter<TManifest extends IntegrationManifest = Integrat
    * message is still running. Best-effort: nothing retries it.
    */
   notice(input: { manifest: TManifest; conversation_key: string; text: string }): Promise<DeliveryResult>;
+  /** Answers a click: replaces the message it was on, or tells the clicker alone. Best-effort. */
+  settleInteraction(input: {
+    manifest: TManifest;
+    reply_context: string;
+    outcome: InteractionOutcome;
+  }): Promise<DeliveryResult>;
 }

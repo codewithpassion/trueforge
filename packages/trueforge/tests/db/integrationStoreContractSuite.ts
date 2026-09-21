@@ -27,6 +27,8 @@ function manifest(overrides: Partial<IntegrationManifest> = {}): IntegrationMani
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
+    approver_slack_user_ids: ['U0APPROVER'],
+    notification_rules: [{ schedule_name: 'nightly-report', channel_id: 'C0RELEASES', outcome: 'any' }],
     auth: { bot_token: 'xoxb-test', signing_secret: 'sigsecret' },
     ...overrides,
   };
@@ -51,17 +53,23 @@ const past = (msAgo = 60_000): Date => new Date(Date.now() - msAgo);
 /** Not due yet, so the sweep leaves the row alone. */
 const soon = (msAhead = 60_000): Date => new Date(Date.now() + msAhead);
 
+/** Where the delivery cases post; also the session external id, as an integration thread's is. */
+const CONVERSATION = 'slack:T:C:1';
 /** One outbox row `del-1` owed to `turn-1`, the shape the delivery cases start from. */
 function enqueue(store: IIntegrationStore, integrationId: string): Promise<{ enqueued: boolean }> {
   return store.enqueueDelivery({
     id: 'del-1',
     tenant_id: TENANT,
     integration_id: integrationId,
-    conversation_key: 'slack:T:C:1',
+    conversation_key: CONVERSATION,
     turn_id: 'turn-1',
+    session_external_id: CONVERSATION,
     next_attempt_at: past(),
   });
 }
+
+/** The pair that names one outbox row, for the cases that read or claim `del-1`. */
+const TARGET = { turn_id: 'turn-1', conversation_key: CONVERSATION } as const;
 
 export function runIntegrationStoreContractSuite(getStore: () => IIntegrationStore): void {
   it('create round-trips the manifest and creator, and is readable by id', async () => {
@@ -102,6 +110,8 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
       allowed_channel_ids: ['C0GENERAL'],
       allow_direct_messages: true,
       reply_mode: 'thread',
+      approver_slack_user_ids: [],
+      notification_rules: [],
     };
     const input = createInput({ external_account_id: `pending:${ulid().toLowerCase()}`, manifest: pending });
     const created = await store.createIntegration(input);
@@ -202,15 +212,16 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
       id: ulid().toLowerCase(),
       tenant_id: TENANT,
       integration_id: created.id,
-      conversation_key: 'slack:T:C:1',
+      conversation_key: CONVERSATION,
       turn_id: 'turn-1',
+      session_external_id: CONVERSATION,
       next_attempt_at: past(),
     });
 
     await store.deleteIntegration({ tenant_id: TENANT, id: created.id });
 
     expect(await store.getIntegrationById({ id: created.id })).toBeUndefined();
-    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toBeUndefined();
+    expect(await store.getPendingDelivery(TARGET)).toBeUndefined();
     // The dedupe row went with it, so the same event id is accepted again after a re-connect.
     const reconnected = await store.createIntegration(createInput({ id: created.id }));
     expect(
@@ -305,31 +316,81 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     expect(await store.pruneEvents({ before: new Date(Date.now() - 60_000) })).toBe(0);
   });
 
-  it('enqueueDelivery writes at most one outbox row per turn', async () => {
+  it('enqueueDelivery writes at most one outbox row per turn and conversation', async () => {
     const store = getStore();
     const created = await store.createIntegration(createInput());
     const delivery = {
       tenant_id: TENANT,
       integration_id: created.id,
-      conversation_key: 'slack:T0LACROSSE:C0GENERAL:1700000000.000100',
+      conversation_key: CONVERSATION,
       turn_id: 'turn-1',
+      session_external_id: CONVERSATION,
       next_attempt_at: past(),
     };
 
     expect(await store.enqueueDelivery({ id: ulid().toLowerCase(), ...delivery })).toEqual({ enqueued: true });
     expect(await store.enqueueDelivery({ id: ulid().toLowerCase(), ...delivery })).toEqual({ enqueued: false });
 
-    const pending = await store.getPendingDelivery({ turn_id: 'turn-1' });
+    const pending = await store.getPendingDelivery(TARGET);
     expect(pending).toMatchObject({
       tenant_id: TENANT,
       integration_id: created.id,
       conversation_key: delivery.conversation_key,
       turn_id: 'turn-1',
+      session_external_id: CONVERSATION,
       status: 'pending',
       attempts: 0,
       last_error: null,
     });
     expect(pending?.created_at).toMatch(ISO_UTC);
+  });
+
+  it('one turn owes a row per conversation, so two notification rules both post', async () => {
+    const store = getStore();
+    const created = await store.createIntegration(createInput());
+    // A schedule run reported to two channels: same turn, different conversation keys.
+    const toChannel = (channelId: string) => ({
+      id: `del-${channelId}`,
+      tenant_id: TENANT,
+      integration_id: created.id,
+      conversation_key: `slack:${TEAM_ID}:${channelId}:channel`,
+      turn_id: 'turn-1',
+      // The schedule session is keyed by its run id, not by either channel.
+      session_external_id: 'run-77',
+      next_attempt_at: past(),
+    });
+
+    expect(await store.enqueueDelivery(toChannel('C0RELEASES'))).toEqual({ enqueued: true });
+    expect(await store.enqueueDelivery(toChannel('C0OPS'))).toEqual({ enqueued: true });
+    expect(await store.enqueueDelivery(toChannel('C0OPS'))).toEqual({ enqueued: false });
+
+    const releases = await store.getPendingDelivery({
+      turn_id: 'turn-1',
+      conversation_key: `slack:${TEAM_ID}:C0RELEASES:channel`,
+    });
+    const ops = await store.getPendingDelivery({
+      turn_id: 'turn-1',
+      conversation_key: `slack:${TEAM_ID}:C0OPS:channel`,
+    });
+    expect(releases?.id).toBe('del-C0RELEASES');
+    expect(releases?.session_external_id).toBe('run-77');
+    expect(ops?.id).toBe('del-C0OPS');
+
+    // Claiming one leaves the other owed, so both channels are posted to exactly once.
+    const claimed = await store.claimDelivery({
+      turn_id: 'turn-1',
+      conversation_key: `slack:${TEAM_ID}:C0RELEASES:channel`,
+      next_attempt_at: soon(),
+    });
+    expect(claimed?.id).toBe('del-C0RELEASES');
+    expect(
+      (
+        await store.getPendingDelivery({
+          turn_id: 'turn-1',
+          conversation_key: `slack:${TEAM_ID}:C0OPS:channel`,
+        })
+      )?.id,
+    ).toBe('del-C0OPS');
   });
 
   it('concurrent enqueues for one turn write exactly one outbox row', async () => {
@@ -342,8 +403,9 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
           id: ulid().toLowerCase(),
           tenant_id: TENANT,
           integration_id: created.id,
-          conversation_key: 'slack:T:C:1',
+          conversation_key: CONVERSATION,
           turn_id: 'turn-race',
+          session_external_id: CONVERSATION,
           next_attempt_at: past(),
         }),
       ),
@@ -359,8 +421,9 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
         id: ulid().toLowerCase(),
         tenant_id: TENANT,
         integration_id: 'missing',
-        conversation_key: 'slack:T:C:1',
+        conversation_key: CONVERSATION,
         turn_id: 'turn-1',
+        session_external_id: CONVERSATION,
         next_attempt_at: past(),
       }),
     ).toEqual({ enqueued: false });
@@ -371,11 +434,11 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     const created = await store.createIntegration(createInput());
     await enqueue(store, created.id);
 
-    const claimed = await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() });
+    const claimed = await store.claimDelivery({ ...TARGET, next_attempt_at: soon() });
     expect(claimed).toMatchObject({ id: 'del-1', status: 'sending', attempts: 1 });
     // A claimed row is no longer owed, so a second caller has nothing to post.
-    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toBeUndefined();
-    expect(await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() })).toBeUndefined();
+    expect(await store.getPendingDelivery(TARGET)).toBeUndefined();
+    expect(await store.claimDelivery({ ...TARGET, next_attempt_at: soon() })).toBeUndefined();
   });
 
   it('concurrent claims for one turn hand the row to exactly one caller', async () => {
@@ -384,7 +447,7 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     await enqueue(store, created.id);
 
     const claims = await Promise.all(
-      Array.from({ length: 8 }, () => store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() })),
+      Array.from({ length: 8 }, () => store.claimDelivery({ ...TARGET, next_attempt_at: soon() })),
     );
 
     expect(claims.filter(claim => claim !== undefined)).toHaveLength(1);
@@ -394,25 +457,25 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     const store = getStore();
     const created = await store.createIntegration(createInput());
     await enqueue(store, created.id);
-    await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() });
+    await store.claimDelivery({ ...TARGET, next_attempt_at: soon() });
 
     const sent = await store.markDeliverySent({ id: 'del-1', attempts: 1 });
     expect(sent).toMatchObject({ status: 'sent', attempts: 1, last_error: null });
 
     // A second terminal write finds nothing in flight and leaves the row alone.
     expect(await store.markDeliveryFailed({ id: 'del-1', attempts: 1, error: 'late' })).toBeUndefined();
-    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toBeUndefined();
+    expect(await store.getPendingDelivery(TARGET)).toBeUndefined();
   });
 
   it('markDeliveryFailed records the reason on the row this caller claimed', async () => {
     const store = getStore();
     const created = await store.createIntegration(createInput());
     await enqueue(store, created.id);
-    await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() });
+    await store.claimDelivery({ ...TARGET, next_attempt_at: soon() });
 
     const failed = await store.markDeliveryFailed({ id: 'del-1', attempts: 1, error: 'no adapter for slack' });
     expect(failed).toMatchObject({ status: 'failed', attempts: 1, last_error: 'no adapter for slack' });
-    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toBeUndefined();
+    expect(await store.getPendingDelivery(TARGET)).toBeUndefined();
   });
 
   it('a terminal write without a claim changes nothing', async () => {
@@ -421,14 +484,14 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     await enqueue(store, created.id);
 
     expect(await store.markDeliverySent({ id: 'del-1', attempts: 0 })).toBeUndefined();
-    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toMatchObject({ status: 'pending', attempts: 0 });
+    expect(await store.getPendingDelivery(TARGET)).toMatchObject({ status: 'pending', attempts: 0 });
   });
 
   it('releaseDelivery puts a claimed row back in the queue with its reason', async () => {
     const store = getStore();
     const created = await store.createIntegration(createInput());
     await enqueue(store, created.id);
-    await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() });
+    await store.claimDelivery({ ...TARGET, next_attempt_at: soon() });
 
     const released = await store.releaseDelivery({
       id: 'del-1',
@@ -437,7 +500,7 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
       next_attempt_at: past(),
     });
     expect(released).toMatchObject({ status: 'pending', attempts: 1, last_error: 'slack unreachable' });
-    expect(await store.getPendingDelivery({ turn_id: 'turn-1' })).toMatchObject({ status: 'pending', attempts: 1 });
+    expect(await store.getPendingDelivery(TARGET)).toMatchObject({ status: 'pending', attempts: 1 });
     // Nothing is in flight any more, so a second release changes nothing.
     expect(
       await store.releaseDelivery({ id: 'del-1', attempts: 1, error: 'late', next_attempt_at: past() }),
@@ -455,6 +518,7 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
         integration_id: created.id,
         conversation_key: `slack:T:C:${input.turnId}`,
         turn_id: input.turnId,
+        session_external_id: `slack:T:C:${input.turnId}`,
         next_attempt_at: input.dueAt,
       });
     };
@@ -478,10 +542,11 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
       integration_id: created.id,
       conversation_key: 'slack:T:C:2',
       turn_id: 'turn-2',
+      session_external_id: 'slack:T:C:2',
       next_attempt_at: past(),
     });
     // `del-1` is in flight with time left; `del-2` is owed now. A long wait must not hide a short one.
-    await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon(5 * 60_000) });
+    await store.claimDelivery({ ...TARGET, next_attempt_at: soon(5 * 60_000) });
 
     const due = await store.listRetryableDeliveries({ before: new Date(), limit: 10 });
     expect(due.map(row => row.id)).toEqual(['del-2']);
@@ -491,7 +556,7 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     const store = getStore();
     const created = await store.createIntegration(createInput());
     await enqueue(store, created.id);
-    await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: past() });
+    await store.claimDelivery({ ...TARGET, next_attempt_at: past() });
 
     const due = await store.listRetryableDeliveries({ before: new Date(), limit: 10 });
     expect(due.map(row => row.id)).toEqual(['del-1']);
@@ -502,7 +567,7 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     const store = getStore();
     const created = await store.createIntegration(createInput());
     await enqueue(store, created.id);
-    await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() });
+    await store.claimDelivery({ ...TARGET, next_attempt_at: soon() });
 
     const later = soon(10 * 60_000);
     await store.releaseDelivery({ id: 'del-1', attempts: 1, error: 'rate limited', next_attempt_at: later });
@@ -515,7 +580,7 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     const store = getStore();
     const created = await store.createIntegration(createInput());
     await enqueue(store, created.id);
-    const stranded = await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() });
+    const stranded = await store.claimDelivery({ ...TARGET, next_attempt_at: soon() });
     expect(stranded).toMatchObject({ status: 'sending', attempts: 1 });
 
     const reclaimed = await store.claimDeliveryForRetry({ id: 'del-1', attempts: 1, next_attempt_at: soon() });
@@ -542,7 +607,7 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     const store = getStore();
     const created = await store.createIntegration(createInput());
     await enqueue(store, created.id);
-    await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() });
+    await store.claimDelivery({ ...TARGET, next_attempt_at: soon() });
     await store.markDeliveryFailed({ id: 'del-1', attempts: 1, error: 'gave up' });
 
     expect(await store.listRetryableDeliveries({ before: soon(), limit: 10 })).toEqual([]);
@@ -553,7 +618,7 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     const store = getStore();
     const created = await store.createIntegration(createInput());
     await enqueue(store, created.id);
-    await store.claimDelivery({ turn_id: 'turn-1', next_attempt_at: soon() });
+    await store.claimDelivery({ ...TARGET, next_attempt_at: soon() });
     // The sweep decides the first holder is stranded and takes the row for another attempt.
     await store.claimDeliveryForRetry({ id: 'del-1', attempts: 1, next_attempt_at: soon() });
 

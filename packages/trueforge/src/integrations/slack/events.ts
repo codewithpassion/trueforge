@@ -54,8 +54,19 @@ export type SlackEventCallback = z.infer<typeof SlackEventCallbackSchema>;
 export type SlackMessageEvent = z.infer<typeof SlackMessageEventSchema>;
 
 /** Slack ids never contain `:`, so the key splits back apart unambiguously. */
-function slackConversationKey(input: { teamId: string; channelId: string; threadTs: string }): string {
+export function slackConversationKey(input: { teamId: string; channelId: string; threadTs: string }): string {
   return `slack:${input.teamId}:${input.channelId}:${input.threadTs}`;
+}
+
+/**
+ * Where a notification rule posts: a channel, not a thread. `thread_ts` is the sentinel
+ * `channel`, which no Slack timestamp can collide with, and `parseSlackConversationKey` reads
+ * it back as "post at the top level".
+ */
+export const SLACK_CHANNEL_THREAD_SENTINEL = 'channel';
+
+export function slackChannelKey(input: { teamId: string; channelId: string }): string {
+  return slackConversationKey({ ...input, threadTs: SLACK_CHANNEL_THREAD_SENTINEL });
 }
 
 export interface SlackConversation {

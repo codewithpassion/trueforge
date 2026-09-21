@@ -99,6 +99,29 @@ export const SlackBotDisplayNameSchema = z
   .describe('Bot name in Slack, up to 35 characters. The bot user display name is derived from it.')
   .openapi('SlackBotDisplayName');
 
+/** Which finished schedule runs a notification rule posts. */
+export const IntegrationNotificationOutcomeSchema = z
+  .enum(['any', 'success', 'failure'])
+  .describe('Which schedule outcomes the rule posts: any, only successes, or only failures.')
+  .openapi('IntegrationNotificationOutcome');
+
+/**
+ * "Post the result of schedule `<name>` to channel `<id>`". The outcome filter is a required
+ * choice rather than an optional flag, so a rule can never be half-specified.
+ *
+ * The channel is a posting target, not a listening one: it is deliberately separate from
+ * `allowed_channel_ids`, which says where the bot answers.
+ */
+export const IntegrationNotificationRuleSchema = z
+  .object({
+    schedule_name: NameSchema,
+    channel_id: z.string().min(1).describe('Channel the result is posted to. The bot must be a member of it.'),
+    outcome: IntegrationNotificationOutcomeSchema,
+  })
+  .strict()
+  .describe('Posts a finished schedule run to a channel.')
+  .openapi('IntegrationNotificationRule');
+
 /**
  * Slack workspace connection, persisted as `integration.manifest`.
  * `allowed_channel_ids` is an allowlist: an empty list allows no channel.
@@ -126,6 +149,14 @@ export const SlackIntegrationManifestSchema = z
       .describe('Channels the bot answers in. An empty list allows no channel.'),
     allow_direct_messages: z.boolean().describe('Whether direct messages to the bot are answered.'),
     reply_mode: SlackReplyModeSchema,
+    approver_slack_user_ids: z
+      .array(z.string().min(1))
+      .default([])
+      .describe('Slack users who may approve or deny a tool call. An empty list allows nobody.'),
+    notification_rules: z
+      .array(IntegrationNotificationRuleSchema)
+      .default([])
+      .describe('Schedule results posted to a channel, independent of the allowed channels.'),
     auth: SlackIntegrationAuthSchema.optional(),
   })
   .strict();
@@ -185,6 +216,7 @@ export const UpdateIntegrationRequestSchema = z
 export const IntegrationAppManifestSchema = z
   .object({
     request_url: z.string().describe('Events request URL the manifest carries.'),
+    interactions_request_url: z.string().describe('Interactivity request URL the manifest carries.'),
     manifest_json: z.string().describe('App manifest as pretty-printed JSON, ready to paste.'),
     create_app_url: z.string().describe('Page on the channel that accepts the manifest.'),
   })
@@ -204,6 +236,8 @@ export const ListIntegrationsResponseSchema = z
 export const DeleteIntegrationResponseSchema = z.object({}).openapi('DeleteIntegrationResponse');
 
 export type IntegrationType = z.infer<typeof IntegrationTypeSchema>;
+export type IntegrationNotificationOutcome = z.infer<typeof IntegrationNotificationOutcomeSchema>;
+export type IntegrationNotificationRule = z.infer<typeof IntegrationNotificationRuleSchema>;
 export type IntegrationStatus = z.infer<typeof IntegrationStatusSchema>;
 export type SlackIntegrationAuth = z.infer<typeof SlackIntegrationAuthSchema>;
 export type SlackReplyMode = z.infer<typeof SlackReplyModeSchema>;

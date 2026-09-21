@@ -6,16 +6,17 @@ import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { requestContextFromCreatedBySubject } from '../auth/identity';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
-import type { IIntegrationStore } from '../db/integrationStore';
+import type { IIntegrationStore, IntegrationRecord } from '../db/integrationStore';
 import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
+import type { IScheduleStore } from '../db/scheduleStore';
 import type { ISkillStore } from '../db/skillStore';
 import type { IntegrationAdapterRegistry } from '../integrations/registry';
-import { IntegrationRouter } from '../integrations/router';
+import { IntegrationRouter, type IntegrationResumeResult } from '../integrations/router';
 import { TurnCompletionNotifier } from '../integrations/TurnCompletionNotifier';
-import type { InboundRespond } from '../integrations/types';
-import { postIntegrationEventsRoute } from '../routes/integrationRoutes';
+import type { ChannelAdapter, InboundRespond, InteractionOutcome } from '../integrations/types';
+import { postIntegrationEventsRoute, postIntegrationInteractionsRoute } from '../routes/integrationRoutes';
 import type { TurnExecutor } from '../runtime/turnExecutor';
 
 /** Runtime + Context store resolvers needed to run a turn for an inbound channel event. */
@@ -30,6 +31,8 @@ export interface IntegrationEventsRouterDeps<TTransaction> {
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
   /** Persistence agent store (the integration's agent binding is not caller-scoped). */
   agentStore: IAgentStore<TTransaction>;
+  /** Notification rules name a schedule; the notifier resolves that name from its id. */
+  scheduleStore: Pick<IScheduleStore<TTransaction>, 'getSchedule'>;
   turnSkillsResolverStore: Pick<ISkillStore, 'resolveTurnSkills'>;
   logger: Logger;
 }
@@ -66,6 +69,7 @@ function deferOutsideResponse(c: Context, logger: Logger): (run: () => Promise<v
 export function createIntegrationEventsRouter<TTransaction>(deps: IntegrationEventsRouterDeps<TTransaction>) {
   const notifier = new TurnCompletionNotifier({
     integrationStore: deps.integrationStore,
+    scheduleStore: deps.scheduleStore,
     adapters: deps.adapters,
     logger: deps.logger,
   });
@@ -143,7 +147,120 @@ export function createIntegrationEventsRouter<TTransaction>(deps: IntegrationEve
     return c.body(null, 200);
   };
 
+  /**
+   * Answers the channel inside its own three-second window, then settles the click. Slack is
+   * only spoken to after the acknowledgement, so no model or channel call sits in front of it.
+   */
+  const interactionsHandler: RouteHandler<typeof postIntegrationInteractionsRoute> = async c => {
+    const { integration_id: integrationId } = c.req.valid('param');
+    const integration = await deps.integrationStore.getIntegrationById({ id: integrationId });
+    if (integration === undefined) {
+      return c.json({ error: { message: `Integration not found: ${integrationId}` } }, 404);
+    }
+    const adapter = deps.adapters.get(integration.type);
+    if (adapter === undefined) {
+      return c.json({ error: { message: `No adapter for integration type ${integration.type}` } }, 501);
+    }
+
+    const received = await adapter.receiveInteraction({
+      request: c.req.raw,
+      manifest: integration.manifest,
+      integration_id: integration.id,
+    });
+    if (received.type === 'rejected') {
+      return c.json({ error: { message: received.reason } }, 401);
+    }
+    if (received.type === 'not_connected') {
+      return c.json({ error: { message: received.reason } }, 409);
+    }
+    if (received.type === 'ignore') {
+      return c.body(null, 200);
+    }
+    if (received.type === 'refused_sender') {
+      settle(
+        { c, integration, adapter, reply_context: received.reply_context },
+        { type: 'refused', reason: received.reason },
+      );
+      return c.body(null, 200);
+    }
+
+    const { interaction } = received;
+    c.set(
+      'request_context',
+      requestContextFromCreatedBySubject({
+        tenant_id: integration.tenant_id,
+        created_by_subject: integration.created_by_subject,
+      }),
+    );
+    // The resume runs after the acknowledgement: it starts a turn, which is the one thing that
+    // must not sit inside the window the channel is timing.
+    deferOutsideResponse(
+      c,
+      deps.logger,
+    )(async () => {
+      const resumed = await integrationRouterFor(c).resume({ integration, interaction });
+      const outcome = interactionOutcome(resumed);
+      if (outcome === undefined) {
+        return;
+      }
+      const posted = await adapter.settleInteraction({
+        manifest: integration.manifest,
+        reply_context: interaction.reply_context,
+        outcome,
+      });
+      if (!posted.ok) {
+        deps.logger.warn('Integration interaction reply was not posted', {
+          integrationId: integration.id,
+          turnId: interaction.turn_id,
+          reason: posted.error,
+        });
+      }
+    });
+    return c.body(null, 200);
+  };
+
+  /** Best-effort reply that changes nothing, used before any turn work happens. */
+  function settle(
+    input: { c: Context; integration: IntegrationRecord; adapter: ChannelAdapter; reply_context: string },
+    outcome: InteractionOutcome,
+  ): void {
+    deferOutsideResponse(
+      input.c,
+      deps.logger,
+    )(async () => {
+      const posted = await input.adapter.settleInteraction({
+        manifest: input.integration.manifest,
+        reply_context: input.reply_context,
+        outcome,
+      });
+      if (!posted.ok) {
+        deps.logger.warn('Integration interaction reply was not posted', {
+          integrationId: input.integration.id,
+          reason: posted.error,
+        });
+      }
+    });
+  }
+
   const router = new OpenAPIHono();
   router.openapi(postIntegrationEventsRoute, handler);
+  router.openapi(postIntegrationInteractionsRoute, interactionsHandler);
   return router;
+}
+
+/** What the channel is told once a click has been dealt with, or nothing when it was a replay. */
+function interactionOutcome(resumed: IntegrationResumeResult): InteractionOutcome | undefined {
+  switch (resumed.type) {
+    case 'resumed':
+      return { type: 'recorded', summary: resumed.summary };
+    case 'already_settled':
+      // A double click or a channel retry: the first one already replaced the message.
+      return undefined;
+    case 'not_pending':
+      return { type: 'refused', reason: resumed.reason };
+    case 'agent_not_found':
+      return { type: 'refused', reason: `The agent this integration answers with is missing: ${resumed.agent_name}` };
+    case 'turn_failed':
+      return { type: 'refused', reason: 'That decision could not be applied; try again.' };
+  }
 }
