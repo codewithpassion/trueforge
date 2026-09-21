@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"trueforge.dev/computer/internal/audit"
@@ -133,10 +134,7 @@ func (a *Agent) filePut(head protocol.Envelope, frame []byte) []byte {
 	}
 	result, err := a.transfers.Put(request, resolved)
 	if err != nil {
-		code := protocol.ErrOpFailed
-		if errors.Is(err, files.ErrBadRequest) {
-			code = protocol.ErrBadRequest
-		}
+		code := codeForFileError(err)
 		a.record(audit.Entry{
 			Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeError,
 			Path: resolved, Error: err.Error(),
@@ -165,10 +163,7 @@ func (a *Agent) fileGet(head protocol.Envelope, frame []byte) []byte {
 	}
 	result, err := files.Get(request, resolved)
 	if err != nil {
-		code := protocol.ErrOpFailed
-		if errors.Is(err, files.ErrBadRequest) {
-			code = protocol.ErrBadRequest
-		}
+		code := codeForFileError(err)
 		a.record(audit.Entry{
 			Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeError,
 			Path: resolved, Error: err.Error(),
@@ -180,6 +175,33 @@ func (a *Agent) fileGet(head protocol.Envelope, frame []byte) []byte {
 		Path: resolved, Bytes: int64(len(result.DataB64)),
 	})
 	return a.ok(head, result)
+}
+
+// codeForFileError names the failure precisely enough that the server can map it to the
+// right sandbox error rather than one opaque failure.
+func codeForFileError(err error) string {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return protocol.ErrNotFound
+	case errors.Is(err, files.ErrIsDirectory):
+		return protocol.ErrIsADirectory
+	case errors.Is(err, files.ErrBadRequest):
+		return protocol.ErrBadRequest
+	default:
+		return protocol.ErrOpFailed
+	}
+}
+
+// OnReplyDropped records an answer that could not be written because its socket had closed.
+// The server may reissue the request, so the outcome of the work already done is unknown.
+func (a *Agent) OnReplyDropped(head protocol.Envelope, cause error) {
+	a.logger.Warn("dropped a reply whose socket had closed", "id", head.ID, "op", head.Op, "error", cause.Error())
+	a.record(audit.Entry{
+		Op:        head.Op,
+		RequestID: head.ID,
+		Outcome:   audit.OutcomeReplyDropped,
+		Error:     cause.Error(),
+	})
 }
 
 func (a *Agent) ok(head protocol.Envelope, result any) []byte {

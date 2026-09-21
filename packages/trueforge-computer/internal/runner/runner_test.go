@@ -364,6 +364,27 @@ func TestShutdownCancelsEverythingInFlight(t *testing.T) {
 	}
 }
 
+// Cancelling only wakes the goroutine that would do the killing, and the process can exit
+// before it is scheduled — which is how the spike ended up with a sleep reparented to PID 1.
+// So Shutdown does the killing itself, and the assertion is made the moment it returns, with
+// nothing waited on: the records are already cleared and the command never reaches its work.
+func TestShutdownKillsTheGroupsItself(t *testing.T) {
+	stateDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "survivor")
+	r := newTestRunner(t, runner.Options{StateDir: stateDir})
+	go func() { run(t, r, "long", "sleep 1; touch "+marker, 120*time.Second) }()
+	waitFor(t, 5*time.Second, func() bool { return countRecords(t, stateDir) == 1 })
+
+	r.Shutdown()
+	if remaining := countRecords(t, stateDir); remaining != 0 {
+		t.Fatalf("Shutdown returned with %d group record(s) still on disk", remaining)
+	}
+	time.Sleep(3 * time.Second)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a command outlived Shutdown")
+	}
+}
+
 func waitFor(t *testing.T, limit time.Duration, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(limit)

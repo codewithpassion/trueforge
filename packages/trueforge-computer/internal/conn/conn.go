@@ -48,7 +48,10 @@ type Options struct {
 	Dispatch   Dispatcher
 	// OnDisconnect runs after every session ends, so half-finished uploads can be dropped.
 	OnDisconnect func()
-	Logger       *slog.Logger
+	// OnReplyDropped runs when an answer could not be written because its socket had closed.
+	// The work is already done and its outcome is now unknown to the server.
+	OnReplyDropped func(head protocol.Envelope, cause error)
+	Logger         *slog.Logger
 
 	DialTimeout       time.Duration
 	HeartbeatInterval time.Duration
@@ -106,6 +109,9 @@ func New(options Options) (*Client, error) {
 	}
 	if options.OnDisconnect == nil {
 		options.OnDisconnect = func() {}
+	}
+	if options.OnReplyDropped == nil {
+		options.OnReplyDropped = func(protocol.Envelope, error) {}
 	}
 	return &Client{options: options, dialURL: dialURL, logger: options.Logger}, nil
 }
@@ -293,7 +299,7 @@ func (c *Client) handle(ctx context.Context, socket *websocket.Conn, payload []b
 			fmt.Sprintf("the reply is %d bytes, over the %d frame limit", len(answer), protocol.MaxFrameBytes))
 	}
 	if err := c.write(ctx, socket, answer); err != nil {
-		c.logger.Warn("dropped a reply whose socket had closed", "id", head.ID, "error", err.Error())
+		c.options.OnReplyDropped(head, err)
 	}
 }
 

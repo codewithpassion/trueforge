@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -54,7 +55,7 @@ func newHarness(t *testing.T, options policy.Options) *harness {
 		Logger:     discardLogger(),
 	})
 	return &harness{
-		agent:    agent.New(rules, commands, files.NewTransfers(), log, discardLogger()),
+		agent:    agent.New(rules, commands, files.NewTransfers(files.Options{}), log, discardLogger()),
 		stateDir: stateDir,
 		workdir:  options.Workdir,
 	}
@@ -284,6 +285,38 @@ func TestCancelStopsARunningCommand(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the cancelled command never returned")
+	}
+}
+
+// The server maps not-found and is-a-directory to their own sandbox errors, so it needs the
+// two told apart rather than one opaque failure.
+func TestFileFailuresCarryTheirOwnCodes(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	missing := h.dispatch(t, "r1", protocol.OpFileGet, map[string]any{
+		"path": filepath.Join(h.workdir, "nope"), "offset": 0, "max_bytes": protocol.ChunkBytes,
+	})
+	if missing.Error == nil || missing.Error.Code != protocol.ErrNotFound {
+		t.Fatalf("missing file reply = %+v", missing)
+	}
+	directory := h.dispatch(t, "r2", protocol.OpFileGet, map[string]any{
+		"path": h.workdir, "offset": 0, "max_bytes": protocol.ChunkBytes,
+	})
+	if directory.Error == nil || directory.Error.Code != protocol.ErrIsADirectory {
+		t.Fatalf("directory reply = %+v", directory)
+	}
+}
+
+// A reply that could not be written leaves the work done and its outcome unknown to the
+// server, which is exactly the thing an audit log exists to record.
+func TestDroppedReplyIsAudited(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	h.agent.OnReplyDropped(protocol.Envelope{ID: "r1", Op: protocol.OpExec}, errors.New("socket closed"))
+	entries := h.auditEntries(t)
+	if len(entries) != 1 {
+		t.Fatalf("wrote %d audit entries", len(entries))
+	}
+	if entries[0].Outcome != audit.OutcomeReplyDropped || entries[0].RequestID != "r1" {
+		t.Fatalf("entry = %+v", entries[0])
 	}
 }
 

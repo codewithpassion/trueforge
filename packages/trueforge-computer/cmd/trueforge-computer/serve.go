@@ -118,7 +118,7 @@ func runServe(args []string) int {
 	})
 	defer commands.Shutdown()
 
-	worker := agent.New(rules, commands, files.NewTransfers(), log, logger)
+	worker := agent.New(rules, commands, files.NewTransfers(files.Options{}), log, logger)
 	hello := protocol.Hello{
 		Type:            "hello",
 		ProtocolVersion: protocol.Version,
@@ -131,12 +131,13 @@ func runServe(args []string) int {
 	}
 
 	client, err := conn.New(conn.Options{
-		BaseURL:      config.URL,
-		Credential:   credential,
-		Hello:        hello,
-		Dispatch:     worker.Dispatch,
-		OnDisconnect: worker.OnDisconnect,
-		Logger:       logger,
+		BaseURL:        config.URL,
+		Credential:     credential,
+		Hello:          hello,
+		Dispatch:       worker.Dispatch,
+		OnDisconnect:   worker.OnDisconnect,
+		OnReplyDropped: worker.OnReplyDropped,
+		Logger:         logger,
 	})
 	if err != nil {
 		return fail(logger, "could not prepare the connection", err)

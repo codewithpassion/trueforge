@@ -188,9 +188,16 @@ an agent does with the files the daemon's user can read. Those are yours.
 ### At-least-once delivery
 
 A reply is written back on the socket the request arrived on. If that socket has closed, the
-reply is dropped rather than sent on the next one, because the server could not match it. The
-server may reissue the request after a reconnect, so **an operation can run twice**. Commands
-should be written with that in mind.
+reply is dropped rather than sent on the next one, because the server could not match it; the
+drop is recorded in the audit log as `reply_dropped`, which means the work was done and its
+outcome is unknown to the server. The server may reissue the request after a reconnect, so
+**an operation can run twice**. Commands should be written with that in mind.
+
+File uploads are safe against this. Chunks may arrive in any order — the relay pipelines a
+window of them and each is handled on its own goroutine — so a chunk ahead of its turn waits
+for its predecessor, and a chunk the transfer has already taken is answered without being
+written again. When the socket drops, open uploads are discarded along with their partial
+files, and the server restarts the transfer from chunk zero.
 
 ## Troubleshooting
 

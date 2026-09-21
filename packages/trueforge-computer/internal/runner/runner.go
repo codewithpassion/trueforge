@@ -96,7 +96,10 @@ func (r *Runner) Cancel(id string) bool {
 	return true
 }
 
-// Shutdown cancels everything in flight so a stop does not orphan commands.
+// Shutdown cancels everything in flight and then kills the recorded groups directly. The
+// cancel alone is not enough: it only wakes the goroutine that would do the killing, and the
+// process can exit before that goroutine is scheduled, leaving the commands reparented to
+// PID 1 — which is exactly what the spike measured.
 func (r *Runner) Shutdown() {
 	r.mu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(r.running))
@@ -107,6 +110,7 @@ func (r *Runner) Shutdown() {
 	for _, cancel := range cancels {
 		cancel()
 	}
+	Sweep(r.options.StateDir, r.options.Logger)
 }
 
 // InFlight reports how many commands hold a slot, for status output and tests.
