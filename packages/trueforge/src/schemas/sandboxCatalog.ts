@@ -29,6 +29,5 @@ export const GetSandboxProviderCatalogResponseSchema = z
   })
   .openapi('GetSandboxProviderCatalogResponse');
 
-export type CatalogDaytonaSandboxProvider = z.infer<typeof CatalogDaytonaSandboxProviderSchema>;
 export type CatalogSandboxProvider = z.infer<typeof CatalogSandboxProviderSchema>;
 export type SandboxCatalogFile = z.infer<typeof SandboxCatalogFileSchema>;
