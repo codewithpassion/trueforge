@@ -199,7 +199,7 @@ func (c *client) sendHello(ctx context.Context, socket *websocket.Conn) error {
 		RunAsUser: user,
 		Capabilities: capabilities{
 			Python3: hasTool("python3"),
-			Git:     hasTool("g" + "it"),
+			Git:     hasTool("git"),
 		},
 	}
 	payload, err := json.Marshal(hello)

@@ -195,7 +195,7 @@ Reconnection was automatic in every case: 1.1 s after the 4408 close on thaw, 1.
 
 ### Q4. Can `resolveProvider` take a `computer_id`?
 
-**Yes, and the signature change is narrow. The cost is three behavioural sites and one missing field, not a wide refactor.** This is from code reading; nothing in this section was changed.
+**Yes, and the signature change is narrow. The cost is three behavioural sites and one missing field, not a wide refactor.** This is from code reading; nothing in this section was changed, and every line reference below was checked against the tree at `ae01be68`.
 
 `resolveProvider` (`packages/trueforge/src/sandbox/integration.ts:27-32`) and `resolveSandboxUsability` (`:39-43`) already take a single options object, so an optional `computer_id` is additive. Two implementations change (`nodeSandboxIntegration.ts:38,55`, `workers/sandbox/workersSandboxIntegration.ts:64,78`) and two production call sites (`runtime/turnRunner.ts:142`, which has the spec in scope; `apis/turns.ts:230`, which does not). Core needs one field on `SandboxConfigSchema` (`packages/trueforge-core/src/agent-session/schemas/agentSpec.ts:162`); `TurnSandboxFactory` already passes the whole spec, so no core signature moves.
 
@@ -203,9 +203,9 @@ Reconnection was automatic in every case: 1.1 s after the 4408 close on thaw, 1.
 
 Three sites would silently misbehave for a computer-attached agent today:
 
-1. `turnRunner.ts:158` gates the turn on `checkSnapshotStatus`, which answers about the tenant's stored provider record. A remote computer has none, so the agent gets 422 "sandbox image is activating". The `provider.type !== 'local'` exclusion has to widen.
+1. `turnRunner.ts:159` gates a fresh sandbox on `checkSnapshotStatus` (`:161`) for every provider except `local`. That call answers about the tenant's stored provider record — on Workers it returns `undefined` unless the built-in sandbox is enabled (`workersSandboxIntegration.ts:86`) — so a computer-attached agent gets 422 "sandbox image is activating". The `provider.type !== 'local'` exclusion has to widen.
 2. `apis/turns.ts:230` (turn file download) has no spec. Either load the agent spec there or derive `computer_id` from the persisted ref with `parseSandboxId`; either way it needs its own tenant check.
-3. `workersSandboxIntegration.ts:55-65` must short-circuit on `computer_id` **before** `isEnabledForTenant`, or a tenant without the built-in sandbox gets `undefined`. Node has the same ordering question at `nodeSandboxIntegration.ts:39-46`, where the stored record currently wins.
+3. `workersSandboxIntegration.ts:64-65` opens `resolveProvider` with `if (!(await isEnabledForTenant(…))) return undefined`, so `computer_id` must short-circuit **before** that line or a tenant without the built-in sandbox gets nothing. Node has the same ordering question at `nodeSandboxIntegration.ts:38`, where the stored record currently wins.
 
 **The allowlist.** `validateAgentSpec` (`runtime/sessionResources.ts:224`, sandbox block 284-298, five callers across `apis/sessions.ts` and `apis/agents.ts`) has the spec and the tenant but no computer store. Put the check inside `resolveSandboxUsability` and let the integration own the lookup, rather than threading a new store dependency through five call sites. `capabilities.ts:51` has no spec, so `computer_id` must stay optional on that path. At turn time the same call is made again next to `turnRunner.ts:149`.
 
@@ -213,7 +213,7 @@ Three sites would silently misbehave for a computer-attached agent today:
 
 Two things to verify before promising the UX: whether a throw next to `turnRunner.ts:149` surfaces in the create-turn HTTP response or as a turn error event (it goes through `SessionHandle.createTurn`, `SessionHandle.ts:206-216`, and was not traced), and that `SandboxNotAvailableError` (`SandboxErrors.ts:20-28`, 410, "no longer exists") is not reused — its wording is wrong for offline and `Sandbox.ts` answers it by recreating the sandbox. A new subclass, mapped at `turns.ts:249-251`.
 
-UI: the picker belongs at `trueforge-ui/src/atoms/draft/AgentRuntimeConfigFields.tsx:83-92`. The config type is owned by `@truefoundry/assistant-ui-runtime`, so a typed `computerId` needs a new hunk in `patches/@truefoundry__assistant-ui-runtime@0.1.37.patch` (unverified — the patch was not applied in the worktree that read this). `packages/frontend` needs no change. OpenAPI and both SDKs regenerate.
+UI: the picker belongs beside the sandbox switch at `trueforge-ui/src/atoms/draft/AgentRuntimeConfigFields.tsx:73-88`. `SandboxConfig` and `AgentSandboxConfig` are owned by `@truefoundry/assistant-ui-runtime` and exported from the type barrel that `patches/@truefoundry__assistant-ui-runtime@0.1.37.patch` (the repository's only patch) already rewrites, so a typed `computerId` is a new hunk in that same file rather than a new patch. `packages/frontend` needs no change. OpenAPI and both SDKs regenerate.
 
 ### Warm exec and concurrency
 
