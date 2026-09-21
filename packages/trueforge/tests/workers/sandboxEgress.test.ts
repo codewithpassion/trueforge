@@ -1,6 +1,7 @@
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { CODE_MODE_BRIDGE_URL } from '../../src/workers/sandbox/codeModeBridge';
+import { CODE_MODE_REQUEST_MAX_BYTES } from '../../src/workers/sandbox/sandboxEgressGateway';
 
 /**
  * The gateway is reached the way the container backend reaches it: from inside `ComputerDO`, through
@@ -108,6 +109,51 @@ describe('the Code Mode hostname', () => {
 
     expect(answered.status).toBe(401);
     expect(answered.body).toContain('not open for this session');
+  });
+
+  it('refuses a body over the cap by its declared length, before reading it', async () => {
+    const status = await inComputerDO('tenant-1:code-mode-declared', async state => {
+      const response = await gateway(state, 'tenant-1:code-mode-declared').fetch(
+        dispatchRequest({
+          headers: {
+            authorization: 'Bearer anything',
+            'content-length': String(CODE_MODE_REQUEST_MAX_BYTES + 1),
+          },
+          body: 'x',
+        }),
+      );
+      return response.status;
+    });
+
+    expect(status).toBe(413);
+  });
+
+  it('refuses a streamed body once it passes the cap, whatever length it declared', async () => {
+    const status = await inComputerDO('tenant-1:code-mode-streamed', async state => {
+      const chunk = new Uint8Array(256 * 1024);
+      let sent = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent > CODE_MODE_REQUEST_MAX_BYTES) {
+            controller.close();
+            return;
+          }
+          sent += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      });
+      const response = await gateway(state, 'tenant-1:code-mode-streamed').fetch(
+        new Request(CODE_MODE_BRIDGE_URL, {
+          method: 'POST',
+          headers: { authorization: 'Bearer anything' },
+          body,
+          duplex: 'half',
+        }),
+      );
+      return response.status;
+    });
+
+    expect(status).toBe(413);
   });
 
   it('refuses anything but a POST', async () => {

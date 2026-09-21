@@ -13,6 +13,47 @@ export interface SandboxEgressProps {
   sessionDurableObjectName: string | undefined;
 }
 
+/** A Code Mode request is a tool name and its arguments; anything larger is refused unread. */
+export const CODE_MODE_REQUEST_MAX_BYTES = 1024 * 1024;
+
+/** Undefined when the body passes the cap, which is checked while reading, not after. */
+async function readCappedText(request: Request): Promise<string | undefined> {
+  const declared = Number(request.headers.get('content-length') ?? '0');
+  if (declared > CODE_MODE_REQUEST_MAX_BYTES) {
+    return undefined;
+  }
+  if (request.body === null) {
+    return '';
+  }
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  const reader = request.body.getReader();
+  for (;;) {
+    const chunk: ReadableStreamReadResult<unknown> = await reader.read();
+    if (chunk.done) {
+      break;
+    }
+    const value = chunk.value;
+    if (!(value instanceof Uint8Array)) {
+      await reader.cancel();
+      return undefined;
+    }
+    received += value.byteLength;
+    if (received > CODE_MODE_REQUEST_MAX_BYTES) {
+      await reader.cancel();
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
+
 function bearerToken(header: string | null): string | undefined {
   const match = /^Bearer (.+)$/i.exec(header ?? '');
   return match?.[1];
@@ -67,6 +108,12 @@ export class SandboxEgressGateway extends WorkerEntrypoint<Env, SandboxEgressPro
     if (token === undefined) {
       return new Response('Code Mode needs a bearer token', { status: 401 });
     }
+    const requestJson = await readCappedText(request);
+    if (requestJson === undefined) {
+      return new Response(`Code Mode requests are limited to ${String(CODE_MODE_REQUEST_MAX_BYTES)} bytes`, {
+        status: 413,
+      });
+    }
     const namespace = this.env.SESSION_DO;
     // Annotated, because the RPC stub intersects each union member with `Disposable`, which stops
     // `ok` from discriminating.
@@ -76,7 +123,7 @@ export class SandboxEgressGateway extends WorkerEntrypoint<Env, SandboxEgressPro
         token,
         // Forwarded as text: the session owns the wire shape, and a body that is not a Code Mode
         // request comes back as a reply blaming the caller rather than as a transport failure.
-        requestJson: await request.text(),
+        requestJson,
         traceCarrier: traceCarrier(request.headers),
       });
     if (outcome.ok) {
