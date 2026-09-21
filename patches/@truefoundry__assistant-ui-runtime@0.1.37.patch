@@ -8,7 +8,7 @@ index 9da26ff4021a3c6ecd0b5d5aba3c73cf2e1288c0..2d5a3041efc86e629d807a65c0bb17b4
  export { DeltaEvents, TurnEvent, TurnStreamingEvent, isEventDelta, mergeEventDelta };
 +export type { ComputerAuditEntry, ComputerAuditOp, ComputerBase, ComputerCatalogServer, ComputerEnrollment, ComputerStatus, ComputerTools, CreateComputerRequest, CreateIntegrationRequest, IntegrationAuthInput, IntegrationBase, IntegrationCatalogServer, IntegrationNotificationRule, IntegrationSetupManifest, IntegrationStatus, ListComputerAuditParams, UpdateComputerRequest, UpdateIntegrationRequest } from '../types-hS8TQqBP.js';
 diff --git a/dist/types-hS8TQqBP.d.ts b/dist/types-hS8TQqBP.d.ts
-index bddf93d1f4ad64c3df464ec48e884fc6f586e816..9e9c96f307e468d1c84d1a164a4971dfbfd25031 100644
+index bddf93d1f4ad64c3df464ec48e884fc6f586e816..1fe7090cfb521bde5fe2f91663f16faecd891ffe 100644
 --- a/dist/types-hS8TQqBP.d.ts
 +++ b/dist/types-hS8TQqBP.d.ts
 @@ -315,6 +315,8 @@ interface AgentCapabilityConfig {
@@ -20,7 +20,7 @@ index bddf93d1f4ad64c3df464ec48e884fc6f586e816..9e9c96f307e468d1c84d1a164a4971df
  }
  interface AgentInputTokensCompactionTrigger {
      type: "input_tokens";
-@@ -883,18 +885,226 @@ type AgentSkill = SkillSelectorEntry;
+@@ -883,18 +885,224 @@ type AgentSkill = SkillSelectorEntry;
  type ConnectorState = ConnectorSelectorEntry;
  type AgentLibraryEntry = AgentSelectorEntry;
  type SearchAgentsParams = SearchAgentSelectorParams;
@@ -120,8 +120,6 @@ index bddf93d1f4ad64c3df464ec48e884fc6f586e816..9e9c96f307e468d1c84d1a164a4971df
 +    runAsUser: string | null;
 +    /** Ask a person before each command. */
 +    requireApproval: boolean;
-+    /** Whether this server acts on `requireApproval` yet; omit when it only stores the flag. */
-+    approvalEnforced?: boolean;
 +    /** ISO-8601 instant of the last heartbeat. */
 +    lastSeenAt: string | null;
 +    createdAt: string;
@@ -249,7 +247,7 @@ index bddf93d1f4ad64c3df464ec48e884fc6f586e816..9e9c96f307e468d1c84d1a164a4971df
  }
  /**
   * Published agent identity + spec for the agent-detail Overview (read-only).
-@@ -1142,3 +1352,4 @@ type AgentUIServerPort<TChat extends AgentChatServer = AgentChatServer, TBuilder
+@@ -1142,3 +1350,4 @@ type AgentUIServerPort<TChat extends AgentChatServer = AgentChatServer, TBuilder
  type AgentUIServer = AgentUIServerPort;
  
  export type { ConnectorConfigBase as $, AgentSpec as A, AgentSessionsServer as B, AgentSkill as C, AgentUIServer as D, AgentUIServerPort as E, ApprovalDecision as F, AuthenticateConnectorRequest as G, CatalogServer as H, CodeSnippet as I, CodeSnippetSampleCode as J, ConnectorAuth as K, ConnectorAuthApiKey as L, McpAuthRequiredEvent as M, ConnectorAuthNone as N, ConnectorAuthOAuth as O, ConnectorAuthPublic as P, ConnectorAuthPublicApiKey as Q, ConnectorAuthPublicNone as R, Session as S, TurnEvent as T, UserToolResponseEvent as U, ConnectorAuthPublicOAuth as V, ConnectorAuthType as W, ConnectorAuthenticationResult as X, ConnectorBase as Y, ConnectorCatalogEntry as Z, ConnectorCatalogServer as _, AgentChatServer as a, SessionEventItem as a$, ConnectorSelectorEntry as a0, ConnectorState as a1, CreateConnectorRequest as a2, CreateModelProviderRequest as a3, CreateSandboxProviderRequest as a4, CreateSandboxRequest as a5, CreateScheduleRequest as a6, CreateScheduleRunRequest as a7, CreateSessionRequest as a8, CreateSkillRequest as a9, PermissionResourceType as aA, PermissionsServer as aB, PreviousTurnIdInput as aC, ProviderEntry as aD, ProviderType as aE, RegistrySkill as aF, ResourcePermission as aG, SandboxBase as aH, SandboxCatalogEntry as aI, SandboxCatalogServer as aJ, SandboxConfig as aK, SandboxCreatedEvent as aL, SandboxProviderBase as aM, SandboxProviderCatalogEntry as aN, SandboxProviderConfig as aO, SandboxProviderListEntry as aP, SandboxSnapshotSyncStatus as aQ, SaveAgentRequest as aR, SaveAgentResult as aS, Schedule as aT, ScheduleRun as aU, ScheduleRunStatus as aV, ScheduleServer as aW, ScheduleStatus as aX, SearchAgentSelectorParams as aY, SearchAgentsParams as aZ, SelectRegistrySkillRequest as a_, CreateSkillRequestBase as aa, CreatedBySubject as ab, DefinedSkill as ac, GithubSkill as ad, ImportGithubSkillRequest as ae, ListPermissionsRequest as af, ListPermissionsResponse as ag, ListResult as ah, ListSchedulesParams as ai, ListSessionEventsParams as aj, ListSessionsOrder as ak, ListSessionsParams as al, McpServerMount as am, McpToolSelection as an, Model as ao, ModelCatalogServer as ap, ModelEntry as aq, ModelMessageEvent as ar, ModelParams as as, ModelProperties as at, ModelProviderBase as au, ModelProviderCatalogEntry as av, ModelProviderConfigBase as aw, ModelSelection as ax, ModelSelectorEntry as ay, PageParams as az, ThreadCreatedEvent as b, SessionListEntry as b0, SessionListMetrics as b1, SkillBase as b2, SkillCatalogEntry as b3, SkillCatalogServer as b4, SkillConfigBase as b5, SkillMount as b6, SkillSelectorEntry as b7, ToolApprovalRequiredEvent as b8, ToolBase as b9, ToolInfo as bA, ToolResponseEvent as bB, TurnCreatedEvent as bC, TurnDoneEvent as bD, TurnStateCancelled as bE, TurnStateError as bF, TurnStateRunning as bG, UserMessageContent as bH, ToolCall as ba, ToolResponseRequiredEvent as bb, TurnDoneMetrics as bc, TurnState as bd, TurnStateDone as be, TurnStreamData as bf, TurnStreamingEvent as bg, UpdateConnectorRequest as bh, UpdateModelProviderRequest as bi, UpdateSandboxProviderRequest as bj, UpdateSandboxRequest as bk, UpdateScheduleRequest as bl, UpdateSessionRequest as bm, UserMessage as bn, DeltaEvents as bo, ActionRequiredEvent as bp, AgentInfo as bq, AgentParent as br, ChunkDeltaToolCall as bs, McpInitializeEvent as bt, McpServerAuthInfo as bu, ModelMessageContentPart as bv, ModelMessageDeltaEvent as bw, ThreadDoneEvent as bx, ToolCallFunction as by, ToolCallRef as bz, UserToolApprovalEvent as c, Turn as d, TurnInputItem as e, AgentBuilderCapabilitiesResponse as f, AgentBuilderServer as g, AgentCapabilityConfig as h, AgentCompactionConfig as i, AgentContextManagementConfig as j, AgentDetail as k, AgentInputTokensCompactionTrigger as l, AgentLibraryEntry as m, AgentMetricChartData as n, AgentMetricChartDataRequest as o, AgentMetricChartDefinition as p, AgentMetricChartType as q, AgentMetricGraph as r, AgentMetricGraphLine as s, AgentMetricMeter as t, AgentMetricPoint as u, AgentMetricRangeRequest as v, AgentMetricsServer as w, AgentRuntimeConfig as x, AgentSandboxConfig as y, AgentSelectorEntry as z };
@@ -284,7 +282,7 @@ index 5c7c55ba5dd34d08e9c989cbcf5ec3cf2314f9d5..b0c356d6dba7a59d0938675af8d76bf9
      AgentDetail,
      CodeSnippetSampleCode,
 diff --git a/src/server/types.ts b/src/server/types.ts
-index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..41cbfc03f28affda2bef31782ed14f09a091218b 100644
+index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..fb0b2b8dba33c5565846300ca41e37c5dfd915ff 100644
 --- a/src/server/types.ts
 +++ b/src/server/types.ts
 @@ -128,6 +128,8 @@ export interface AgentCapabilityConfig {
@@ -296,7 +294,7 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..41cbfc03f28affda2bef31782ed14f09
  }
  
  export interface AgentInputTokensCompactionTrigger {
-@@ -830,9 +832,212 @@ export type ConnectorState = ConnectorSelectorEntry;
+@@ -830,9 +832,210 @@ export type ConnectorState = ConnectorSelectorEntry;
  export type AgentLibraryEntry = AgentSelectorEntry;
  export type SearchAgentsParams = SearchAgentSelectorParams;
  
@@ -403,8 +401,6 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..41cbfc03f28affda2bef31782ed14f09
 +  runAsUser: string | null;
 +  /** Ask a person before each command. */
 +  requireApproval: boolean;
-+  /** Whether this server acts on `requireApproval` yet; omit when it only stores the flag. */
-+  approvalEnforced?: boolean;
 +  /** ISO-8601 instant of the last heartbeat. */
 +  lastSeenAt: string | null;
 +  createdAt: string;
@@ -510,7 +506,7 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..41cbfc03f28affda2bef31782ed14f09
   * Hosts may pass the whole object to an app shell, or a focused sub-port to a page.
   */
  export interface CatalogServer<
-@@ -840,6 +1045,8 @@ export interface CatalogServer<
+@@ -840,6 +1043,8 @@ export interface CatalogServer<
    TConnectorCatalog extends ConnectorCatalogServer = ConnectorCatalogServer,
    TSkillCatalog extends SkillCatalogServer = SkillCatalogServer,
    TSandboxCatalog extends SandboxCatalogServer = SandboxCatalogServer,
@@ -519,7 +515,7 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..41cbfc03f28affda2bef31782ed14f09
  > {
    modelCatalog: TModelCatalog;
    connectorCatalog: TConnectorCatalog;
-@@ -847,6 +1054,10 @@ export interface CatalogServer<
+@@ -847,6 +1052,10 @@ export interface CatalogServer<
    skillCatalog?: TSkillCatalog;
    /** Optional — omit when the host has no sandboxes settings surface. */
    sandboxCatalog?: TSandboxCatalog;

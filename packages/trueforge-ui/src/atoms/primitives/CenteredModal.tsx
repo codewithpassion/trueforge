@@ -18,6 +18,8 @@ export type CenteredModalProps = {
   footer?: ReactNode;
   className?: string;
   contentSized?: boolean;
+  /** For content that cannot be recovered once gone: no header close, and Escape is ignored. */
+  persistent?: boolean;
   'aria-label'?: string;
 };
 
@@ -35,6 +37,7 @@ export function CenteredModal({
   footer,
   className,
   contentSized = false,
+  persistent = false,
   'aria-label': ariaLabel,
 }: CenteredModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -70,7 +73,7 @@ export function CenteredModal({
       onCancel={event => {
         event.preventDefault();
         event.stopPropagation();
-        onOpenChange(false);
+        if (!persistent) onOpenChange(false);
       }}
       style={compactStyle ?? (contentSized ? { height: 'fit-content', maxHeight: '85dvh' } : undefined)}
       className={cn(
@@ -101,15 +104,17 @@ export function CenteredModal({
             </p>
           ) : null}
         </div>
-        <button
-          type="button"
-          aria-label="Close"
-          title="Close"
-          className={auiButtonClass({ variant: 'ghost', size: 'icon' })}
-          onClick={() => onOpenChange(false)}
-        >
-          <Icon name="xmark" />
-        </button>
+        {persistent ? null : (
+          <button
+            type="button"
+            aria-label="Close"
+            title="Close"
+            className={auiButtonClass({ variant: 'ghost', size: 'icon' })}
+            onClick={() => onOpenChange(false)}
+          >
+            <Icon name="xmark" />
+          </button>
+        )}
       </header>
       <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">{children}</div>
       {footer ? <div className="shrink-0 border-t border-border px-5 py-3">{footer}</div> : null}

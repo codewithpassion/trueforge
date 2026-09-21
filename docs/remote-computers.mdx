@@ -31,10 +31,12 @@ and fills in the hostname, OS, client version, the user it runs commands as, and
 The **install** command downloads the client, creates an unprivileged `trueforge` user and runs it:
 
 ```bash
-curl -fsSL https://<your-trueforge>/install.sh | sh -s -- --url https://<your-trueforge> --code <code>
+TRUEFORGE_ENROLL_CODE=<code> sh -c "curl -fsSL https://<your-trueforge>/install.sh | sh -s -- --url https://<your-trueforge>"
 ```
 
-It refuses to run as root unless you pass `--allow-root`, and `--run-as <user>` picks a different account.
+The code travels in the environment, not as an argument, so it never appears in another user's process list.
+The script refuses to run as root unless you pass `--allow-root`, and `--run-as <user>` picks a different
+account.
 
 The **Docker** command runs the same client in a container as uid 1000, with a read-only root filesystem and a
 named volume for its state:
@@ -42,12 +44,15 @@ named volume for its state:
 ```bash
 docker run -d --restart unless-stopped \
   -v trueforge-computer:/var/lib/trueforge-computer \
-  ghcr.io/<org>/trueforge-computer --url https://<your-trueforge> --code <code>
+  -e TRUEFORGE_URL=https://<your-trueforge> \
+  -e TRUEFORGE_ENROLL_CODE=<code> \
+  ghcr.io/<org>/trueforge-computer
 ```
 
-The container re-passes the code on every restart, which is fine: the client enrols only when it has no stored
-credential and ignores the code afterwards. A Docker computer sees only what you mount into it — which is often
-exactly what you want.
+The image's entrypoint is `trueforge-computer run`, which enrols itself only when it holds no credential — so
+`docker restart` is safe: the container finds the credential it stored in the volume and ignores the (by then
+spent) code in its environment. A Docker computer sees only what you mount into it, which is often exactly
+what you want.
 
 Either way the client dials out over a WebSocket. There is no inbound port to open, so a machine behind NAT
 works unchanged.

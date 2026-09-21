@@ -1,5 +1,6 @@
 'use client';
 
+import { withoutComputer } from '../../server/draftSpecPreferences.js';
 import type { AgentRuntimeConfig } from '../../server/types.js';
 import { cn } from '../lib/cn.js';
 import { auiInputClass } from '../lib/inputClasses.js';
@@ -128,12 +129,12 @@ export function AgentRuntimeConfigFields({
       disabled={disabled || !sandboxEnabled}
       onChange={computerId => {
         // Back to the tenant sandbox means the field goes away, not that it holds an empty id.
-        const { computerId: current, ...sandbox } = { ...value.sandbox, enabled: sandboxEnabled };
-        void current;
-        onChange({
-          ...value,
-          sandbox: computerId === undefined ? sandbox : { ...sandbox, computerId },
-        });
+        const cleared = withoutComputer({ ...value, sandbox: { ...value.sandbox, enabled: sandboxEnabled } });
+        onChange(
+          computerId === undefined
+            ? cleared
+            : { ...cleared, sandbox: { ...cleared.sandbox, enabled: sandboxEnabled, computerId } },
+        );
       }}
     />
   );

@@ -8,6 +8,7 @@ import {
   readDraftSpecPreferences,
   selectAgentDraftSpecPreferences,
   selectChatDraftSpecPreferences,
+  specWithoutComputer,
   withCapabilitiesSandbox,
   writeDraftSpecPreferences,
 } from '@/server/draftSpecPreferences.js';
@@ -39,6 +40,26 @@ describe('selectDraftSpecPreferences', () => {
     ).toEqual({
       model: { name: 'm' },
       config: { sandbox: { enabled: true } },
+    });
+  });
+
+  it('specWithoutComputer leaves a spec with no computer untouched', () => {
+    const spec = { model: { name: 'm' }, config: { sandbox: { enabled: true } } };
+    expect(specWithoutComputer(spec)).toEqual(spec);
+    expect(specWithoutComputer({ model: { name: 'm' } })).toEqual({ model: { name: 'm' } });
+  });
+
+  it('specWithoutComputer strips only the computer, keeping every sibling', () => {
+    expect(
+      specWithoutComputer({
+        model: { name: 'm' },
+        instructions: 'keep me',
+        config: { iterationLimit: 9, sandbox: { enabled: true, fileDownloads: false, computerId: 'cmp-1' } },
+      }),
+    ).toEqual({
+      model: { name: 'm' },
+      instructions: 'keep me',
+      config: { iterationLimit: 9, sandbox: { enabled: true, fileDownloads: false } },
     });
   });
 

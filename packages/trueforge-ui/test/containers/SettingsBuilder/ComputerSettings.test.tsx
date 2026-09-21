@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ComputerSettings from '@/containers/SettingsBuilder/ComputerSettings.js';
@@ -181,20 +181,60 @@ describe('ComputerSettings', () => {
     });
   });
 
+  it('offers the manual fallback when the browser exposes no clipboard', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    renderSection({
+      listComputers: async () => [],
+      createComputer: async () => ({ computer: PENDING, enrollment: ENROLLMENT }),
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add computer/ }));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'spare-laptop' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /Copy install command/ }));
+
+    expect(await screen.findByRole('button', { name: /select it instead/ })).toBeInTheDocument();
+  });
+
+  it('does not let Escape or a close control take the one-time code away', async () => {
+    renderSection({
+      listComputers: async () => [],
+      createComputer: async () => ({ computer: PENDING, enrollment: ENROLLMENT }),
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add computer/ }));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'spare-laptop' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    const panel = (await screen.findByText(ENROLLMENT.installCommand)).closest('dialog');
+    expect(panel).not.toBeNull();
+    fireEvent(panel ?? document.body, new Event('cancel', { cancelable: true, bubbles: false }));
+    expect(screen.getByText(ENROLLMENT.installCommand)).toBeInTheDocument();
+    // The header close control is gone, so there is nothing that discards it by accident.
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => {
+      expect(screen.queryByText(ENROLLMENT.installCommand)).not.toBeInTheDocument();
+    });
+  });
+
+  it('strips control and bidi characters from what the machine reported', async () => {
+    renderSection({
+      listComputers: async () => [{ ...ONLINE, hostname: 'office\u202e.local', runAsUser: 'root\u0007' }],
+    });
+
+    expect(await screen.findByText(/office\.local · linux/)).toBeInTheDocument();
+    expect(screen.queryByText(/\u202e/)).not.toBeInTheDocument();
+  });
+
   it('says the approval flag is stored but not enforced', async () => {
     renderSection({ listComputers: async () => [ONLINE] });
 
     fireEvent.click(await screen.findByText('office-box'));
 
     expect(await screen.findByText(/Stored now, enforced from a later release/)).toBeInTheDocument();
-  });
-
-  it('says the approval flag is live when the server enforces it', async () => {
-    renderSection({ listComputers: async () => [{ ...ONLINE, approvalEnforced: true }] });
-
-    fireEvent.click(await screen.findByText('office-box'));
-
-    expect(await screen.findByText(/A person has to approve every command/)).toBeInTheDocument();
   });
 
   it('shows the server 422 for an unknown agent name beside the access editor', async () => {
@@ -219,11 +259,9 @@ describe('ComputerSettings', () => {
     expect(await screen.findByText(/trusts everyone who can edit that agent/)).toBeInTheDocument();
   });
 
-  it('disables delete while an agent is granted, and surfaces the 409 when it is not', async () => {
-    const deleteComputer = vi.fn(async () => {
-      throw { statusCode: 409, body: { error: { message: '1 agent(s) are still allowed to use this computer' } } };
-    });
-    const { unmount } = renderSection({
+  it('disables delete while an agent is granted', async () => {
+    const deleteComputer = vi.fn(unavailable);
+    renderSection({
       listComputers: async () => [ONLINE],
       getComputerAgentAccess: async () => ['release-bot'],
       deleteComputer,
@@ -231,23 +269,88 @@ describe('ComputerSettings', () => {
 
     fireEvent.click(await screen.findByText('office-box'));
 
-    const disabled = await screen.findByRole('button', { name: /Delete/ });
-    expect(disabled).toBeDisabled();
+    const button = await screen.findByRole('button', { name: /Delete/ });
+    await waitFor(() => {
+      expect(button).toBeDisabled();
+    });
     expect(
       screen.getByText(/1 agent\(s\) are still allowed to use this computer — remove their access/),
     ).toBeInTheDocument();
-    unmount();
+    expect(deleteComputer).not.toHaveBeenCalled();
+  });
 
-    // A grant added elsewhere between the read and the delete still loses; the server says so.
-    renderSection({ listComputers: async () => [ONLINE], getComputerAgentAccess: async () => [], deleteComputer });
-    fireEvent.click(await screen.findByText('office-box'));
-    const enabled = await screen.findByRole('button', { name: /Delete/ });
-    await waitFor(() => {
-      expect(enabled).toBeEnabled();
+  it('holds delete back while the allowlist cannot be read, rather than reading it as empty', async () => {
+    const deleteComputer = vi.fn(unavailable);
+    renderSection({
+      listComputers: async () => [ONLINE],
+      getComputerAgentAccess: async () => {
+        throw new Error('network down');
+      },
+      deleteComputer,
     });
-    fireEvent.click(enabled);
+
+    fireEvent.click(await screen.findByText('office-box'));
+
+    expect(await screen.findByText(/Deleting is held back until the allowlist can be read/)).toBeInTheDocument();
+    expect(screen.getByText(/The allowlist could not be read/)).toBeInTheDocument();
+    expect(screen.queryByText('No agents granted.')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Delete/ })).toBeDisabled();
+    });
+  });
+
+  it('re-reads the allowlist when the retry is used', async () => {
+    let attempt = 0;
+    const getComputerAgentAccess = vi.fn(async () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error('network down');
+      return ['release-bot'];
+    });
+    renderSection({ listComputers: async () => [ONLINE], getComputerAgentAccess });
+
+    fireEvent.click(await screen.findByText('office-box'));
+    fireEvent.click(await screen.findByRole('button', { name: /Try again/ }));
+
+    expect(await screen.findByText('release-bot')).toBeInTheDocument();
+    expect(getComputerAgentAccess).toHaveBeenCalledTimes(2);
+  });
+
+  it('confirms before deleting, says what survives, and surfaces the 409', async () => {
+    const deleteComputer = vi.fn(async () => {
+      throw { statusCode: 409, body: { error: { message: '1 agent(s) are still allowed to use this computer' } } };
+    });
+    renderSection({ listComputers: async () => [ONLINE], getComputerAgentAccess: async () => [], deleteComputer });
+
+    fireEvent.click(await screen.findByText('office-box'));
+    const button = await screen.findByRole('button', { name: /Delete/ });
+    await waitFor(() => {
+      expect(button).toBeEnabled();
+    });
+    fireEvent.click(button);
+
+    // A grant added elsewhere between the read and the click still loses; the server says so.
+    expect(await screen.findByText(/the machine can no longer connect/)).toBeInTheDocument();
+    expect(screen.getByText(/activity log for 30 days/)).toBeInTheDocument();
+    expect(deleteComputer).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole('heading', { name: 'Delete this computer?' }).closest('dialog');
+    expect(dialog).not.toBeNull();
+    fireEvent.click(within(dialog ?? document.body).getByRole('button', { name: 'Delete' }));
 
     expect(await screen.findByText('1 agent(s) are still allowed to use this computer')).toBeInTheDocument();
+    expect(deleteComputer).toHaveBeenCalledWith({ computerId: 'cmp-1' });
+  });
+
+  it('leaves nothing to rotate or revoke on a revoked computer', async () => {
+    renderSection({ listComputers: async () => [{ ...ONLINE, status: 'revoked' }] });
+
+    fireEvent.click(await screen.findByText('office-box'));
+
+    expect(await screen.findByRole('button', { name: /Rotate enrollment/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Revoke' })).toBeDisabled();
+    expect(screen.getByLabelText('Name')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByText(/A revoked computer holds no credential/)).toBeInTheDocument();
   });
 
   it('confirms before rotating, and shows the new code once', async () => {

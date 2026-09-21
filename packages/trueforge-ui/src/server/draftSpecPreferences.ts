@@ -56,14 +56,20 @@ export function selectChatDraftSpecPreferences(spec: AgentSpec): AgentSpec {
 }
 
 /**
- * A computer is granted to one saved agent, so carrying it into the next draft would leave an
- * unnamed agent holding an id the server refuses and the picker cannot offer.
+ * A computer is granted to one saved agent by id, so any spec that will create another agent —
+ * a clone, a new agent seeded from this one — must not carry it: the server refuses a computer
+ * at create, and an unnamed draft holding one cannot be offered it back.
  */
-function withoutComputer(config: AgentRuntimeConfig): AgentRuntimeConfig {
+export function withoutComputer(config: AgentRuntimeConfig): AgentRuntimeConfig {
   if (config.sandbox?.computerId === undefined) return config;
-  const { computerId, ...sandbox } = config.sandbox;
-  void computerId;
+  const sandbox = { ...config.sandbox };
+  delete sandbox.computerId;
   return { ...config, sandbox };
+}
+
+/** `withoutComputer` for a whole spec, which is what the create paths hold. */
+export function specWithoutComputer(spec: AgentSpec): AgentSpec {
+  return spec.config === undefined ? spec : { ...spec, config: withoutComputer(spec.config) };
 }
 
 /** New Agent: full composer seed including runtime config (sandbox, ask-user, …). */

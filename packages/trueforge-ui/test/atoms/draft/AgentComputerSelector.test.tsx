@@ -61,12 +61,14 @@ function renderFields({
   agentName,
   granted = {},
   computers,
+  access,
   onChange = vi.fn(),
 }: {
   value: AgentRuntimeConfig;
   agentName: string | undefined;
   granted?: Record<string, string[]>;
   computers?: ComputerBase[];
+  access?: (req: { computerId: string }) => Promise<string[]>;
   onChange?: (next: AgentRuntimeConfig) => void;
 }) {
   const computerCatalog: ComputerCatalogServer = {
@@ -75,7 +77,7 @@ function renderFields({
     getComputer: unavailable,
     updateComputer: unavailable,
     deleteComputer: unavailable,
-    getComputerAgentAccess: async ({ computerId }) => granted[computerId] ?? [],
+    getComputerAgentAccess: access ?? (async ({ computerId }) => granted[computerId] ?? []),
     putComputerAgentAccess: unavailable,
     rotateComputerEnrollment: unavailable,
     revokeComputer: unavailable,
@@ -181,6 +183,54 @@ describe('AgentComputerSelector', () => {
     expect(await screen.findByRole('option', { name: /sleepy-box — sleepy-box\.local, offline/ })).toBeEnabled();
     expect(await screen.findByText(/offline right now\. It can still be saved/)).toBeInTheDocument();
     expect(screen.getByLabelText('Run on')).toBeEnabled();
+  });
+
+  it('does not read a failed lookup as a grant that went away', async () => {
+    renderFields({
+      value: { sandbox: { enabled: true, computerId: 'cmp-1' } },
+      agentName: 'release-bot',
+      computers: [GRANTED],
+      access: async () => {
+        throw new Error('network down');
+      },
+    });
+
+    expect(await screen.findByText(/Could not read which computers this agent may use/)).toBeInTheDocument();
+    expect(screen.queryByText(/no longer granted/)).not.toBeInTheDocument();
+    // The stored value still has an option, so the select cannot silently show something else.
+    expect(screen.getByLabelText('Run on')).toHaveValue('cmp-1');
+  });
+
+  it('re-reads the allowlist when the retry is used', async () => {
+    let attempt = 0;
+    renderFields({
+      value: { sandbox: { enabled: true } },
+      agentName: 'release-bot',
+      computers: [GRANTED],
+      granted: { 'cmp-1': ['release-bot'] },
+      access: async ({ computerId }) => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('network down');
+        return computerId === 'cmp-1' ? ['release-bot'] : [];
+      },
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByRole('option', { name: /office-box/ })).toBeInTheDocument();
+  });
+
+  it('caps and strips a hostile hostname in the option label', async () => {
+    renderFields({
+      value: { sandbox: { enabled: true } },
+      agentName: 'release-bot',
+      computers: [computer({ id: 'cmp-9', name: 'loud-box', hostname: `bad\u202e${'h'.repeat(120)}` })],
+      granted: { 'cmp-9': ['release-bot'] },
+    });
+
+    const option = await screen.findByRole('option', { name: /loud-box/ });
+    expect(option.textContent ?? '').not.toContain('\u202e');
+    expect((option.textContent ?? '').length).toBeLessThan(70);
   });
 
   it('tells an unsaved agent to be saved and granted first', async () => {

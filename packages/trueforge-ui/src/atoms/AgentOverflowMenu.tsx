@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { useToasterOptional } from '../containers/ToasterContainer.js';
 import { Icon } from '../icons/Icon.js';
+import { specWithoutComputer } from '../server/draftSpecPreferences.js';
 import { useOptionalServer } from '../server/ServerContext.js';
 import { useOptionalShellMode } from '../server/ShellModeContext.js';
 import type { AgentSpec } from '../server/types.js';
@@ -75,7 +76,8 @@ export function AgentOverflowMenu({
       await builder.saveAgent({
         agentName: clonedName,
         ...(description === undefined ? {} : { description }),
-        agentSpec,
+        // The grant is held against the source agent's id, so the clone starts without it.
+        agentSpec: specWithoutComputer(agentSpec),
         intent: 'create',
       });
       shell?.invalidateAgentsList();

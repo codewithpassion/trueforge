@@ -10,6 +10,7 @@ import { useRef, useState } from 'react';
 import { useSaveAgentVisible } from '../hooks/useChatChromeActionsVisible.js';
 import { useResourcePermissions } from '../hooks/useResourcePermissions.js';
 import { Icon } from '../icons/Icon.js';
+import { specWithoutComputer } from '../server/draftSpecPreferences.js';
 import { useOptionalServer } from '../server/ServerContext.js';
 import { useOptionalShellMode } from '../server/ShellModeContext.js';
 import type { AgentSpec } from '../server/types.js';
@@ -127,20 +128,23 @@ function SaveAgentButtonContent({
     if (!normalizedDescription) return;
     setSaving(true);
     setError(null);
+    // An agent that does not exist yet cannot be on a computer's allowlist, so a create never
+    // carries one; what is adopted afterwards has to be what was actually saved.
+    const savedSpec = intent === 'create' ? specWithoutComputer(draftSpec) : draftSpec;
     try {
       const result = await builder.saveAgent({
         agentName: normalizedName,
         ...(normalizedDescription ? { description: normalizedDescription } : {}),
-        agentSpec: draftSpec,
+        agentSpec: savedSpec,
         intent,
         sessionId: draftSessionId,
       });
-      adoptAgentSpec({ agentSpec: draftSpec, updatedAt: result.sessionUpdatedAt });
+      adoptAgentSpec({ agentSpec: savedSpec, updatedAt: result.sessionUpdatedAt });
       shell?.bindMutableAgent({
         agentId: result.agentId ?? normalizedName,
         agentName: normalizedName,
         ...(normalizedDescription ? { description: normalizedDescription } : {}),
-        agentSpec: draftSpec,
+        agentSpec: savedSpec,
       });
       shell?.invalidateAgentsList();
       setOpen(false);

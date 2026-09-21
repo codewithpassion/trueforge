@@ -10,6 +10,7 @@ import { Switch } from '@/atoms/primitives/Switch.js';
 import { Icon } from '@/icons/Icon.js';
 import { useCatalogServer, useOptionalServer } from '@/server/ServerContext.js';
 import type { ComputerAuditEntry, ComputerBase, ComputerCatalogServer, ComputerEnrollment } from '@/server/types.js';
+import { clientReportedText } from '@/utils/clientReportedText.js';
 import { getErrorMessage } from '@/utils/getErrorMessage.js';
 import { useToasterOptional } from '../ToasterContainer.js';
 
@@ -18,6 +19,8 @@ const AGENT_PICKER_LIMIT = 100;
 const AUDIT_PAGE_SIZE = 25;
 /** Longer than a command usually is; the rest is behind "Show more". */
 const COMMAND_PREVIEW_LENGTH = 120;
+/** The server truncates at 4 KiB; one row still must not own the page. */
+const COMMAND_MAX_LENGTH = 2000;
 
 const STATUS_LABELS: Record<ComputerBase['status'], string> = {
   pending: 'Waiting to enroll',
@@ -55,6 +58,10 @@ function formatInstant(value: string | null): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
+function reported(value: string | null, fallback: string): string {
+  return value === null ? fallback : clientReportedText(value);
+}
+
 function toolsLabel(tools: ComputerBase['tools']): string {
   if (tools === null) return 'not reported yet';
   const present = [tools.python3 ? 'python3' : undefined, tools.git ? 'git' : undefined].filter(
@@ -83,7 +90,13 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       size="small"
       type="button"
       onClick={() => {
-        void navigator.clipboard?.writeText(value).then(
+        // Absent outside a secure context, where an optional call would silently do nothing.
+        const clipboard = navigator.clipboard;
+        if (clipboard === undefined) {
+          setFailed(true);
+          return;
+        }
+        void clipboard.writeText(value).then(
           () => {
             setFailed(false);
             toaster?.showSuccess({ title: `${label} copied` });
@@ -116,13 +129,15 @@ function CommandBlock({ title, command, label }: { title: string; command: strin
 
 function AuditCommand({ command }: { command: string }) {
   const [expanded, setExpanded] = useState(false);
-  if (command.length <= COMMAND_PREVIEW_LENGTH) {
-    return <code className="break-all text-xs text-text-primary">{command}</code>;
+  // A recorded command is the machine's text: capped generously here, previewed shorter below.
+  const safe = clientReportedText(command, COMMAND_MAX_LENGTH);
+  if (safe.length <= COMMAND_PREVIEW_LENGTH) {
+    return <code className="break-all text-xs text-text-primary">{safe}</code>;
   }
   return (
     <span className="flex flex-col items-start gap-1">
       <code className="break-all text-xs text-text-primary">
-        {expanded ? command : `${command.slice(0, COMMAND_PREVIEW_LENGTH)}…`}
+        {expanded ? safe : `${safe.slice(0, COMMAND_PREVIEW_LENGTH)}…`}
       </code>
       <button
         type="button"
@@ -146,10 +161,33 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-type PendingConfirm = 'rotate' | 'revoke';
+type PendingConfirm = 'rotate' | 'revoke' | 'delete';
 
-/** Held in component state until the admin dismisses it: the code is never readable again. */
-type OneTimeEnrollment = { computerName: string; enrollment: ComputerEnrollment };
+const CONFIRM_TITLES: Record<PendingConfirm, string> = {
+  rotate: 'Rotate the enrollment?',
+  revoke: 'Revoke this computer?',
+  delete: 'Delete this computer?',
+};
+
+const CONFIRM_DESCRIPTIONS: Record<PendingConfirm, string> = {
+  rotate:
+    'The current credential stops working and the connection closes. The machine has to enroll again with the new code.',
+  revoke:
+    'The credential is dropped and the live connection closes. This cannot be undone: the machine has to be added again from scratch.',
+  delete:
+    'The computer is removed and its credential stops working, so the machine can no longer connect. This cannot be undone. What already ran on it stays in the activity log for 30 days.',
+};
+
+/**
+ * Held in component state until the admin dismisses it: the code is never readable again.
+ * Only the two commands are kept — a second copy of the bare code would be one more place
+ * for it to be read from.
+ */
+type OneTimeEnrollment = { computerName: string; installCommand: string; dockerCommand: string | null };
+
+function toOneTime({ computerName, enrollment }: { computerName: string; enrollment: ComputerEnrollment }) {
+  return { computerName, installCommand: enrollment.installCommand, dockerCommand: enrollment.dockerCommand };
+}
 
 const ComputerSettings = () => {
   const catalog = useCatalogServer();
@@ -174,6 +212,10 @@ const ComputerSettings = () => {
   const [agentNames, setAgentNames] = useState<string[]>([]);
   const [agentDraft, setAgentDraft] = useState('');
   const [accessError, setAccessError] = useState<string | null>(null);
+  // Distinct from an empty allowlist: neither may be read as "no agent holds this computer".
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [accessFailed, setAccessFailed] = useState(false);
+  const [accessEpoch, setAccessEpoch] = useState(0);
   const [knownAgentNames, setKnownAgentNames] = useState<string[]>([]);
 
   const [audit, setAudit] = useState<ComputerAuditEntry[]>([]);
@@ -227,13 +269,22 @@ const ComputerSettings = () => {
       return;
     }
     let cancelled = false;
+    setAccessLoading(true);
+    setAccessFailed(false);
     void computerCatalog
       .getComputerAgentAccess({ computerId: selectedId })
       .then(names => {
-        if (!cancelled) setAgentNames(names);
+        if (cancelled) return;
+        setAgentNames(names);
+        setAccessError(null);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setAccessError(getErrorMessage(err, 'Could not load agent access'));
+        if (cancelled) return;
+        setAccessFailed(true);
+        setAccessError(getErrorMessage(err, 'Could not load agent access'));
+      })
+      .finally(() => {
+        if (!cancelled) setAccessLoading(false);
       });
     void computerCatalog
       .listComputerAudit({ computerId: selectedId, limit: AUDIT_PAGE_SIZE })
@@ -248,7 +299,7 @@ const ComputerSettings = () => {
     return () => {
       cancelled = true;
     };
-  }, [computerCatalog, selectedId]);
+  }, [computerCatalog, selectedId, accessEpoch]);
 
   const openDetail = (computer: ComputerBase) => {
     setSelectedId(computer.id);
@@ -256,6 +307,7 @@ const ComputerSettings = () => {
     setDetailRequireApproval(computer.requireApproval);
     setError(null);
     setAccessError(null);
+    setAccessFailed(false);
     setAgentDraft('');
   };
 
@@ -284,7 +336,7 @@ const ComputerSettings = () => {
     void runMutation(async () => {
       const created = await computerCatalog.createComputer({ name, requireApproval: true });
       // Set before the list refresh inside runMutation, and never cleared by it.
-      setOneTime({ computerName: created.computer.name, enrollment: created.enrollment });
+      setOneTime(toOneTime({ computerName: created.computer.name, enrollment: created.enrollment }));
       setAddOpen(false);
       setAddName('');
     }, setFormError);
@@ -321,7 +373,7 @@ const ComputerSettings = () => {
     setConfirm(null);
     void runMutation(async () => {
       const enrollment = await computerCatalog.rotateComputerEnrollment({ computerId: selected.id });
-      setOneTime({ computerName: selected.name, enrollment });
+      setOneTime(toOneTime({ computerName: selected.name, enrollment }));
     });
   };
 
@@ -335,6 +387,7 @@ const ComputerSettings = () => {
 
   const handleDelete = () => {
     if (computerCatalog === undefined || selected === null) return;
+    setConfirm(null);
     void runMutation(async () => {
       await computerCatalog.deleteComputer({ computerId: selected.id });
       setSelectedId(null);
@@ -364,9 +417,9 @@ const ComputerSettings = () => {
   const oneTimePanel = (
     <CenteredModal
       open={oneTime !== null}
-      onOpenChange={open => {
-        if (!open) setOneTime(null);
-      }}
+      // Nothing but Done may close it: an Escape here costs a rotate to recover.
+      onOpenChange={() => undefined}
+      persistent
       title="Run this on the machine"
       description={
         oneTime === null ? undefined : `The enrollment code for ${oneTime.computerName} is shown once, here, now.`
@@ -383,13 +436,13 @@ const ComputerSettings = () => {
               it, rotate the enrollment for a fresh one.
             </span>
           </p>
-          <CommandBlock title="Install and run" command={oneTime.enrollment.installCommand} label="Install command" />
-          {oneTime.enrollment.dockerCommand === null ? (
+          <CommandBlock title="Install and run" command={oneTime.installCommand} label="Install command" />
+          {oneTime.dockerCommand === null ? (
             <p className="text-sm text-text-secondary">
               This server has no client image configured, so there is no Docker command.
             </p>
           ) : (
-            <CommandBlock title="Or run in Docker" command={oneTime.enrollment.dockerCommand} label="Docker command" />
+            <CommandBlock title="Or run in Docker" command={oneTime.dockerCommand} label="Docker command" />
           )}
         </div>
       )}
@@ -408,6 +461,9 @@ const ComputerSettings = () => {
 
   if (selected !== null) {
     const grantedCount = agentNames.length;
+    const revoked = selected.status === 'revoked';
+    // An empty list is only evidence of "no grants" once the lookup actually came back.
+    const grantsKnown = !accessLoading && !accessFailed;
     return (
       <>
         <div className="flex items-center gap-2">
@@ -442,14 +498,14 @@ const ComputerSettings = () => {
                 What the machine reports
               </h4>
               <div className="mt-3 divide-y divide-border">
-                <DetailRow label="Hostname">{selected.hostname ?? 'not reported yet'}</DetailRow>
+                <DetailRow label="Hostname">{reported(selected.hostname, 'not reported yet')}</DetailRow>
                 <DetailRow label="OS">
                   {selected.os === null
                     ? 'not reported yet'
-                    : `${selected.os}${selected.arch === null ? '' : ` / ${selected.arch}`}`}
+                    : `${reported(selected.os, '')}${selected.arch === null ? '' : ` / ${reported(selected.arch, '')}`}`}
                 </DetailRow>
-                <DetailRow label="Client version">{selected.agentVersion ?? 'not reported yet'}</DetailRow>
-                <DetailRow label="Runs commands as">{selected.runAsUser ?? 'not reported yet'}</DetailRow>
+                <DetailRow label="Client version">{reported(selected.agentVersion, 'not reported yet')}</DetailRow>
+                <DetailRow label="Runs commands as">{reported(selected.runAsUser, 'not reported yet')}</DetailRow>
                 <DetailRow label="Detected tools">{toolsLabel(selected.tools)}</DetailRow>
                 <DetailRow label="Last seen">{formatInstant(selected.lastSeenAt)}</DetailRow>
               </div>
@@ -468,30 +524,35 @@ const ComputerSettings = () => {
                   <input
                     id="computer-name"
                     value={detailName}
+                    disabled={revoked}
                     onChange={event => {
                       setDetailName(event.target.value);
                     }}
-                    className={auiInputClass('h-11')}
+                    className={auiInputClass('h-11 disabled:opacity-60')}
                   />
                 </div>
                 <div className="flex items-start justify-between gap-4">
                   <span>
                     <span className="block text-sm font-medium text-text-primary">Ask before each command</span>
                     <span className="mt-0.5 block text-xs text-text-secondary">
-                      {selected.approvalEnforced === true
-                        ? 'A person has to approve every command this computer runs.'
-                        : 'Stored now, enforced from a later release — this server records the setting but does not yet pause a command for approval.'}
+                      Stored now, enforced from a later release — this server records the setting but does not yet pause
+                      a command for approval.
                     </span>
                   </span>
                   <Switch
                     checked={detailRequireApproval}
-                    disabled={busy}
+                    disabled={busy || revoked}
                     onCheckedChange={setDetailRequireApproval}
                     aria-label="Ask before each command"
                   />
                 </div>
-                <div className="flex justify-end">
-                  <Button.Primary type="submit" disabled={busy}>
+                <div className="flex items-center justify-end gap-3">
+                  {revoked ? (
+                    <span className="text-xs text-text-secondary">
+                      This computer is revoked, so there is nothing left for a setting to apply to.
+                    </span>
+                  ) : null}
+                  <Button.Primary type="submit" disabled={busy || revoked}>
                     Save
                   </Button.Primary>
                 </div>
@@ -510,8 +571,20 @@ const ComputerSettings = () => {
                 what it is told to do. Only saved, named agents can be granted.
               </p>
               {accessError ? (
-                <p className="mt-3 rounded-md border border-failure-bg/30 bg-failure-bg/10 px-3 py-2 text-sm text-failure-bg">
-                  {accessError}
+                <p className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-failure-bg/30 bg-failure-bg/10 px-3 py-2 text-sm text-failure-bg">
+                  <span>{accessError}</span>
+                  {accessFailed ? (
+                    <Button.Secondary
+                      size="small"
+                      type="button"
+                      onClick={() => {
+                        setAccessEpoch(epoch => epoch + 1);
+                      }}
+                    >
+                      <Icon name="rotate-right" size="1rem" className="mr-1" />
+                      Try again
+                    </Button.Secondary>
+                  ) : null}
                 </p>
               ) : null}
               <ul className="mt-3 flex flex-wrap gap-2">
@@ -534,7 +607,15 @@ const ComputerSettings = () => {
                     </button>
                   </li>
                 ))}
-                {agentNames.length === 0 ? <li className="text-sm text-text-secondary">No agents granted.</li> : null}
+                {agentNames.length === 0 ? (
+                  <li className="text-sm text-text-secondary">
+                    {accessLoading
+                      ? 'Loading the allowlist…'
+                      : accessFailed
+                        ? 'The allowlist could not be read, so what holds this computer is unknown.'
+                        : 'No agents granted.'}
+                  </li>
+                ) : null}
               </ul>
               <datalist id="computer-agent-names">
                 {knownAgentNames.map(name => (
@@ -554,7 +635,7 @@ const ComputerSettings = () => {
                 />
                 <Button.Secondary
                   type="button"
-                  disabled={busy || agentDraft.trim() === ''}
+                  disabled={busy || accessFailed || agentDraft.trim() === ''}
                   onClick={() => {
                     const name = agentDraft.trim();
                     if (name === '' || agentNames.includes(name)) return;
@@ -620,7 +701,7 @@ const ComputerSettings = () => {
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button.Secondary
                   type="button"
-                  disabled={busy}
+                  disabled={busy || revoked}
                   onClick={() => {
                     setConfirm('rotate');
                   }}
@@ -630,24 +711,43 @@ const ComputerSettings = () => {
                 </Button.Secondary>
                 <Button.Destructive
                   type="button"
-                  disabled={busy || selected.status === 'revoked'}
+                  disabled={busy || revoked}
                   onClick={() => {
                     setConfirm('revoke');
                   }}
                 >
                   Revoke
                 </Button.Destructive>
-                <Button.Ghost type="button" disabled={busy || grantedCount > 0} onClick={handleDelete}>
+                <Button.Ghost
+                  type="button"
+                  disabled={busy || !grantsKnown || grantedCount > 0}
+                  onClick={() => {
+                    setConfirm('delete');
+                  }}
+                >
                   <Icon name="trash" size="1rem" className="mr-1" />
                   Delete
                 </Button.Ghost>
               </div>
-              {grantedCount > 0 ? (
+              {revoked ? (
+                <p className="mt-2 text-xs text-text-secondary">
+                  A revoked computer holds no credential, so there is nothing left to rotate or revoke. Delete it once
+                  no agent is granted it.
+                </p>
+              ) : null}
+              {grantsKnown && grantedCount > 0 ? (
                 <p className="mt-2 text-xs text-text-secondary">
                   {grantedCount} agent(s) are still allowed to use this computer — remove their access before deleting
                   it.
                 </p>
               ) : null}
+              {grantsKnown ? null : (
+                <p className="mt-2 text-xs text-text-secondary">
+                  {accessLoading
+                    ? 'Checking which agents hold this computer…'
+                    : 'Deleting is held back until the allowlist can be read — retry it above.'}
+                </p>
+              )}
             </section>
           </div>
         </div>
@@ -657,12 +757,8 @@ const ComputerSettings = () => {
           onOpenChange={open => {
             if (!open) setConfirm(null);
           }}
-          title={confirm === 'revoke' ? 'Revoke this computer?' : 'Rotate the enrollment?'}
-          description={
-            confirm === 'revoke'
-              ? 'The credential is dropped and the live connection closes. This cannot be undone: the machine has to be added again from scratch.'
-              : 'The current credential stops working and the connection closes. The machine has to enroll again with the new code.'
-          }
+          title={CONFIRM_TITLES[confirm ?? 'rotate']}
+          description={CONFIRM_DESCRIPTIONS[confirm ?? 'rotate']}
           contentSized
         >
           <footer className="flex justify-end gap-2 border-t border-border px-5 py-4">
@@ -677,6 +773,10 @@ const ComputerSettings = () => {
             {confirm === 'revoke' ? (
               <Button.Destructive type="button" disabled={busy} onClick={handleRevoke}>
                 Revoke
+              </Button.Destructive>
+            ) : confirm === 'delete' ? (
+              <Button.Destructive type="button" disabled={busy} onClick={handleDelete}>
+                Delete
               </Button.Destructive>
             ) : (
               <Button.Primary type="button" disabled={busy} onClick={handleRotate}>
@@ -748,9 +848,10 @@ const ComputerSettings = () => {
                         <StatusBadge status={computer.status} />
                       </span>
                       <span className="block truncate text-xs text-text-secondary">
-                        {computer.hostname ?? 'no hostname yet'} · {computer.os ?? 'unknown OS'} ·{' '}
-                        {computer.agentVersion ?? 'no version'} · as {computer.runAsUser ?? 'unknown user'} ·{' '}
-                        {toolsLabel(computer.tools)} · last seen {formatInstant(computer.lastSeenAt)}
+                        {reported(computer.hostname, 'no hostname yet')} · {reported(computer.os, 'unknown OS')} ·{' '}
+                        {reported(computer.agentVersion, 'no version')} · as{' '}
+                        {reported(computer.runAsUser, 'unknown user')} · {toolsLabel(computer.tools)} · last seen{' '}
+                        {formatInstant(computer.lastSeenAt)}
                       </span>
                     </span>
                     <Icon name="chevron-right" className="size-4 text-text-secondary" />

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useOptionalCatalogServer } from '../../server/ServerContext.js';
 import { useOptionalShellMode } from '../../server/ShellModeContext.js';
 import type { AgentSandboxConfig, ComputerBase } from '../../server/types.js';
+import { clientReportedText } from '../../utils/clientReportedText.js';
 import { auiInputClass } from '../lib/inputClasses.js';
 
 /** The tenant's own sandbox provider, which is what an agent uses when no computer is chosen. */
@@ -16,8 +17,9 @@ export type AgentComputerSelectorProps = {
   onChange: (computerId: string | undefined) => void;
 };
 
+/** The hostname is the machine's own text, so it is capped and stripped before it is shown. */
 function describe(computer: ComputerBase): string {
-  const where = computer.hostname ?? 'no hostname yet';
+  const where = computer.hostname === null ? 'no hostname yet' : clientReportedText(computer.hostname, 40);
   if (computer.status === 'online') return `${computer.name} — ${where}`;
   if (computer.status === 'offline') return `${computer.name} — ${where}, offline`;
   return `${computer.name} — ${where}, waiting to enroll`;
@@ -36,6 +38,9 @@ export function AgentComputerSelector({ sandbox, disabled, onChange }: AgentComp
 
   const [granted, setGranted] = useState<ComputerBase[]>([]);
   const [loading, setLoading] = useState(false);
+  // A failed lookup is not an empty allowlist, and must never read as a grant that went away.
+  const [failed, setFailed] = useState(false);
+  const [epoch, setEpoch] = useState(0);
 
   useEffect(() => {
     if (computerCatalog === undefined || agentName === undefined) {
@@ -44,6 +49,7 @@ export function AgentComputerSelector({ sandbox, disabled, onChange }: AgentComp
     }
     let cancelled = false;
     setLoading(true);
+    setFailed(false);
     void (async () => {
       try {
         const computers = await computerCatalog.listComputers();
@@ -59,8 +65,10 @@ export function AgentComputerSelector({ sandbox, disabled, onChange }: AgentComp
           setGranted(access.filter(entry => entry.names.includes(agentName)).map(entry => entry.computer));
         }
       } catch {
-        // A picker that cannot list leaves the stored value alone rather than clearing it.
-        if (!cancelled) setGranted([]);
+        if (cancelled) return;
+        // The stored value is left alone: what this agent may use is now unknown, not gone.
+        setGranted([]);
+        setFailed(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -68,14 +76,31 @@ export function AgentComputerSelector({ sandbox, disabled, onChange }: AgentComp
     return () => {
       cancelled = true;
     };
-  }, [computerCatalog, agentName]);
+  }, [computerCatalog, agentName, epoch]);
 
   if (computerCatalog === undefined) return null;
 
   const offline = granted.find(computer => computer.id === selectedId && computer.status !== 'online');
-  // Only once the lookup is in: an empty list mid-fetch is not evidence that a grant is gone.
-  const storedButUnavailable =
-    !loading && selectedId !== undefined && !granted.some(computer => computer.id === selectedId);
+  // The option has to exist whatever the lookup did, or the select would silently show
+  // something other than what is stored.
+  const storedMissing = selectedId !== undefined && !granted.some(computer => computer.id === selectedId);
+  // Only once the lookup is in: neither a fetch in flight nor a failed one is evidence of a
+  // grant that went away.
+  const storedButUnavailable = storedMissing && !loading && !failed;
+
+  function hint(): string {
+    if (agentName === undefined) return 'Save the agent first, then grant it a computer in Settings → Computers.';
+    if (loading) return 'Looking up which computers this agent may use…';
+    if (failed) return 'Could not read which computers this agent may use. What is stored has been left alone.';
+    if (storedButUnavailable) {
+      return 'The saved computer is no longer granted to this agent; a turn will be refused until you pick another.';
+    }
+    if (granted.length === 0) return 'No computer has granted this agent access yet — do that in Settings → Computers.';
+    if (offline !== undefined) {
+      return 'That computer is offline right now. It can still be saved; a turn fails fast while it stays away.';
+    }
+    return 'Commands run on that machine, as its own user, instead of in a sandbox.';
+  }
 
   return (
     <div className="mt-3 border-l-2 border-primary-button-bg/50 pl-3">
@@ -98,22 +123,25 @@ export function AgentComputerSelector({ sandbox, disabled, onChange }: AgentComp
             {describe(computer)}
           </option>
         ))}
-        {storedButUnavailable ? (
-          <option value={selectedId}>{selectedId} — no longer available to this agent</option>
+        {storedMissing ? (
+          <option value={selectedId}>
+            {storedButUnavailable ? `${selectedId} — no longer available to this agent` : selectedId}
+          </option>
         ) : null}
       </select>
-      <p className="mt-1 text-xs text-text-secondary">
-        {agentName === undefined
-          ? 'Save the agent first, then grant it a computer in Settings → Computers.'
-          : loading
-            ? 'Looking up which computers this agent may use…'
-            : granted.length === 0
-              ? 'No computer has granted this agent access yet — do that in Settings → Computers.'
-              : storedButUnavailable
-                ? 'The saved computer is no longer granted to this agent; a turn will be refused until you pick another.'
-                : offline === undefined
-                  ? 'Commands run on that machine, as its own user, instead of in a sandbox.'
-                  : 'That computer is offline right now. It can still be saved; a turn fails fast while it stays away.'}
+      <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+        <span>{hint()}</span>
+        {failed ? (
+          <button
+            type="button"
+            className="font-medium text-primary-button-bg hover:underline"
+            onClick={() => {
+              setEpoch(current => current + 1);
+            }}
+          >
+            Try again
+          </button>
+        ) : null}
       </p>
     </div>
   );
