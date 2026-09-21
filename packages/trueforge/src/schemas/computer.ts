@@ -11,8 +11,13 @@ import { NameSchema } from './common';
 export const ComputerStatusSchema = z.enum(COMPUTER_STATUSES).openapi('ComputerStatus');
 export const ComputerAuditOpSchema = z.enum(COMPUTER_AUDIT_OPS).openapi('ComputerAuditOp');
 
-/** The wire name for the capabilities the protocol already owns; the shape is not redeclared. */
-export const ComputerToolsSchema = z.object(ComputerCapabilitiesSchema.shape).openapi('ComputerTools');
+/**
+ * The wire name for the capabilities the protocol already owns; the shape is not redeclared.
+ * `skills` is left off: it is a derived verdict, not a tool anyone installs, and no client reads it.
+ */
+export const ComputerToolsSchema = z
+  .object(ComputerCapabilitiesSchema.omit({ skills: true }).shape)
+  .openapi('ComputerTools');
 
 export const ComputerSchema = z
   .object({

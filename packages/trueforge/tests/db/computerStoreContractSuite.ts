@@ -17,7 +17,7 @@ const OWNER = 'user_owner';
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
-const CAPABILITIES: ComputerCapabilities = { python3: true, git: false };
+const CAPABILITIES: ComputerCapabilities = { python3: true, git: false, skills: false };
 
 function isoIn(ms: number): string {
   return new Date(Date.now() + ms).toISOString();

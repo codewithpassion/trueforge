@@ -92,7 +92,7 @@ sharing one credential evict each other forever.
   "version": "0.1.0",
   "run_as_user": "trueforge",
   "workdir": "/var/lib/trueforge-computer/sessions",
-  "capabilities": { "python3": true, "git": true }
+  "capabilities": { "python3": true, "git": true, "skills": true }
 }
 ```
 
@@ -105,8 +105,14 @@ server that filled that in itself would send commands naming directories that ar
 session directory as `<workdir>/<session_id>` and accepts nothing else: at most 1024 characters, a
 leading `/`, at least one path segment, no `.` or `..` segment, no trailing slash, and none of NUL, a
 control character, `'`, `"`, a backtick, `\` or `$`. `run_as_user` is reported for the UI and the
-activity log; no path is built from it. Skills are mounted on a computer only when
-`capabilities.python3` and `capabilities.git` are both true.
+activity log; no path is built from it.
+
+`capabilities.skills` is the client's own verdict on whether the server's skill downloader can run on
+this machine: true only when `python3` and `git` are on `PATH` **and** `python3 -c "import pydantic"`
+succeeds. The server mounts skills on a computer only when it is true, and sends no skill work at all
+when it is false — an agent with no skills still runs its commands there. The server does not
+re-derive the answer from `python3` and `git`: only the machine can import a package. The field
+defaults to false when a client omits it, which is why it did not need a new `protocol_version`.
 
 ### Requests (server → client)
 

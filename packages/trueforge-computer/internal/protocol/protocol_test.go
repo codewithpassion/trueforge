@@ -104,7 +104,8 @@ func TestHelloRoundTrip(t *testing.T) {
 	if hello.Type != "hello" {
 		t.Fatalf("type = %q, want hello", hello.Type)
 	}
-	if !hello.Capabilities.Python3 || hello.Capabilities.Git {
+	// Skills is the client's verdict, not python3 && git: this fixture has python3 and no git.
+	if !hello.Capabilities.Python3 || hello.Capabilities.Git || hello.Capabilities.Skills {
 		t.Fatalf("capabilities = %+v", hello.Capabilities)
 	}
 	// The server has nothing else to build a session path from, so an absent workdir would

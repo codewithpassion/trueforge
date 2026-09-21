@@ -9,6 +9,7 @@
   "workdir": "/var/lib/trueforge-computer/sessions",
   "capabilities": {
     "python3": true,
-    "git": false
+    "git": false,
+    "skills": false
   }
 }

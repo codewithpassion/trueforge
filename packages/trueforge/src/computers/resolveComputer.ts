@@ -34,6 +34,8 @@ export function computerNotUsableMessage({
       return 'Remote computers are not available on this server';
     case 'computer_offline':
       return `Computer "${computerId}" is offline`;
+    case 'computer_no_skills':
+      return `Computer "${computerId}" cannot mount skills: it needs python3, git and the pydantic package`;
   }
 }
 
@@ -46,6 +48,8 @@ export interface ComputerSelection {
    */
   agent_id: string | undefined;
   tenant_id: string;
+  /** Whether the spec asks for skills. A machine that cannot mount them may still run commands. */
+  skills_requested: boolean;
 }
 
 /**
@@ -85,6 +89,11 @@ export async function resolveComputerUsability({
   });
   if (!allowed) {
     return refuse('agent_not_allowed');
+  }
+  // Only refused once the machine has said what it has: a computer that has never connected is
+  // still worth saving an agent for, and the turn checks again against the live hello.
+  if (selection.skills_requested && computer.capabilities !== null && !computer.capabilities.skills) {
+    return refuse('computer_no_skills');
   }
   return computer.status === 'online'
     ? { usable: true, status: 'ready', reason: undefined }

@@ -13,7 +13,7 @@ import type {
 
 /**
  * Why a sandbox cannot run, or why it can run but may still refuse at turn time. Without this the
- * four remote-computer answers below are one boolean, and the caller cannot say which one it is.
+ * remote-computer answers below are one boolean, and the caller cannot say which one it is.
  */
 export const SANDBOX_USABILITY_REASONS = [
   'unknown_computer',
@@ -22,6 +22,7 @@ export const SANDBOX_USABILITY_REASONS = [
   'inline_agent',
   'computers_disabled',
   'computer_offline',
+  'computer_no_skills',
 ] as const;
 export type SandboxUsabilityReason = (typeof SANDBOX_USABILITY_REASONS)[number];
 
@@ -74,6 +75,8 @@ export interface SandboxIntegration {
      * which may not use a computer: access is granted per agent, and there is nothing to grant to.
      */
     agent_id: string | undefined;
+    /** Whether the spec asks for skills, which a computer may be unable to mount. */
+    skills_requested: boolean;
   }): Promise<SandboxUsability>;
   /** Whether skills can be mounted into a sandbox on this runtime. */
   isSkillMountingSupported(): boolean;

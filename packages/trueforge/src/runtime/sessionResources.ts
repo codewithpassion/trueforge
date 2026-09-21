@@ -202,6 +202,7 @@ async function resolveSandboxUsabilityOrThrow({
   logger,
   computer_id,
   agent_id,
+  skills_requested,
 }: {
   sandboxIntegration: SandboxIntegration;
   sandboxProviderStore: ISandboxProviderStore;
@@ -209,6 +210,7 @@ async function resolveSandboxUsabilityOrThrow({
   logger: Logger;
   computer_id: string | undefined;
   agent_id: string | undefined;
+  skills_requested: boolean;
 }): Promise<SandboxUsability> {
   try {
     return await sandboxIntegration.resolveSandboxUsability({
@@ -217,6 +219,7 @@ async function resolveSandboxUsabilityOrThrow({
       logger,
       computer_id,
       agent_id,
+      skills_requested,
     });
   } catch (error) {
     logger.error('Sandbox image status check failed while validating an agent spec', extractErrorLogFields(error));
@@ -314,6 +317,7 @@ export async function validateAgentSpec({
             logger,
             computer_id: computerId,
             agent_id,
+            skills_requested: hasSkills,
           });
     if (usability?.usable !== true) {
       throw new HTTPException(422, {

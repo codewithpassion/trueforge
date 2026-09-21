@@ -1,6 +1,9 @@
+import type { SandboxProvider } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
 import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
+import type { Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { SkillMounter } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { HTTPException } from 'hono/http-exception';
+import { RemoteComputerProvider } from '../../computers/RemoteComputerProvider';
 import { buildRemoteComputerProvider, resolveComputerUsability } from '../../computers/resolveComputer';
 import type { ComputersService } from '../../computers/service';
 import configuration from '../../config';
@@ -15,6 +18,17 @@ import type { CodeModeBridgeRegistry } from './codeModeBridge';
 import type { ComputerWorkspace } from './ComputerDO';
 
 const NOT_SUPPORTED_MESSAGE = 'Daytona sandbox providers are not supported on the Cloudflare Workers runtime';
+
+/**
+ * Undefined means sandbox init sends no skill work at all. Only a computer that says it cannot run
+ * the downloader gets that; the built-in workspace always mounts, so a dropped skill is cleaned up.
+ */
+function skillMounterFor(input: { provider: SandboxProvider; skills: readonly Skill[] }): SkillMounter | undefined {
+  if (input.provider instanceof RemoteComputerProvider && !input.provider.supportsSkills) {
+    return undefined;
+  }
+  return new SkillMounter({ skills: input.skills });
+}
 
 export interface WorkersSandboxIntegrationOptions {
   /** Unset means code execution stays off, which is the phase 5 behaviour. */
@@ -105,6 +119,7 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
             tenant_id: input.tenant_id,
             computer_id: input.computer_id,
             agent_id: input.agent_id,
+            skills_requested: input.skills_requested,
           },
         });
       }
@@ -123,7 +138,6 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
     isDaytonaAuthError: () => false,
     isDaytonaPermissionError: () => false,
     buildTurnSandbox: input =>
-      // The mounter runs even with no skills, so one the agent dropped is removed on the next init.
       new Sandbox({
         provider: input.provider,
         existingSandboxId: input.existingSandboxId,
@@ -131,7 +145,10 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
         blockDestructiveToolsInCodeMode: true,
         mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,
         mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
-        skillMounter: new SkillMounter({ skills: input.skills }),
+        // The mounter runs even with no skills, so one the agent dropped is removed on the next
+        // init. A machine that cannot run the downloader gets none at all: its init exec would
+        // die on `import pydantic` and take every plain command down with it.
+        skillMounter: skillMounterFor(input),
         tracing: input.tracing,
         logger: input.logger,
       }),

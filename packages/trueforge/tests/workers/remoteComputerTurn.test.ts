@@ -35,7 +35,11 @@ function computerIntegration() {
 }
 
 /** Creates a computer through the API, enrolls it, and connects a client that answers commands. */
-async function onlineComputer(name: string): Promise<{ computerId: string; client: FakeComputerClient }> {
+async function onlineComputer(
+  name: string,
+  /** What the machine says about the skill downloader. The default machine can run it. */
+  skills = true,
+): Promise<{ computerId: string; client: FakeComputerClient }> {
   const computers = workersComputersService(env);
   const app = computersApp({ computers });
   const created = await app.fetch(
@@ -66,6 +70,9 @@ async function onlineComputer(name: string): Promise<{ computerId: string; clien
     app,
     credential,
     options: {
+      // python3 and git are always there: the machine the live test found had both and no
+      // pydantic, so only `skills` varies — a server that re-derived it would still pass.
+      hello: { capabilities: { python3: true, git: true, skills } },
       onRequest: frame =>
         frame['op'] === 'exec'
           ? { ...OK_EXEC, stdout: String(frame['command']).includes('uname') ? UNAME_OUTPUT : '' }
@@ -77,10 +84,19 @@ async function onlineComputer(name: string): Promise<{ computerId: string; clien
   return { computerId: body.data.computer.id, client };
 }
 
-function computerSpec({ providerName, computerId }: { providerName: string; computerId: string }) {
+function computerSpec({
+  providerName,
+  computerId,
+  skillName,
+}: {
+  providerName: string;
+  computerId: string;
+  skillName?: string;
+}) {
   return AgentSpecSchema.parse({
     model: { name: `${providerName}/mock-model` },
     instructions: 'test',
+    ...(skillName === undefined ? {} : { skills: [{ name: skillName }] }),
     config: { sandbox: { enabled: true, file_downloads: false, computer_id: computerId } },
   });
 }
@@ -122,11 +138,13 @@ async function agentOnComputer({
   agentName,
   sessionId,
   allowed,
+  skillName,
 }: {
   computerId: string;
   agentName: string;
   sessionId: string;
   allowed: boolean;
+  skillName?: string;
 }) {
   const stores = d1Persistence();
   const computers = workersComputersService(env);
@@ -135,7 +153,7 @@ async function agentOnComputer({
     tenant_id: TENANT_ID,
     name: agentName,
     description: 'runs on a machine',
-    manifest: computerSpec({ providerName, computerId }),
+    manifest: computerSpec({ providerName, computerId, skillName }),
     external_id: null,
     created_by_subject: { subject_id: USER_REF, subject_type: 'user', subject_display_name: USER_REF },
   });
@@ -154,7 +172,7 @@ async function agentOnComputer({
     external_id: null,
     source: null,
   });
-  return { stores, providerName, computers };
+  return { stores, providerName, computers, agent };
 }
 
 let counter = 0;
@@ -286,6 +304,117 @@ describe('a turn on a remote computer', () => {
     // Offline is a turn-time reason, not a refusal: the turn runs and the command reports it.
     const finished = await runTurn({ sessionId, stores });
     expect(finished?.state.status).toBe('done');
+  });
+});
+
+/** What sandbox init sends when a skill mounter is attached: the skill list, then the downloader. */
+function skillInitFrames(client: FakeComputerClient) {
+  return {
+    uploads: client.received.filter(
+      frame => frame['op'] === 'file_put' && String(frame['path']).endsWith('requested-skills.json'),
+    ),
+    downloaderExecs: client.received.filter(
+      frame => frame['op'] === 'exec' && String(frame['command']).includes('skill_downloader.py'),
+    ),
+  };
+}
+
+async function gitSkill(stores: ReturnType<typeof d1Persistence>, name: string): Promise<string> {
+  await stores.skillStore.createSkill({
+    tenant_id: TENANT_ID,
+    name,
+    manifest: {
+      type: 'git',
+      name,
+      url: 'https://example.test/skills.git',
+      ref: 'main',
+      description: 'a skill the machine would have to download',
+    },
+  });
+  return name;
+}
+
+describe('a machine that cannot run the skill downloader', () => {
+  it('still runs plain commands, with no downloader upload and no downloader exec', async () => {
+    const { computerId, client } = await onlineComputer(unique('no-pydantic-box'), false);
+    const sessionId = `computer-turn-no-skills-${newId()}`;
+    const { stores } = await agentOnComputer({
+      computerId,
+      agentName: unique('no-skills-agent'),
+      sessionId,
+      allowed: true,
+    });
+
+    const finished = await runTurn({ sessionId, stores });
+    expect(finished?.state.status).toBe('done');
+    // The turn's own commands still reached the machine...
+    expect(client.received.filter(frame => frame['op'] === 'exec').length).toBeGreaterThan(1);
+    // ...and nothing about skills did, so `import pydantic` never had the chance to fail.
+    const { uploads, downloaderExecs } = skillInitFrames(client);
+    expect(uploads).toHaveLength(0);
+    expect(downloaderExecs).toHaveLength(0);
+    client.close();
+  });
+
+  it('refuses an agent that asks for a skill, at validation and at turn time', async () => {
+    const { computerId, client } = await onlineComputer(unique('no-pydantic-refuse-box'), false);
+    const sessionId = `computer-turn-skills-refused-${newId()}`;
+    const skillName = await gitSkill(d1Persistence(), unique('needs-download'));
+    const { stores, providerName, agent, computers } = await agentOnComputer({
+      computerId,
+      agentName: unique('skills-agent'),
+      sessionId,
+      allowed: true,
+      skillName,
+    });
+    // Validation reads the row, which the relay writes once per connect. Nothing can be said
+    // about the machine's skills before it has said anything at all.
+    const readRow = () => computers.store.getComputer({ tenant_id: TENANT_ID, computer_id: computerId });
+    let stored = await readRow();
+    for (let attempt = 0; attempt < 100 && stored?.capabilities == null; attempt += 1) {
+      await settle(2);
+      stored = await readRow();
+    }
+    expect(stored?.capabilities).toEqual({ python3: true, git: true, skills: false });
+
+    const expected = /cannot mount skills: it needs python3, git and the pydantic package/;
+    await expect(
+      validateAgentSpec({
+        spec: computerSpec({ providerName, computerId, skillName }),
+        tenant_id: TENANT_ID,
+        agent_id: agent.id,
+        modelProviderStore: stores.modelProviderStore,
+        mcpServerStore: stores.mcpServerStore,
+        skillStore: stores.skillStore,
+        sandboxProviderStore: stores.sandboxProviderStore,
+        sandboxIntegration: computerIntegration(),
+        logger,
+      }),
+    ).rejects.toThrow(expected);
+    await expect(runTurn({ sessionId, stores })).rejects.toThrow(expected);
+    // A traceback out of sandbox init is exactly what this replaces, so nothing was sent.
+    expect(skillInitFrames(client).downloaderExecs).toHaveLength(0);
+    client.close();
+  });
+
+  it('leaves a machine that reports skills mounting them as before', async () => {
+    const { computerId, client } = await onlineComputer(unique('pydantic-box'), true);
+    // Init uploads the skill list before it runs the downloader, so this machine accepts files.
+    client.answerWith(frame => (frame['op'] === 'exec' ? OK_EXEC : { bytes_written: 0, sha256: null }));
+    const sessionId = `computer-turn-skills-ok-${newId()}`;
+    const { stores } = await agentOnComputer({
+      computerId,
+      agentName: unique('skills-ok-agent'),
+      sessionId,
+      allowed: true,
+    });
+
+    await runTurn({ sessionId, stores });
+    // No skills on the spec, but the mounter still runs so one the agent dropped is cleaned up.
+    const { uploads, downloaderExecs } = skillInitFrames(client);
+    expect(uploads).toHaveLength(1);
+    expect(downloaderExecs).toHaveLength(1);
+    client.close();
   });
 });
 

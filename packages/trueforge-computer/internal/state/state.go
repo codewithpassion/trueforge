@@ -3,6 +3,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"trueforge.dev/computer/internal/protocol"
 )
@@ -199,17 +201,36 @@ func RunAsUser() string {
 	return "uid-" + strconv.Itoa(os.Getuid())
 }
 
-// DetectCapabilities reports the tools the server gates skill mounting on.
+// pydanticProbeTimeout bounds the one import this probe runs. A cold interpreter on a slow disk
+// can take seconds; anything past this is a machine we would rather report as skill-less than
+// hang the hello behind.
+const pydanticProbeTimeout = 10 * time.Second
+
+// DetectCapabilities reports what this machine has. It runs python3 once, so callers build the
+// hello from it rather than asking per request.
 func DetectCapabilities() protocol.Capabilities {
+	python3, git := hasTool("python3"), hasTool("git")
 	return protocol.Capabilities{
-		Python3: hasTool("python3"),
-		Git:     hasTool("git"),
+		Python3: python3,
+		Git:     git,
+		// The server's skill downloader is a python3 script that clones with git and imports
+		// pydantic. Reporting the two tools alone let a machine without pydantic through, and
+		// then every command on it failed inside sandbox init.
+		Skills: python3 && git && hasPydantic(),
 	}
 }
 
 func hasTool(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+// hasPydantic asks the interpreter, because the package can come from a distro package, a venv
+// or a user site directory and no path on disk settles it. Argv, never a shell string.
+func hasPydantic() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), pydanticProbeTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "python3", "-c", "import pydantic").Run() == nil
 }
 
 // Hostname is what the machine calls itself, or the override given at enrollment.

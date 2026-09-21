@@ -4,6 +4,30 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 30 — Phase 8b live test: one missing Python package stopped every command (2026-09-22)
+
+**Goal:** Fix what the next live test of remote computers found. A machine with `python3` and `git` but without the `pydantic` package connected fine, and an agent with **no skills** then failed every `exec` with `Sandbox initialization failed: (exit code 1): Traceback ... skill_downloader.py, line 89 ... from pydantic import ...`.
+
+**What we did:**
+
+- **Named the real cause: an optional feature took the basic one down with it.** Sandbox init always attaches a `SkillMounter` — deliberately, since 7b, so a skill the agent dropped is cleaned up on the next init — and its init exec runs the downloader whether or not there is anything to download. On a remote computer the server gated skills on `hello.capabilities` `{ python3, git }`, which is not what the downloader needs: it imports `pydantic`. Two tools present, one package missing, and a machine that could run nothing at all.
+- **The client answers the question instead of the server guessing at it.** `hello.capabilities` gained `skills`, computed by the client: `python3` and `git` on `PATH` **and** `python3 -c "import pydantic"` exiting zero, run as argv under a 10 s timeout. `protocol_version` stays 1 — the field defaults to false, so a client and a stored row from before it still parse, and false is the safe direction. The canonical owner is `packages/trueforge/src/computers/protocol.ts`; the Go `internal/protocol`, `internal/state`, `trueforge-computer status`, `docs/remote-computers-protocol.md` and the golden fixture follow it, and the server test that parses that fixture holds both sides to the same bytes.
+- **No mounter at all when the machine cannot run one.** The Workers integration picks the mounter per turn: a `RemoteComputerProvider` whose machine reports `skills: false` gets `undefined`, so sandbox init uploads nothing and runs no downloader, and a plain `exec` works. Every other provider is untouched — the built-in workspace, Daytona, TFY, local and Node still mount unconditionally, which is what keeps skill cleanup working there.
+- **An agent that does ask for a skill is refused, in words.** `resolveSandboxUsability` now takes `skills_requested`, and `resolveComputerUsability` answers the new reason `computer_no_skills` when the stored row says the machine cannot mount them. One message, owned by `computerNotUsableMessage`: `cannot mount skills: it needs python3, git and the pydantic package`. It comes out of spec validation, out of the turn's allowlist re-check, and out of the turn's own check against the live hello — the last one matters because a machine can lose pydantic between saving an agent and running it. A computer that has never connected reports `null` capabilities and is not refused at validation: there is nothing to refuse it on yet.
+
+**Lessons learned:**
+
+- A capability gate must test what the feature actually needs, not what someone remembered it needing. `python3` and `git` were the two visible tools; the third requirement lived on line 89 of a script nobody was reading.
+- An optional feature must not be able to break the basic one. Skill mounting is an extra on a remote computer; the cost of it failing should have been "no skills", not "no commands".
+- The machine is the only thing that can answer "can I import this". A boolean the server derives from two `LookPath` results is a guess wearing a capability's clothes — which the plan's own "for protocol v2" note had already said, and which was cheaper to do additively than it looked.
+- A defaulted field is an additive wire change. It is also the only kind that survives rows already in the database: `Schema.parse(row)` runs over every stored capability document.
+
+**Avoid next time:**
+
+- Don't gate a feature on the tools its implementation happens to shell out to. Gate it on the implementation succeeding, and let the side that can run it say so.
+- Don't let an "always run it so cleanup happens" step be unconditional across providers that do not all have the same runtime.
+- Don't add a required field to a schema that parses persisted documents. Check where the schema is used before deciding it is only a wire shape.
+
 ## Cycle 29 — Phase 8b live test: the server stops guessing where a machine keeps its sessions (2026-09-22)
 
 **Goal:** Fix what a live test of remote computers found. Enroll, connect, online status and grants all worked; every `exec` came back `Sandbox initialization failed: (exit code 127): fork/exec /bin/sh: no such file or directory`, on a machine where `/bin/sh` exists.

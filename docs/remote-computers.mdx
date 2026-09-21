@@ -111,6 +111,17 @@ Setting **any** of them also turns the environment into an allowlist. Only `LANG
 refuses the exec. `--allow-env` takes a trailing `*` for a prefix, and `LD_*` / `DYLD_*` are refused on every
 computer and cannot be permitted.
 
+## Skills on a computer
+
+Skills are downloaded by a Python script, so a computer can mount them only when it has `python3`, `git`
+and the `pydantic` package — `python3 -c "import pydantic"` has to succeed as the user the client runs as.
+The client tests this when it connects and `trueforge-computer status` prints the answer as `skills`.
+
+A computer without them is not crippled: agents with no skills run on it exactly as before. Only an agent
+that asks for a skill is refused, when it is saved and again when it starts a turn, naming what is missing.
+To fix it, install the package for that interpreter (`python3 -m pip install pydantic`, or your
+distribution's `python3-pydantic`) and restart the client.
+
 Two TrueForge features need a grant on a restricted computer:
 
 - skills that use git credentials need `--allow-env 'GIT_CONFIG_*'`

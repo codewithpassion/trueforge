@@ -94,6 +94,7 @@ func printStatus(report statusReport) {
 	fmt.Printf("run as        %s\n", report.RunAsUser)
 	fmt.Printf("python3       %t\n", report.Capabilities.Python3)
 	fmt.Printf("git           %t\n", report.Capabilities.Git)
+	fmt.Printf("skills        %t\n", report.Capabilities.Skills)
 	fmt.Printf("audit log     %s\n", report.AuditLog)
 	if report.PendingGroups > 0 {
 		fmt.Printf("left behind   %d command group(s) from a previous run; the next `run` reaps them\n", report.PendingGroups)

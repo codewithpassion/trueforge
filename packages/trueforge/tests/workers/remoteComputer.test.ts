@@ -108,7 +108,7 @@ function providerFor({
     sessionId,
     turnId: 'turn-1',
     workdir,
-    capabilities: { python3: true, git: true },
+    capabilities: { python3: true, git: true, skills: true },
     defaultExecTimeoutSeconds: 10,
     fileMaxBytesForDownload: 1024 * 1024,
     store: computers.store,

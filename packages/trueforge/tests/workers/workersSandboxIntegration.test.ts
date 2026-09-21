@@ -77,6 +77,7 @@ function storeInput() {
     computer_id: undefined,
     turn_id: null,
     agent_id: undefined,
+    skills_requested: false,
   };
 }
 

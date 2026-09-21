@@ -164,7 +164,7 @@ export class FakeComputerClient {
       version: '0.1.0-test',
       run_as_user: 'trueforge',
       workdir: FAKE_WORKDIR,
-      capabilities: { python3: true, git: true },
+      capabilities: { python3: true, git: true, skills: true },
       ...overrides,
     };
     this.#socket.send(JSON.stringify(hello));

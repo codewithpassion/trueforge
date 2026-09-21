@@ -151,6 +151,7 @@ function createTurnResolver(
           logger,
           computer_id: computerId,
           agent_id: session.agent.type === 'reference' ? session.agent.id : undefined,
+          skills_requested: (spec.skills ?? []).length > 0,
         });
         if (!usability.usable) {
           throw new HTTPException(422, {
@@ -198,11 +199,11 @@ function createTurnResolver(
         }
       }
       const skills = spec.skills ?? [];
-      // The downloader is a python3 script that clones with git, so a machine without both cannot
-      // mount a skill at all. Said here rather than failing halfway through the mount.
+      // Checked again against the live hello, not only the stored row: a machine can lose pydantic
+      // between saving the agent and running it. Said here rather than failing inside the mount.
       if (skills.length > 0 && provider instanceof RemoteComputerProvider && !provider.supportsSkills) {
         throw new HTTPException(422, {
-          message: `Computer "${provider.computerName}" does not report python3 and git, which skills need`,
+          message: computerNotUsableMessage({ computerId: provider.computerName, reason: 'computer_no_skills' }),
         });
       }
       const mountSkills =

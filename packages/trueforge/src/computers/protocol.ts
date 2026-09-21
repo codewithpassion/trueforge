@@ -2,8 +2,9 @@
  * The v1 wire contract between a remote computer client and the relay.
  * One JSON text frame per message, snake_case fields. Heartbeats are the bare literals below so
  * `setWebSocketAutoResponse` can answer them without waking the Durable Object.
- * Treat it as frozen: `hello.workdir` was added while no client had shipped, and the next shape
- * change needs a new `protocol_version` instead.
+ * Treat it as frozen. A field may still be added when every older client and every stored row
+ * still read correctly without it — which means a default — and anything a v1 client cannot parse
+ * needs a new `protocol_version` instead.
  */
 import { z } from 'zod';
 
@@ -41,6 +42,12 @@ export const FILE_CHUNK_BYTES = 256 * 1024;
 export const ComputerCapabilitiesSchema = z.object({
   python3: z.boolean(),
   git: z.boolean(),
+  /**
+   * Whether the skill downloader can run here. Only the machine can answer it: python3 and git on
+   * PATH are not enough, the downloader also imports pydantic. Defaults to false so a client or a
+   * stored row from before this field reads as "no skills" instead of failing to parse.
+   */
+  skills: z.boolean().default(false),
 });
 export type ComputerCapabilities = z.infer<typeof ComputerCapabilitiesSchema>;
 

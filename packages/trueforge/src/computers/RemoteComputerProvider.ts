@@ -185,10 +185,9 @@ export class RemoteComputerProvider implements SandboxProvider {
     return offlineMessage({ computerName: this.#options.computerName, lastSeenAt: null, now: Date.now() });
   }
 
-  /** Skills need the downloader's python3 and git; a machine that has neither cannot mount them. */
+  /** The machine's own verdict on whether the skill downloader can run: python3, git and pydantic. */
   get supportsSkills(): boolean {
-    const capabilities = this.#options.capabilities;
-    return capabilities !== null && capabilities.python3 && capabilities.git;
+    return this.#options.capabilities?.skills === true;
   }
 
   get computerName(): string {

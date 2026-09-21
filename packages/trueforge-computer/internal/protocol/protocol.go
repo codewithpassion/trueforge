@@ -74,10 +74,12 @@ const (
 	ErrDuplicateID = "duplicate_id"
 )
 
-// Capabilities are the tools the server needs before it will mount skills.
+// Capabilities are what this machine has. Skills is this client's own verdict on whether the
+// server's skill downloader can run here, which needs more than python3 and git being on PATH.
 type Capabilities struct {
 	Python3 bool `json:"python3"`
 	Git     bool `json:"git"`
+	Skills  bool `json:"skills"`
 }
 
 // Hello is the first frame the client sends after the upgrade.

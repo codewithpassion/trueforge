@@ -1,11 +1,13 @@
 package state_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"trueforge.dev/computer/internal/protocol"
 	"trueforge.dev/computer/internal/state"
 )
 
@@ -160,5 +162,70 @@ func TestSessionsDirSitsUnderTheStateDir(t *testing.T) {
 	dir := t.TempDir()
 	if got := state.SessionsDir(dir); got != filepath.Join(dir, "sessions") {
 		t.Fatalf("SessionsDir = %q", got)
+	}
+}
+
+// fakeTool writes an executable that exits with code, so a test can stand in for a real binary
+// on PATH without needing python3 or git on the machine running the suite.
+func fakeTool(t *testing.T, dir, name string, code int) {
+	t.Helper()
+	script := fmt.Sprintf("#!/bin/sh\nexit %d\n", code)
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+		t.Fatalf("writing %s: %v", name, err)
+	}
+}
+
+// Skills is the one capability that is a verdict rather than a lookup, and it is the gate that
+// keeps the server's skill downloader off a machine that cannot run it.
+func TestDetectCapabilitiesReportsSkillsOnlyWhenTheImportSucceeds(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		python3     bool
+		git         bool
+		importExits int
+		want        protocol.Capabilities
+	}{
+		{
+			name:        "no python3 at all",
+			git:         true,
+			importExits: 0,
+			want:        protocol.Capabilities{Python3: false, Git: true, Skills: false},
+		},
+		{
+			name:        "python3 and git, but the pydantic import fails",
+			python3:     true,
+			git:         true,
+			importExits: 1,
+			want:        protocol.Capabilities{Python3: true, Git: true, Skills: false},
+		},
+		{
+			name:        "python3 and pydantic, but no git to clone with",
+			python3:     true,
+			importExits: 0,
+			want:        protocol.Capabilities{Python3: true, Git: false, Skills: false},
+		},
+		{
+			name:        "all three",
+			python3:     true,
+			git:         true,
+			importExits: 0,
+			want:        protocol.Capabilities{Python3: true, Git: true, Skills: true},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if testCase.python3 {
+				fakeTool(t, dir, "python3", testCase.importExits)
+			}
+			if testCase.git {
+				fakeTool(t, dir, "git", 0)
+			}
+			// The temporary directory is the whole of PATH, so a real python3 on the machine
+			// running the suite cannot answer for the one this case is describing.
+			t.Setenv("PATH", dir)
+			if got := state.DetectCapabilities(); got != testCase.want {
+				t.Fatalf("DetectCapabilities() = %+v, want %+v", got, testCase.want)
+			}
+		})
 	}
 }
