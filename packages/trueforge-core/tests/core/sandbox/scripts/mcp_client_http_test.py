@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
@@ -167,6 +168,21 @@ class HttpBridgeTest(unittest.TestCase):
             "tool": "ping",
             "arguments": {"n": 1},
         })
+
+    def test_ignores_a_proxy_the_sandbox_configured(self) -> None:
+        # A proxy would receive the bearer token; this one is dead, so using it would fail the call.
+        dead_proxy = "http://127.0.0.1:9"
+        # urlopen caches its opener per process; drop it so the proxy env below would be read.
+        urllib.request.install_opener(None)
+        self.addCleanup(urllib.request.install_opener, None)
+        with RecordingBridge([ok_reply({"tools": [PING_TOOL]})]) as bridge:
+            client = self.load(
+                http_env(bridge.url, http_proxy=dead_proxy, HTTP_PROXY=dead_proxy, no_proxy="", NO_PROXY="")
+            )
+            tools = asyncio.run(client._fetch_tools("demo"))
+
+        self.assertEqual([tool.name for tool in tools], ["ping"])
+        self.assertEqual(bridge.requests[0]["authorization"], "Bearer turn-token-1")
 
     def test_forwards_the_trace_context_it_was_given(self) -> None:
         traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"

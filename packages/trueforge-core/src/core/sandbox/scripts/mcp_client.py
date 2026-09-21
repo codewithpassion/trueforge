@@ -151,12 +151,19 @@ async def _bridge_request(payload: dict[str, Any]) -> Any:
     ) from None
 
 
+# Ignores http_proxy and friends: a proxy the sandbox configured would otherwise receive the token.
+_HTTP_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _http_request_sync(payload: dict[str, Any]) -> Any:
     """POST one request to the host bridge and unwrap { ok, result|error }.
 
     Only a connection that never opened is retried, so a non-idempotent tool cannot double-execute:
     a refused connection or an unresolvable host proves nothing was delivered, while a timeout, a
     reset, or any HTTP status means the request may already have reached a handler.
+
+    The timeout applies to each socket operation, not the whole exchange, so a reply that trickles
+    in can outlast it; the host gives up at the same bound and ends the exchange there.
     """
     url = _http_url
     request = urllib.request.Request(
@@ -176,7 +183,7 @@ def _http_request_sync(payload: dict[str, Any]) -> Any:
         if attempt > 1:
             time.sleep(_RETRY_BACKOFF_MS / 1000)
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _HTTP_OPENER.open(request, timeout=timeout) as response:
                 raw = response.read().decode()
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace").strip()
