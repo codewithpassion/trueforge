@@ -194,4 +194,19 @@ describe('AgentComputerSelector', () => {
     expect(await screen.findByText(/Save the agent first, then grant it a computer/)).toBeInTheDocument();
     expect(screen.getByLabelText('Run on')).toBeDisabled();
   });
+
+  it('lets an unsaved draft put a stored computer back to the tenant sandbox', async () => {
+    const onChange = renderFields({
+      value: { sandbox: { enabled: true, computerId: 'cmp-1' } },
+      agentName: undefined,
+      computers: [GRANTED],
+      granted: { 'cmp-1': ['release-bot'] },
+    });
+
+    const select = await screen.findByLabelText('Run on');
+    expect(select).toBeEnabled();
+    fireEvent.change(select, { target: { value: '' } });
+
+    expect(onChange).toHaveBeenCalledWith({ sandbox: { enabled: true } });
+  });
 });

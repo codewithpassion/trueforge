@@ -41,6 +41,18 @@ describe('selectDraftSpecPreferences', () => {
       config: { sandbox: { enabled: true } },
     });
   });
+
+  it("drops the agent's computer, which is granted to it and not to the next draft", () => {
+    expect(
+      selectAgentDraftSpecPreferences({
+        model: { name: 'm' },
+        config: { iterationLimit: 20, sandbox: { enabled: true, fileDownloads: false, computerId: 'cmp-1' } },
+      }),
+    ).toEqual({
+      model: { name: 'm' },
+      config: { iterationLimit: 20, sandbox: { enabled: true, fileDownloads: false } },
+    });
+  });
 });
 
 describe('draft preference storage', () => {

@@ -73,7 +73,9 @@ export function AgentComputerSelector({ sandbox, disabled, onChange }: AgentComp
   if (computerCatalog === undefined) return null;
 
   const offline = granted.find(computer => computer.id === selectedId && computer.status !== 'online');
-  const storedButUnavailable = selectedId !== undefined && !granted.some(computer => computer.id === selectedId);
+  // Only once the lookup is in: an empty list mid-fetch is not evidence that a grant is gone.
+  const storedButUnavailable =
+    !loading && selectedId !== undefined && !granted.some(computer => computer.id === selectedId);
 
   return (
     <div className="mt-3 border-l-2 border-primary-button-bg/50 pl-3">
@@ -83,7 +85,8 @@ export function AgentComputerSelector({ sandbox, disabled, onChange }: AgentComp
       <select
         id="agent-run-on"
         value={selectedId ?? TENANT_SANDBOX}
-        disabled={disabled || agentName === undefined}
+        // An unsaved draft cannot pick a computer, but it must always be able to put one back.
+        disabled={disabled || (agentName === undefined && selectedId === undefined)}
         className={auiInputClass('mt-1 h-8 disabled:opacity-60')}
         onChange={event => {
           onChange(event.target.value === TENANT_SANDBOX ? undefined : event.target.value);

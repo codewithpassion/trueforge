@@ -1,4 +1,4 @@
-import type { AgentSpec } from './types.js';
+import type { AgentRuntimeConfig, AgentSpec } from './types.js';
 
 /** @deprecated Migrated into chat/agent keys on first read. */
 export const DRAFT_SPEC_PREFERENCES_STORAGE_KEY = 'tfy-aui-draft-spec-preferences';
@@ -55,11 +55,22 @@ export function selectChatDraftSpecPreferences(spec: AgentSpec): AgentSpec {
   };
 }
 
+/**
+ * A computer is granted to one saved agent, so carrying it into the next draft would leave an
+ * unnamed agent holding an id the server refuses and the picker cannot offer.
+ */
+function withoutComputer(config: AgentRuntimeConfig): AgentRuntimeConfig {
+  if (config.sandbox?.computerId === undefined) return config;
+  const { computerId, ...sandbox } = config.sandbox;
+  void computerId;
+  return { ...config, sandbox };
+}
+
 /** New Agent: full composer seed including runtime config (sandbox, ask-user, …). */
 export function selectAgentDraftSpecPreferences(spec: AgentSpec): AgentSpec {
   return {
     ...selectChatDraftSpecPreferences(spec),
-    ...(spec.config !== undefined ? { config: spec.config } : {}),
+    ...(spec.config !== undefined ? { config: withoutComputer(spec.config) } : {}),
   };
 }
 
