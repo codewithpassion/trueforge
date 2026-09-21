@@ -9,9 +9,19 @@ import { createD1Db } from '../db/d1/client';
 import { SqliteComputerStore } from '../db/sqlite/computer-store/SqliteComputerStore';
 import type { Env } from './env';
 
-/** The D1-backed rows on their own, for the relay, which has no namespace to hand out. */
+/**
+ * The D1-backed rows on their own, for the relay, which has no namespace to hand out.
+ *
+ * Reads are pinned to the primary. Every other store here takes replica reads, but this one
+ * answers "may this agent use this machine", and an authorization decision must not be allowed to
+ * read a grant that has since been taken away. It also makes the read after `PUT .../agents`
+ * see that write, which a replica need not.
+ */
 export function workersComputerStore(env: Pick<Env, 'DB'>): SqliteComputerStore {
-  return new SqliteComputerStore(createD1Db({ queryable: env.DB }), new D1AtomicRunner(env.DB));
+  return new SqliteComputerStore(
+    createD1Db({ queryable: env.DB.withSession('first-primary') }),
+    new D1AtomicRunner(env.DB),
+  );
 }
 
 export function workersComputersService(
