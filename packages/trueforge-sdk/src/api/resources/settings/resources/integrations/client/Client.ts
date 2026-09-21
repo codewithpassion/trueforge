@@ -116,13 +116,14 @@ export class IntegrationsClient {
     }
 
     /**
-     * Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.
+     * Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
      *
      * @param {TrueForge.settings.CreateIntegrationRequest} request
      * @param {IntegrationsClient.RequestOptions} requestOptions - Request-specific configuration.
      *
      * @throws {@link TrueForge.BadRequestError}
      * @throws {@link TrueForge.ConflictError}
+     * @throws {@link TrueForge.BadGatewayError}
      * @throws {@link errors.TrueForgeError}
      * @throws {@link errors.TrueForgeTimeoutError}
      *
@@ -131,14 +132,8 @@ export class IntegrationsClient {
      *         manifest: {
      *             allowDirectMessages: true,
      *             allowedChannelIds: ["allowed_channel_ids"],
-     *             auth: {
-     *                 botToken: "bot_token",
-     *                 signingSecret: "signing_secret"
-     *             },
-     *             botUserId: "bot_user_id",
      *             defaultAgentName: "default_agent_name",
      *             replyMode: "thread",
-     *             teamId: "team_id",
      *             type: "slack"
      *         }
      *     })
@@ -214,6 +209,17 @@ export class IntegrationsClient {
                     );
                 case 409:
                     throw new TrueForge.ConflictError(
+                        serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
+                            unrecognizedObjectKeys: "passthrough",
+                            allowUnrecognizedUnionMembers: true,
+                            allowUnrecognizedEnumValues: true,
+                            skipValidation: true,
+                            breadcrumbsPrefix: ["response"],
+                        }),
+                        _response.rawResponse,
+                    );
+                case 502:
+                    throw new TrueForge.BadGatewayError(
                         serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
                             unrecognizedObjectKeys: "passthrough",
                             allowUnrecognizedUnionMembers: true,
@@ -329,7 +335,7 @@ export class IntegrationsClient {
     }
 
     /**
-     * Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.
+     * Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
      *
      * @param {string} integration_id - Immutable integration id.
      * @param {TrueForge.settings.UpdateIntegrationRequest} request
@@ -338,6 +344,7 @@ export class IntegrationsClient {
      * @throws {@link TrueForge.BadRequestError}
      * @throws {@link TrueForge.NotFoundError}
      * @throws {@link TrueForge.ConflictError}
+     * @throws {@link TrueForge.BadGatewayError}
      * @throws {@link errors.TrueForgeError}
      * @throws {@link errors.TrueForgeTimeoutError}
      *
@@ -346,14 +353,8 @@ export class IntegrationsClient {
      *         manifest: {
      *             allowDirectMessages: true,
      *             allowedChannelIds: ["allowed_channel_ids"],
-     *             auth: {
-     *                 botToken: "bot_token",
-     *                 signingSecret: "signing_secret"
-     *             },
-     *             botUserId: "bot_user_id",
      *             defaultAgentName: "default_agent_name",
      *             replyMode: "thread",
-     *             teamId: "team_id",
      *             type: "slack"
      *         }
      *     })
@@ -451,6 +452,17 @@ export class IntegrationsClient {
                         }),
                         _response.rawResponse,
                     );
+                case 502:
+                    throw new TrueForge.BadGatewayError(
+                        serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
+                            unrecognizedObjectKeys: "passthrough",
+                            allowUnrecognizedUnionMembers: true,
+                            allowUnrecognizedEnumValues: true,
+                            skipValidation: true,
+                            breadcrumbsPrefix: ["response"],
+                        }),
+                        _response.rawResponse,
+                    );
                 default:
                     throw new errors.TrueForgeError({
                         statusCode: _response.error.statusCode,
@@ -538,6 +550,106 @@ export class IntegrationsClient {
             _response.rawResponse,
             "DELETE",
             "/api/v1/settings/integrations/{integration_id}",
+        );
+    }
+
+    /**
+     * App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.
+     *
+     * @param {string} integration_id - Immutable integration id.
+     * @param {IntegrationsClient.RequestOptions} requestOptions - Request-specific configuration.
+     *
+     * @throws {@link TrueForge.NotFoundError}
+     * @throws {@link TrueForge.InternalServerError}
+     * @throws {@link errors.TrueForgeError}
+     * @throws {@link errors.TrueForgeTimeoutError}
+     *
+     * @example
+     *     await client.settings.integrations.getAppManifest("integration_id")
+     */
+    public getAppManifest(
+        integration_id: string,
+        requestOptions?: IntegrationsClient.RequestOptions,
+    ): core.HttpResponsePromise<TrueForge.GetIntegrationAppManifestResponse> {
+        return core.HttpResponsePromise.fromPromise(this.__getAppManifest(integration_id, requestOptions));
+    }
+
+    private async __getAppManifest(
+        integration_id: string,
+        requestOptions?: IntegrationsClient.RequestOptions,
+    ): Promise<core.WithRawResponse<TrueForge.GetIntegrationAppManifestResponse>> {
+        const _authRequest: core.AuthRequest = await this._options.authProvider.getAuthRequest();
+        const _headers: core.Fetcher.Args["headers"] = mergeHeaders(
+            _authRequest.headers,
+            this._options?.headers,
+            requestOptions?.headers,
+        );
+        const _response = await (this._options.fetcher ?? core.fetcher)({
+            url: core.url.join(
+                (await core.Supplier.get(this._options.baseUrl)) ??
+                    (await core.Supplier.get(this._options.environment)),
+                `api/v1/settings/integrations/${core.url.encodePathParam(integration_id)}/app-manifest`,
+            ),
+            method: "GET",
+            headers: _headers,
+            queryString: core.url.queryBuilder().mergeAdditional(requestOptions?.queryParams).build(),
+            timeoutMs: (requestOptions?.timeoutInSeconds ?? this._options?.timeoutInSeconds ?? 60) * 1000,
+            maxRetries: requestOptions?.maxRetries ?? this._options?.maxRetries,
+            abortSignal: requestOptions?.abortSignal,
+            fetchFn: this._options?.fetch,
+            logging: this._options.logging,
+        });
+        if (_response.ok) {
+            return {
+                data: serializers.GetIntegrationAppManifestResponse.parseOrThrow(_response.body, {
+                    unrecognizedObjectKeys: "passthrough",
+                    allowUnrecognizedUnionMembers: true,
+                    allowUnrecognizedEnumValues: true,
+                    skipValidation: true,
+                    breadcrumbsPrefix: ["response"],
+                }),
+                rawResponse: _response.rawResponse,
+            };
+        }
+
+        if (_response.error.reason === "status-code") {
+            switch (_response.error.statusCode) {
+                case 404:
+                    throw new TrueForge.NotFoundError(
+                        serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
+                            unrecognizedObjectKeys: "passthrough",
+                            allowUnrecognizedUnionMembers: true,
+                            allowUnrecognizedEnumValues: true,
+                            skipValidation: true,
+                            breadcrumbsPrefix: ["response"],
+                        }),
+                        _response.rawResponse,
+                    );
+                case 500:
+                    throw new TrueForge.InternalServerError(
+                        serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
+                            unrecognizedObjectKeys: "passthrough",
+                            allowUnrecognizedUnionMembers: true,
+                            allowUnrecognizedEnumValues: true,
+                            skipValidation: true,
+                            breadcrumbsPrefix: ["response"],
+                        }),
+                        _response.rawResponse,
+                    );
+                default:
+                    throw new errors.TrueForgeError({
+                        statusCode: _response.error.statusCode,
+                        body: _response.error.body,
+                        rawResponse: _response.rawResponse,
+                    });
+            }
+        }
+
+        return handleNonStatusCodeError(
+            _response.error,
+            _response.rawResponse,
+            "GET",
+            "/api/v1/settings/integrations/{integration_id}/app-manifest",
         );
     }
 }

@@ -11,12 +11,15 @@ from ...core.parse_error import ParsingError
 from ...core.request_options import RequestOptions
 from ...core.serialization import convert_and_respect_annotation_metadata
 from ...core.unchecked_base_model import construct_type
+from ...errors.bad_gateway_error import BadGatewayError
 from ...errors.bad_request_error import BadRequestError
 from ...errors.conflict_error import ConflictError
 from ...errors.forbidden_error import ForbiddenError
+from ...errors.internal_server_error import InternalServerError
 from ...errors.not_found_error import NotFoundError
 from ...errors.unauthorized_error import UnauthorizedError
 from ...types.delete_integration_response import DeleteIntegrationResponse
+from ...types.get_integration_app_manifest_response import GetIntegrationAppManifestResponse
 from ...types.get_integration_response import GetIntegrationResponse
 from ...types.integration_manifest import IntegrationManifest
 from ...types.list_integrations_response import ListIntegrationsResponse
@@ -97,7 +100,7 @@ class RawIntegrationsClient:
         self, *, manifest: IntegrationManifest, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[GetIntegrationResponse]:
         """
-        Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.
+        Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 
         Parameters
         ----------
@@ -109,7 +112,7 @@ class RawIntegrationsClient:
         Returns
         -------
         HttpResponse[GetIntegrationResponse]
-            The connected integration.
+            The new integration.
         """
         _response = self._client_wrapper.httpx_client.request(
             "api/v1/settings/integrations",
@@ -148,6 +151,17 @@ class RawIntegrationsClient:
                 )
             if _response.status_code == 409:
                 raise ConflictError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 502:
+                raise BadGatewayError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -228,7 +242,7 @@ class RawIntegrationsClient:
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[GetIntegrationResponse]:
         """
-        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.
+        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 
         Parameters
         ----------
@@ -302,6 +316,17 @@ class RawIntegrationsClient:
                         ),
                     ),
                 )
+            if _response.status_code == 502:
+                raise BadGatewayError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
@@ -345,6 +370,71 @@ class RawIntegrationsClient:
                     ),
                 )
                 return HttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        except ValidationError as e:
+            raise ParsingError(
+                status_code=_response.status_code, headers=dict(_response.headers), body=_response.json(), cause=e
+            )
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def get_app_manifest(
+        self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[GetIntegrationAppManifestResponse]:
+        """
+        App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.
+
+        Parameters
+        ----------
+        integration_id : str
+            Immutable integration id.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[GetIntegrationAppManifestResponse]
+            The app manifest and where to paste it.
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            f"api/v1/settings/integrations/{encode_path_param(integration_id)}/app-manifest",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    GetIntegrationAppManifestResponse,
+                    construct_type(
+                        type_=GetIntegrationAppManifestResponse,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 500:
+                raise InternalServerError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
@@ -425,7 +515,7 @@ class AsyncRawIntegrationsClient:
         self, *, manifest: IntegrationManifest, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[GetIntegrationResponse]:
         """
-        Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.
+        Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 
         Parameters
         ----------
@@ -437,7 +527,7 @@ class AsyncRawIntegrationsClient:
         Returns
         -------
         AsyncHttpResponse[GetIntegrationResponse]
-            The connected integration.
+            The new integration.
         """
         _response = await self._client_wrapper.httpx_client.request(
             "api/v1/settings/integrations",
@@ -476,6 +566,17 @@ class AsyncRawIntegrationsClient:
                 )
             if _response.status_code == 409:
                 raise ConflictError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 502:
+                raise BadGatewayError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -556,7 +657,7 @@ class AsyncRawIntegrationsClient:
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[GetIntegrationResponse]:
         """
-        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.
+        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 
         Parameters
         ----------
@@ -630,6 +731,17 @@ class AsyncRawIntegrationsClient:
                         ),
                     ),
                 )
+            if _response.status_code == 502:
+                raise BadGatewayError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
@@ -673,6 +785,71 @@ class AsyncRawIntegrationsClient:
                     ),
                 )
                 return AsyncHttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        except ValidationError as e:
+            raise ParsingError(
+                status_code=_response.status_code, headers=dict(_response.headers), body=_response.json(), cause=e
+            )
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def get_app_manifest(
+        self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[GetIntegrationAppManifestResponse]:
+        """
+        App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.
+
+        Parameters
+        ----------
+        integration_id : str
+            Immutable integration id.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[GetIntegrationAppManifestResponse]
+            The app manifest and where to paste it.
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            f"api/v1/settings/integrations/{encode_path_param(integration_id)}/app-manifest",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    GetIntegrationAppManifestResponse,
+                    construct_type(
+                        type_=GetIntegrationAppManifestResponse,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 500:
+                raise InternalServerError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)

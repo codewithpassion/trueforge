@@ -11,6 +11,7 @@ export interface Integration {
     /** Immutable integration id. */
     id: string;
     manifest: TrueForge.IntegrationManifest;
+    status: TrueForge.IntegrationStatus;
     type: TrueForge.IntegrationType;
     /** ISO 8601 last-update timestamp. */
     updatedAt: string;

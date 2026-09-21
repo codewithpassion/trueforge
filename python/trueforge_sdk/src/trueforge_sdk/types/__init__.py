@@ -74,6 +74,7 @@ if typing.TYPE_CHECKING:
     from .get_agent_response import GetAgentResponse
     from .get_available_mcp_server_response import GetAvailableMcpServerResponse
     from .get_capabilities_response import GetCapabilitiesResponse
+    from .get_integration_app_manifest_response import GetIntegrationAppManifestResponse
     from .get_integration_response import GetIntegrationResponse
     from .get_mcp_server_catalog_response import GetMcpServerCatalogResponse
     from .get_mcp_server_response import GetMcpServerResponse
@@ -96,7 +97,9 @@ if typing.TYPE_CHECKING:
     from .initial_user_message import InitialUserMessage
     from .input_tokens_compaction_trigger import InputTokensCompactionTrigger
     from .integration import Integration
+    from .integration_app_manifest import IntegrationAppManifest
     from .integration_manifest import IntegrationManifest
+    from .integration_status import IntegrationStatus
     from .integration_type import IntegrationType
     from .large_tool_response_config import LargeToolResponseConfig
     from .list_agents_response import ListAgentsResponse
@@ -206,6 +209,7 @@ if typing.TYPE_CHECKING:
     from .skill_capability import SkillCapability
     from .skill_manifest import SkillManifest
     from .skill_version import SkillVersion
+    from .slack_bot_display_name import SlackBotDisplayName
     from .slack_integration_auth import SlackIntegrationAuth
     from .slack_reply_mode import SlackReplyMode
     from .text_content import TextContent
@@ -317,6 +321,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "GetAgentResponse": ".get_agent_response",
     "GetAvailableMcpServerResponse": ".get_available_mcp_server_response",
     "GetCapabilitiesResponse": ".get_capabilities_response",
+    "GetIntegrationAppManifestResponse": ".get_integration_app_manifest_response",
     "GetIntegrationResponse": ".get_integration_response",
     "GetMcpServerCatalogResponse": ".get_mcp_server_catalog_response",
     "GetMcpServerResponse": ".get_mcp_server_response",
@@ -339,7 +344,9 @@ _dynamic_imports: typing.Dict[str, str] = {
     "InitialUserMessage": ".initial_user_message",
     "InputTokensCompactionTrigger": ".input_tokens_compaction_trigger",
     "Integration": ".integration",
+    "IntegrationAppManifest": ".integration_app_manifest",
     "IntegrationManifest": ".integration_manifest",
+    "IntegrationStatus": ".integration_status",
     "IntegrationType": ".integration_type",
     "LargeToolResponseConfig": ".large_tool_response_config",
     "ListAgentsResponse": ".list_agents_response",
@@ -449,6 +456,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "SkillCapability": ".skill_capability",
     "SkillManifest": ".skill_manifest",
     "SkillVersion": ".skill_version",
+    "SlackBotDisplayName": ".slack_bot_display_name",
     "SlackIntegrationAuth": ".slack_integration_auth",
     "SlackReplyMode": ".slack_reply_mode",
     "TextContent": ".text_content",
@@ -584,6 +592,7 @@ __all__ = [
     "GetAgentResponse",
     "GetAvailableMcpServerResponse",
     "GetCapabilitiesResponse",
+    "GetIntegrationAppManifestResponse",
     "GetIntegrationResponse",
     "GetMcpServerCatalogResponse",
     "GetMcpServerResponse",
@@ -606,7 +615,9 @@ __all__ = [
     "InitialUserMessage",
     "InputTokensCompactionTrigger",
     "Integration",
+    "IntegrationAppManifest",
     "IntegrationManifest",
+    "IntegrationStatus",
     "IntegrationType",
     "LargeToolResponseConfig",
     "ListAgentsResponse",
@@ -716,6 +727,7 @@ __all__ = [
     "SkillCapability",
     "SkillManifest",
     "SkillVersion",
+    "SlackBotDisplayName",
     "SlackIntegrationAuth",
     "SlackReplyMode",
     "TextContent",

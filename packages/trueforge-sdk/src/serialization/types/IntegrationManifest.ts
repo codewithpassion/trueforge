@@ -4,6 +4,7 @@ import type * as TrueForge from "../../api/index.js";
 import * as core from "../../core/index.js";
 import type * as serializers from "../index.js";
 import { ResourceName } from "./ResourceName.js";
+import { SlackBotDisplayName } from "./SlackBotDisplayName.js";
 import { SlackIntegrationAuth } from "./SlackIntegrationAuth.js";
 import { SlackReplyMode } from "./SlackReplyMode.js";
 
@@ -16,11 +17,12 @@ export const IntegrationManifest: core.serialization.ObjectSchema<
         "allowed_channel_ids",
         core.serialization.list(core.serialization.string()),
     ),
-    auth: SlackIntegrationAuth,
-    botUserId: core.serialization.property("bot_user_id", core.serialization.string()),
+    auth: SlackIntegrationAuth.optional(),
+    botDisplayName: core.serialization.property("bot_display_name", SlackBotDisplayName.optional()),
+    botUserId: core.serialization.property("bot_user_id", core.serialization.string().optional()),
     defaultAgentName: core.serialization.property("default_agent_name", ResourceName),
     replyMode: core.serialization.property("reply_mode", SlackReplyMode),
-    teamId: core.serialization.property("team_id", core.serialization.string()),
+    teamId: core.serialization.property("team_id", core.serialization.string().optional()),
     type: core.serialization.stringLiteral("slack"),
 });
 
@@ -28,11 +30,12 @@ export declare namespace IntegrationManifest {
     export interface Raw {
         allow_direct_messages: boolean;
         allowed_channel_ids: string[];
-        auth: SlackIntegrationAuth.Raw;
-        bot_user_id: string;
+        auth?: SlackIntegrationAuth.Raw | null;
+        bot_display_name?: SlackBotDisplayName.Raw | null;
+        bot_user_id?: string | null;
         default_agent_name: ResourceName.Raw;
         reply_mode: SlackReplyMode.Raw;
-        team_id: string;
+        team_id?: string | null;
         type: "slack";
     }
 }

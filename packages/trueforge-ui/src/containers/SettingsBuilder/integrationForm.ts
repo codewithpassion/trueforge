@@ -1,0 +1,96 @@
+/**
+ * Form state for a channel integration and the rules that turn it into a request.
+ *
+ * Kept apart from the section so the decisions — what is required when, which change the
+ * server will refuse — are testable without a DOM.
+ */
+import type { IntegrationBase, UpdateIntegrationRequest } from '@/server/types.js';
+
+export interface IntegrationFormDraft {
+  /** Name the bot takes in the channel; also the name of the app the manifest creates. */
+  botDisplayName: string;
+  defaultAgentName: string;
+  /** Comma or newline separated; an empty list allows no channel. */
+  allowedChannels: string;
+  allowDirectMessages: boolean;
+}
+
+export const EMPTY_INTEGRATION_FORM: IntegrationFormDraft = {
+  botDisplayName: '',
+  defaultAgentName: '',
+  allowedChannels: '',
+  allowDirectMessages: true,
+};
+
+/** What Slack accepts for both an app name and a bot display name. */
+const BOT_DISPLAY_NAME = /^[a-z0-9._-]{1,35}$/;
+
+export function parseAllowedChannels(value: string): string[] {
+  return value
+    .split(/[\s,]+/)
+    .map(entry => entry.trim())
+    .filter(entry => entry.length > 0);
+}
+
+export function toIntegrationForm(integration: IntegrationBase): IntegrationFormDraft {
+  return {
+    botDisplayName: integration.botDisplayName,
+    defaultAgentName: integration.defaultAgentName,
+    allowedChannels: integration.allowedChannelIds.join(', '),
+    allowDirectMessages: integration.allowDirectMessages,
+  };
+}
+
+/**
+ * The first problem a person should fix, or undefined. Mirrors what the server enforces, so
+ * the form says why instead of surfacing a 400.
+ */
+export function validateIntegrationForm(form: IntegrationFormDraft): string | undefined {
+  if (form.botDisplayName.trim().length === 0) {
+    return 'A bot name is required.';
+  }
+  if (!BOT_DISPLAY_NAME.test(form.botDisplayName.trim())) {
+    return 'The bot name may use up to 35 lowercase letters, digits, dot, dash or underscore.';
+  }
+  if (form.defaultAgentName.trim().length === 0) {
+    return 'An agent name is required.';
+  }
+  if (parseAllowedChannels(form.allowedChannels).length === 0 && !form.allowDirectMessages) {
+    return 'Allow direct messages, or list at least one channel, or the bot can never answer.';
+  }
+  return undefined;
+}
+
+/** Both credentials travel together: `auth.test` needs the token, ingress needs the secret. */
+export function validateCredentials(input: { botToken: string; signingSecret: string }): string | undefined {
+  const given = [input.botToken.trim().length > 0, input.signingSecret.trim().length > 0];
+  if (given[0] !== given[1]) {
+    return 'Paste both the bot token and the signing secret, or neither.';
+  }
+  return undefined;
+}
+
+/**
+ * The update to send. Credentials are omitted unless they were typed, which the server reads
+ * as "keep what is stored"; a real pair connects a pending integration or rotates a live one.
+ */
+export function toUpdateIntegrationRequest(input: {
+  id: string;
+  form: IntegrationFormDraft;
+  botToken: string;
+  signingSecret: string;
+}): UpdateIntegrationRequest {
+  const botToken = input.botToken.trim();
+  const signingSecret = input.signingSecret.trim();
+  const base = {
+    id: input.id,
+    botDisplayName: input.form.botDisplayName.trim(),
+    defaultAgentName: input.form.defaultAgentName.trim(),
+    allowedChannelIds: parseAllowedChannels(input.form.allowedChannels),
+    allowDirectMessages: input.form.allowDirectMessages,
+  };
+  if (botToken.length === 0 || signingSecret.length === 0) {
+    return base;
+  }
+  return { ...base, auth: { botToken, signingSecret } };
+}

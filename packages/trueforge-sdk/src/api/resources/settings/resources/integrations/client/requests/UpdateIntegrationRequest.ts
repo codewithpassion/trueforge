@@ -8,14 +8,8 @@ import type * as TrueForge from "../../../../../../index.js";
  *         manifest: {
  *             allowDirectMessages: true,
  *             allowedChannelIds: ["allowed_channel_ids"],
- *             auth: {
- *                 botToken: "bot_token",
- *                 signingSecret: "signing_secret"
- *             },
- *             botUserId: "bot_user_id",
  *             defaultAgentName: "default_agent_name",
  *             replyMode: "thread",
- *             teamId: "team_id",
  *             type: "slack"
  *         }
  *     }

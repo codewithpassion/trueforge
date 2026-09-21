@@ -5,6 +5,7 @@ import * as core from "../../core/index.js";
 import type * as serializers from "../index.js";
 import { CreatedBySubject } from "./CreatedBySubject.js";
 import { IntegrationManifest } from "./IntegrationManifest.js";
+import { IntegrationStatus } from "./IntegrationStatus.js";
 import { IntegrationType } from "./IntegrationType.js";
 
 export const Integration: core.serialization.ObjectSchema<serializers.Integration.Raw, TrueForge.Integration> =
@@ -14,6 +15,7 @@ export const Integration: core.serialization.ObjectSchema<serializers.Integratio
         externalAccountId: core.serialization.property("external_account_id", core.serialization.string()),
         id: core.serialization.string(),
         manifest: IntegrationManifest,
+        status: IntegrationStatus,
         type: IntegrationType,
         updatedAt: core.serialization.property("updated_at", core.serialization.string()),
     });
@@ -25,6 +27,7 @@ export declare namespace Integration {
         external_account_id: string;
         id: string;
         manifest: IntegrationManifest.Raw;
+        status: IntegrationStatus.Raw;
         type: IntegrationType.Raw;
         updated_at: string;
     }

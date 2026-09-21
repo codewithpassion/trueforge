@@ -116,8 +116,8 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
       external_account_id: TEAM_ID,
       manifest: manifest(),
     });
-    expect(connected.external_account_id).toBe(TEAM_ID);
-    expect(connected.manifest).toEqual(manifest());
+    expect(connected?.external_account_id).toBe(TEAM_ID);
+    expect(connected?.manifest).toEqual(manifest());
   });
 
   it('two pending integrations coexist because each is keyed by its own id', async () => {

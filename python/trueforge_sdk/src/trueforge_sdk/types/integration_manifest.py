@@ -6,6 +6,7 @@ import pydantic
 from ..core.pydantic_utilities import IS_PYDANTIC_V2
 from ..core.unchecked_base_model import UncheckedBaseModel
 from .resource_name import ResourceName
+from .slack_bot_display_name import SlackBotDisplayName
 from .slack_integration_auth import SlackIntegrationAuth
 from .slack_reply_mode import SlackReplyMode
 
@@ -25,17 +26,18 @@ class IntegrationManifest(UncheckedBaseModel):
     Channels the bot answers in. An empty list allows no channel.
     """
 
-    auth: SlackIntegrationAuth
-    bot_user_id: str = pydantic.Field()
+    auth: typing.Optional[SlackIntegrationAuth] = None
+    bot_display_name: typing.Optional[SlackBotDisplayName] = None
+    bot_user_id: typing.Optional[str] = pydantic.Field(default=None)
     """
-    User id of the bot, used to ignore its own messages.
+    User id of the bot, used to ignore its own messages. Filled from `auth.test`.
     """
 
     default_agent_name: ResourceName
     reply_mode: SlackReplyMode = "thread"
-    team_id: str = pydantic.Field()
+    team_id: typing.Optional[str] = pydantic.Field(default=None)
     """
-    Slack workspace (team) id this integration is bound to.
+    Slack workspace (team) id. Filled from `auth.test` when credentials are saved.
     """
 
     type: typing.Literal["slack"] = pydantic.Field(default="slack")

@@ -159,10 +159,7 @@ describe('slackAuthTest', () => {
     const fetchImpl: typeof fetch = async (input, init) => {
       const headers = new Headers(init?.headers);
       calls.push({ url: String(input), authorization: headers.get('authorization'), body: init?.body ?? null });
-      if (typeof response === 'function') {
-        response();
-      }
-      return response;
+      return typeof response === 'function' ? response() : response;
     };
     return { fetchImpl, calls };
   }

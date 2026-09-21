@@ -7,6 +7,7 @@ from ..core.pydantic_utilities import IS_PYDANTIC_V2
 from ..core.unchecked_base_model import UncheckedBaseModel
 from .created_by_subject import CreatedBySubject
 from .integration_manifest import IntegrationManifest
+from .integration_status import IntegrationStatus
 from .integration_type import IntegrationType
 
 
@@ -28,6 +29,7 @@ class Integration(UncheckedBaseModel):
     """
 
     manifest: IntegrationManifest
+    status: IntegrationStatus
     type: IntegrationType = "slack"
     updated_at: str = pydantic.Field()
     """

@@ -3874,7 +3874,7 @@ client.settings.integrations.list()
 <dl>
 <dd>
 
-Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.
+Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 </dd>
 </dl>
 </dd>
@@ -3889,7 +3889,7 @@ Connects a channel account. Fails if that account is already connected. Credenti
 <dd>
 
 ```python
-from trueforge_sdk import TrueForge, IntegrationManifest, SlackIntegrationAuth
+from trueforge_sdk import TrueForge, IntegrationManifest
 
 client = TrueForge(
     token="<token>",
@@ -3902,14 +3902,8 @@ client.settings.integrations.create(
         allowed_channel_ids=[
             "allowed_channel_ids"
         ],
-        auth=SlackIntegrationAuth(
-            bot_token="bot_token",
-            signing_secret="signing_secret",
-        ),
-        bot_user_id="bot_user_id",
         default_agent_name="default_agent_name",
         reply_mode="thread",
-        team_id="team_id",
         type="slack",
     ),
 )
@@ -4032,7 +4026,7 @@ client.settings.integrations.get(
 <dl>
 <dd>
 
-Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.
+Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 </dd>
 </dl>
 </dd>
@@ -4047,7 +4041,7 @@ Replaces the whole manifest of an existing integration. Credentials: a real valu
 <dd>
 
 ```python
-from trueforge_sdk import TrueForge, IntegrationManifest, SlackIntegrationAuth
+from trueforge_sdk import TrueForge, IntegrationManifest
 
 client = TrueForge(
     token="<token>",
@@ -4061,14 +4055,8 @@ client.settings.integrations.update(
         allowed_channel_ids=[
             "allowed_channel_ids"
         ],
-        auth=SlackIntegrationAuth(
-            bot_token="bot_token",
-            signing_secret="signing_secret",
-        ),
-        bot_user_id="bot_user_id",
         default_agent_name="default_agent_name",
         reply_mode="thread",
-        team_id="team_id",
         type="slack",
     ),
 )
@@ -4150,6 +4138,78 @@ client = TrueForge(
 )
 
 client.settings.integrations.delete(
+    integration_id="integration_id",
+)
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**integration_id:** `str` — Immutable integration id.
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.settings.integrations.<a href="src/trueforge_sdk/settings/integrations/client.py">get_app_manifest</a>(...) -> GetIntegrationAppManifestResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```python
+from trueforge_sdk import TrueForge
+
+client = TrueForge(
+    token="<token>",
+    base_url="https://yourhost.com/path/to/api",
+)
+
+client.settings.integrations.get_app_manifest(
     integration_id="integration_id",
 )
 

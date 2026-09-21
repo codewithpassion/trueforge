@@ -23,13 +23,11 @@ describe("IntegrationsClient", () => {
                     manifest: {
                         allow_direct_messages: true,
                         allowed_channel_ids: ["allowed_channel_ids"],
-                        auth: { bot_token: "bot_token", signing_secret: "signing_secret" },
-                        bot_user_id: "bot_user_id",
                         default_agent_name: "default_agent_name",
                         reply_mode: "thread",
-                        team_id: "team_id",
                         type: "slack",
                     },
+                    status: "pending",
                     type: "slack",
                     updated_at: "updated_at",
                 },
@@ -59,16 +57,11 @@ describe("IntegrationsClient", () => {
                     manifest: {
                         allowDirectMessages: true,
                         allowedChannelIds: ["allowed_channel_ids"],
-                        auth: {
-                            botToken: "bot_token",
-                            signingSecret: "signing_secret",
-                        },
-                        botUserId: "bot_user_id",
                         defaultAgentName: "default_agent_name",
                         replyMode: "thread",
-                        teamId: "team_id",
                         type: "slack",
                     },
+                    status: "pending",
                     type: "slack",
                     updatedAt: "updated_at",
                 },
@@ -121,11 +114,8 @@ describe("IntegrationsClient", () => {
             manifest: {
                 allow_direct_messages: true,
                 allowed_channel_ids: ["allowed_channel_ids"],
-                auth: { bot_token: "bot_token", signing_secret: "signing_secret" },
-                bot_user_id: "bot_user_id",
                 default_agent_name: "default_agent_name",
                 reply_mode: "thread",
-                team_id: "team_id",
                 type: "slack",
             },
         };
@@ -143,12 +133,14 @@ describe("IntegrationsClient", () => {
                     allow_direct_messages: true,
                     allowed_channel_ids: ["allowed_channel_ids"],
                     auth: { bot_token: "bot_token", signing_secret: "signing_secret" },
+                    bot_display_name: "bot_display_name",
                     bot_user_id: "bot_user_id",
                     default_agent_name: "default_agent_name",
                     reply_mode: "thread",
                     team_id: "team_id",
                     type: "slack",
                 },
+                status: "pending",
                 type: "slack",
                 updated_at: "updated_at",
             },
@@ -167,14 +159,8 @@ describe("IntegrationsClient", () => {
             manifest: {
                 allowDirectMessages: true,
                 allowedChannelIds: ["allowed_channel_ids"],
-                auth: {
-                    botToken: "bot_token",
-                    signingSecret: "signing_secret",
-                },
-                botUserId: "bot_user_id",
                 defaultAgentName: "default_agent_name",
                 replyMode: "thread",
-                teamId: "team_id",
                 type: "slack",
             },
         });
@@ -195,12 +181,14 @@ describe("IntegrationsClient", () => {
                         botToken: "bot_token",
                         signingSecret: "signing_secret",
                     },
+                    botDisplayName: "bot_display_name",
                     botUserId: "bot_user_id",
                     defaultAgentName: "default_agent_name",
                     replyMode: "thread",
                     teamId: "team_id",
                     type: "slack",
                 },
+                status: "pending",
                 type: "slack",
                 updatedAt: "updated_at",
             },
@@ -214,11 +202,8 @@ describe("IntegrationsClient", () => {
             manifest: {
                 allow_direct_messages: true,
                 allowed_channel_ids: ["allowed_channel_ids", "allowed_channel_ids"],
-                auth: { bot_token: "x", signing_secret: "x" },
-                bot_user_id: "x",
                 default_agent_name: "xy",
                 reply_mode: "thread",
-                team_id: "x",
                 type: "slack",
             },
         };
@@ -238,14 +223,8 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allowDirectMessages: true,
                     allowedChannelIds: ["allowed_channel_ids", "allowed_channel_ids"],
-                    auth: {
-                        botToken: "x",
-                        signingSecret: "x",
-                    },
-                    botUserId: "x",
                     defaultAgentName: "xy",
                     replyMode: "thread",
-                    teamId: "x",
                     type: "slack",
                 },
             });
@@ -259,11 +238,8 @@ describe("IntegrationsClient", () => {
             manifest: {
                 allow_direct_messages: true,
                 allowed_channel_ids: ["allowed_channel_ids", "allowed_channel_ids"],
-                auth: { bot_token: "x", signing_secret: "x" },
-                bot_user_id: "x",
                 default_agent_name: "xy",
                 reply_mode: "thread",
-                team_id: "x",
                 type: "slack",
             },
         };
@@ -283,18 +259,48 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allowDirectMessages: true,
                     allowedChannelIds: ["allowed_channel_ids", "allowed_channel_ids"],
-                    auth: {
-                        botToken: "x",
-                        signingSecret: "x",
-                    },
-                    botUserId: "x",
                     defaultAgentName: "xy",
                     replyMode: "thread",
-                    teamId: "x",
                     type: "slack",
                 },
             });
         }).rejects.toThrow(TrueForgeTypes.ConflictError);
+    });
+
+    test("create (4)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+        const rawRequestBody = {
+            manifest: {
+                allow_direct_messages: true,
+                allowed_channel_ids: ["allowed_channel_ids", "allowed_channel_ids"],
+                default_agent_name: "xy",
+                reply_mode: "thread",
+                type: "slack",
+            },
+        };
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .post("/api/v1/settings/integrations")
+            .jsonBody(rawRequestBody)
+            .respondWith()
+            .statusCode(502)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.settings.integrations.create({
+                manifest: {
+                    allowDirectMessages: true,
+                    allowedChannelIds: ["allowed_channel_ids", "allowed_channel_ids"],
+                    defaultAgentName: "xy",
+                    replyMode: "thread",
+                    type: "slack",
+                },
+            });
+        }).rejects.toThrow(TrueForgeTypes.BadGatewayError);
     });
 
     test("get (1)", async () => {
@@ -315,12 +321,14 @@ describe("IntegrationsClient", () => {
                     allow_direct_messages: true,
                     allowed_channel_ids: ["allowed_channel_ids"],
                     auth: { bot_token: "bot_token", signing_secret: "signing_secret" },
+                    bot_display_name: "bot_display_name",
                     bot_user_id: "bot_user_id",
                     default_agent_name: "default_agent_name",
                     reply_mode: "thread",
                     team_id: "team_id",
                     type: "slack",
                 },
+                status: "pending",
                 type: "slack",
                 updated_at: "updated_at",
             },
@@ -352,12 +360,14 @@ describe("IntegrationsClient", () => {
                         botToken: "bot_token",
                         signingSecret: "signing_secret",
                     },
+                    botDisplayName: "bot_display_name",
                     botUserId: "bot_user_id",
                     defaultAgentName: "default_agent_name",
                     replyMode: "thread",
                     teamId: "team_id",
                     type: "slack",
                 },
+                status: "pending",
                 type: "slack",
                 updatedAt: "updated_at",
             },
@@ -390,11 +400,8 @@ describe("IntegrationsClient", () => {
             manifest: {
                 allow_direct_messages: true,
                 allowed_channel_ids: ["allowed_channel_ids"],
-                auth: { bot_token: "bot_token", signing_secret: "signing_secret" },
-                bot_user_id: "bot_user_id",
                 default_agent_name: "default_agent_name",
                 reply_mode: "thread",
-                team_id: "team_id",
                 type: "slack",
             },
         };
@@ -412,12 +419,14 @@ describe("IntegrationsClient", () => {
                     allow_direct_messages: true,
                     allowed_channel_ids: ["allowed_channel_ids"],
                     auth: { bot_token: "bot_token", signing_secret: "signing_secret" },
+                    bot_display_name: "bot_display_name",
                     bot_user_id: "bot_user_id",
                     default_agent_name: "default_agent_name",
                     reply_mode: "thread",
                     team_id: "team_id",
                     type: "slack",
                 },
+                status: "pending",
                 type: "slack",
                 updated_at: "updated_at",
             },
@@ -436,14 +445,8 @@ describe("IntegrationsClient", () => {
             manifest: {
                 allowDirectMessages: true,
                 allowedChannelIds: ["allowed_channel_ids"],
-                auth: {
-                    botToken: "bot_token",
-                    signingSecret: "signing_secret",
-                },
-                botUserId: "bot_user_id",
                 defaultAgentName: "default_agent_name",
                 replyMode: "thread",
-                teamId: "team_id",
                 type: "slack",
             },
         });
@@ -464,12 +467,14 @@ describe("IntegrationsClient", () => {
                         botToken: "bot_token",
                         signingSecret: "signing_secret",
                     },
+                    botDisplayName: "bot_display_name",
                     botUserId: "bot_user_id",
                     defaultAgentName: "default_agent_name",
                     replyMode: "thread",
                     teamId: "team_id",
                     type: "slack",
                 },
+                status: "pending",
                 type: "slack",
                 updatedAt: "updated_at",
             },
@@ -483,11 +488,8 @@ describe("IntegrationsClient", () => {
             manifest: {
                 allow_direct_messages: true,
                 allowed_channel_ids: ["allowed_channel_ids", "allowed_channel_ids"],
-                auth: { bot_token: "x", signing_secret: "x" },
-                bot_user_id: "x",
                 default_agent_name: "xy",
                 reply_mode: "thread",
-                team_id: "x",
                 type: "slack",
             },
         };
@@ -507,14 +509,8 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allowDirectMessages: true,
                     allowedChannelIds: ["allowed_channel_ids", "allowed_channel_ids"],
-                    auth: {
-                        botToken: "x",
-                        signingSecret: "x",
-                    },
-                    botUserId: "x",
                     defaultAgentName: "xy",
                     replyMode: "thread",
-                    teamId: "x",
                     type: "slack",
                 },
             });
@@ -528,11 +524,8 @@ describe("IntegrationsClient", () => {
             manifest: {
                 allow_direct_messages: true,
                 allowed_channel_ids: ["allowed_channel_ids", "allowed_channel_ids"],
-                auth: { bot_token: "x", signing_secret: "x" },
-                bot_user_id: "x",
                 default_agent_name: "xy",
                 reply_mode: "thread",
-                team_id: "x",
                 type: "slack",
             },
         };
@@ -552,14 +545,8 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allowDirectMessages: true,
                     allowedChannelIds: ["allowed_channel_ids", "allowed_channel_ids"],
-                    auth: {
-                        botToken: "x",
-                        signingSecret: "x",
-                    },
-                    botUserId: "x",
                     defaultAgentName: "xy",
                     replyMode: "thread",
-                    teamId: "x",
                     type: "slack",
                 },
             });
@@ -573,11 +560,8 @@ describe("IntegrationsClient", () => {
             manifest: {
                 allow_direct_messages: true,
                 allowed_channel_ids: ["allowed_channel_ids", "allowed_channel_ids"],
-                auth: { bot_token: "x", signing_secret: "x" },
-                bot_user_id: "x",
                 default_agent_name: "xy",
                 reply_mode: "thread",
-                team_id: "x",
                 type: "slack",
             },
         };
@@ -597,18 +581,48 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allowDirectMessages: true,
                     allowedChannelIds: ["allowed_channel_ids", "allowed_channel_ids"],
-                    auth: {
-                        botToken: "x",
-                        signingSecret: "x",
-                    },
-                    botUserId: "x",
                     defaultAgentName: "xy",
                     replyMode: "thread",
-                    teamId: "x",
                     type: "slack",
                 },
             });
         }).rejects.toThrow(TrueForgeTypes.ConflictError);
+    });
+
+    test("update (5)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+        const rawRequestBody = {
+            manifest: {
+                allow_direct_messages: true,
+                allowed_channel_ids: ["allowed_channel_ids", "allowed_channel_ids"],
+                default_agent_name: "xy",
+                reply_mode: "thread",
+                type: "slack",
+            },
+        };
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .put("/api/v1/settings/integrations/integration_id")
+            .jsonBody(rawRequestBody)
+            .respondWith()
+            .statusCode(502)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.settings.integrations.update("integration_id", {
+                manifest: {
+                    allowDirectMessages: true,
+                    allowedChannelIds: ["allowed_channel_ids", "allowed_channel_ids"],
+                    defaultAgentName: "xy",
+                    replyMode: "thread",
+                    type: "slack",
+                },
+            });
+        }).rejects.toThrow(TrueForgeTypes.BadGatewayError);
     });
 
     test("delete", async () => {
@@ -627,5 +641,69 @@ describe("IntegrationsClient", () => {
 
         const response = await client.settings.integrations.delete("integration_id");
         expect(response).toEqual({});
+    });
+
+    test("get_app_manifest (1)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = {
+            data: { create_app_url: "create_app_url", manifest_json: "manifest_json", request_url: "request_url" },
+        };
+
+        server
+            .mockEndpoint()
+            .get("/api/v1/settings/integrations/integration_id/app-manifest")
+            .respondWith()
+            .statusCode(200)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        const response = await client.settings.integrations.getAppManifest("integration_id");
+        expect(response).toEqual({
+            data: {
+                createAppUrl: "create_app_url",
+                manifestJson: "manifest_json",
+                requestUrl: "request_url",
+            },
+        });
+    });
+
+    test("get_app_manifest (2)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .get("/api/v1/settings/integrations/integration_id/app-manifest")
+            .respondWith()
+            .statusCode(404)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.settings.integrations.getAppManifest("integration_id");
+        }).rejects.toThrow(TrueForgeTypes.NotFoundError);
+    });
+
+    test("get_app_manifest (3)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .get("/api/v1/settings/integrations/integration_id/app-manifest")
+            .respondWith()
+            .statusCode(500)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.settings.integrations.getAppManifest("integration_id");
+        }).rejects.toThrow(TrueForgeTypes.InternalServerError);
     });
 });

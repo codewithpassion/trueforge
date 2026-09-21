@@ -17,6 +17,7 @@ const ModelSettings = lazy(() => import('./ModelSettings.js'));
 const ConnectorSettings = lazy(() => import('./ConnectorSettings.js'));
 const SkillSettings = lazy(() => import('./SkillSettings.js'));
 const SandboxSettings = lazy(() => import('./SandboxSettings.js'));
+const IntegrationSettings = lazy(() => import('./IntegrationSettings.js'));
 
 function SettingsSectionFallback() {
   return (
@@ -36,6 +37,7 @@ const TruefoundrySettingsBuilder = () => {
   const compact = useCompactLayout();
   const hasSkills = catalog?.skillCatalog != null;
   const hasSandbox = catalog?.sandboxCatalog != null;
+  const hasIntegrations = catalog?.integrationCatalog != null;
 
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
@@ -57,7 +59,10 @@ const TruefoundrySettingsBuilder = () => {
     if (!hasSandbox && section === 'sandbox') {
       setSettingsOpen(settingsOpen, 'models');
     }
-  }, [hasSkills, hasSandbox, section, settingsOpen, setSettingsOpen]);
+    if (!hasIntegrations && section === 'integrations') {
+      setSettingsOpen(settingsOpen, 'models');
+    }
+  }, [hasSkills, hasSandbox, hasIntegrations, section, settingsOpen, setSettingsOpen]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -75,13 +80,13 @@ const TruefoundrySettingsBuilder = () => {
     Array<{
       id: SettingsSection;
       label: string;
-      icon: 'cpu' | 'plug' | 'lightbulb' | 'cube';
+      icon: 'cpu' | 'plug' | 'lightbulb' | 'cube' | 'message-square-text';
     }>
   >(() => {
     const baseSections: Array<{
       id: SettingsSection;
       label: string;
-      icon: 'cpu' | 'plug' | 'lightbulb' | 'cube';
+      icon: 'cpu' | 'plug' | 'lightbulb' | 'cube' | 'message-square-text';
     }> = [
       { id: 'models', label: 'Models', icon: 'cpu' },
       { id: 'connectors', label: 'Connectors', icon: 'plug' },
@@ -92,8 +97,11 @@ const TruefoundrySettingsBuilder = () => {
     if (hasSandbox) {
       baseSections.push({ id: 'sandbox', label: 'Sandbox providers', icon: 'cube' });
     }
+    if (hasIntegrations) {
+      baseSections.push({ id: 'integrations', label: 'Integrations', icon: 'message-square-text' });
+    }
     return baseSections;
-  }, [hasSkills, hasSandbox]);
+  }, [hasSkills, hasSandbox, hasIntegrations]);
 
   if (!settingsOpen || !catalog) return null;
 
@@ -154,6 +162,7 @@ const TruefoundrySettingsBuilder = () => {
               {section === 'connectors' ? <ConnectorSettings /> : null}
               {section === 'skills' && hasSkills ? <SkillSettings /> : null}
               {section === 'sandbox' && hasSandbox ? <SandboxSettings /> : null}
+              {section === 'integrations' && hasIntegrations ? <IntegrationSettings /> : null}
             </Suspense>
           </div>
         </section>

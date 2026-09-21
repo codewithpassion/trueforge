@@ -7,7 +7,12 @@ import { DraftCatalogProvider } from '@/atoms/draft/DraftCatalogProvider.js';
 import TruefoundrySettingsBuilder from '@/containers/SettingsBuilder/index.js';
 import { ServerProvider } from '@/server/ServerContext.js';
 import { ShellModeProvider, useShellMode } from '@/server/ShellModeContext.js';
-import type { AgentUIServer, SandboxCatalogServer, SkillCatalogServer } from '@/server/types.js';
+import type {
+  AgentUIServer,
+  IntegrationCatalogServer,
+  SandboxCatalogServer,
+  SkillCatalogServer,
+} from '@/server/types.js';
 import { createMockAgentUIServer, createMockCatalog } from '../../server/mockServer.js';
 
 vi.mock('@/containers/SettingsBuilder/ModelSettings.js', () => ({
@@ -24,6 +29,10 @@ vi.mock('@/containers/SettingsBuilder/SkillSettings.js', () => ({
 
 vi.mock('@/containers/SettingsBuilder/SandboxSettings.js', () => ({
   default: () => <div>Sandbox settings content</div>,
+}));
+
+vi.mock('@/containers/SettingsBuilder/IntegrationSettings.js', () => ({
+  default: () => <div>Integration settings content</div>,
 }));
 
 async function unavailable(): Promise<never> {
@@ -43,7 +52,17 @@ const sandboxCatalog: SandboxCatalogServer = {
   updateSandboxProvider: unavailable,
 };
 
-function createServer(options: { catalog?: boolean; skills?: boolean; sandbox?: boolean } = {}): AgentUIServer {
+const integrationCatalog: IntegrationCatalogServer = {
+  listIntegrations: async () => [],
+  createIntegration: unavailable,
+  updateIntegration: unavailable,
+  deleteIntegration: unavailable,
+  getIntegrationSetupManifest: unavailable,
+};
+
+function createServer(
+  options: { catalog?: boolean; skills?: boolean; sandbox?: boolean; integrations?: boolean } = {},
+): AgentUIServer {
   if (options.catalog === false) {
     return createMockAgentUIServer();
   }
@@ -51,6 +70,7 @@ function createServer(options: { catalog?: boolean; skills?: boolean; sandbox?: 
     catalog: createMockCatalog({
       ...(options.skills ? { skillCatalog } : {}),
       ...(options.sandbox ? { sandboxCatalog } : {}),
+      ...(options.integrations ? { integrationCatalog } : {}),
     }),
   });
 }
@@ -113,11 +133,12 @@ describe('TruefoundrySettingsBuilder', () => {
     expect(screen.getByRole('button', { name: 'Connectors' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Skills' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sandbox' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Integrations' })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText('Model settings content')).toBeInTheDocument();
     });
 
-    rerender(<TestShell server={createServer({ skills: true, sandbox: true })} />);
+    rerender(<TestShell server={createServer({ skills: true, sandbox: true, integrations: true })} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Skills' }));
     await waitFor(() => {
@@ -129,10 +150,31 @@ describe('TruefoundrySettingsBuilder', () => {
       expect(screen.getByText('Sandbox settings content')).toBeInTheDocument();
     });
 
+    fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
+    await waitFor(() => {
+      expect(screen.getByText('Integration settings content')).toBeInTheDocument();
+    });
+
     fireEvent.click(screen.getByRole('button', { name: 'Connectors' }));
     await waitFor(() => {
       expect(screen.getByText('Connector settings content')).toBeInTheDocument();
     });
+  });
+
+  it('sends the integrations section back to models when its catalog disappears', async () => {
+    const { rerender } = render(<TestShell server={createServer({ integrations: true })} />);
+    await openSettings();
+    fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
+    await waitFor(() => {
+      expect(screen.getByText('Integration settings content')).toBeInTheDocument();
+    });
+
+    rerender(<TestShell server={createServer()} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Models' })).toHaveAttribute('aria-current', 'page');
+    });
+    expect(screen.queryByRole('button', { name: 'Integrations' })).not.toBeInTheDocument();
   });
 
   it('resets a stale optional section when its catalog disappears', async () => {

@@ -10,13 +10,14 @@ export interface IntegrationManifest {
     allowDirectMessages: boolean;
     /** Channels the bot answers in. An empty list allows no channel. */
     allowedChannelIds: string[];
-    auth: TrueForge.SlackIntegrationAuth;
-    /** User id of the bot, used to ignore its own messages. */
-    botUserId: string;
+    auth?: TrueForge.SlackIntegrationAuth;
+    botDisplayName?: TrueForge.SlackBotDisplayName;
+    /** User id of the bot, used to ignore its own messages. Filled from `auth.test`. */
+    botUserId?: string;
     defaultAgentName: TrueForge.ResourceName;
     replyMode: TrueForge.SlackReplyMode;
-    /** Slack workspace (team) id this integration is bound to. */
-    teamId: string;
+    /** Slack workspace (team) id. Filled from `auth.test` when credentials are saved. */
+    teamId?: string;
     /** Slack workspace connection. */
     type: "slack";
 }

@@ -19,11 +19,9 @@ import { createAuthAwareFetch } from './authFetch';
 import { probeSession, type SessionState } from './authSession';
 import { parseAuthErrorReason, shouldShowAuthErrorScreen, stripAuthErrorSearch } from './authStatusSearch';
 import { GetStartedScreen } from './GetStartedScreen';
-import { IntegrationsPage } from './IntegrationsPage';
-import { isIntegrationsPath } from './integrationsRoute';
 import { NewAgentWelcomeScreen } from './NewAgentWelcomeScreen';
+import { LogoutButton } from './LogoutButton';
 import { API_BASE_URL, uiRouterBasename } from './publicPath';
-import { ShellActions } from './ShellActions';
 
 /** Shared cookie/OIDC fetch for boot helpers and `<TrueForgeUI server />`. */
 const authAwareFetch = createAuthAwareFetch();
@@ -154,7 +152,7 @@ export function App() {
   }, [session]);
 
   const overrides: SlotOverrides = useMemo(
-    () => ({ ShellActionsActionSlot: ShellActions, WelcomeScreen: NewAgentWelcomeScreen }),
+    () => ({ ShellActionsActionSlot: LogoutButton, WelcomeScreen: NewAgentWelcomeScreen }),
     [],
   );
 
@@ -179,14 +177,6 @@ export function App() {
     return (
       <ThemeProvider theme={appTheme}>
         <GetStartedScreen />
-      </ThemeProvider>
-    );
-  }
-
-  if (isIntegrationsPath(window.location.pathname)) {
-    return (
-      <ThemeProvider theme={appTheme}>
-        <IntegrationsPage client={bootClient} />
       </ThemeProvider>
     );
   }

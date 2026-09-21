@@ -1498,6 +1498,17 @@
         ],
         "type": "object"
       },
+      "GetIntegrationAppManifestResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/IntegrationAppManifest"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "GetIntegrationResponse": {
         "properties": {
           "data": {
@@ -2258,6 +2269,9 @@
           "manifest": {
             "$ref": "#/components/schemas/IntegrationManifest"
           },
+          "status": {
+            "$ref": "#/components/schemas/IntegrationStatus"
+          },
           "type": {
             "$ref": "#/components/schemas/IntegrationType"
           },
@@ -2269,11 +2283,35 @@
         "required": [
           "id",
           "type",
+          "status",
           "external_account_id",
           "manifest",
           "created_by_subject",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "IntegrationAppManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "create_app_url": {
+            "description": "Page on the channel that accepts the manifest.",
+            "type": "string"
+          },
+          "manifest_json": {
+            "description": "App manifest as pretty-printed JSON, ready to paste.",
+            "type": "string"
+          },
+          "request_url": {
+            "description": "Events request URL the manifest carries.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_url",
+          "manifest_json",
+          "create_app_url"
         ],
         "type": "object"
       },
@@ -2296,8 +2334,11 @@
           "auth": {
             "$ref": "#/components/schemas/SlackIntegrationAuth"
           },
+          "bot_display_name": {
+            "$ref": "#/components/schemas/SlackBotDisplayName"
+          },
           "bot_user_id": {
-            "description": "User id of the bot, used to ignore its own messages.",
+            "description": "User id of the bot, used to ignore its own messages. Filled from `auth.test`.",
             "minLength": 1,
             "type": "string"
           },
@@ -2308,7 +2349,7 @@
             "$ref": "#/components/schemas/SlackReplyMode"
           },
           "team_id": {
-            "description": "Slack workspace (team) id this integration is bound to.",
+            "description": "Slack workspace (team) id. Filled from `auth.test` when credentials are saved.",
             "minLength": 1,
             "type": "string"
           },
@@ -2322,15 +2363,20 @@
         },
         "required": [
           "type",
-          "team_id",
-          "bot_user_id",
           "default_agent_name",
           "allowed_channel_ids",
           "allow_direct_messages",
-          "reply_mode",
-          "auth"
+          "reply_mode"
         ],
         "type": "object"
+      },
+      "IntegrationStatus": {
+        "description": "`pending` until the channel app is installed and its credentials are saved.",
+        "enum": [
+          "pending",
+          "connected"
+        ],
+        "type": "string"
       },
       "IntegrationType": {
         "description": "Channel type.",
@@ -4652,6 +4698,12 @@
           "version"
         ],
         "type": "object"
+      },
+      "SlackBotDisplayName": {
+        "default": "trueforge",
+        "description": "Bot name in Slack: 1-35 characters, lowercase letters, digits, dot, dash or underscore.",
+        "pattern": "^[a-z0-9._-]{1,35}$",
+        "type": "string"
       },
       "SlackIntegrationAuth": {
         "additionalProperties": false,
@@ -7188,6 +7240,16 @@
             },
             "description": "Integration not found."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The integration is still pending: its credentials have not been saved."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -9499,7 +9561,7 @@
         "x-fern-sdk-method-name": "list"
       },
       "post": {
-        "description": "Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.",
+        "description": "Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -9519,7 +9581,7 @@
                 }
               }
             },
-            "description": "The connected integration."
+            "description": "The new integration."
           },
           "400": {
             "content": {
@@ -9540,9 +9602,19 @@
               }
             },
             "description": "That channel account is already connected."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel refused the credentials or did not answer."
           }
         },
-        "summary": "Connect an integration",
+        "summary": "Create an integration",
         "tags": [
           "Integrations"
         ],
@@ -9639,7 +9711,7 @@
         "x-fern-sdk-method-name": "get"
       },
       "put": {
-        "description": "Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.",
+        "description": "Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.",
         "parameters": [
           {
             "description": "Immutable integration id.",
@@ -9702,7 +9774,17 @@
                 }
               }
             },
-            "description": "That channel account is already connected to another integration."
+            "description": "That channel account is already connected, or belongs to a different workspace."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel refused the credentials or did not answer."
           }
         },
         "summary": "Replace a connected integration",
@@ -9714,6 +9796,65 @@
           "integrations"
         ],
         "x-fern-sdk-method-name": "update"
+      }
+    },
+    "/api/v1/settings/integrations/{integration_id}/app-manifest": {
+      "get": {
+        "description": "App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationAppManifestResponse"
+                }
+              }
+            },
+            "description": "The app manifest and where to paste it."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Server misconfiguration (e.g. PUBLIC_BASE_URL unset)."
+          }
+        },
+        "summary": "Get the channel app manifest",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "get_app_manifest"
       }
     },
     "/api/v1/settings/mcp-servers": {

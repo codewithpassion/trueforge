@@ -5,6 +5,7 @@ import typing
 from ...core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
 from ...core.request_options import RequestOptions
 from ...types.delete_integration_response import DeleteIntegrationResponse
+from ...types.get_integration_app_manifest_response import GetIntegrationAppManifestResponse
 from ...types.get_integration_response import GetIntegrationResponse
 from ...types.integration_manifest import IntegrationManifest
 from ...types.list_integrations_response import ListIntegrationsResponse
@@ -60,7 +61,7 @@ class IntegrationsClient:
         self, *, manifest: IntegrationManifest, request_options: typing.Optional[RequestOptions] = None
     ) -> GetIntegrationResponse:
         """
-        Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.
+        Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 
         Parameters
         ----------
@@ -72,11 +73,11 @@ class IntegrationsClient:
         Returns
         -------
         GetIntegrationResponse
-            The connected integration.
+            The new integration.
 
         Examples
         --------
-        from trueforge_sdk import IntegrationManifest, SlackIntegrationAuth, TrueForge
+        from trueforge_sdk import IntegrationManifest, TrueForge
 
         client = TrueForge(
             token="YOUR_TOKEN",
@@ -86,13 +87,7 @@ class IntegrationsClient:
             manifest=IntegrationManifest(
                 allow_direct_messages=True,
                 allowed_channel_ids=["allowed_channel_ids"],
-                auth=SlackIntegrationAuth(
-                    bot_token="bot_token",
-                    signing_secret="signing_secret",
-                ),
-                bot_user_id="bot_user_id",
                 default_agent_name="default_agent_name",
-                team_id="team_id",
             ),
         )
         """
@@ -141,7 +136,7 @@ class IntegrationsClient:
         request_options: typing.Optional[RequestOptions] = None,
     ) -> GetIntegrationResponse:
         """
-        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.
+        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 
         Parameters
         ----------
@@ -160,7 +155,7 @@ class IntegrationsClient:
 
         Examples
         --------
-        from trueforge_sdk import IntegrationManifest, SlackIntegrationAuth, TrueForge
+        from trueforge_sdk import IntegrationManifest, TrueForge
 
         client = TrueForge(
             token="YOUR_TOKEN",
@@ -171,13 +166,7 @@ class IntegrationsClient:
             manifest=IntegrationManifest(
                 allow_direct_messages=True,
                 allowed_channel_ids=["allowed_channel_ids"],
-                auth=SlackIntegrationAuth(
-                    bot_token="bot_token",
-                    signing_secret="signing_secret",
-                ),
-                bot_user_id="bot_user_id",
                 default_agent_name="default_agent_name",
-                team_id="team_id",
             ),
         )
         """
@@ -218,6 +207,40 @@ class IntegrationsClient:
         )
         """
         _response = self._raw_client.delete(integration_id=integration_id, request_options=request_options)
+        return _response.data
+
+    def get_app_manifest(
+        self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> GetIntegrationAppManifestResponse:
+        """
+        App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.
+
+        Parameters
+        ----------
+        integration_id : str
+            Immutable integration id.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        GetIntegrationAppManifestResponse
+            The app manifest and where to paste it.
+
+        Examples
+        --------
+        from trueforge_sdk import TrueForge
+
+        client = TrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+        client.settings.integrations.get_app_manifest(
+            integration_id="integration_id",
+        )
+        """
+        _response = self._raw_client.get_app_manifest(integration_id=integration_id, request_options=request_options)
         return _response.data
 
 
@@ -275,7 +298,7 @@ class AsyncIntegrationsClient:
         self, *, manifest: IntegrationManifest, request_options: typing.Optional[RequestOptions] = None
     ) -> GetIntegrationResponse:
         """
-        Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.
+        Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 
         Parameters
         ----------
@@ -287,17 +310,13 @@ class AsyncIntegrationsClient:
         Returns
         -------
         GetIntegrationResponse
-            The connected integration.
+            The new integration.
 
         Examples
         --------
         import asyncio
 
-        from trueforge_sdk import (
-            AsyncTrueForge,
-            IntegrationManifest,
-            SlackIntegrationAuth,
-        )
+        from trueforge_sdk import AsyncTrueForge, IntegrationManifest
 
         client = AsyncTrueForge(
             token="YOUR_TOKEN",
@@ -310,13 +329,7 @@ class AsyncIntegrationsClient:
                 manifest=IntegrationManifest(
                     allow_direct_messages=True,
                     allowed_channel_ids=["allowed_channel_ids"],
-                    auth=SlackIntegrationAuth(
-                        bot_token="bot_token",
-                        signing_secret="signing_secret",
-                    ),
-                    bot_user_id="bot_user_id",
                     default_agent_name="default_agent_name",
-                    team_id="team_id",
                 ),
             )
 
@@ -376,7 +389,7 @@ class AsyncIntegrationsClient:
         request_options: typing.Optional[RequestOptions] = None,
     ) -> GetIntegrationResponse:
         """
-        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.
+        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 
         Parameters
         ----------
@@ -397,11 +410,7 @@ class AsyncIntegrationsClient:
         --------
         import asyncio
 
-        from trueforge_sdk import (
-            AsyncTrueForge,
-            IntegrationManifest,
-            SlackIntegrationAuth,
-        )
+        from trueforge_sdk import AsyncTrueForge, IntegrationManifest
 
         client = AsyncTrueForge(
             token="YOUR_TOKEN",
@@ -415,13 +424,7 @@ class AsyncIntegrationsClient:
                 manifest=IntegrationManifest(
                     allow_direct_messages=True,
                     allowed_channel_ids=["allowed_channel_ids"],
-                    auth=SlackIntegrationAuth(
-                        bot_token="bot_token",
-                        signing_secret="signing_secret",
-                    ),
-                    bot_user_id="bot_user_id",
                     default_agent_name="default_agent_name",
-                    team_id="team_id",
                 ),
             )
 
@@ -473,4 +476,48 @@ class AsyncIntegrationsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.delete(integration_id=integration_id, request_options=request_options)
+        return _response.data
+
+    async def get_app_manifest(
+        self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> GetIntegrationAppManifestResponse:
+        """
+        App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.
+
+        Parameters
+        ----------
+        integration_id : str
+            Immutable integration id.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        GetIntegrationAppManifestResponse
+            The app manifest and where to paste it.
+
+        Examples
+        --------
+        import asyncio
+
+        from trueforge_sdk import AsyncTrueForge
+
+        client = AsyncTrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+
+
+        async def main() -> None:
+            await client.settings.integrations.get_app_manifest(
+                integration_id="integration_id",
+            )
+
+
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.get_app_manifest(
+            integration_id=integration_id, request_options=request_options
+        )
         return _response.data

@@ -7,6 +7,7 @@ import { createHarnessAgentMetricsServer } from './agentMetricsServer.js';
 import { createHarnessAgentSessionsServer } from './agentSessionsServer.js';
 import { createHarnessBuilderServer } from './builderServer.js';
 import { createConnectorCatalog } from './catalogs/connectorCatalog.js';
+import { createIntegrationCatalog } from './catalogs/integrationCatalog.js';
 import { createModelProviderCatalog } from './catalogs/modelProviderCatalog.js';
 import { createSandboxProviderCatalog } from './catalogs/sandboxProviderCatalog.js';
 import { createSkillCatalog } from './catalogs/skillCatalog.js';
@@ -34,6 +35,7 @@ export {
   toUiConnector,
   toUiConnectorFromReadEntry,
 } from './catalogs/connectorCatalog.js';
+export { createIntegrationCatalog, toUiIntegration, toUiSetupManifest } from './catalogs/integrationCatalog.js';
 export {
   createModelProviderCatalog,
   toHarnessModelProvider,
@@ -82,6 +84,7 @@ export function createTrueForgeAgentUIServer(options: CreateTrueForgeAgentUIServ
       connectorCatalog: createConnectorCatalog(client),
       skillCatalog: createSkillCatalog(client),
       sandboxCatalog: createSandboxProviderCatalog(client),
+      integrationCatalog: createIntegrationCatalog(client),
     } satisfies CatalogServer);
 
   return createTrueFoundryServer<HarnessAgentSpec>({

@@ -3263,7 +3263,7 @@ await client.settings.integrations.list();
 <dl>
 <dd>
 
-Connects a channel account. Fails if that account is already connected. Credentials: a real value is required; a redacted value returns 400.
+Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 </dd>
 </dl>
 </dd>
@@ -3282,14 +3282,8 @@ await client.settings.integrations.create({
     manifest: {
         allowDirectMessages: true,
         allowedChannelIds: ["allowed_channel_ids"],
-        auth: {
-            botToken: "bot_token",
-            signingSecret: "signing_secret"
-        },
-        botUserId: "bot_user_id",
         defaultAgentName: "default_agent_name",
         replyMode: "thread",
-        teamId: "team_id",
         type: "slack"
     }
 });
@@ -3403,7 +3397,7 @@ await client.settings.integrations.get("integration_id");
 <dl>
 <dd>
 
-Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates; a redacted value keeps the stored secret.
+Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 </dd>
 </dl>
 </dd>
@@ -3422,14 +3416,8 @@ await client.settings.integrations.update("integration_id", {
     manifest: {
         allowDirectMessages: true,
         allowedChannelIds: ["allowed_channel_ids"],
-        auth: {
-            botToken: "bot_token",
-            signingSecret: "signing_secret"
-        },
-        botUserId: "bot_user_id",
         defaultAgentName: "default_agent_name",
         replyMode: "thread",
-        teamId: "team_id",
         type: "slack"
     }
 });
@@ -3504,6 +3492,69 @@ Deletes the integration by immutable id and stops its ingress. Existing sessions
 
 ```typescript
 await client.settings.integrations.delete("integration_id");
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**integration_id:** `string` — Immutable integration id.
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**requestOptions:** `IntegrationsClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.settings.integrations.<a href="/src/api/resources/settings/resources/integrations/client/Client.ts">getAppManifest</a>(integration_id) -> TrueForge.GetIntegrationAppManifestResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+await client.settings.integrations.getAppManifest("integration_id");
 
 ```
 </dd>
