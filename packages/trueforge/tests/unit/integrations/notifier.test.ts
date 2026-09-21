@@ -17,6 +17,7 @@ import {
 import type { IIntegrationStore } from '../../../src/db/integrationStore';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
+import type { ScheduleRecord } from '../../../src/db/scheduleStore';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
 import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteIntegrationStore } from '../../../src/db/sqlite/integration-store/SqliteIntegrationStore';
@@ -32,10 +33,10 @@ import { TurnCompletionNotifier } from '../../../src/integrations/TurnCompletion
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
 import { startTurnInProcess, type BeginTurnExecutionDeps } from '../../../src/runtime/turnRunner';
-import type { IntegrationManifest } from '../../../src/schemas/integration';
+import type { IntegrationManifest, IntegrationNotificationRule } from '../../../src/schemas/integration';
 import { newId } from '../../../src/utils/id';
 import { ScriptedTurnSessions } from '../apis/scriptedSessions';
-import { fakeChannelAdapter } from './fakeChannelAdapter';
+import { fakeChannelAdapter, type FakeChannelAdapter } from './fakeChannelAdapter';
 
 /** Notification rules only fire for schedule sessions, which these cases do not create. */
 const scheduleStore = { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) };
@@ -78,7 +79,7 @@ interface Harness {
   >;
 }
 
-async function createHarness(options: { source?: SessionSource | null } = {}): Promise<Harness> {
+async function createHarness(options: { source?: SessionSource | null; external_id?: string } = {}): Promise<Harness> {
   const db = createSqliteDb(':memory:');
   await migrateSqliteToLatest(db);
   const atomic = new BetterSqliteAtomicRunner(db);
@@ -102,7 +103,7 @@ async function createHarness(options: { source?: SessionSource | null } = {}): P
     agent: { type: 'inline', spec: AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } }) },
     custom: null,
     metadata: {},
-    external_id: CONVERSATION_KEY,
+    external_id: options.external_id ?? CONVERSATION_KEY,
     source:
       options.source === undefined
         ? { type: 'integration', id: integrationId, conversation_key: CONVERSATION_KEY }
@@ -378,5 +379,173 @@ describe('TurnCompletionNotifier on Node', () => {
     ).toMatchObject({
       status: 'pending',
     });
+  });
+});
+
+const SCHEDULE_ID = 'sched-1';
+const RUN_ID = 'run-1';
+const SCHEDULE_NAME = 'nightly-report';
+
+/** Only the fields the notifier reads; the real record carries a manifest and timestamps. */
+function scheduleStoreNamed(name: string | undefined) {
+  return {
+    getSchedule: (): Promise<ScheduleRecord | undefined> =>
+      Promise.resolve(
+        name === undefined
+          ? undefined
+          : {
+              id: SCHEDULE_ID,
+              tenant_id: TENANT,
+              agent_id: 'agent-1',
+              agent_name: 'support-bot',
+              name,
+              manifest: { task: 'report', cron: '0 0 * * *', timezone: 'UTC', status: 'active' },
+              status: 'active',
+              created_by_subject: CREATED_BY,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+      ),
+  };
+}
+
+/** A schedule run's session: keyed by the run, not by any channel. */
+async function scheduleHarness(input: { rules: IntegrationNotificationRule[]; connected?: boolean }): Promise<Harness> {
+  const harness = await createHarness({
+    source: { type: 'schedule', id: SCHEDULE_ID, run_id: RUN_ID },
+    external_id: RUN_ID,
+  });
+  const base = manifest();
+  await harness.integrationStore.updateIntegration({
+    tenant_id: TENANT,
+    id: harness.integrationId,
+    external_account_id: 'T0TEAM',
+    manifest:
+      input.connected === false
+        ? { ...base, team_id: undefined, bot_user_id: undefined, auth: undefined, notification_rules: input.rules }
+        : { ...base, notification_rules: input.rules },
+  });
+  return harness;
+}
+
+function rule(overrides: Partial<IntegrationNotificationRule> = {}): IntegrationNotificationRule {
+  return { schedule_name: SCHEDULE_NAME, channel_id: 'C0RELEASES', outcome: 'any', ...overrides };
+}
+
+describe('notification rules for a finished schedule run', () => {
+  let harness: Harness;
+
+  afterEach(async () => {
+    await harness?.db.destroy();
+  });
+
+  /** `scheduleName: null` stands for a schedule that has since been deleted. */
+  function notifierFor(input: { harness: Harness; fake: FakeChannelAdapter; scheduleName?: string | null }) {
+    const named = input.scheduleName === undefined ? SCHEDULE_NAME : input.scheduleName;
+    return new TurnCompletionNotifier({
+      integrationStore: input.harness.integrationStore,
+      scheduleStore: scheduleStoreNamed(named === null ? undefined : named),
+      adapters: input.fake.adapters,
+      logger: createLogger({ silent: true }),
+    });
+  }
+
+  it('posts the run to the channel the rule names, at the top of it rather than in a thread', async () => {
+    harness = await scheduleHarness({ rules: [rule()] });
+    const fake = fakeChannelAdapter();
+
+    await runTurn({ harness, notifier: notifierFor({ harness, fake }) });
+
+    expect(fake.delivered).toHaveLength(1);
+    expect(fake.delivered[0]).toMatchObject({
+      conversation_key: 'slack:T0TEAM:C0RELEASES:channel',
+      turn_id: TURN_ID,
+    });
+    const [row] = await harness.db.selectFrom('integration_delivery').selectAll().execute();
+    expect(row).toMatchObject({ status: 'sent', session_external_id: RUN_ID });
+  });
+
+  it('posts once per channel, however many rules point at it', async () => {
+    harness = await scheduleHarness({
+      rules: [rule(), rule({ outcome: 'success' }), rule({ channel_id: 'C0OPS' })],
+    });
+    const fake = fakeChannelAdapter();
+
+    await runTurn({ harness, notifier: notifierFor({ harness, fake }) });
+
+    expect(fake.delivered.map(delivery => delivery.conversation_key).sort()).toEqual([
+      'slack:T0TEAM:C0OPS:channel',
+      'slack:T0TEAM:C0RELEASES:channel',
+    ]);
+  });
+
+  it('ignores a rule for another schedule', async () => {
+    harness = await scheduleHarness({ rules: [rule({ schedule_name: 'weekly-digest' })] });
+    const fake = fakeChannelAdapter();
+
+    await runTurn({ harness, notifier: notifierFor({ harness, fake }) });
+
+    expect(fake.delivered).toHaveLength(0);
+  });
+
+  it('honours an outcome filter: a successful run is not a failure', async () => {
+    harness = await scheduleHarness({ rules: [rule({ outcome: 'failure' })] });
+    const fake = fakeChannelAdapter();
+
+    await runTurn({ harness, notifier: notifierFor({ harness, fake }) });
+
+    expect(fake.delivered).toHaveLength(0);
+  });
+
+  it('honours an outcome filter: a successful run matches a success rule', async () => {
+    harness = await scheduleHarness({ rules: [rule({ outcome: 'success' })] });
+    const fake = fakeChannelAdapter();
+
+    await runTurn({ harness, notifier: notifierFor({ harness, fake }) });
+
+    expect(fake.delivered).toHaveLength(1);
+  });
+
+  it('posts nothing for an integration whose credentials are not saved', async () => {
+    harness = await scheduleHarness({ rules: [rule()], connected: false });
+    const fake = fakeChannelAdapter();
+
+    await runTurn({ harness, notifier: notifierFor({ harness, fake }) });
+
+    expect(fake.delivered).toHaveLength(0);
+    expect(await harness.db.selectFrom('integration_delivery').selectAll().execute()).toEqual([]);
+  });
+
+  it('posts nothing when the tenant has no rules at all', async () => {
+    harness = await scheduleHarness({ rules: [] });
+    const fake = fakeChannelAdapter();
+
+    await runTurn({ harness, notifier: notifierFor({ harness, fake }) });
+
+    expect(fake.delivered).toHaveLength(0);
+  });
+
+  it('posts nothing when the schedule the session names is gone', async () => {
+    harness = await scheduleHarness({ rules: [rule()] });
+    const fake = fakeChannelAdapter();
+
+    await runTurn({ harness, notifier: notifierFor({ harness, fake, scheduleName: null }) });
+
+    expect(fake.delivered).toHaveLength(0);
+  });
+
+  it('a second pass over the same turn posts nothing more', async () => {
+    harness = await scheduleHarness({ rules: [rule()] });
+    const fake = fakeChannelAdapter();
+    const notifier = notifierFor({ harness, fake });
+
+    await runTurn({ harness, notifier });
+    const session = await sessionHandle(harness);
+    if (session === undefined) {
+      throw new Error('session was not created');
+    }
+    await notifier.deliverForTurn({ session, turn_id: TURN_ID });
+
+    expect(fake.delivered).toHaveLength(1);
   });
 });

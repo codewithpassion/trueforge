@@ -28,6 +28,39 @@ export async function signSlackBody(input: {
   return `v0=${toHex(signature)}`;
 }
 
+/**
+ * An interactive callback: Slack posts it form-encoded with the JSON in `payload`, and signs
+ * the raw form body, not the JSON. Signing the JSON instead is exactly the mistake a fixture
+ * would hide, so the body is built once and both the request and the signature use it.
+ */
+export async function slackInteractionRequest(input: {
+  url?: string;
+  payload: unknown;
+  nowMs?: number;
+  signingSecret?: string;
+  /** Replaces the computed signature, for the bad-signature cases. */
+  signature?: string;
+}): Promise<Request> {
+  const body = new URLSearchParams({ payload: JSON.stringify(input.payload) }).toString();
+  const timestamp = String(Math.floor((input.nowMs ?? Date.now()) / 1000));
+  const signature =
+    input.signature ??
+    (await signSlackBody({
+      body,
+      timestamp,
+      ...(input.signingSecret === undefined ? {} : { signingSecret: input.signingSecret }),
+    }));
+  return new Request(input.url ?? 'https://trueforge.test/api/v1/integrations/int-1/interactions', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      'x-slack-request-timestamp': timestamp,
+      'x-slack-signature': signature,
+    },
+    body,
+  });
+}
+
 export async function slackRequest(input: {
   url?: string;
   payload: unknown;

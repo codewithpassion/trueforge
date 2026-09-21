@@ -21,7 +21,12 @@ import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/Sqlite
 import type { Database } from '../../../src/db/sqlite/types';
 import { createIntegrationAdapters, type IntegrationAdapterRegistry } from '../../../src/integrations/registry';
 import type { SlackAuthTest } from '../../../src/integrations/slack/api';
-import type { ChannelAdapter, InboundResult } from '../../../src/integrations/types';
+import type {
+  ChannelAdapter,
+  InboundInteractionResult,
+  InboundResult,
+  InteractionOutcome,
+} from '../../../src/integrations/types';
 import type { Integration, IntegrationManifest } from '../../../src/schemas/integration';
 import { newId } from '../../../src/utils/id';
 import { SECRET_REDACTION, toRedactedSecretValue } from '../../../src/utils/secretRedaction';
@@ -698,6 +703,136 @@ describe('integration events ingress', () => {
         body: JSON.stringify({ type: 'url_verification', challenge: 'chal-123' }),
       });
       expect(response.status).toBe(401);
+    } finally {
+      await db.destroy();
+    }
+  });
+});
+
+describe('integration interactions ingress', () => {
+  /** A registry whose interaction result is fixed, so only the route's own behaviour is under test. */
+  function interactionAdapter(result: InboundInteractionResult): {
+    adapters: IntegrationAdapterRegistry;
+    settlements: InteractionOutcome[];
+  } {
+    const settlements: InteractionOutcome[] = [];
+    const adapter: ChannelAdapter = {
+      type: 'slack',
+      receive: () => Promise.resolve({ type: 'ignore', reason: 'not used here' }),
+      receiveInteraction: () => Promise.resolve(result),
+      deliver: () => Promise.resolve({ ok: true }),
+      notice: () => Promise.resolve({ ok: true }),
+      settleInteraction: input => {
+        settlements.push(input.outcome);
+        return Promise.resolve({ ok: true });
+      },
+    };
+    return { adapters: new Map([['slack', adapter]]), settlements };
+  }
+
+  const CLICK: InboundInteractionResult = {
+    type: 'interaction',
+    interaction: {
+      integration_id: 'unused',
+      conversation_key: 'slack:T0TEAM:C0GENERAL:1700000000.000100',
+      sender: { id: 'U0ADMIN', display_name: 'Admin' },
+      turn_id: 'turn-nobody-holds',
+      tool_call_id: 'call-1',
+      decision: { type: 'approval', approved: true },
+      reply_context: 'https://hooks.slack.com/actions/T0TEAM/1/abc',
+    },
+  };
+
+  it('returns 404 for an unknown integration', async () => {
+    const { db, app } = await createIngress({ adapters: createIntegrationAdapters() });
+    try {
+      const response = await app.request('/missing/interactions', { method: 'POST' });
+      expect(response.status).toBe(404);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('returns 501 for a type with no adapter registered', async () => {
+    const { db, app, integration } = await createIngress({ adapters: new Map() });
+    try {
+      const response = await app.request(`/${integration.id}/interactions`, { method: 'POST' });
+      expect(response.status).toBe(501);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('answers 401 when the adapter refuses the signature', async () => {
+    const { adapters } = interactionAdapter({ type: 'rejected', reason: 'Slack signature did not verify' });
+    const { db, app, integration } = await createIngress({ adapters });
+    try {
+      const response = await app.request(`/${integration.id}/interactions`, { method: 'POST' });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: { message: 'Slack signature did not verify' } });
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('answers 409 while the integration is pending, because it has no buttons out there', async () => {
+    const { adapters } = interactionAdapter({ type: 'not_connected', reason: 'credentials are not saved' });
+    const { db, app, integration } = await createIngress({ adapters, pending: true });
+    try {
+      const response = await app.request(`/${integration.id}/interactions`, { method: 'POST' });
+      expect(response.status).toBe(409);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('acknowledges a refused sender and changes nothing', async () => {
+    const { adapters, settlements } = interactionAdapter({
+      type: 'refused_sender',
+      reason: 'You are not on this integration’s approver list.',
+      reply_context: 'https://hooks.slack.com/actions/T0TEAM/1/abc',
+    });
+    const { db, app, integration, executor } = await createIngress({ adapters });
+    try {
+      const response = await app.request(`/${integration.id}/interactions`, { method: 'POST' });
+      expect(response.status).toBe(200);
+      // The settle is deferred off the acknowledgement, so it lands on the next tick.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(settlements).toEqual([{ type: 'refused', reason: 'You are not on this integration’s approver list.' }]);
+      expect(executor.starts).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('acknowledges before it resumes anything, and reports a stale click back to the clicker', async () => {
+    const { adapters, settlements } = interactionAdapter(CLICK);
+    const { db, app, integration, executor } = await createIngress({ adapters });
+    try {
+      const response = await app.request(`/${integration.id}/interactions`, { method: 'POST' });
+      expect(response.status).toBe(200);
+      // Nothing was started while the channel was waiting on the acknowledgement.
+      expect(executor.starts).toHaveLength(0);
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(settlements).toHaveLength(1);
+      expect(settlements[0]).toMatchObject({ type: 'refused' });
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('ignores a click it did not post', async () => {
+    const { adapters, settlements } = interactionAdapter({
+      type: 'ignore',
+      reason: 'No action this integration posted',
+    });
+    const { db, app, integration } = await createIngress({ adapters });
+    try {
+      const response = await app.request(`/${integration.id}/interactions`, { method: 'POST' });
+      expect(response.status).toBe(200);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(settlements).toEqual([]);
     } finally {
       await db.destroy();
     }
