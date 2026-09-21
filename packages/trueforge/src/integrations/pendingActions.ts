@@ -23,7 +23,9 @@ const SECRET_ARGUMENT_KEY =
   /(token|secret|password|passphrase|credential|api[-_]?key|apikey|auth|cookie|private[-_]?key|session[-_]?id|signature|bearer)/i;
 /** Values that look like a credential whatever they are called: `Bearer …`, `sk-…`, a JWT, a long opaque blob. */
 const SECRET_VALUE = /^(bearer\s|basic\s|sk-|xox[abprs]-|ghp_|gh[pousr]_|eyJ[\w-]+\.[\w-]+\.)/i;
-/** Long enough that nothing readable is this shape, and dense enough to be a key rather than prose. */
+/** A hex digest or key: nothing a person types into a tool argument looks like this. */
+const HEX_SECRET = /^[0-9a-f]{32,}$/i;
+/** Long enough, and mixed enough, to be a generated credential rather than a name or a path. */
 const OPAQUE_MIN_LENGTH = 24;
 const REDACTED = '[redacted]';
 /** Longest one argument value may be before it is cut. */
@@ -74,9 +76,21 @@ function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
-/** A value with no spaces and enough length to be a key rather than a sentence. */
+/**
+ * A credential in a format the prefix list does not know. Deliberately narrow: an approval
+ * message's argument line is what the approver decides on, so a path, a URL, a filename or a
+ * hyphenated slug must survive it. Anything with a separator (`/`, `:`) is one of those, and
+ * an all-lowercase name is not a generated key — what is left is a hex digest or a long
+ * string mixing both cases with digits.
+ */
 function looksOpaque(value: string): boolean {
-  return value.length >= OPAQUE_MIN_LENGTH && !/\s/.test(value) && /[A-Za-z]/.test(value) && /[\d\-_.]/.test(value);
+  if (HEX_SECRET.test(value)) {
+    return true;
+  }
+  if (value.length < OPAQUE_MIN_LENGTH || /[\s/:]/.test(value)) {
+    return false;
+  }
+  return /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value);
 }
 
 function secretValue(value: string): boolean {

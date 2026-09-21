@@ -131,10 +131,24 @@ describe('summarizeToolArguments', () => {
     expect(summarizeToolArguments(JSON.stringify({ note: value }))).toBe('note: [redacted]');
   });
 
-  it('leaves ordinary prose alone', () => {
-    expect(summarizeToolArguments(JSON.stringify({ note: 'restart the api service please' }))).toBe(
-      'note: restart the api service please',
+  it('redacts an unknown credential format that is long and mixed', () => {
+    expect(summarizeToolArguments(JSON.stringify({ note: 'Xk29fQpLm4RtZa81BvNw55' + 'Qq7' }))).toBe('note: [redacted]');
+    expect(summarizeToolArguments(JSON.stringify({ note: 'a3f5c9e1b7d2408695facbde1234567890abcdef' }))).toBe(
+      'note: [redacted]',
     );
+  });
+
+  // The argument line is what an approver decides on, so redaction has to be narrow: a
+  // Slack message reading `path: [redacted]` on every file operation is approved blind.
+  it.each([
+    '/var/log/app/production-2026.log',
+    'https://api.example.com/v2/deploy',
+    'service-account-prod.iam',
+    'restart the api service please',
+    'releases/2026-09-21-hotfix',
+    'my-very-long-kebab-case-branch-name',
+  ])('leaves %p alone, because an approver needs to read it', value => {
+    expect(summarizeToolArguments(JSON.stringify({ target: value }))).toBe(`target: ${value}`);
   });
 
   it('stops naming keys past a sane depth rather than stringifying what is under them', () => {
