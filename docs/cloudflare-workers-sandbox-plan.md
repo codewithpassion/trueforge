@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. It follows `docs/cloudflare-workers-port-plan.md`, which shipped Phases 0 to 5 with code execution disabled.
 
-Status: proposed on 2026-09-16. Phases 7a and 7b are complete; 7c (Code Mode) is built and deployed but its live acceptance test has not run. Section 8 records what 7a steps 1 to 8 found, Section 9 the 7a live acceptance test, Section 10 the Section 6 verdict, Section 11 Phase 7b: skills plus the two must-fixes 7a left behind, Section 12 the settings surface that replaced the deploy-var-only switch, and Section 13 Phase 7c: Code Mode, its design note and what is still open.
+Status: proposed on 2026-09-16. Phases 7a and 7b are complete; 7c (Code Mode) is built and the whole branch is deployed, but its live acceptance test has not run. Section 8 records what 7a steps 1 to 8 found, Section 9 the 7a live acceptance test, Section 10 the Section 6 verdict, Section 11 Phase 7b: skills plus the two must-fixes 7a left behind, Section 12 the settings surface that replaced the deploy-var-only switch, and Section 13 Phase 7c: Code Mode, its design note and what is still open.
 
 Goal: restore code execution on the Workers deploy with a Cloudflare-native sandbox provider, starting with a time-boxed spike on Cloudflare Computer (`@cloudflare/computer`). The spike decides whether Computer, or the Cloudflare Sandbox SDK as the fallback, backs a new `SandboxProvider`.
 
@@ -473,7 +473,11 @@ Deployed as Worker version `9e10a572-3299-4712-8976-e2ed03b65838` with the gate 
 
 **Only the gate is deployed.** `9e10a572` is the first commit of the phase and nothing else: the transport, the registry, the routing and the provider flip are on the branch, not on the deploy, so `supportsCodeMode` is still false live and Code Mode is still off for every agent. Leaving it up costs nothing — the tenant has no sessions, and the only behaviour that changed is where a container's outbound requests go.
 
-The acceptance run did not happen: the deploy's own session had expired, and re-establishing it stops at a Clerk OAuth consent screen, which an agent must not click. It runs in two passes, once someone has clicked Allow.
+The acceptance run did not happen: the deploy's own session had expired, and re-establishing it stops at a Clerk OAuth consent screen, which an agent must not click.
+
+**The whole branch is deployed since 2026-09-21**, rebased onto `0cbddda5`, as Worker version `688d2bfb-d63c-421a-9f3b-b3ab3e18d8e7`. No D1 migration was pending. The image pushed as `trueforge-computerdo@sha256:33c4ebc5…`, and the Containers application `trueforge-computerdo` reported `ready` right after the deploy. `/healthz` answers 200 (0.60 s) and `/api/v1/capabilities` answers 401 unauthenticated. A tail over the deploy recorded 5 events, all `ok`, and no exception. That deploy carries the transport, the registry and the routing as well as the gate, so the two passes below collapse into one. The built-in sandbox is still not enabled for the tenant, so no container has run a command through the gateway, and Code Mode is unreachable until a tenant admin enables the provider in Settings.
+
+The acceptance run stopped again before its first probe: the agent running it had no permission to drive the signed-in browser, and every probe needs an authenticated session. Nothing below has been measured. The list stays in its two-pass order, with pass two now running against `688d2bfb` as well.
 
 **Pass one decides the gate, against `9e10a572` as deployed.** Stop here and report if any of it fails.
 
