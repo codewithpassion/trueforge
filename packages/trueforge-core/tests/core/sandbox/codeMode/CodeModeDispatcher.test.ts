@@ -85,7 +85,7 @@ describe('CodeModeDispatcher', () => {
 
     const dispatcher = makeDispatcher([server]);
     const reply = await dispatcher.dispatch({
-      request: { op: 'call_tool', server: 'github', tool: 'spawn' },
+      request: { op: 'call_tool', server: 'github', tool: 'tool_a' },
       traceCarrier: {},
     });
 
@@ -142,5 +142,63 @@ describe('CodeModeDispatcher', () => {
       source: 'transport',
     });
     expect(server.listTools).not.toHaveBeenCalled();
+  });
+
+  describe('destructive tools', () => {
+    function serverWith(annotations: { destructiveHint?: boolean; readOnlyHint?: boolean } | undefined): IToolSet {
+      const server = makeMockIMCPServer({
+        name: 'github',
+        preload: true,
+        tools: [{ name: 'tool_a', description: 'A', inputSchema: OBJECT_INPUT_SCHEMA, preload: true, annotations }],
+      });
+      jest.mocked(server.callTool).mockResolvedValue({
+        result: { content: [{ type: 'text', text: 'ok' }], isError: false },
+        wasInitialized: undefined,
+      } satisfies CallToolResponse);
+      return server;
+    }
+
+    function callToolA(server: IToolSet) {
+      return makeDispatcher([server]).dispatch({
+        request: { op: 'call_tool', server: 'github', tool: 'tool_a', arguments: {} },
+        traceCarrier: {},
+      });
+    }
+
+    it.each([
+      ['an explicit destructive hint', { destructiveHint: true }],
+      ['a tool that says it is not read-only', { readOnlyHint: false }],
+    ])('refuses %s without calling it, blaming the caller', async (_label, annotations) => {
+      const server = serverWith(annotations);
+
+      const reply = await callToolA(server);
+
+      expect(reply).toMatchObject({ ok: false, source: 'caller' });
+      if (reply.ok) throw new Error('unreachable');
+      expect(reply.error).toContain('is destructive and cannot be called in Code Mode');
+      expect(server.callTool).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a read-only tool', { readOnlyHint: true }],
+      ['a tool with no annotations', undefined],
+    ])('calls %s', async (_label, annotations) => {
+      const server = serverWith(annotations);
+
+      await expect(callToolA(server)).resolves.toMatchObject({ ok: true });
+      expect(server.callTool).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a tool the server does not list', async () => {
+      const server = serverWith(undefined);
+
+      const reply = await makeDispatcher([server]).dispatch({
+        request: { op: 'call_tool', server: 'github', tool: 'unlisted', arguments: {} },
+        traceCarrier: {},
+      });
+
+      expect(reply).toMatchObject({ ok: false, source: 'caller' });
+      expect(server.callTool).not.toHaveBeenCalled();
+    });
   });
 });

@@ -12,6 +12,9 @@ import { d1Persistence, migrateDatabase, TENANT_ID } from './harness';
 
 const logger = createConsoleLogger({ level: 'error', bindings: { component: 'code-mode-routing-test' } });
 
+/** Names of the tools the fake server actually ran, so a refusal can be told apart from a failure. */
+const calledTools: string[] = [];
+
 const demoToolSet: IToolSet = {
   name: 'demo',
   id: 'demo',
@@ -19,14 +22,26 @@ const demoToolSet: IToolSet = {
   hasPreloadedTools: true,
   listTools: () =>
     Promise.resolve({
-      result: { tools: [{ name: 'ping', inputSchema: { type: 'object' as const }, preload: true }] },
+      result: {
+        tools: [
+          { name: 'ping', inputSchema: { type: 'object' as const }, preload: true },
+          {
+            name: 'wipe',
+            inputSchema: { type: 'object' as const },
+            preload: true,
+            annotations: { destructiveHint: true },
+          },
+        ],
+      },
       wasInitialized: undefined,
     }),
-  callTool: () =>
-    Promise.resolve({
+  callTool: params => {
+    calledTools.push(params.name);
+    return Promise.resolve({
       result: { content: [{ type: 'text' as const, text: 'pong' }], isError: false },
       wasInitialized: undefined,
-    }),
+    });
+  },
   toolCallInfo: () =>
     Promise.resolve({
       type: 'mcp' as const,
@@ -67,14 +82,14 @@ async function openChannelInSession(session_id: string): Promise<string> {
 }
 
 /** Presents a token on the gateway the session's own `ComputerDO` built, as its container would. */
-function presentThroughWorkspaceOf(params: { session_id: string; token: string }) {
+function presentThroughWorkspaceOf(params: { session_id: string; token: string; request?: object }) {
   const name = sessionDurableObjectName({ tenant_id: TENANT_ID, session_id: params.session_id });
   return runInDurableObject(env.COMPUTER_DO.get(env.COMPUTER_DO.idFromName(name)), async instance => {
     const response = await instance.egressGateway.fetch(
       new Request(CODE_MODE_BRIDGE_URL, {
         method: 'POST',
         headers: { authorization: `Bearer ${params.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ op: 'list_tools', server: 'demo' }),
+        body: JSON.stringify(params.request ?? { op: 'list_tools', server: 'demo' }),
       }),
     );
     return { status: response.status, body: await response.text() };
@@ -102,7 +117,7 @@ describe('Code Mode routing through the objects the deploy wires together', () =
 
     expect(answered.status).toBe(200);
     const reply = CodeModeReplySchema.parse(JSON.parse(answered.body));
-    expect(reply).toMatchObject({ ok: true, result: { tools: [{ name: 'ping' }] } });
+    expect(reply).toMatchObject({ ok: true, result: { tools: [{ name: 'ping' }, { name: 'wipe' }] } });
   });
 
   it('refuses a live token of one session presented through another session workspace', async () => {
@@ -119,5 +134,24 @@ describe('Code Mode routing through the objects the deploy wires together', () =
     } finally {
       warned.mockRestore();
     }
+  });
+
+  // The token sits in the sandbox env, so a raw request can skip the client and its approval check.
+  it('refuses a destructive tool sent straight to the gateway, without running it', async () => {
+    const token = await openChannelInSession('routing-destructive');
+
+    const answered = await presentThroughWorkspaceOf({
+      session_id: 'routing-destructive',
+      token,
+      request: { op: 'call_tool', server: 'demo', tool: 'wipe', arguments: {} },
+    });
+
+    expect(answered.status).toBe(200);
+    expect(CodeModeReplySchema.parse(JSON.parse(answered.body))).toMatchObject({
+      ok: false,
+      source: 'caller',
+      error: expect.stringContaining('is destructive'),
+    });
+    expect(calledTools).not.toContain('wipe');
   });
 });

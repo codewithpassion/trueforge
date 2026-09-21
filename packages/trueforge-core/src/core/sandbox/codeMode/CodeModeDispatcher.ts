@@ -6,6 +6,7 @@ import {
   isCallToolResponseCreateSubAgent,
   isCallToolResponseResult,
   type IToolSet,
+  type ToolSchema,
 } from '../../mcp/IMCPServer';
 import { extractErrorLogFields } from '../../util/errorLogFields';
 import type { Logger } from '../../util/logger';
@@ -35,6 +36,11 @@ function classifyErrorSource(e: unknown): CodeModeErrorSource {
     return 'caller';
   }
   return 'internal';
+}
+
+/** The rule `mcp_client.py` applies too: an explicit destructive hint, or a tool that says it is not read-only. */
+function isDestructive(tool: ToolSchema): boolean {
+  return tool.annotations?.destructiveHint === true || tool.annotations?.readOnlyHint === false;
 }
 
 // Direct W3C extractor, NOT the global `propagation` API. The gateway-wide propagator
@@ -122,7 +128,9 @@ export class CodeModeDispatcher {
     arguments?: Record<string, unknown> | undefined;
   }): Promise<unknown> {
     const { server, tool, arguments: args } = req;
-    const response = await this.getToolSet(server).callTool({ name: tool, arguments: args ?? {} });
+    const mcp = this.getToolSet(server);
+    await this.ensureNonDestructive({ mcp, server, tool });
+    const response = await mcp.callTool({ name: tool, arguments: args ?? {} });
     if (isAuthRequired(response)) {
       throw new InvalidMCPUsageError(`MCP server '${server}' requires OAuth; cannot call tool from sandbox`);
     }
@@ -135,5 +143,27 @@ export class CodeModeDispatcher {
       );
     }
     return response.result;
+  }
+
+  /**
+   * The sandbox client checks this too, but the sandbox holds the channel token, so a request that
+   * skips the client must meet the same refusal here or it would bypass the approval flow.
+   */
+  private async ensureNonDestructive(params: { mcp: IToolSet; server: string; tool: string }): Promise<void> {
+    const { mcp, server, tool } = params;
+    const listed = await mcp.listTools();
+    if (isAuthRequired(listed)) {
+      throw new InvalidMCPUsageError(`MCP server '${server}' requires OAuth; cannot call tool from sandbox`);
+    }
+    const schema = listed.result.tools.find(candidate => candidate.name === tool);
+    if (schema === undefined) {
+      throw new InvalidMCPUsageError(`Tool '${tool}' not found on MCP server '${server}'`);
+    }
+    if (isDestructive(schema)) {
+      throw new InvalidMCPUsageError(
+        `Tool '${tool}' on MCP server '${server}' is destructive and cannot be called in Code Mode; ` +
+          'call it directly so it can go through the user approval flow',
+      );
+    }
   }
 }
