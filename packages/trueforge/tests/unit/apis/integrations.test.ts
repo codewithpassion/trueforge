@@ -647,6 +647,8 @@ describe('integration events ingress', () => {
       });
       expect(response.status).toBe(200);
       expect(await response.text()).toBe('chal-123');
+      // The one body an unsigned caller can make us echo must not be sniffed as anything else.
+      expect(response.headers.get('x-content-type-options')).toBe('nosniff');
     } finally {
       await db.destroy();
     }
