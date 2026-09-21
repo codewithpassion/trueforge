@@ -79,6 +79,10 @@ function redactIntegration(manifest: IntegrationManifest): IntegrationManifest {
 /**
  * Real values set or rotate; redacted stand-ins and an omitted `auth` keep what is stored.
  * A manifest with no credentials on either side stays pending.
+ *
+ * `team_id` and `bot_user_id` are the channel's answer, not the caller's: an editor that
+ * leaves them out keeps what is stored rather than sending the integration back to pending.
+ * When a real token was supplied they already carry `auth.test`'s answer, so nothing is kept.
  */
 function resolveManifestForWrite({
   incoming,
@@ -87,13 +91,20 @@ function resolveManifestForWrite({
   incoming: IntegrationManifest;
   existing: IntegrationManifest | undefined;
 }): IntegrationManifest {
+  const installed = {
+    ...(incoming.team_id === undefined && existing?.team_id !== undefined ? { team_id: existing.team_id } : {}),
+    ...(incoming.bot_user_id === undefined && existing?.bot_user_id !== undefined
+      ? { bot_user_id: existing.bot_user_id }
+      : {}),
+  };
   const incomingAuth = incoming.auth;
   if (incomingAuth === undefined) {
     const kept = existing?.auth;
-    return kept === undefined ? { ...incoming } : { ...incoming, auth: kept };
+    return kept === undefined ? { ...incoming, ...installed } : { ...incoming, ...installed, auth: kept };
   }
   return {
     ...incoming,
+    ...installed,
     auth: {
       bot_token: resolveStoredSecretValue({
         incoming: incomingAuth.bot_token,

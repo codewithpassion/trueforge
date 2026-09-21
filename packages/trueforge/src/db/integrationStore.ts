@@ -18,7 +18,10 @@ export interface IntegrationRecord {
   id: string;
   tenant_id: string;
   type: IntegrationType;
-  /** Channel-side account (for Slack, the `team_id`); unique per tenant and type. */
+  /**
+   * Channel-side account (for Slack, the `team_id`); unique per tenant and type. A pending
+   * integration has no account yet and stands on its own id instead.
+   */
   external_account_id: string;
   manifest: IntegrationManifest;
   created_by_subject: CreatedBySubject;

@@ -340,6 +340,30 @@ describe('settings integrations router', () => {
     expect(stored?.manifest.auth).toBeUndefined();
   });
 
+  it('edits a connected integration from the settings form alone, which sends no ids', async () => {
+    // Exactly the request the Settings section makes: no workspace, no bot user, no credentials.
+    harness = await createHarness();
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const { data } = (await created.json()) as { data: Integration };
+
+    const updated = await harness.settings.request(
+      `/${data.id}`,
+      jsonInit('PUT', { manifest: pendingManifest({ allowed_channel_ids: ['C0GENERAL', 'C0RANDOM'] }) }),
+    );
+    expect(updated.status).toBe(200);
+    const body = (await updated.json()) as { data: Integration };
+    expect(body.data.status).toBe('connected');
+    expect(body.data.external_account_id).toBe('T0TEAM');
+    expect(body.data.manifest.team_id).toBe('T0TEAM');
+    expect(body.data.manifest.bot_user_id).toBe('U0BOT');
+    expect(body.data.manifest.allowed_channel_ids).toEqual(['C0GENERAL', 'C0RANDOM']);
+    // Nothing was rotated, so Slack was only asked at create time.
+    expect(harness.authTestCalls).toEqual([BOT_TOKEN]);
+
+    const stored = await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: data.id });
+    expect(stored?.manifest.auth).toEqual({ bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET });
+  });
+
   it('answers 409 when the credentials name a workspace other than the one claimed', async () => {
     harness = await createHarness({
       slackAuthTest: async () => ({ ok: true, team_id: 'T0OTHER', bot_user_id: 'U0OTHERBOT' }),
