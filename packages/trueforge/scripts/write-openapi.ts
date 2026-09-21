@@ -81,6 +81,8 @@ const app = createServerApp({
   resolveSkillStore: () => skillStore,
   resolveSandboxProviderStore: () => sandboxProviderStore,
   sandboxIntegration: undefined,
+  // Routes register regardless; the spec is the same whether or not a runtime serves them.
+  computers: undefined,
   clientCertificateMiddleware: undefined,
   sessionImport: undefined,
   resolveAgentStore: () => agentStore,

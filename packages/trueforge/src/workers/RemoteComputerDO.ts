@@ -17,19 +17,13 @@ import {
   STALE_AFTER_MS,
   STALENESS_POLL_MS,
 } from '../computers/protocol';
+import { COMPUTER_NAME_HEADER, COMPUTER_TENANT_HEADER } from '../computers/relayHeaders';
 import type { IComputerStore } from '../db/computerStore';
 import { workersComputerStore } from './computersService';
 import type { Env } from './env';
 
 /** Written by the alarm rather than per heartbeat, so a connected computer costs no D1 churn. */
 const LAST_SEEN_ALARM_MS = 60_000;
-
-/**
- * Set by the connect route on the forwarded upgrade. The object's id already is the computer id;
- * the name is carried so offline messages can say something a person recognises.
- */
-export const COMPUTER_NAME_HEADER = 'x-trueforge-computer-name';
-export const COMPUTER_TENANT_HEADER = 'x-trueforge-computer-tenant';
 
 interface SocketAttachment {
   readonly generation: number;

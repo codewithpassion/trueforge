@@ -13,6 +13,7 @@ import { createAgentsRouter } from './apis/agents';
 import { createAuthRouter } from './apis/auth';
 import { createCapabilitiesRouter } from './apis/capabilities';
 import { createCatalogRouter } from './apis/catalog';
+import { createComputerMachineRouter, createComputersRouter, registerComputerConnectRoute } from './apis/computers';
 import { createIntegrationEventsRouter } from './apis/integrationEvents';
 import { createMcpOAuthRouter } from './apis/mcpOAuth';
 import { createMcpServersRouter } from './apis/mcpServers';
@@ -37,6 +38,8 @@ import type { McpCatalog } from './catalog/McpCatalog';
 import type { ModelCatalog } from './catalog/ModelCatalog';
 import type { SandboxCatalog } from './catalog/SandboxCatalog';
 import type { SkillCatalog } from './catalog/SkillCatalog';
+import { INSTALL_SCRIPT_UNCONFIGURED, renderInstallScript } from './computers/installScript';
+import type { ComputersService } from './computers/service';
 import configuration, {
   getPublicBaseUrl,
   getPublicUiBasePath,
@@ -200,6 +203,11 @@ export interface ServerDeps<TTransaction> {
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
   /** Undefined when this runtime cannot run sandboxes; sandbox features then report unavailable. */
   sandboxIntegration: SandboxIntegration | undefined;
+  /**
+   * Undefined when this runtime cannot reach a machine's relay. The computer routes then answer
+   * 404 and `GET /capabilities` reports computers off, which is the Node build until phase 8c.
+   */
+  computers: ComputersService | undefined;
   /** Rejects requests without a verified client certificate; set only when mTLS is on. */
   clientCertificateMiddleware: MiddlewareHandler | undefined;
   /** Per-request store: DB git skills, or TrueFoundry registry catalog in TrueFoundry mode. */
@@ -254,6 +262,44 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
 
   app.get('/healthz', c => c.json({ status: 'ok', version: PACKAGE_VERSION }));
 
+  app.get('/install.sh', c => {
+    if (configuration.REMOTE_COMPUTER_RELEASE_BASE_URL === '') {
+      return c.json({ error: { message: INSTALL_SCRIPT_UNCONFIGURED } }, 503);
+    }
+    return c.body(
+      renderInstallScript({
+        baseUrl: getPublicBaseUrl(),
+        releaseBaseUrl: configuration.REMOTE_COMPUTER_RELEASE_BASE_URL,
+      }),
+      200,
+      { 'Content-Type': 'text/x-shellscript; charset=utf-8', 'Cache-Control': 'no-store' },
+    );
+  });
+
+  // The machine's own routes carry a credential of their own, so they are mounted without an auth
+  // shell — and before the admin mount, whose `use('*')` would otherwise swallow them.
+  registerComputerConnectRoute({
+    app,
+    path: '/api/v1/computers/connect',
+    computers: deps.computers,
+    logger: deps.logger,
+  });
+  app.route('/api/v1/computers', createComputerMachineRouter({ computers: deps.computers, logger: deps.logger }));
+  app.route(
+    '/api/v1/computers',
+    withAdminAuth(
+      createComputersRouter({
+        computers: deps.computers,
+        resolveRequestContext,
+        publicBaseUrl: () => getPublicBaseUrl(),
+        releaseBaseUrl: configuration.REMOTE_COMPUTER_RELEASE_BASE_URL,
+        dockerImage: configuration.REMOTE_COMPUTER_DOCKER_IMAGE,
+        logger: deps.logger,
+      }),
+      adminAuthMiddleware,
+    ),
+  );
+
   app.route(
     '/api/v1/auth',
     createAuthRouter({
@@ -268,6 +314,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       createCapabilitiesRouter({
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
         sandboxIntegration: deps.sandboxIntegration,
+        computers: deps.computers,
         withTransaction: deps.withTransaction,
         logger: deps.logger,
         resolveRequestContext,

@@ -117,6 +117,11 @@ export function parseOidcAllowedEmails(raw: string | undefined): string[] {
 }
 
 /** Parses a positive-integer env var, falling back to `defaultValue` when unset/blank. */
+/** Callers join with `/`, so a configured base never carries its own trailing slash. */
+function trimTrailingSlash(raw: string): string {
+  return raw.trim().replace(/\/+$/, '');
+}
+
 function parsePositiveInt(options: {
   envKey: string;
   raw: string | undefined;
@@ -462,6 +467,18 @@ export interface SharedServerConfiguration {
    */
   SANDBOX_EXEC_TIMEOUT_SECONDS: number;
   /**
+   * Where `GET /install.sh` downloads the remote-computer client from, without a trailing slash;
+   * the script appends `/<version>/trueforge-computer_<os>_<arch>`. Empty makes that route answer
+   * 503, so no deploy points at someone else's binaries by default.
+   * Env: `REMOTE_COMPUTER_RELEASE_BASE_URL`.
+   */
+  REMOTE_COMPUTER_RELEASE_BASE_URL: string;
+  /**
+   * Container image for the remote-computer client, used only to build the copyable `docker run`
+   * command. Empty omits that command. Env: `REMOTE_COMPUTER_DOCKER_IMAGE`.
+   */
+  REMOTE_COMPUTER_DOCKER_IMAGE: string;
+  /**
    * Max bytes for an HTTP request body. Env: `MAX_REQUEST_BODY_BYTES`. Default 30 MB.
    */
   MAX_REQUEST_BODY_BYTES: number;
@@ -720,6 +737,10 @@ export function parseServerConfiguration(): ServerConfiguration {
       defaultValue: 300,
       maxValue: SANDBOX_EXEC_TIMEOUT_MAX_SECONDS,
     }),
+    REMOTE_COMPUTER_RELEASE_BASE_URL: trimTrailingSlash(
+      getEnv('REMOTE_COMPUTER_RELEASE_BASE_URL', { defaultValue: '' }) ?? '',
+    ),
+    REMOTE_COMPUTER_DOCKER_IMAGE: (getEnv('REMOTE_COMPUTER_DOCKER_IMAGE', { defaultValue: '' }) ?? '').trim(),
     MAX_REQUEST_BODY_BYTES: parsePositiveInt({
       envKey: 'MAX_REQUEST_BODY_BYTES',
       raw: getEnv('MAX_REQUEST_BODY_BYTES'),

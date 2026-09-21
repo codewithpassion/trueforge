@@ -20,6 +20,8 @@ export interface ComputerRelayPort {
 export interface ComputersService {
   readonly store: IComputerStore;
   relay(computerId: string): ComputerRelayPort;
+  /** Hands a WebSocket upgrade to the machine's relay, which owns the socket from then on. */
+  relayFetch(input: { computerId: string; request: Request }): Promise<Response>;
 }
 
 /** Where a machine's per-session directories live, derived from what `hello` reported. */

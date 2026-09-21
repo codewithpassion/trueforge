@@ -16,10 +16,12 @@ export function workersComputerStore(env: Pick<Env, 'DB'>): SqliteComputerStore 
 
 export function workersComputersService(env: Pick<Env, 'DB' | 'REMOTE_COMPUTER_DO'>): ComputersService {
   const store = workersComputerStore(env);
+  const stubFor = (computerId: string) => env.REMOTE_COMPUTER_DO.get(env.REMOTE_COMPUTER_DO.idFromName(computerId));
   return {
     store,
+    relayFetch: ({ computerId, request }) => stubFor(computerId).fetch(request),
     relay: computerId => {
-      const stub = env.REMOTE_COMPUTER_DO.get(env.REMOTE_COMPUTER_DO.idFromName(computerId));
+      const stub = stubFor(computerId);
       return {
         request: input => stub.request(input),
         revoke: () => stub.revoke(),

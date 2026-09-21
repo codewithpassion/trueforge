@@ -422,7 +422,7 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
       .where('computer_agent_access.computer_id', '=', input.computer_id)
       .where('computer.tenant_id', '=', input.tenant_id)
       .executeTakeFirstOrThrow();
-    return Number(row.count);
+    return row.count;
   }
 
   async appendAudit(input: AppendComputerAuditInput, transaction?: Kysely<Database>): Promise<void> {

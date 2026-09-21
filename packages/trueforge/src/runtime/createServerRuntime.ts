@@ -10,6 +10,7 @@ import { McpCatalog } from '../catalog/McpCatalog';
 import { ModelCatalog } from '../catalog/ModelCatalog';
 import { SandboxCatalog } from '../catalog/SandboxCatalog';
 import { SkillCatalog } from '../catalog/SkillCatalog';
+import type { ComputersService } from '../computers/service';
 import configuration, { isOidcConfigured } from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IIntegrationStore } from '../db/integrationStore';
@@ -66,6 +67,8 @@ export async function createServerRuntime<TTransaction>(options: {
   persistence: ServerPersistence<TTransaction>;
   logger: Logger;
   sandboxIntegration: SandboxIntegration | undefined;
+  /** Undefined when this runtime cannot reach a machine's relay. */
+  computers: ComputersService | undefined;
   clientCertificateMiddleware: MiddlewareHandler | undefined;
   authenticator: Authenticator;
   authorizer: Authorizer;
@@ -123,6 +126,7 @@ export async function createServerRuntime<TTransaction>(options: {
     resolveImportAgentStore,
     resolveSandboxProviderStore,
     sandboxIntegration: options.sandboxIntegration,
+    computers: options.computers,
     clientCertificateMiddleware: options.clientCertificateMiddleware,
     resolveSkillStore,
     withTransaction,

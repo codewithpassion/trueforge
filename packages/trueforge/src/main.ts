@@ -499,6 +499,9 @@ async function createNodeServerRuntime<TTransaction>(options: {
     persistence,
     logger,
     sandboxIntegration,
+    // Remote computers ship on Workers first; this runtime has no relay to hold their sockets,
+    // so the routes answer 404 and `GET /capabilities` reports them off until phase 8c.
+    computers: undefined,
     clientCertificateMiddleware:
       !configuration.STANDALONE && configuration.TRUEFORGE_MTLS_ENABLED
         ? createClientCertificateMiddleware(logger)

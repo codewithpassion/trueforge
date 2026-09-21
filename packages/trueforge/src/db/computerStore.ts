@@ -165,7 +165,7 @@ export interface IComputerStore<TTransaction = never> {
     input: { tenant_id: string; computer_id: string; agent_name: string },
     transaction?: TTransaction,
   ): Promise<boolean>;
-  /** Names on any computer's allowlist in this tenant, so delete can refuse while one is granted. */
+  /** How many agents this computer allows, so delete can refuse while one is still granted. */
   countAgentAccess(input: { tenant_id: string; computer_id: string }, transaction?: TTransaction): Promise<number>;
 
   appendAudit(input: AppendComputerAuditInput, transaction?: TTransaction): Promise<void>;
