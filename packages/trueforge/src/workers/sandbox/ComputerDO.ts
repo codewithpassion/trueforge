@@ -6,6 +6,7 @@ import configuration from '../../config';
 import type { Env } from '../env';
 import { createConsoleLogger } from '../logger';
 import { COMPUTER_TLS_TRUST_ENV, COMPUTER_TRUST_EGRESS_CA_BIN, COMPUTER_WORKSPACE_ROOT } from './computerPaths';
+import { EgressCaTrust } from './egressCaTrust';
 import type { SandboxEgressGateway } from './sandboxEgressGateway';
 import { workspaceStorage } from './workspaceStorage';
 
@@ -91,7 +92,12 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
   readonly #workspace: Workspace;
   readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'ComputerDO' } });
   #inactivityTimeoutSet = false;
-  #egressCaTrusted = false;
+  /**
+   * The entrypoint installs the egress CA in the background once it appears; this makes sure it has
+   * before a container's first command, and says so in the log when it has not, because the command
+   * itself would only see a certificate error.
+   */
+  readonly #egressCaTrust: EgressCaTrust;
   /**
    * Where this container's egress goes. Public so a test can drive the gateway this object built,
    * props included, rather than one it assembled itself.
@@ -109,6 +115,21 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
       // Code Mode gets an address inside the Worker and the rest of egress stays reviewable.
       egress: { mode: 'http-gateway', gateway: this.egressGateway },
     });
+    this.#egressCaTrust = new EgressCaTrust({
+      runHelper: async () => {
+        using handle = await this.#workspace.runtime.exec(
+          `${COMPUTER_TRUST_EGRESS_CA_BIN} ${String(EGRESS_CA_WAIT_SECONDS)}`,
+          { cwd: COMPUTER_WORKSPACE_ROOT, env: {}, timeoutMs: (EGRESS_CA_WAIT_SECONDS + 10) * 1000, encoding: 'utf8' },
+        );
+        const result = await handle.result();
+        return { exitCode: result.exitCode, output: result.stdout + result.stderr };
+      },
+      containerHasExited: async () =>
+        (await this.getWorkspaceContainer()
+          .exitInfo()
+          .catch(() => null)) !== null,
+      logger: this.#logger,
+    });
     this.#workspace = new Workspace({
       storage: workspaceStorage(ctx.storage),
       backends: [this.#backend],
@@ -121,7 +142,7 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
   }
 
   async execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome> {
-    await this.#trustEgressCa();
+    await this.#egressCaTrust.ensure();
     using handle = await this.#workspace.runtime.exec(request.command, {
       cwd: request.cwd,
       env: withTlsTrustEnv(request.env),
@@ -143,46 +164,6 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
       syncPending: result.sync.status === 'pending',
       syncError: result.sync.status === 'pending' ? result.sync.error : undefined,
     };
-  }
-
-  /**
-   * The container's entrypoint installs the egress CA in the background once it appears; this makes
-   * sure it has before the first command, and after the container has exited, and says so in the
-   * log when it has not, because the command itself would only see a certificate error. Retried on
-   * every command until it succeeds.
-   */
-  async #trustEgressCa(): Promise<void> {
-    if (this.#egressCaTrusted) {
-      // An exit is cleared when a container starts, so one on record means the trusted container
-      // has gone and the next is a new one with a CA of its own.
-      const exited = await this.getWorkspaceContainer()
-        .exitInfo()
-        .catch(() => null);
-      if (exited === null) {
-        return;
-      }
-      this.#egressCaTrusted = false;
-    }
-    try {
-      using handle = await this.#workspace.runtime.exec(
-        `${COMPUTER_TRUST_EGRESS_CA_BIN} ${String(EGRESS_CA_WAIT_SECONDS)}`,
-        { cwd: COMPUTER_WORKSPACE_ROOT, env: {}, timeoutMs: (EGRESS_CA_WAIT_SECONDS + 10) * 1000, encoding: 'utf8' },
-      );
-      const result = await handle.result();
-      if (result.exitCode === 0) {
-        this.#egressCaTrusted = true;
-        return;
-      }
-      this.#logger.error('The sandbox does not trust the Cloudflare egress CA; its HTTPS requests will fail', {
-        exitCode: result.exitCode,
-        output: (result.stdout + result.stderr).slice(0, 500),
-      });
-    } catch (error) {
-      this.#logger.error(
-        'Could not check that the sandbox trusts the Cloudflare egress CA',
-        extractErrorLogFields(error),
-      );
-    }
   }
 
   /**
