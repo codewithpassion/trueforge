@@ -43,16 +43,35 @@ const SLACK_BOT_USER_DISPLAY_NAME_MAX = 80;
 const SLACK_APP_NAME_MAX = 35;
 
 /**
+ * Latin letters that carry no combining mark, so `NFKD` leaves them whole. Without these,
+ * "Bøt" would slug to `b-t` and "Straße" to `stra-e`.
+ */
+const LATIN_FOLDING: Record<string, string> = {
+  ø: 'o',
+  æ: 'ae',
+  œ: 'oe',
+  ß: 'ss',
+  đ: 'd',
+  ð: 'd',
+  þ: 'th',
+  ł: 'l',
+  ħ: 'h',
+  ı: 'i',
+  ŋ: 'n',
+};
+
+/**
  * Slack's bot user display name allows only `a-z 0-9 . _ -`, while the app name it sits under
  * is free text. Rather than make people type the restricted form, the app name is what they
- * choose and the bot display name is derived from it: accents are folded, everything else
- * outside the set becomes a dash, and runs of dashes collapse.
+ * choose and the bot display name is derived from it here — the one place that owns the rule.
  */
 export function slackBotUserDisplayName(appName: string): string {
-  return appName
+  const folded = appName
     .normalize('NFKD')
     .replace(/\p{Diacritic}/gu, '')
     .toLowerCase()
+    .replace(/[øæœßđðþłħıŋ]/g, character => LATIN_FOLDING[character] ?? character);
+  return folded
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^[-.]+|[-.]+$/g, '')
@@ -61,16 +80,21 @@ export function slackBotUserDisplayName(appName: string): string {
 
 /**
  * The name a person chooses for the bot. It becomes Slack's app name as typed, and the bot
- * user's display name once slugged — so a name that slugs away to nothing is refused here
- * rather than by Slack.
+ * user's display name once slugged — so a name that leaves no letter or digit behind is
+ * refused here rather than by Slack.
  */
 export const SlackBotDisplayNameSchema = z
   .string()
   .trim()
   .min(1)
   .max(SLACK_APP_NAME_MAX)
-  .refine(value => slackBotUserDisplayName(value).length > 0, {
-    message: 'The name must contain a letter or a digit.',
+  .refine(value => /[a-z0-9]/.test(slackBotUserDisplayName(value)), {
+    message: 'The bot name must contain a letter or a digit.',
+  })
+  // Slack reserves its own name, so an app called "slackbot" or "Slack helper" is refused on
+  // creation; catching it here costs one round trip less.
+  .refine(value => !/slack/i.test(value), {
+    message: 'Slack does not allow "slack" in an app name.',
   })
   .describe('Bot name in Slack, up to 35 characters. The bot user display name is derived from it.')
   .openapi('SlackBotDisplayName');

@@ -23,7 +23,11 @@ const PENDING: IntegrationBase = {
 
 const CONNECTED: IntegrationBase = { ...PENDING, status: 'connected', externalAccountId: 'T0TEAM' };
 
-const MANIFEST_JSON = JSON.stringify({ display_information: { name: 'release-bot' } }, null, 2);
+const MANIFEST_JSON = JSON.stringify(
+  { display_information: { name: 'TrueForge Bot' }, features: { bot_user: { display_name: 'trueforge-bot' } } },
+  null,
+  2,
+);
 
 function renderSection(
   catalog: Partial<IntegrationCatalogServer> & { listIntegrations: () => Promise<IntegrationBase[]> },
@@ -97,14 +101,13 @@ describe('IntegrationSettings', () => {
     });
   });
 
-  it('accepts a human-readable bot name and shows what the bot user becomes', async () => {
+  it('sends a human-readable bot name as typed', async () => {
     const createIntegration = vi.fn(async () => PENDING);
     renderSection({ listIntegrations: async () => [], createIntegration });
 
     fireEvent.click(await screen.findByRole('button', { name: /Add Slack workspace/ }));
     fireEvent.change(screen.getByLabelText('Bot name'), { target: { value: 'TrueForge Bot' } });
     fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'support-bot' } });
-    expect(screen.getByText(/@trueforge-bot/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => {
@@ -112,9 +115,14 @@ describe('IntegrationSettings', () => {
     });
   });
 
-  it('says why a bot name Slack would refuse cannot be used, without calling the server', async () => {
-    const createIntegration = vi.fn(async () => PENDING);
-    renderSection({ listIntegrations: async () => [], createIntegration });
+  it("surfaces the server's own message when it refuses the bot name", async () => {
+    // The slug rule lives on the server, so the form does not second-guess it.
+    renderSection({
+      listIntegrations: async () => [],
+      createIntegration: async () => {
+        throw new Error('The bot name must contain a letter or a digit.');
+      },
+    });
 
     fireEvent.click(await screen.findByRole('button', { name: /Add Slack workspace/ }));
     fireEvent.change(screen.getByLabelText('Bot name'), { target: { value: '???' } });
@@ -122,7 +130,14 @@ describe('IntegrationSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     expect(await screen.findByText(/letter or a digit/)).toBeInTheDocument();
-    expect(createIntegration).not.toHaveBeenCalled();
+  });
+
+  it('shows the bot handle the server derived, not one it computed', async () => {
+    renderSection({ listIntegrations: async () => [PENDING] });
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+
+    expect(await screen.findByText(/The bot will appear in Slack as @trueforge-bot/)).toBeInTheDocument();
   });
 
   it('warns that renaming does not rename an app Slack already created', async () => {

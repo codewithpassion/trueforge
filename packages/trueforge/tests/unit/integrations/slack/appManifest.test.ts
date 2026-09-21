@@ -52,7 +52,7 @@ describe('buildSlackAppManifest', () => {
 });
 
 describe('the chosen bot name', () => {
-  it.each(['TrueForge Bot', 'release-bot', 'Release Bot 2', 'Über Bot', 'forge.bot', 'a'.repeat(35)])(
+  it.each(['TrueForge Bot', 'release-bot', 'Release Bot 2', 'Über Bot', 'Bøt', 'Straße', 'forge.bot', 'a'.repeat(35)])(
     'accepts %p',
     name => {
       expect(SlackBotDisplayNameSchema.safeParse(name).success).toBe(true);
@@ -64,14 +64,34 @@ describe('the chosen bot name', () => {
     ['   ', 'blank'],
     ['a'.repeat(36), 'over Slack’s 35-character app name limit'],
     ['???', 'nothing left once slugged'],
-    ['---', 'nothing left once slugged'],
+    ['---', 'no letter or digit'],
+    ['___', 'no letter or digit'],
+    ['_-_', 'no letter or digit'],
+    ['...', 'no letter or digit'],
+    ['日本語', 'no Latin letter or digit'],
   ])('rejects %p (%s)', name => {
-    expect(SlackBotDisplayNameSchema.safeParse(name).success).toBe(false);
+    const parsed = SlackBotDisplayNameSchema.safeParse(name);
+    expect(parsed.success).toBe(false);
+  });
+
+  it.each(['slackbot', 'Slackbot', 'Slack helper', 'my-slack-bot'])('rejects %p, which Slack reserves', name => {
+    const parsed = SlackBotDisplayNameSchema.safeParse(name);
+    expect(parsed.success).toBe(false);
+    expect(JSON.stringify(parsed.error?.issues)).toContain('slack');
+  });
+
+  it('says a name with nothing to slug must contain a letter or a digit', () => {
+    const parsed = SlackBotDisplayNameSchema.safeParse('___');
+    expect(JSON.stringify(parsed.error?.issues)).toContain('letter or a digit');
   });
 
   it.each([
     ['TrueForge Bot', 'trueforge-bot'],
     ['Über Bot', 'uber-bot'],
+    ['Bøt', 'bot'],
+    ['Straße', 'strasse'],
+    ['Æon Œuvre', 'aeon-oeuvre'],
+    ['Łukasz', 'lukasz'],
     ['release  --  bot', 'release-bot'],
     ['.forge.', 'forge'],
     ['already-fine', 'already-fine'],

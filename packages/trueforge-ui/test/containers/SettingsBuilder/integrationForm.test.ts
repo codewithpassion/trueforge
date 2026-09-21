@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  botUserDisplayName,
   EMPTY_INTEGRATION_FORM,
   parseAllowedChannels,
   toIntegrationForm,
@@ -74,16 +73,10 @@ describe('validateIntegrationForm', () => {
     expect(validateIntegrationForm(form({ botDisplayName: 'a'.repeat(36) }))).toContain('at most 35');
   });
 
-  it.each(['???', '---'])('refuses %p, which leaves no bot user display name', botDisplayName => {
-    expect(validateIntegrationForm(form({ botDisplayName }))).toContain('letter or a digit');
-  });
-
-  it.each([
-    ['TrueForge Bot', 'trueforge-bot'],
-    ['Über Bot', 'uber-bot'],
-    ['already-fine', 'already-fine'],
-  ])('derives the Slack bot user display name %p → %p', (name, expected) => {
-    expect(botUserDisplayName(name)).toBe(expected);
+  // The character rules belong to the server, which owns the slug; the form only checks what
+  // it can without duplicating them, and surfaces the server's message for the rest.
+  it.each(['???', '---', 'slackbot'])('leaves %p for the server to refuse', botDisplayName => {
+    expect(validateIntegrationForm(form({ botDisplayName }))).toBeUndefined();
   });
 
   it('asks for an agent', () => {

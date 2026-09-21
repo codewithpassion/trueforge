@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { z } from 'zod';
 
 import { cn } from '@/atoms/lib/cn.js';
 import { auiInputClass } from '@/atoms/lib/inputClasses.js';
@@ -12,7 +13,6 @@ import type { IntegrationBase, IntegrationCatalogServer, IntegrationSetupManifes
 import { getErrorMessage } from '@/utils/getErrorMessage.js';
 import { useToasterOptional } from '../ToasterContainer.js';
 import {
-  botUserDisplayName,
   EMPTY_INTEGRATION_FORM,
   parseAllowedChannels,
   toIntegrationForm,
@@ -37,10 +37,23 @@ function StatusBadge({ status }: { status: IntegrationBase['status'] }) {
   );
 }
 
-/** Slack restricts the bot user's own display name, so show what the chosen name becomes. */
-function botUserPreview(name: string): string {
-  const slug = botUserDisplayName(name.trim());
-  return slug === '' || slug === name.trim() ? '' : `, and the bot as @${slug}`;
+/**
+ * The handle Slack will give the bot user. Read from the manifest the server generated rather
+ * than derived again here: the server owns that rule.
+ */
+const BotHandleSchema = z.object({
+  features: z.object({ bot_user: z.object({ display_name: z.string() }) }),
+});
+
+function botHandleFrom(manifestJson: string): string | undefined {
+  let document: unknown;
+  try {
+    document = JSON.parse(manifestJson);
+  } catch {
+    return undefined;
+  }
+  const parsed = BotHandleSchema.safeParse(document);
+  return parsed.success ? parsed.data.features.bot_user.display_name : undefined;
 }
 
 function FieldLabel({ htmlFor, children }: { htmlFor: string; children: string }) {
@@ -73,6 +86,7 @@ const IntegrationSettings = () => {
   const [setup, setSetup] = useState<IntegrationSetupManifest | null>(null);
 
   const selected = integrations.find(integration => integration.id === selectedId) ?? null;
+  const botHandle = setup === null ? undefined : botHandleFrom(setup.manifestJson);
 
   const refresh = useCallback(async () => {
     if (integrationCatalog === undefined) return;
@@ -220,8 +234,8 @@ const IntegrationSettings = () => {
           className={auiInputClass('h-11')}
         />
         <p className="mt-1 text-xs text-text-secondary">
-          Up to 35 characters. Slack shows this as the app name{botUserPreview(form.botDisplayName)}. Renaming here
-          changes the generated manifest only — an app Slack has already created keeps its name.
+          Up to 35 characters, written however you like. Renaming here changes the generated manifest only — an app
+          Slack has already created keeps its name.
         </p>
       </div>
       <div>
@@ -303,6 +317,9 @@ const IntegrationSettings = () => {
                     <code>{setup.manifestJson}</code>
                   </pre>
                   <p className="mt-2 break-all text-xs text-text-secondary">Request URL: {setup.requestUrl}</p>
+                  {botHandle === undefined ? null : (
+                    <p className="mt-1 text-xs text-text-secondary">The bot will appear in Slack as @{botHandle}.</p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button.Secondary type="button" onClick={copyManifest}>
                       <Icon name="copy" size="1rem" className="mr-1" />

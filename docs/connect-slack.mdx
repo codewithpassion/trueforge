@@ -34,9 +34,11 @@ Open **Settings → Integrations → Add Slack workspace** and fill in:
 
 - **Bot name** — what Slack calls the app, up to 35 characters and written however you like:
   `TrueForge Bot` is fine. Slack restricts the bot user's own display name to `a-z`, `0-9`, `.`,
-  `-` and `_`, so that one is derived from your name — accents are folded, anything else becomes a
-  dash, and runs of dashes collapse, making `TrueForge Bot` into `@trueforge-bot`. The form shows
-  what it will be. A name that leaves nothing behind, such as `???`, is refused.
+  `-` and `_`, so that one is derived from your name — accents and letters like `ø` and `ß` are
+  folded to their Latin spelling, anything else becomes a dash, and runs of dashes collapse, so
+  `TrueForge Bot` becomes `@trueforge-bot` and `Straße Bot` becomes `@strasse-bot`. The
+  integration's page shows the handle once it exists. A name with no letter or digit left, such as
+  `???` or `___`, is refused, and so is any name containing "slack", which Slack reserves.
 - **Agent** — the agent that answers.
 - **Allowed channels** — channel ids, comma separated. This is an allowlist, not a filter: an empty
   list allows no channel.
