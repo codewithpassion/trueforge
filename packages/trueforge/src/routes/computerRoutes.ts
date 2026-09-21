@@ -173,7 +173,8 @@ export const putComputerAgentAccessRoute = createRoute({
   path: '/{computer_id}/agents',
   tags: [OpenApiTag.COMPUTERS],
   summary: 'Replace the agents allowed on a computer',
-  description: 'Sets the whole list. An agent removed here stops being able to use the machine at once.',
+  description:
+    'Sets the whole list. Granting an agent trusts everyone who can edit it: its owner can point it at this machine and change what it is told to do.',
   'x-fern-sdk-group-name': ['computers', 'agents'],
   'x-fern-sdk-method-name': 'create_or_update',
   request: {

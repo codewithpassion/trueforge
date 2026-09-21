@@ -4070,7 +4070,7 @@ client.computers.agents.list(
 <dl>
 <dd>
 
-Sets the whole list. An agent removed here stops being able to use the machine at once.
+Sets the whole list. Granting an agent trusts everyone who can edit it: its owner can point it at this machine and change what it is told to do.
 </dd>
 </dl>
 </dd>

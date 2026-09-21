@@ -23,5 +23,11 @@ export interface RateLimiter {
  */
 export function rateLimitKey({ request, route }: { request: Request; route: string }): string | undefined {
   const address = request.headers.get('CF-Connecting-IP');
-  return address === null ? undefined : `${route}:${address}`;
+  if (address === null) {
+    return undefined;
+  }
+  // An IPv6 client is given a /64 rather than a single address: one host there holds more
+  // addresses than the whole of IPv4, so keying on the full one limits nothing.
+  const bucket = address.includes(':') ? address.split(':').slice(0, 4).join(':') : address;
+  return `${route}:${bucket}`;
 }

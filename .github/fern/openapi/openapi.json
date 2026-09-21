@@ -8382,7 +8382,7 @@
         "x-fern-sdk-method-name": "list"
       },
       "put": {
-        "description": "Sets the whole list. An agent removed here stops being able to use the machine at once.",
+        "description": "Sets the whole list. Granting an agent trusts everyone who can edit it: its owner can point it at this machine and change what it is told to do.",
         "parameters": [
           {
             "description": "Computer id.",

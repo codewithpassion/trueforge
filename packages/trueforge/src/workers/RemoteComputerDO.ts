@@ -549,6 +549,10 @@ export class RemoteComputerDO extends DurableObject {
       const stale = heartbeatAt !== null && now - heartbeatAt > STALE_AFTER_MS;
       if (stale || this.#meta.generation !== generation || socket.readyState !== WebSocket.READY_STATE_OPEN) {
         this.#discard(id);
+        // The command is still running on a machine that has simply stopped answering — a
+        // suspended laptop, most often. Nothing here can reach it, so it is cancelled on the
+        // socket that comes back, exactly like one lost to a dropped connection.
+        this.ctx.waitUntil(this.#rememberOrphans([id]));
         if (stale) {
           this.#meta = { ...this.#meta, last_seen_at: heartbeatAt };
           try {
@@ -560,11 +564,11 @@ export class RemoteComputerDO extends DurableObject {
         return {
           ok: false,
           reason: 'offline',
-          message: offlineMessage({
+          message: `${offlineMessage({
             computerName: this.#name(),
             lastSeenAt: this.#meta.last_seen_at,
             now,
-          }),
+          })}. The command may still be running on the computer; it is not retried.`,
           last_seen_at: this.#meta.last_seen_at,
           waited_ms: now - entry.startedAt,
         };

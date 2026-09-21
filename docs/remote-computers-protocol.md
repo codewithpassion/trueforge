@@ -200,6 +200,11 @@ frame over 8 MiB with `frame_too_large`, because the platform enforces its own 3
 the socket rather than failing one request. A reply whose socket has closed is dropped rather than
 written to the next one, so the server never receives an answer it has no pending request for.
 
+The server confines `file_get` and `file_put` to the session's own directory, but that check is
+**lexical**: it resolves `.` and `..` and compares prefixes. A symlink inside the session directory
+that points out of it is invisible to the server, so the client refuses its own state directory and
+is the only side that can see where a path really leads.
+
 ## 5. Concurrency and timeouts
 
 The relay runs at most `MAX_IN_FLIGHT_EXEC` = 4 execs per computer and queues up to `MAX_QUEUE_DEPTH` =
@@ -208,6 +213,13 @@ The relay runs at most `MAX_IN_FLIGHT_EXEC` = 4 execs per computer and queues up
 A request's relay deadline is its own `timeout_ms` plus `RELAY_GRACE_MS` = 10,000 ms, so the client's own
 exit 124 wins the race. On its deadline the relay sends a `cancel` for the request and gives up. While a
 request waits, the relay re-checks the socket's last heartbeat every `STALENESS_POLL_MS` = 2,000 ms.
+
+The server never re-runs a command whose answer was lost. A dropped socket, a replaced connection, a
+revoke or a stale heartbeat all report the outcome as unknown — saying the command may still be
+running — and the relay sends a `cancel` for that request id on the socket that next connects. A
+relay **reset** is the exception: the object dies with its pending map, so those ids are not
+remembered and no cancel follows; the command runs until its own `timeout_ms` deadline, which the
+client enforces with exit 124. Either way a retry is a new request with a new id, never a reissue.
 
 If the relay object is reset mid-request (a deploy, an eviction) the command keeps running on the machine
 with nobody to collect it. The client must record its process-group ids and sweep them on startup, and a

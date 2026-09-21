@@ -89,18 +89,30 @@ async function refuseWhenRateLimited({
   request,
   route,
   limit,
+  logger,
 }: {
   computers: ComputersService;
   request: Request;
   route: string;
   limit: number;
+  logger: Logger;
 }): Promise<{ retryAfterSeconds: string } | undefined> {
   const limiter = computers.rateLimiter;
   const key = rateLimitKey({ request, route });
   if (limiter === undefined || key === undefined) {
     return undefined;
   }
-  const outcome = await limiter.take({ key, limit, windowMs: RATE_LIMIT_WINDOW_MS });
+  let outcome;
+  try {
+    outcome = await limiter.take({ key, limit, windowMs: RATE_LIMIT_WINDOW_MS });
+  } catch (error) {
+    // Fail open, as the comment above promises: a broken limiter must not lock every machine out.
+    logger.warn('Could not rate limit a remote computer route; allowing it', {
+      ...extractErrorLogFields(error),
+      route,
+    });
+    return undefined;
+  }
   return outcome.allowed ? undefined : { retryAfterSeconds: String(Math.ceil(outcome.retry_after_ms / 1000)) };
 }
 
@@ -419,8 +431,11 @@ export function createComputersRouter(deps: ComputersRouterDeps) {
     );
   };
 
+  // Every fixed path goes on before `/{computer_id}`, or the wildcard swallows it and `/audit`
+  // answers "no such computer". `tests/workers/remoteComputerRoutes.test.ts` holds that line.
   router.openapi(listComputersRoute, listHandler);
   router.openapi(createComputerRoute, createHandler);
+  router.openapi(listTenantComputerAuditRoute, tenantAuditHandler);
   router.openapi(getComputerRoute, getHandler);
   router.openapi(patchComputerRoute, patchHandler);
   router.openapi(deleteComputerRoute, deleteHandler);
@@ -428,7 +443,6 @@ export function createComputersRouter(deps: ComputersRouterDeps) {
   router.openapi(putComputerAgentAccessRoute, putAccessHandler);
   router.openapi(rotateComputerEnrollmentRoute, rotateHandler);
   router.openapi(revokeComputerRoute, revokeHandler);
-  router.openapi(listTenantComputerAuditRoute, tenantAuditHandler);
   router.openapi(listComputerAuditRoute, auditHandler);
   return router;
 }
@@ -453,6 +467,7 @@ export function createComputerMachineRouter(deps: {
       request: c.req.raw,
       route: 'enroll',
       limit: ENROLL_ATTEMPTS_PER_WINDOW,
+      logger: deps.logger,
     });
     if (limited !== undefined) {
       return c.json({ error: { message: UNAUTHORIZED } }, 429, { 'Retry-After': limited.retryAfterSeconds });
@@ -510,6 +525,7 @@ export function registerComputerConnectRoute(input: {
       request: c.req.raw,
       route: 'connect',
       limit: CONNECT_ATTEMPTS_PER_WINDOW,
+      logger: input.logger,
     });
     if (limited !== undefined) {
       return c.json({ error: { message: UNAUTHORIZED } }, 429, { 'Retry-After': limited.retryAfterSeconds });
