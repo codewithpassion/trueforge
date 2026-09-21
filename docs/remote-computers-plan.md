@@ -1,6 +1,6 @@
 # Remote computers: agents that run on a real machine (Phase 8 PRD)
 
-Status: proposed on 2026-09-21. Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. Nothing in this plan is implemented.
+Status: approved by the owner on 2026-09-21 with the decisions in Section 9; Phase 8a (spike) is next. Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. Nothing in this plan is implemented.
 
 ## 1. Problem, goal, non-goals
 
@@ -123,13 +123,13 @@ Process as in the sandbox plan: forge agents in worktrees, an Opus adversarial r
 - [ ] **8d: safety.** The approval gate for `exec` (core change), allow and deny lists, `workdir_only`, the `install-service` command, signed releases. Live test: an approval-required exec pauses the turn and runs only after approval.
 - [ ] **8e: skills and Code Mode.** Capability-gated skill mounting; the Code Mode reverse channel. Live test: a skill runs, and an MCP call through `mcp-client` completes from the machine.
 
-## 9. Decisions for the owner
+## 9. Decisions (owner, 2026-09-21)
 
-1. **Attachment scope.** Per agent (recommended), or a tenant-wide provider variant? Default: per agent, with the tenant provider unchanged.
-2. **One computer, many sessions?** Default: yes, with per-session directories and 4 concurrent execs.
-3. **Binary language.** Default: Go. The alternative is Bun compile, reusing Agentum code.
-4. **Approval by default on new computers.** Default: on, turned off per computer by its owner.
-5. **Offline at turn time.** Fail fast (recommended) or wait up to 30 s for a reconnect? Default: fail fast.
-6. **Who may create and attach computers.** Default: tenant admins create; attaching requires owning the computer or being an admin.
-7. **Agentum code provenance.** Default: rewrite from the design, with no verbatim copying until IP is confirmed.
-8. **Windows and PTY.** Default: out until after 8e.
+1. **Scope: tenant-wide computers with a per-computer agent allowlist.** A computer belongs to the tenant, not to one agent. An admin chooses which agents may use each computer (`computer_agent_access`: `computer_id`, `agent_name`). An agent selects a computer with `sandbox.computer_id`; the server refuses a computer the agent is not allowed to use, at spec validation and again at turn time. Inline (unnamed) agents cannot use a computer. This replaces the per-agent attachment described in Sections 3 and 4 wherever they differ; the `sandbox.computer_id` field and `RemoteComputerProvider` stand.
+2. **One computer serves many sessions:** yes, with per-session directories and 4 concurrent execs.
+3. **Binary language: Go.** Single static binary, easy cross-compilation, no runtime on the target.
+4. **Approval is on by default** for new computers; an admin can turn it off per computer.
+5. **Offline at turn time: fail fast** with the last-seen reason.
+6. **Admins only** create, manage, and grant access to computers.
+7. **Agentum code: rewrite from the design.** The owner confirms Agentum is entirely their own work, so ideas and code may be ported freely.
+8. **Windows and PTY** stay out until after 8e.
