@@ -95,15 +95,17 @@ export default {
       // Calls the relay straight from the Worker, so the alarm-held caller's overhead can be compared.
       case '/t/exec': {
         const startedAt = Date.now();
+        const timeoutMs = readNumber(body, 'timeout_ms', 30_000);
+        // A shorter relay timeout makes the relay give up first, which exercises the cancel op.
         const outcome = await relayFor({ env, computerId }).request({
           op_json: JSON.stringify({
             op: 'exec',
             command: readString(body, 'command', 'uname -a'),
             cwd: readString(body, 'cwd', '') === '' ? null : readString(body, 'cwd', ''),
             env: {},
-            timeout_ms: readNumber(body, 'timeout_ms', 30_000),
+            timeout_ms: timeoutMs,
           }),
-          timeout_ms: readNumber(body, 'timeout_ms', 30_000),
+          timeout_ms: readNumber(body, 'relay_timeout_ms', timeoutMs),
         });
         return Response.json({ wall_ms: Date.now() - startedAt, outcome });
       }
@@ -130,6 +132,15 @@ export default {
       }
       case '/t/revoke':
         return Response.json(await relayFor({ env, computerId }).revoke());
+      case '/t/abort': {
+        // The abort tears down the object, so the RPC itself is expected to reject.
+        try {
+          await relayFor({ env, computerId }).abortSelf();
+          return Response.json({ aborted: true, rpc: 'returned' });
+        } catch (error) {
+          return Response.json({ aborted: true, rpc: error instanceof Error ? error.message : 'threw' });
+        }
+      }
       case '/t/unrevoke': {
         await relayFor({ env, computerId }).unrevoke();
         return Response.json({ ok: true });

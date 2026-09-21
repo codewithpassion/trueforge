@@ -4,6 +4,49 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 25 — Phase 8a spike: a Go client and a relay Durable Object, measured live (2026-09-21)
+
+**Goal:** Settle the four questions Phase 8a of `docs/remote-computers-plan.md` puts in front of remote computers — hibernating sockets under a pending caller, the message size limit, reconnect after eviction and deploy, and whether `resolveProvider` can take a `computer_id` — with numbers rather than argument, then go or no-go.
+
+**What we did:**
+
+- Built a throwaway spike under `packages/trueforge/spikes/remote-computer/`: a Go client (dial, `hello`, heartbeat, jittered reconnect, `exec`, `cancel`, chunked `file_put`/`file_get`, a `probe` op for frame sizes) and a two-object Worker — `RemoteComputerDO`, the relay, and `CallerDO`, which stands in for `SessionDO` by calling the relay over RPC from inside `alarm()`. Deployed it as `trueforge-computer-spike` on `workers.dev`, ran the client bare on this machine behind NAT and in a `busybox` container, took the measurements, then deleted the Worker.
+- Go is not installed here, so everything went through `golang:1.23` in Docker with a user-owned named volume for `/go/pkg`. `linux/amd64` and `darwin/arm64` build from one source pass at 5,849,240 and 5,709,906 bytes — cross-compilation proven, and well under the 10 MB Section 7 assumed.
+- Wrote Section 10 of the plan with the full evidence table and 19 concrete changes to Sections 4 to 8, and recorded the go verdict with its two caveats.
+- Verified: `pnpm format:check`, `pnpm typecheck`, `pnpm workers:check` and repo-wide eslint all clean (the two `DropdownMenu.tsx` warnings are pre-existing). The spike carries its own `tsconfig.json`, so type-aware eslint resolves it without joining any package project, and it is excluded from the `trueforge` CI path filter. No binary is committed.
+
+**Findings, with the numbers:**
+
+- **Hibernation is aggressive and the socket does not care.** A constructor counter went 2 → 3 → 5 → 7 across 0/5/15/30/60 s idle gaps while the socket count stayed 1. `getWebSocketAutoResponseTimestamp` kept advancing through all of it, so heartbeats cost no wake and liveness is still readable afterwards.
+- **The pending map is safe; nothing else in memory is.** An entry only exists while a caller's RPC is in flight, and that keeps the object loaded. The spike lost `hello` to a hibernation seconds after connecting, because it was a field.
+- **The frame limit is exactly 33,554,432 bytes, and exceeding it closes the socket.** A 16 MiB payload rode a 22,369,661-byte message fine; 24 MiB produced `Message is too large: 33554491 > 33554432` and every in-flight request on that computer died with the connection.
+- **A reset relay loses in-flight requests as an RPC rejection, not an offline outcome.** Forced eviction answered in 72 ms with HTTP `1101`. A deploy against an active object did the same and re-entered `CallerDO`'s alarm; a deploy against an idle one kept the socket, the generation and the next `exec`.
+- **Offline detection beats the 35 s target by a wide margin.** 38 ms on `SIGKILL`, 39 ms on `SIGTERM`, 23.1 s when the host freezes with TCP still open. `revoke()` closed the socket in 118 ms, refused the next call in 20 ms, and the client exited instead of hammering.
+- **Warm overhead is not a concern.** Twenty consecutive `uname -a` through the alarm-held caller: 42/43/44/63 ms min/median/mean/max, none lost, and the same call straight from the Worker was no faster. Four `sleep 3` ran in parallel at 3,063 ms and the fifth queued and finished at 3,091 ms.
+- **5 MiB round-trips correctly at 1.7–2.1 MiB/s**, all four digests agreeing. The rate is round-trip-bound: 40 sequential chunk requests at about 120 ms each.
+- **Verdict: go.** No fallback to HTTP long-poll. The real streaming and non-streaming turns could not be run — no browser access, and the production Worker was off limits — so the controller runs those before 8b closes.
+
+**Lessons learned:**
+
+- **A hibernating Durable Object is not a long-lived object with a cache.** The instinct to hold "the connected computer's details" in a field is wrong; it survives seconds. The rule that came out of it is narrow and worth keeping: only state whose lifetime is bounded by an in-flight RPC may live in memory. Everything else goes to storage on the write, not on a timer.
+- **"Never throws across RPC" is a property of the callee, not of the call.** `request()` returns an outcome for every failure it can see, and the caller still got a rejection when the object underneath it was reset. Any port that promises not to throw needs the caller to wrap it anyway.
+- **A 5 s liveness alarm across every connected computer would have been waste.** The object is already awake for the whole of a pending request, so the staleness poll belongs inside the request. That is the difference between one wake per computer per five seconds and none.
+- **Test the freeze, not the kill.** `SIGKILL` closes TCP and the relay hears immediately — it proves nothing about a suspended laptop. `SIGSTOP` reproduces the half-open socket exactly, and it is the only case where the heartbeat threshold is load-bearing (23.1 s versus 0.04 s).
+- **Deploys are not uniform.** An idle relay keeps its socket across a deploy; one holding a request loses it, and the caller's alarm re-enters. Measuring only the idle case would have produced a confidently wrong claim, which is what the first reading of the evidence was.
+- **The reference implementation's bugs are cheap to avoid and expensive to inherit.** Resetting the backoff step on every open (two clients with one credential evict each other forever), never checking heartbeat replies (a half-open socket reads as connected), picking a socket by identity after a replacement close, and reporting exit 1 for a signalled command all cost a line or two each here.
+- **A base image without a CA bundle fails silently and forever.** `busybox` loops on `x509: certificate signed by unknown authority` with textbook backoff, which looks like a network problem and is not.
+
+**Avoid next time:**
+
+- Don't measure a Durable Object's behaviour without an instance counter. `boots` in storage turned "I think it hibernated" into a number, and it is three lines.
+- Don't let an alarm-driven test replay its work. Guard on stored state at entry and record the re-entry instead — otherwise a platform reset silently doubles the run and the numbers lie.
+- Don't run a probe loop through `curl | head`; `head` exits, `curl` takes SIGPIPE, `pipefail` kills the script, and you lose the run that mattered. Redirect to a file and cut it afterwards.
+- Don't reach for `pgrep -f` to count survivors of a command whose text you searched for — it matches the shell that is running the search. Check from outside the machine under test.
+- Don't put a spike inside a published package without deciding, in the same change, what CI does with it: its own `tsconfig.json` so type-aware lint resolves it, a path-filter exclusion, and a note on why it needs no changeset.
+- Run `build:gen` before eslint on a fresh checkout. Seventy-two "unsafe assignment of an error typed value" errors were nothing but missing generated catalogs.
+
+---
+
 ## Cycle 24 — Phases I3 and I4: approvals, questions and schedule notifications in Slack (2026-09-21)
 
 **Goal:** Close Phases I3 and I4 of `docs/integrations-slack-plan.md` — let a Slack thread approve a tool call or answer a question, and let a finished schedule run post itself to a channel — on both runtimes, up to but not including the live workspace test.

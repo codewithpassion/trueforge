@@ -133,3 +133,164 @@ Process as in the sandbox plan: forge agents in worktrees, an Opus adversarial r
 6. **Admins only** create, manage, and grant access to computers.
 7. **Agentum code: rewrite from the design.** The owner confirms Agentum is entirely their own work, so ideas and code may be ported freely.
 8. **Windows and PTY** stay out until after 8e.
+
+## 10. Phase 8a spike report
+
+Run on 2026-09-21 against a throwaway Worker, `trueforge-computer-spike`, on `workers.dev` (no D1, no custom domain, two secrets set with `wrangler secret put`). The Worker has been deleted; the code is committed under `packages/trueforge/spikes/remote-computer/` and is excluded from the `trueforge` CI path filter.
+
+The client is Go, built in Docker because Go is not installed on this machine (`golang:1.23`, `CGO_ENABLED=0`). Cross-compilation is real, not assumed: `linux/amd64` is 5,849,240 bytes and `darwin/arm64` is 5,709,906 bytes from the same source in one pass — well under the 10 MB Section 7 budgeted. It ran bare on this machine (behind NAT, no inbound port) and in a `busybox:1.37` container as uid 1000.
+
+### Q1. Hibernating sockets while a caller's RPC is pending
+
+**Sockets hibernate and survive; the pending map survives for the reason Section 4 gives; an evicted relay loses in-flight requests without an offline reason.**
+
+A `boots` counter incremented in the constructor went 2 → 3 → 5 → 7 across idle gaps of 0, 5, 15, 30 and 60 seconds while `socket_count` stayed 1 and the connection generation stayed 1. The object is evicted from memory repeatedly and the socket outlives it. `getWebSocketAutoResponseTimestamp` kept advancing by one heartbeat interval through all of it, so liveness is readable after a wake without the object ever having been woken to record it.
+
+The pending map is safe, but only by construction: an entry exists only while a caller's RPC is in flight, and an object with an in-flight RPC is not evicted. Nothing else in memory is safe. The spike proved this the hard way — `hello` was held in a field, the object hibernated seconds after the client connected, and the field was empty at the next call. It is storage-backed now. **Anything `RemoteComputerDO` must still know after an idle minute belongs in storage, not in a field.**
+
+Forced eviction mid-request (`ctx.abort()` while an `exec` was pending) is the bad case. The caller's RPC **rejects**; it does not return an offline outcome. The Worker answered HTTP `error code: 1101` seventy-two milliseconds after the abort. The socket dropped too, and the client reconnected by itself 1.9 s later. A `wrangler deploy` while the relay was holding a request did the same: the socket dropped, the client reconnected after 3.6 s, the in-flight `exec` was never answered, and the `sleep 60` it had started kept running on the machine with nobody to collect it.
+
+The same deploy also reset `CallerDO` and re-entered its `alarm()`. The idempotency guard caught it — the run was recorded as `alarm_entries: 2` with "alarm re-entered after a Durable Object reset" rather than replaying the work. `SessionDO` has the same exposure today.
+
+A deploy while the relay was **idle** kept everything: generation unchanged, no reconnect in the client's log, and the next `exec` worked. So a deploy costs a reconnect only for the computers that were mid-request.
+
+### Q2. Message size limit and the 5 MiB round trip
+
+**The limit is exactly 33,554,432 bytes (32 MiB), it is enforced by closing the whole socket, and 256 KiB chunking gives a correct 5 MiB round trip.**
+
+Frames from the client to the relay were accepted up to a 22,369,661-byte JSON message (a 16 MiB payload, 4.85 s). A 24 MiB payload produced a 33,554,491-byte message and the platform closed the connection with `StatusMessageTooBig` and the reason `Message is too large: 33554491 > 33554432`. That is 32 MiB to the byte.
+
+The failure mode matters more than the number: **an oversized frame kills the connection, it does not fail one request.** The caller saw `offline … socket closed with 1006` and every other in-flight request on that computer died with it. A provider that sends an unchunked write is not slow, it is a disconnect.
+
+In the other direction the relay sent payloads up to 4 MiB raw (about 5.6 MiB base64 on the wire) with no trouble; the ceiling was not probed further because the client's own read limit is set to 8 MiB.
+
+The 5 MiB round trip, 20 chunks of 256 KiB, through the alarm-held caller:
+
+| Leg      | Time     | Throughput |
+| -------- | -------- | ---------- |
+| Upload   | 2,408 ms | 2.08 MiB/s |
+| Download | 2,919 ms | 1.71 MiB/s |
+
+All four digests agreed (`ee75285c…41dd`): the bytes the caller generated, the digest the client computed after writing the file, the digest it reported at the start of the download, and the digest of the reassembled download. 5,242,880 bytes in, 5,242,880 bytes out.
+
+Throughput is round-trip-bound, not bandwidth-bound: each chunk is a separate request that waits for its reply, so 5 MiB costs 40 sequential round trips at roughly 120 ms each. Pipelining a few chunks would multiply this several times over, and nothing in the protocol prevents it.
+
+### Q3. Reconnect, offline detection, and revocation
+
+| Event                                    | Caller learns after | How                                           |
+| ---------------------------------------- | ------------------- | --------------------------------------------- |
+| `SIGKILL` the client mid-exec            | 38 ms               | TCP closes, `webSocketClose` with 1006        |
+| `SIGTERM` the client mid-exec            | 39 ms               | same                                          |
+| Host freezes (`SIGSTOP`, TCP still open) | 23.1 s              | relay's heartbeat-staleness check, close 4408 |
+| `revoke()` on a live socket              | 118 ms              | `revoke()` closes 4401 and fails the pending  |
+| Relay force-evicted mid-request          | 72 ms               | **RPC rejection, not an offline outcome**     |
+
+Killing the process is the easy case: the kernel closes the socket and the relay hears about it immediately. The case worth designing for is a laptop that suspends or loses its network, where TCP stays open and nothing arrives. `SIGSTOP` reproduces it exactly, and the relay's staleness check — comparing the platform's heartbeat timestamp against a 25 s threshold, polled every 2 s while a request waits — answered in 23.1 s with "Computer spike-a is offline (last seen 25 seconds ago)". **Under the 35 s target, and that is the worst case, not the typical one.**
+
+No alarm is needed for this. Because the object is awake for the whole of a pending request, the staleness poll runs inside the request. A 5-second alarm across every connected computer would have cost a wake per computer per five seconds for nothing.
+
+Reconnection was automatic in every case: 1.1 s after the 4408 close on thaw, 1.9 s after a forced eviction, 3.6 s after a deploy that reset the object. Backoff is uniform in [0.5c, c] with c = min(1000·2^step, 60000) ms; against a client that could not verify the certificate it went 1.79 s, 3.80 s, 4.21 s and kept growing.
+
+`revoke()` closed the socket, failed the in-flight request with `revoked` in 118 ms, and refused the next request in 20 ms without touching the network. The client treated 4401 as terminal: it logged one line, exited 3, and wrote nothing else in the following 30 seconds. Agentum's gap — a rejected client hammering the endpoint forever — does not reproduce.
+
+### Q4. Can `resolveProvider` take a `computer_id`?
+
+**Yes, and the signature change is narrow. The cost is three behavioural sites and one missing field, not a wide refactor.** This is from code reading; nothing in this section was changed.
+
+`resolveProvider` (`packages/trueforge/src/sandbox/integration.ts:27-32`) and `resolveSandboxUsability` (`:39-43`) already take a single options object, so an optional `computer_id` is additive. Two implementations change (`nodeSandboxIntegration.ts:38,55`, `workers/sandbox/workersSandboxIntegration.ts:64,78`) and two production call sites (`runtime/turnRunner.ts:142`, which has the spec in scope; `apis/turns.ts:230`, which does not). Core needs one field on `SandboxConfigSchema` (`packages/trueforge-core/src/agent-session/schemas/agentSpec.ts:162`); `TurnSandboxFactory` already passes the whole spec, so no core signature moves.
+
+`sandboxRef.ts` needs nothing. Only the first colon after `v1:` is a delimiter and the raw id is a plain slice, so `v1:remote-computer:<computer_id>/<session_id>` round-trips with its slash and any colons intact, and `existingSandboxIdForProvider` carries it forward unchanged. The provider `type` is an open string, so `'remote-computer'` adds no union member — deliberately: making remote computers a sandbox-provider **settings manifest** instead would touch the closed union in `schemas/sandboxProvider.ts`, `apis/sandboxProviders.ts`, `apis/catalog.ts`, the UI catalog and the TrueFoundry store. Computers get their own tables, routes and Settings section; `sandbox.computer_id` stays the only selector.
+
+Three sites would silently misbehave for a computer-attached agent today:
+
+1. `turnRunner.ts:158` gates the turn on `checkSnapshotStatus`, which answers about the tenant's stored provider record. A remote computer has none, so the agent gets 422 "sandbox image is activating". The `provider.type !== 'local'` exclusion has to widen.
+2. `apis/turns.ts:230` (turn file download) has no spec. Either load the agent spec there or derive `computer_id` from the persisted ref with `parseSandboxId`; either way it needs its own tenant check.
+3. `workersSandboxIntegration.ts:55-65` must short-circuit on `computer_id` **before** `isEnabledForTenant`, or a tenant without the built-in sandbox gets `undefined`. Node has the same ordering question at `nodeSandboxIntegration.ts:39-46`, where the stored record currently wins.
+
+**The allowlist.** `validateAgentSpec` (`runtime/sessionResources.ts:224`, sandbox block 284-298, five callers across `apis/sessions.ts` and `apis/agents.ts`) has the spec and the tenant but no computer store. Put the check inside `resolveSandboxUsability` and let the integration own the lookup, rather than threading a new store dependency through five call sites. `capabilities.ts:51` has no spec, so `computer_id` must stay optional on that path. At turn time the same call is made again next to `turnRunner.ts:149`.
+
+**`resolveSandboxUsability` when the computer is offline: `usable: true`.** Section 5 already says this and the spike agrees — a laptop is offline most of the time, and refusing to save or start an agent for that is wrong. Offline is a turn-time reason. But `SandboxUsability` (`integration.ts:15-19`) has no reason field today, so "unknown computer", "not allowed for this agent" and "revoked" cannot be told apart from each other or from "offline". **Add a reason to that shape**; the first three are `usable: false` and only offline is `usable: true`.
+
+Two things to verify before promising the UX: whether a throw next to `turnRunner.ts:149` surfaces in the create-turn HTTP response or as a turn error event (it goes through `SessionHandle.createTurn`, `SessionHandle.ts:206-216`, and was not traced), and that `SandboxNotAvailableError` (`SandboxErrors.ts:20-28`, 410, "no longer exists") is not reused — its wording is wrong for offline and `Sandbox.ts` answers it by recreating the sandbox. A new subclass, mapped at `turns.ts:249-251`.
+
+UI: the picker belongs at `trueforge-ui/src/atoms/draft/AgentRuntimeConfigFields.tsx:83-92`. The config type is owned by `@truefoundry/assistant-ui-runtime`, so a typed `computerId` needs a new hunk in `patches/@truefoundry__assistant-ui-runtime@0.1.37.patch` (unverified — the patch was not applied in the worktree that read this). `packages/frontend` needs no change. OpenAPI and both SDKs regenerate.
+
+### Warm exec and concurrency
+
+Twenty consecutive `uname -a` through the alarm-held caller, which is the path a real turn takes:
+
+| min   | median | mean  | max   | over 1 s | lost |
+| ----- | ------ | ----- | ----- | -------- | ---- |
+| 42 ms | 43 ms  | 44 ms | 63 ms | 0        | 0    |
+
+The same command called straight from the Worker, with no alarm, took 50–58 ms wall and 27–30 ms inside the relay. **Holding the call inside `alarm()` costs nothing measurable.**
+
+Four `sleep 3` issued together plus a fifth `uname -a`: the four finished at 3,063 ms each, so they ran in parallel, and the fifth finished at 3,091 ms — it waited for a slot and then took 28 ms. The cap and its queue behave as Section 4 describes.
+
+### Exec semantics, checked in the container
+
+- Deadline: exit **124** at 4,020 ms for a 4 s timeout.
+- Process group: `(sleep 120 &) ; sleep 60` under a 4 s deadline left **zero** survivors. The detached grandchild dies with the group.
+- `exit 7` returns 7 with stdout and stderr separated; `kill -TERM $$` returns **143**, not 1. Agentum reported 1 for every signalled command.
+- Output cap: 3,000,000 bytes of output reported `bytes_total: 3000000`, `truncated: true`, and kept 524,288 bytes. Everything is counted, the head is kept.
+- Relay-side cancel: with a 2 s relay timeout against a 300 s command, the caller got `timeout` at 12,001 ms (2 s plus the 10 s grace) and the client logged `cancel … cancelled: true`. The command did not outlive it.
+- **Killing the daemon orphans its commands.** After `SIGKILL`, `/bin/sh -c sleep 400` was still running, reparented to PID 1. Nothing collects it.
+- The `busybox` image needed the CA bundle copied from the build stage. Without it the client loops on `x509: certificate signed by unknown authority` — with correct backoff, but forever.
+- Capability detection works and would do the right thing: the container reported `python3: false, git: false`, the host `true, true`.
+
+### Verdict: go
+
+Against the Section 8 criteria:
+
+| Criterion                                                 | Result                                            |
+| --------------------------------------------------------- | ------------------------------------------------- |
+| Offline reason within 35 s of killing the binary mid-exec | **Pass** — 0.04 s on a kill, 23.1 s on a freeze   |
+| Warm exec under 1 s over 20 consecutive execs, none lost  | **Pass** — 63 ms worst, 0 lost                    |
+| 5 MiB upload and download round trip                      | **Pass** — digests match on all four measurements |
+| No casts                                                  | **Pass** — guards and parsers, no `as`, no `!`    |
+| No unexplained drop in the socket                         | **Pass** — every drop had a named cause           |
+| No lost replies                                           | **Qualified** — see below                         |
+| A streaming and a non-streaming turn                      | **Not tested** — see below                        |
+
+**Not tested, and why.** The real streaming and non-streaming turns need the signed-in production app, and this spike had no browser access and was barred from touching `trueforge.rockyshoreslabs.io`. `CallerDO` is the stand-in: it calls the relay over RPC from inside `alarm()`, which is exactly what `SessionDO` does, and it passed. The controller runs the real turns before 8b closes. Nothing measured here depends on the turn loop, so the risk is integration, not transport.
+
+**The qualification on lost replies.** Replies are not lost on the wire, on reconnect, or under load. They are lost when the relay object itself is reset mid-request — a forced eviction or a deploy against an active object — and the caller gets an RPC rejection rather than an outcome. That is explained, bounded, and the same exposure `SessionDO` already documents for turns; it is not the "unexplained drop" the no-go clause is about. It does mean the provider must treat an RPC rejection as a first-class failure, which is a requirement below, not a blocker. **No fallback to HTTP long-poll is needed.**
+
+### Changes to Sections 4 to 8 before 8b starts
+
+**Section 4, relay.**
+
+1. **`request()` can still reject.** Section 4 promises the provider never throws; the transport does not honour that. `RemoteComputerProvider` must wrap every RPC call and map a rejection to the same offline-shaped failure, with its own message ("the connection to the computer was interrupted"), so a reset relay reads like an offline computer rather than a 500.
+2. **Say that only the pending map may live in memory.** Last-seen, capabilities, the connection generation, the revoked flag and the enrolled identity all go to storage. The spike lost `hello` to a hibernation within seconds of connecting.
+3. **Drop the periodic liveness alarm; poll inside the pending request.** The object is awake for the whole of a request, so a 2-second poll against `getWebSocketAutoResponseTimestamp` catches a frozen host in 23 s with no wake cost. Keep the 60 s alarm only for writing last-seen while connected, as Section 4 already says.
+4. **Track the current socket by connection generation, not identity.** A socket closed on replacement stays in `getWebSockets()` long enough to be picked for dispatch. The generation lives in storage, is stamped into the attachment at accept, and is checked on dispatch, on reply and on close.
+5. **Register the pending entry before writing the frame,** on both sides. The reply can arrive first.
+6. **Per-request timeout with the grace, plus a bounded queue.** `timeout_ms + 10 s`, and a cap on queue depth (32 in the spike) so a stalled computer cannot grow an unbounded backlog.
+
+**Section 4, chunking and limits.**
+
+7. **Record the measured limit: 32 MiB, enforced by closing the socket.** Section 4 says the spike must measure it; the number is 33,554,432 bytes and the consequence is a disconnect, not a failed request. 256 KiB stays, with a hard guard in the provider so no path can build a larger frame.
+8. **Pipeline file chunks.** 1.7–2.1 MiB/s is a round-trip artefact. Allow a small window of in-flight chunks per transfer.
+9. **Keep head and tail, not head only.** The spike kept the head, as Agentum did, and 3 MB of output came back as the first 512 KiB. Build and test failures are at the end. Split the 1 MiB cap and mark the elision.
+
+**Section 4, and a new line in Section 6.**
+
+10. **Killing the daemon leaves its commands running.** Verified. The daemon must record its process-group ids and sweep them on startup, and the service unit should use a cgroup (`KillMode=control-group`) so a stop takes the group with it.
+11. **A reset relay leaves an orphaned command.** The command keeps running and its output is discarded. 8b should re-send `cancel` for a request the relay no longer has a caller for, and the audit row should record that the outcome is unknown.
+
+**Section 5.**
+
+12. **`SandboxUsability` needs a reason field.** Otherwise "unknown computer", "not allowed for this agent", "revoked" and "offline" are one boolean. Offline is the only one that stays `usable: true`.
+13. **Put the allowlist check inside `resolveSandboxUsability`.** `validateAgentSpec` has five callers and no computer store; giving the integration the lookup keeps the change to one place.
+
+**Section 7.**
+
+14. **The binary is ~5.7 MB, not ~10 MB,** for both targets, with `-trimpath -ldflags "-s -w"`.
+15. **The image must carry a CA bundle.** A scratch or busybox base without one fails to dial and retries forever. Say so where the distroless image is specified.
+16. **The client must check its own heartbeats.** Without a read deadline of about two intervals, a half-open socket looks connected. The spike closes and reconnects after two unanswered pings.
+17. **Treat 4401 as terminal and reset the backoff step only after a stable connection,** not on every open. Agentum reset on open, which is why two clients sharing a credential could evict each other forever.
+
+**Section 8.**
+
+18. **8b must cover a deploy during an active turn** in its live test, not just create/attach/revoke. It is the one event that loses an in-flight request, and it happens on every release.
+19. **Add the `probe` op to the protocol permanently**, or keep an equivalent, so the frame ceiling can be re-measured when the platform changes it.

@@ -231,6 +231,8 @@ export class RemoteComputerDO extends DurableObject<SpikeEnv> {
     if (isSocketAttachment(attachment) && attachment.generation !== this.#generation) {
       return;
     }
+    // The platform's heartbeat stamp is the only accurate last-seen; the stored one is a minute stale.
+    this.#lastSeenAt = this.#lastHeartbeatAt(socket) ?? this.#lastSeenAt;
     this.#failPending({
       reason: 'offline',
       message: `${offlineMessage({ computerId: this.#name(), lastSeenAt: this.#lastSeenAt, now: Date.now() })}; socket ${detail}`,
@@ -463,6 +465,11 @@ export class RemoteComputerDO extends DurableObject<SpikeEnv> {
     }
     this.#failPending({ reason: 'revoked', message: `Computer ${this.#name()} has been revoked` });
     return { closed };
+  }
+
+  /** Forces the eviction a deploy or a platform reset would cause, to see what a waiting caller gets. */
+  abortSelf(): void {
+    this.ctx.abort('spike: forced eviction');
   }
 
   async unrevoke(): Promise<void> {
