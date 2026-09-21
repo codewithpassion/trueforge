@@ -1,11 +1,13 @@
 /**
  * Built-in Harness → AgentUIServer factory for `<TrueForgeUI server={{ type: "trueforge", … }} />`.
  */
+import type { TrueForge } from '@truefoundry/trueforge-sdk';
 import { createTrueFoundryServer } from '../../server/createTrueFoundryServer.js';
 import type { CatalogServer, PermissionsServer } from '../../server/types.js';
 import { createHarnessAgentMetricsServer } from './agentMetricsServer.js';
 import { createHarnessAgentSessionsServer } from './agentSessionsServer.js';
 import { createHarnessBuilderServer } from './builderServer.js';
+import { createComputerCatalog } from './catalogs/computerCatalog.js';
 import { createConnectorCatalog } from './catalogs/connectorCatalog.js';
 import { createIntegrationCatalog } from './catalogs/integrationCatalog.js';
 import { createModelProviderCatalog } from './catalogs/modelProviderCatalog.js';
@@ -28,6 +30,12 @@ export {
   toModelSelection,
   type CreateHarnessBuilderServerOptions,
 } from './builderServer.js';
+export {
+  createComputerCatalog,
+  toUiComputer,
+  toUiComputerAuditEntry,
+  toUiEnrollment,
+} from './catalogs/computerCatalog.js';
 export {
   createConnectorCatalog,
   toHarnessAuth,
@@ -72,20 +80,33 @@ export type CreateTrueForgeAgentUIServerOptions = CreateTrueForgeClientOptions &
 };
 
 /**
+ * The default Harness settings catalogs. Remote computers are opt-in because only the host
+ * has read `capabilities.computers.enabled`, and a slot that is present turns the section on.
+ */
+export function createTrueForgeCatalog({
+  client,
+  computers = false,
+}: {
+  client: TrueForge;
+  computers?: boolean;
+}): CatalogServer {
+  return {
+    modelCatalog: createModelProviderCatalog(client),
+    connectorCatalog: createConnectorCatalog(client),
+    skillCatalog: createSkillCatalog(client),
+    sandboxCatalog: createSandboxProviderCatalog(client),
+    integrationCatalog: createIntegrationCatalog(client),
+    ...(computers ? { computerCatalog: createComputerCatalog(client) } : {}),
+  };
+}
+
+/**
  * Compose chat + builder + agent sessions + default settings catalogs into an `AgentUIServer`.
  */
 export function createTrueForgeAgentUIServer(options: CreateTrueForgeAgentUIServerOptions = {}) {
   const { catalog: catalogOverride, permissions, ...clientOptions } = options;
   const client = createTrueForgeClient(clientOptions);
-  const catalog =
-    catalogOverride ??
-    ({
-      modelCatalog: createModelProviderCatalog(client),
-      connectorCatalog: createConnectorCatalog(client),
-      skillCatalog: createSkillCatalog(client),
-      sandboxCatalog: createSandboxProviderCatalog(client),
-      integrationCatalog: createIntegrationCatalog(client),
-    } satisfies CatalogServer);
+  const catalog = catalogOverride ?? createTrueForgeCatalog({ client });
 
   return createTrueFoundryServer<HarnessAgentSpec>({
     chatServer: createHarnessChatServer({ client }),

@@ -5,6 +5,7 @@ import { cn } from '../lib/cn.js';
 import { auiInputClass } from '../lib/inputClasses.js';
 import { Switch } from '../primitives/Switch.js';
 import { Tooltip } from '../primitives/Tooltip.js';
+import { AgentComputerSelector } from './AgentComputerSelector.js';
 
 export type AgentRuntimeConfigFieldsProps = {
   value: AgentRuntimeConfig;
@@ -121,6 +122,21 @@ export function AgentRuntimeConfigFields({
     }),
   };
   const runtimeFields = [sandboxField, fileDownloadsField, compactionField, largeToolResponseField];
+  const computerSelector = (
+    <AgentComputerSelector
+      sandbox={value.sandbox}
+      disabled={disabled || !sandboxEnabled}
+      onChange={computerId => {
+        // Back to the tenant sandbox means the field goes away, not that it holds an empty id.
+        const { computerId: current, ...sandbox } = { ...value.sandbox, enabled: sandboxEnabled };
+        void current;
+        onChange({
+          ...value,
+          sandbox: computerId === undefined ? sandbox : { ...sandbox, computerId },
+        });
+      }}
+    />
+  );
   const compactionThreshold = value.contextManagement?.compaction?.trigger?.value ?? 50_000;
 
   const switchField = ({
@@ -201,6 +217,7 @@ export function AgentRuntimeConfigFields({
             <div className={`mt-3 border-l-2 border-primary-button-bg/50 pl-3 ${sandboxEnabled ? '' : 'opacity-50'}`}>
               {switchField({ field: fileDownloadsField, className: 'items-center justify-between gap-4' })}
             </div>
+            <div className={sandboxEnabled ? '' : 'opacity-50'}>{computerSelector}</div>
           </section>
           <section className="py-3">
             {switchField({ field: compactionField, className: 'items-center justify-between gap-4' })}
@@ -264,6 +281,7 @@ export function AgentRuntimeConfigFields({
         />
       </label>
       {[...runtimeFields, ...(showCapabilities ? capabilityFields : [])].map(field => switchField({ field }))}
+      {computerSelector}
     </div>
   );
 }

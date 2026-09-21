@@ -7,6 +7,7 @@ import {
   type ThemeConfig,
 } from '@truefoundry/trueforge-ui';
 import {
+  createTrueForgeCatalog,
   createTrueForgeClient,
   getCapabilities,
   listModels,
@@ -58,7 +59,7 @@ function Loader() {
 type BootState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; defaultAgentSpec: HarnessAgentSpec; openSettings: boolean };
+  | { status: 'ready'; defaultAgentSpec: HarnessAgentSpec; openSettings: boolean; computersEnabled: boolean };
 
 export function App() {
   const authError = parseAuthErrorReason(window.location.search);
@@ -116,6 +117,7 @@ export function App() {
           setBoot({
             status: 'ready',
             openSettings: capabilities.settings.enabled,
+            computersEnabled: capabilities.computers.enabled,
             defaultAgentSpec: {
               model: { name: '' },
               config: sandboxConfig,
@@ -129,6 +131,7 @@ export function App() {
         setBoot({
           status: 'ready',
           openSettings: false,
+          computersEnabled: capabilities.computers.enabled,
           defaultAgentSpec: {
             model: {
               name: first.name,
@@ -154,6 +157,14 @@ export function App() {
   const overrides: SlotOverrides = useMemo(
     () => ({ ShellActionsActionSlot: LogoutButton, WelcomeScreen: NewAgentWelcomeScreen }),
     [],
+  );
+
+  // Settings → Computers appears because the slot is present, so it is supplied only on a
+  // server that reports the feature.
+  const computersEnabled = boot.status === 'ready' && boot.computersEnabled;
+  const catalog = useMemo(
+    () => createTrueForgeCatalog({ client: bootClient, computers: computersEnabled }),
+    [computersEnabled],
   );
 
   const authErrorReason = shouldShowAuthErrorScreen({ authError, session });
@@ -202,7 +213,7 @@ export function App() {
   return (
     <div className="app-root">
       <TrueForgeUI
-        server={{ type: 'trueforge', baseUrl: API_BASE_URL, fetch: authAwareFetch }}
+        server={{ type: 'trueforge', baseUrl: API_BASE_URL, fetch: authAwareFetch, catalog }}
         layout="sidebar"
         withRouter
         {...(routerBasename ? { routes: { basename: routerBasename } } : {})}

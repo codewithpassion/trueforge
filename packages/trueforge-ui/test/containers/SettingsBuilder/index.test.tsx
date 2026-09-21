@@ -9,6 +9,7 @@ import { ServerProvider } from '@/server/ServerContext.js';
 import { ShellModeProvider, useShellMode } from '@/server/ShellModeContext.js';
 import type {
   AgentUIServer,
+  ComputerCatalogServer,
   IntegrationCatalogServer,
   SandboxCatalogServer,
   SkillCatalogServer,
@@ -33,6 +34,10 @@ vi.mock('@/containers/SettingsBuilder/SandboxSettings.js', () => ({
 
 vi.mock('@/containers/SettingsBuilder/IntegrationSettings.js', () => ({
   default: () => <div>Integration settings content</div>,
+}));
+
+vi.mock('@/containers/SettingsBuilder/ComputerSettings.js', () => ({
+  default: () => <div>Computer settings content</div>,
 }));
 
 async function unavailable(): Promise<never> {
@@ -60,8 +65,27 @@ const integrationCatalog: IntegrationCatalogServer = {
   getIntegrationSetupManifest: unavailable,
 };
 
+const computerCatalog: ComputerCatalogServer = {
+  listComputers: async () => [],
+  createComputer: unavailable,
+  getComputer: unavailable,
+  updateComputer: unavailable,
+  deleteComputer: unavailable,
+  getComputerAgentAccess: async () => [],
+  putComputerAgentAccess: unavailable,
+  rotateComputerEnrollment: unavailable,
+  revokeComputer: unavailable,
+  listComputerAudit: async () => ({ data: [] }),
+};
+
 function createServer(
-  options: { catalog?: boolean; skills?: boolean; sandbox?: boolean; integrations?: boolean } = {},
+  options: {
+    catalog?: boolean;
+    skills?: boolean;
+    sandbox?: boolean;
+    integrations?: boolean;
+    computers?: boolean;
+  } = {},
 ): AgentUIServer {
   if (options.catalog === false) {
     return createMockAgentUIServer();
@@ -71,6 +95,7 @@ function createServer(
       ...(options.skills ? { skillCatalog } : {}),
       ...(options.sandbox ? { sandboxCatalog } : {}),
       ...(options.integrations ? { integrationCatalog } : {}),
+      ...(options.computers ? { computerCatalog } : {}),
     }),
   });
 }
@@ -134,11 +159,13 @@ describe('TruefoundrySettingsBuilder', () => {
     expect(screen.queryByRole('button', { name: 'Skills' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sandbox' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Integrations' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Computers' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Computer settings content')).not.toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText('Model settings content')).toBeInTheDocument();
     });
 
-    rerender(<TestShell server={createServer({ skills: true, sandbox: true, integrations: true })} />);
+    rerender(<TestShell server={createServer({ skills: true, sandbox: true, integrations: true, computers: true })} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Skills' }));
     await waitFor(() => {
@@ -155,10 +182,31 @@ describe('TruefoundrySettingsBuilder', () => {
       expect(screen.getByText('Integration settings content')).toBeInTheDocument();
     });
 
+    fireEvent.click(screen.getByRole('button', { name: 'Computers' }));
+    await waitFor(() => {
+      expect(screen.getByText('Computer settings content')).toBeInTheDocument();
+    });
+
     fireEvent.click(screen.getByRole('button', { name: 'Connectors' }));
     await waitFor(() => {
       expect(screen.getByText('Connector settings content')).toBeInTheDocument();
     });
+  });
+
+  it('sends the computers section back to models when its catalog disappears', async () => {
+    const { rerender } = render(<TestShell server={createServer({ computers: true })} />);
+    await openSettings();
+    fireEvent.click(screen.getByRole('button', { name: 'Computers' }));
+    await waitFor(() => {
+      expect(screen.getByText('Computer settings content')).toBeInTheDocument();
+    });
+
+    rerender(<TestShell server={createServer()} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Models' })).toHaveAttribute('aria-current', 'page');
+    });
+    expect(screen.queryByRole('button', { name: 'Computers' })).not.toBeInTheDocument();
   });
 
   it('sends the integrations section back to models when its catalog disappears', async () => {
