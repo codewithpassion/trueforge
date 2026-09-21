@@ -147,7 +147,6 @@ describe('the Code Mode hostname', () => {
           method: 'POST',
           headers: { authorization: 'Bearer anything' },
           body,
-          duplex: 'half',
         }),
       );
       return response.status;
