@@ -352,6 +352,14 @@ func (t *Transfers) commit(request protocol.FilePutRequest, entry *transfer) (pr
 	if err := checkDestination(dest); err != nil {
 		return protocol.FilePutResult{}, err
 	}
+	// Replacing a file should not silently change what can run or read it. A rename gives
+	// the destination the temporary file's 0600, so an existing file's bits are carried over
+	// first; a new file keeps 0600.
+	if existing, statErr := os.Stat(dest); statErr == nil {
+		if err := os.Chmod(tempPath, existing.Mode().Perm()); err != nil {
+			return protocol.FilePutResult{}, fmt.Errorf("carry over the mode of %s: %w", dest, err)
+		}
+	}
 	if err := os.Rename(tempPath, dest); err != nil {
 		return protocol.FilePutResult{}, fmt.Errorf("move the upload into place at %s: %w", dest, err)
 	}

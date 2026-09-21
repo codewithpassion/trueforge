@@ -17,7 +17,6 @@ func TestPlaintextIsRefusedExceptToThisMachine(t *testing.T) {
 		"http://[::1]:8787",
 		"http://127.0.0.5",
 		"ws://localhost:8787",
-		"http://app.localhost:8787",
 	} {
 		if _, err := serverurl.Parse(allowed); err != nil {
 			t.Fatalf("%q was refused: %v", allowed, err)
@@ -29,6 +28,9 @@ func TestPlaintextIsRefusedExceptToThisMachine(t *testing.T) {
 		"http://10.0.0.1",
 		"ws://trueforge.example.com",
 		"http://localhost.evil.com",
+		// A subdomain is whatever the resolver says it is, and the static build's resolver
+		// may ask DNS for it.
+		"http://app.localhost:8787",
 	} {
 		_, err := serverurl.Parse(refused)
 		if !errors.Is(err, serverurl.ErrInsecure) {
@@ -94,12 +96,12 @@ func TestCanonicalStripsTheExtras(t *testing.T) {
 }
 
 func TestIsLoopback(t *testing.T) {
-	for _, yes := range []string{"localhost", "LOCALHOST", "127.0.0.1", "127.1.2.3", "::1", "[::1]", "api.localhost"} {
+	for _, yes := range []string{"localhost", "LOCALHOST", "127.0.0.1", "127.1.2.3", "::1", "[::1]"} {
 		if !serverurl.IsLoopback(yes) {
 			t.Fatalf("%q was not recognised as this machine", yes)
 		}
 	}
-	for _, no := range []string{"example.com", "192.168.0.1", "0.0.0.0", "localhost.evil.com", ""} {
+	for _, no := range []string{"example.com", "192.168.0.1", "0.0.0.0", "localhost.evil.com", "api.localhost", ""} {
 		if serverurl.IsLoopback(no) {
 			t.Fatalf("%q was treated as this machine", no)
 		}

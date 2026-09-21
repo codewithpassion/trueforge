@@ -39,6 +39,17 @@ func (a *Agent) OnDisconnect() {
 	a.transfers.Abandon()
 }
 
+// codedError carries the wire code a refusal should be reported with, so the connection
+// layer does not have to know what this one can fail with.
+type codedError struct {
+	code string
+	err  error
+}
+
+func (e *codedError) Error() string     { return e.err.Error() }
+func (e *codedError) Unwrap() error     { return e.err }
+func (e *codedError) ReplyCode() string { return e.code }
+
 // Prepare claims an exec's request id on the read loop, before the frame is handed to a
 // goroutine. Without it a cancel on the next frame can be answered "unknown" while the
 // command it names starts anyway.
@@ -46,7 +57,15 @@ func (a *Agent) Prepare(head protocol.Envelope) error {
 	if head.Op != protocol.OpExec {
 		return nil
 	}
-	return a.runner.Reserve(head.ID)
+	if err := a.runner.Reserve(head.ID); err != nil {
+		if errors.Is(err, runner.ErrDuplicateID) {
+			// Its own code: the server reads this as "that request is still running here",
+			// which is a different thing from a frame it got wrong.
+			return &codedError{code: protocol.ErrDuplicateID, err: err}
+		}
+		return err
+	}
+	return nil
 }
 
 // OnRefused releases a claim for a frame that will not be dispatched after all.
@@ -111,8 +130,11 @@ func (a *Agent) exec(head protocol.Envelope, frame []byte) []byte {
 	result, err := a.runner.Run(head.ID, request)
 	if err != nil {
 		code := protocol.ErrOpFailed
-		if errors.Is(err, runner.ErrQueueFull) {
+		switch {
+		case errors.Is(err, runner.ErrQueueFull):
 			code = protocol.ErrQueueFull
+		case errors.Is(err, runner.ErrDuplicateID):
+			code = protocol.ErrDuplicateID
 		}
 		a.record(audit.Entry{
 			Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeError,

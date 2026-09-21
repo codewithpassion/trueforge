@@ -275,7 +275,7 @@ func (c *Client) accept(session context.Context, socket *websocket.Conn, payload
 		return
 	}
 	if err := c.options.Prepare(head); err != nil {
-		c.refuse(session, socket, head, protocol.ErrBadRequest, err.Error())
+		c.refuse(session, socket, head, replyCodeFor(err), err.Error())
 		return
 	}
 	select {
@@ -293,6 +293,16 @@ func (c *Client) accept(session context.Context, socket *websocket.Conn, payload
 		defer func() { <-c.handlers }()
 		c.handle(session, socket, head, payload)
 	}()
+}
+
+// replyCodeFor lets a refusal name its own wire code without this package having to know
+// what the layers above it can fail with.
+func replyCodeFor(err error) string {
+	var coded interface{ ReplyCode() string }
+	if errors.As(err, &coded) {
+		return coded.ReplyCode()
+	}
+	return protocol.ErrBadRequest
 }
 
 // refuse answers a frame that will not be dispatched, on the read loop.

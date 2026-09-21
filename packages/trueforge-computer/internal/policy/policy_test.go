@@ -250,6 +250,45 @@ func TestStateDirectoryIsProtectedInEveryMode(t *testing.T) {
 	}
 }
 
+// A working directory that contains the state directory would put the credential and the
+// sweep's records inside the one subtree file operations may reach.
+func TestAWorkdirOverlappingTheStateDirIsRefused(t *testing.T) {
+	stateDir := t.TempDir()
+	sessions := filepath.Join(stateDir, "sessions")
+	if err := os.MkdirAll(sessions, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// The working directory is the state directory itself, or its parent.
+	for _, workdir := range []string{stateDir, filepath.Dir(stateDir)} {
+		_, err := policy.New(policy.Options{
+			WorkdirOnly: true,
+			Workdir:     workdir,
+			StateDir:    stateDir,
+			SessionsDir: sessions,
+		})
+		if err == nil {
+			t.Fatalf("a working directory of %s was accepted", workdir)
+		}
+		if !strings.Contains(err.Error(), "overlaps the state directory") {
+			t.Fatalf("wrong refusal for %s: %v", workdir, err)
+		}
+	}
+
+	// The normal arrangement, where the working directory is the sessions subtree.
+	if _, err := policy.New(policy.Options{
+		WorkdirOnly: true, Workdir: sessions, StateDir: stateDir, SessionsDir: sessions,
+	}); err != nil {
+		t.Fatalf("the normal arrangement was refused: %v", err)
+	}
+	// And a working directory somewhere else entirely.
+	if _, err := policy.New(policy.Options{
+		WorkdirOnly: true, Workdir: t.TempDir(), StateDir: stateDir, SessionsDir: sessions,
+	}); err != nil {
+		t.Fatalf("an unrelated working directory was refused: %v", err)
+	}
+}
+
 func TestBadPatternFailsAtStartup(t *testing.T) {
 	if _, err := policy.New(policy.Options{Deny: []string{"("}}); err == nil {
 		t.Fatal("an invalid deny pattern was accepted")

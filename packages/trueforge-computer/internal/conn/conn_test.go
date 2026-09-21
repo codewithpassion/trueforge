@@ -99,6 +99,27 @@ func (r *recorder) recorded() []time.Duration {
 	return append([]time.Duration(nil), r.delays...)
 }
 
+// runBudget bounds every Run in this package. A test that relies on the client deciding to
+// stop — which is most of them — hangs for the whole go test timeout when that decision
+// regresses, and reports nothing useful. Nothing here calls Run with an unbounded context.
+const runBudget = 20 * time.Second
+
+// runBounded starts the client with a deadline and returns its error.
+func runBounded(t *testing.T, client *conn.Client) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
+	defer cancel()
+	return client.Run(ctx)
+}
+
+// runBoundedAsync is for tests that drive the relay while the client runs.
+func runBoundedAsync(t *testing.T, client *conn.Client) context.CancelFunc {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
+	go func() { _ = client.Run(ctx) }()
+	return cancel
+}
+
 func newClient(t *testing.T, relay *fakeRelay, sleep func(context.Context, time.Duration) error, dispatch conn.Dispatcher) *conn.Client {
 	t.Helper()
 	if dispatch == nil {
@@ -164,7 +185,7 @@ func TestCredentialTravelsInAHeaderNotTheURL(t *testing.T) {
 		_ = socket.Close(protocol.CloseRevoked, "revoked")
 	})
 	client := newClient(t, relay, func(context.Context, time.Duration) error { return nil }, nil)
-	if err := client.Run(context.Background()); !errors.Is(err, conn.ErrRevoked) {
+	if err := runBounded(t, client); !errors.Is(err, conn.ErrRevoked) {
 		t.Fatalf("run: %v", err)
 	}
 	_, auth, paths := relay.snapshot()
@@ -184,7 +205,7 @@ func TestHelloCarriesTheProtocolVersion(t *testing.T) {
 		_ = socket.Close(protocol.CloseRevoked, "revoked")
 	})
 	client := newClient(t, relay, func(context.Context, time.Duration) error { return nil }, nil)
-	_ = client.Run(context.Background())
+	_ = runBounded(t, client)
 
 	relay.mu.Lock()
 	defer relay.mu.Unlock()
@@ -209,14 +230,13 @@ func TestRevokedIsTerminalAndNeverRetries(t *testing.T) {
 	slept := 0
 	// A budget rather than an unbounded loop: if 4401 is ever misclassified as transient this
 	// test must fail, not hang.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+
 	client := newClient(t, relay, func(context.Context, time.Duration) error {
 		slept++
 		return nil
 	}, nil)
 
-	err := client.Run(ctx)
+	err := runBounded(t, client)
 	if !errors.Is(err, conn.ErrRevoked) {
 		t.Fatalf("run returned %v, want ErrRevoked", err)
 	}
@@ -235,7 +255,7 @@ func TestReplacedBacksOffForMinutes(t *testing.T) {
 		r.recordHello(socket)
 		_ = socket.Close(protocol.CloseReplaced, "replaced")
 	})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 	sleeps := &recorder{limit: 3, cancel: cancel}
 	client := newClient(t, relay, sleeps.sleep, nil)
@@ -258,7 +278,7 @@ func TestStaleCloseReconnectsPromptly(t *testing.T) {
 		r.recordHello(socket)
 		_ = socket.Close(protocol.CloseStale, "stale")
 	})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 	sleeps := &recorder{limit: 3, cancel: cancel}
 	client := newClient(t, relay, sleeps.sleep, nil)
@@ -287,7 +307,7 @@ func TestUnauthorizedUpgradeRetriesSlowly(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 	sleeps := &recorder{limit: 2, cancel: cancel}
 	client, err := conn.New(conn.Options{
@@ -344,7 +364,7 @@ func TestRequestIsAnsweredOnItsSocket(t *testing.T) {
 		return encoded
 	}
 	client := newClient(t, relay, func(context.Context, time.Duration) error { return nil }, dispatch)
-	go func() { _ = client.Run(context.Background()) }()
+	defer runBoundedAsync(t, client)()
 
 	select {
 	case reply := <-answered:
@@ -391,7 +411,7 @@ func TestOversizedReplyIsRefusedNotSent(t *testing.T) {
 		return append([]byte(`{"id":"`+head.ID+`","result":{"blob":"`), append(oversized, []byte(`"}}`)...)...)
 	}
 	client := newClient(t, relay, func(context.Context, time.Duration) error { return nil }, dispatch)
-	go func() { _ = client.Run(context.Background()) }()
+	defer runBoundedAsync(t, client)()
 
 	select {
 	case reply := <-received:
@@ -414,7 +434,7 @@ func TestHalfOpenSocketIsClosedByTheHeartbeatCheck(t *testing.T) {
 			}
 		}
 	})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 	sleeps := &recorder{limit: 2, cancel: cancel}
 	client := newClient(t, relay, sleeps.sleep, nil)
@@ -485,7 +505,7 @@ func TestFramesBeyondTheHandlerCapAreRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 	go func() { _ = client.Run(ctx) }()
 
@@ -550,7 +570,7 @@ func TestAFrameThatPrepareRefusesIsNotDispatched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	go func() { _ = client.Run(context.Background()) }()
+	defer runBoundedAsync(t, client)()
 
 	select {
 	case reply := <-answered:

@@ -65,6 +65,9 @@ const (
 	ErrIsADirectory   = "is_a_directory"
 	ErrTooLarge       = "too_large"
 	ErrNotRegularFile = "not_a_regular_file"
+	// ErrDuplicateID means the request id names something still running here, which the
+	// server reads as "it is still going", not as a malformed request.
+	ErrDuplicateID = "duplicate_id"
 )
 
 // Capabilities are the tools the server needs before it will mount skills.

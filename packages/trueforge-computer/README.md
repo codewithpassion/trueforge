@@ -149,27 +149,27 @@ collect them.
 
 `run`:
 
-| Flag                 | Default                  | Meaning                                                              |
-| -------------------- | ------------------------ | -------------------------------------------------------------------- |
-| `--url`              | the enrolled one         | Overrides the stored server URL                                      |
-| `--code`             | `$TRUEFORGE_ENROLL_CODE` | Enrolls first if there is no credential yet                          |
-| `--code-stdin`       | off                      | Read the code from standard input instead                            |
-| `--name`             | the enrolled one         | Hostname to report                                                   |
-| `--state-dir`        | see below                | Credential, config, audit log and process-group records              |
-| `--workdir`          | `<state-dir>/sessions`   | Root for the per-session directories                                 |
-| `--allow-root`       | off                      | Run as root anyway                                                   |
-| `--read-only`        | off                      | Refuse every `exec` and every write                                  |
-| `--workdir-only`     | off                      | Refuse file operations outside `--workdir`                           |
-| `--allow <regex>`    | none                     | A command must match one of these **in full**. Repeatable            |
-| `--deny <regex>`     | none                     | A command must match none of these. Repeatable, checked before allow |
-| `--allow-env <name>` | none                     | Let the server set this variable on a constrained computer           |
-| `--max-concurrent`   | `4`                      | Commands running at once                                             |
-| `--max-queue`        | `32`                     | Commands allowed to wait for a slot                                  |
-| `--max-exec-seconds` | `1800`                   | Longest deadline this computer honours for one command               |
-| `--max-file-bytes`   | `268435456`              | Largest file it will send or receive                                 |
-| `--audit-max-bytes`  | `8388608`                | Size at which the audit log rotates                                  |
-| `--audit-keep`       | `3`                      | Rotated audit logs to keep                                           |
-| `--log-format`       | `json`                   | `json` or `text`                                                     |
+| Flag                 | Default                  | Meaning                                                                        |
+| -------------------- | ------------------------ | ------------------------------------------------------------------------------ |
+| `--url`              | the enrolled one         | Overrides the stored server URL                                                |
+| `--code`             | `$TRUEFORGE_ENROLL_CODE` | Enrolls first if there is no credential yet                                    |
+| `--code-stdin`       | off                      | Read the code from standard input instead                                      |
+| `--name`             | the enrolled one         | Hostname to report                                                             |
+| `--state-dir`        | see below                | Credential, config, audit log and process-group records                        |
+| `--workdir`          | `<state-dir>/sessions`   | Root for the per-session directories                                           |
+| `--allow-root`       | off                      | Run as root anyway                                                             |
+| `--read-only`        | off                      | Refuse every `exec` and every write                                            |
+| `--workdir-only`     | off                      | Refuse file operations outside `--workdir`                                     |
+| `--allow <regex>`    | none                     | A command must match one of these **in full**. Repeatable                      |
+| `--deny <regex>`     | none                     | A command must match none of these. Repeatable, checked before allow           |
+| `--allow-env <name>` | none                     | Let the server set this variable when a policy is active; `NAME*` for a prefix |
+| `--max-concurrent`   | `4`                      | Commands running at once                                                       |
+| `--max-queue`        | `32`                     | Commands allowed to wait for a slot                                            |
+| `--max-exec-seconds` | `1800`                   | Longest deadline this computer honours for one command                         |
+| `--max-file-bytes`   | `268435456`              | Largest file it will send or receive                                           |
+| `--audit-max-bytes`  | `8388608`                | Size at which the audit log rotates                                            |
+| `--audit-keep`       | `3`                      | Rotated audit logs to keep                                                     |
+| `--log-format`       | `json`                   | `json` or `text`                                                               |
 
 `status` also takes `--state-dir` and `--json`.
 
@@ -185,7 +185,10 @@ command it later runs can read it back.
 
 ### Plaintext is refused
 
-`http://` and `ws://` are accepted only for `localhost`, `127.0.0.0/8` and `::1`. Anywhere
+`http://` and `ws://` are accepted only for the exact name `localhost` and for literal
+loopback addresses (`127.0.0.0/8`, `::1`). A subdomain such as `app.localhost` is **not**
+accepted: what it resolves to is up to the system resolver, and the static build's may ask
+DNS. Anywhere
 else they would put the enrollment code, and then the machine credential, on the wire in the
 clear, and the daemon refuses to start rather than do that. There is no flag to override it.
 The enrollment call also refuses to follow redirects, because a 307 re-sends the body — and
@@ -229,7 +232,12 @@ server asks for; none of it contains a determined one. Size the account accordin
   read it — which is the argument for that user being the daemon's own.
 - **Uploads are written to a temporary file and moved into place** only after their digest
   agrees, so a failed or abandoned transfer cannot truncate or delete a file that was
-  already there, and only regular files are ever read or written.
+  already there, and only regular files are ever read or written. An existing file's
+  permission bits are carried over; a new one is `0600`. Because the replacement is a rename,
+  **any hard links to the old file keep the old contents** — the link now names a different
+  inode. The destination path is re-checked against the policy immediately before the rename,
+  which leaves a small window in which a _parent directory_ could be swapped; exploiting it
+  needs `exec` as the same user, which can reach those files directly anyway.
 - **All of this is enforced here, on the machine.** A compromised or hostile server cannot
   lift any of it by asking; the limits live in the flags you started the daemon with.
 - **Everything is audited locally.** `audit.jsonl` records every operation with its outcome,
@@ -255,15 +263,45 @@ stop a server from asking for something obviously wrong. **They are not a sandbo
 - **An allowed interpreter is a blank cheque.** If `python3 .*` or `git .*` is on the allow
   list, the agent can run anything. Allow lists earn their keep only for simple, fixed
   commands.
-- **Environment variables that name a program are refused** once any allow or deny list is
-  set: `PATH`, `BASH_ENV`, `ENV`, `IFS`, `SHELLOPTS`, `PS4`, `PROMPT_COMMAND`, `GIT_SSH`,
-  `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`, `GIT_ASKPASS`,
-  `GIT_EXEC_PATH`, `GIT_PROXY_COMMAND`, `GIT_CONFIG*`, `PAGER`, `EDITOR`, `VISUAL`,
-  `PYTHONSTARTUP`, `PYTHONPATH`, `PYTHONHOME`, `NODE_OPTIONS`, `PERL5OPT` and `RUBYOPT`.
-  Otherwise an allow list of `git .*` plus a `GIT_SSH_COMMAND` runs whatever it names. The
-  whole request is refused rather than the variable quietly dropped; `--allow-env NAME`
-  permits one. `LD_*` and `DYLD_*` are refused always and cannot be allowed, because the
-  dynamic linker acts on them before anything here could check.
+- **A `cwd` is as good as an environment variable.** A repository the server uploaded can
+  carry `.git/config` with `core.fsmonitor` or a `[alias]`, and then `--allow '^git status$'`
+  runs whatever that config names, with no environment involved at all. `--workdir-only`
+  does not help: the repository is inside the working directory.
+
+### The environment on a constrained computer
+
+With **no** policy set, the server's environment is passed through as it sends it, except
+`LD_*` and `DYLD_*` which are refused everywhere and cannot be permitted — the dynamic linker
+acts on them before any code here could look.
+
+As soon as **any** of `--allow`, `--deny`, `--read-only` or `--workdir-only` is set, the
+environment becomes an **allowlist**. Accepted without asking:
+
+`LANG`, `LC_*`, `TZ`, `TERM`, `NO_COLOR`, `CI`, and anything prefixed `TFY_` or
+`TRUEFORGE_SESSION_`.
+
+Everything else refuses the whole request with `denied`, naming the variables. Add what you
+need with `--allow-env NAME`, repeatable, and a trailing `*` makes it a prefix:
+
+```sh
+trueforge-computer run --allow '^git ' --allow-env 'GIT_CONFIG_*' --allow-env PYTHONPATH
+```
+
+This is an allowlist rather than a denylist because a denylist cannot be finished. `PATH`,
+`BASH_ENV` and `GIT_SSH_COMMAND` are the obvious ones; `HOME` plus an uploaded `.gitconfig`,
+`XDG_CONFIG_HOME`, `KUBECONFIG` exec plugins, `AWS_CONFIG_FILE` with `credential_process`,
+`BASH_FUNC_*`, `JAVA_TOOL_OPTIONS`, `PYTHONUSERBASE`, `PERL5LIB`, `RUBYLIB`, `NODE_PATH`,
+`npm_config_*`, `CC`, `MAKEFLAGS`, `RUSTC_WRAPPER`, `SSL_CERT_FILE` and `CURL_HOME` all reach
+the same place, and each one found is evidence of the ones not found yet.
+
+**Two things TrueForge itself needs on a restricted computer:**
+
+- Skills that use git credentials need `--allow-env 'GIT_CONFIG_*'`.
+- Code Mode, when it arrives, needs `--allow-env PYTHONPATH`.
+
+Granting `GIT_CONFIG_*` lets the server set arbitrary git configuration, including
+`core.fsmonitor` and aliases, which run programs. **It is equivalent to allowing arbitrary
+commands.** Grant it on a computer where that is acceptable, or leave skills off.
 
 What TrueForge cannot control from here: what the machine can reach on your network, and what
 an agent does with the files the daemon's user can read. Those are yours.
@@ -285,6 +323,16 @@ files, and the server restarts the transfer from chunk zero.
 A command, by contrast, is **not** cancelled by a disconnect. It keeps running, and a cancel
 arriving on the next socket still reaches it. That is deliberate: a relay restart in the
 middle of a ten-minute build should not throw the build away.
+
+### What the server does about it
+
+TrueForge does not reissue an `exec` after a dropped reply or a disconnect. It reports the
+outcome as unknown, sends a `cancel` for the old request id on the new socket, and retries
+only under a **new** id. So in practice a command runs once; the at-least-once caveat is
+about what this protocol permits, not about what the server does.
+
+A request id that names something still running here comes back as `duplicate_id`, which the
+server reads as "still going" rather than as a bad frame.
 
 ## Troubleshooting
 
@@ -332,10 +380,15 @@ the process group leader. A record it cannot confirm is logged and dropped rathe
 on, because a pid is recycled within hours and the group under it may now be something of
 yours. On systemd, `KillMode=control-group` prevents the situation in the first place.
 
-**A command comes back `denied` naming an environment variable.** The server asked to set
-something that names a program to run, on a computer with an allow or deny list. Either
-narrow what the server sends or permit it explicitly with `--allow-env NAME`. `LD_*` and
-`DYLD_*` cannot be permitted.
+**A command comes back `denied` naming an environment variable.** The computer has a policy
+set, so the environment is an allowlist and this variable is not on it. Permit it with
+`--allow-env NAME` (or `NAME*`), or stop the server sending it. `LD_*` and `DYLD_*` cannot be
+permitted at all. Skills that use git credentials need `--allow-env 'GIT_CONFIG_*'`.
+
+**The daemon refuses to start, saying `--workdir` overlaps the state directory.** The working
+directory contains, or is, the state directory, which would put the credential and the
+process-group records inside the one subtree file operations can reach. Point `--workdir`
+elsewhere, or leave it at its default.
 
 **`refusing to send credentials over plaintext`.** The URL is `http://` to something that is
 not this machine. Use `https://`.

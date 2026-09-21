@@ -36,15 +36,16 @@ type Options struct {
 }
 
 type Policy struct {
-	readOnly    bool
-	allow       []*regexp.Regexp
-	deny        []*regexp.Regexp
-	allowedEnv  map[string]struct{}
-	restricted  bool
-	workdirOnly bool
-	workdir     string
-	stateDir    string
-	sessionsDir string
+	readOnly           bool
+	allow              []*regexp.Regexp
+	deny               []*regexp.Regexp
+	allowedEnv         map[string]struct{}
+	allowedEnvPrefixes []string
+	restricted         bool
+	workdirOnly        bool
+	workdir            string
+	stateDir           string
+	sessionsDir        string
 }
 
 // New compiles the patterns once, so a bad expression fails at startup rather than on the
@@ -81,22 +82,37 @@ func New(options Options) (*Policy, error) {
 	}
 
 	allowedEnv := make(map[string]struct{}, len(options.AllowEnv))
+	var allowedEnvPrefixes []string
 	for _, name := range options.AllowEnv {
-		if trimmed := strings.TrimSpace(name); trimmed != "" {
+		trimmed := strings.TrimSpace(name)
+		switch {
+		case trimmed == "":
+		case strings.HasSuffix(trimmed, "*"):
+			allowedEnvPrefixes = append(allowedEnvPrefixes, strings.TrimSuffix(trimmed, "*"))
+		default:
 			allowedEnv[trimmed] = struct{}{}
 		}
 	}
 
+	// A working directory that contains, or is, the state directory would put the credential
+	// and the sweep's records inside the one subtree file operations are allowed to reach.
+	if stateDir != "" && workdir != "" && (within(workdir, stateDir) || within(stateDir, workdir)) && !within(sessionsDir, workdir) {
+		return nil, fmt.Errorf(
+			"the working directory %s overlaps the state directory %s, which would expose the machine credential and the process-group records to the server; point --workdir somewhere else",
+			workdir, stateDir)
+	}
+
 	return &Policy{
-		readOnly:    options.ReadOnly,
-		allow:       allow,
-		deny:        deny,
-		allowedEnv:  allowedEnv,
-		restricted:  options.ReadOnly || len(allow) > 0 || len(deny) > 0,
-		workdirOnly: options.WorkdirOnly,
-		workdir:     workdir,
-		stateDir:    stateDir,
-		sessionsDir: sessionsDir,
+		readOnly:           options.ReadOnly,
+		allow:              allow,
+		deny:               deny,
+		allowedEnv:         allowedEnv,
+		allowedEnvPrefixes: allowedEnvPrefixes,
+		restricted:         options.ReadOnly || options.WorkdirOnly || len(allow) > 0 || len(deny) > 0,
+		workdirOnly:        options.WorkdirOnly,
+		workdir:            workdir,
+		stateDir:           stateDir,
+		sessionsDir:        sessionsDir,
 	}, nil
 }
 
@@ -221,12 +237,35 @@ func (p *Policy) checkPath(path string) (string, error) {
 	return resolved, nil
 }
 
-// within reports whether candidate is root or sits beneath it, comparing path components so a
-// sibling whose name merely starts with root's does not count.
+// within reports whether candidate is root or sits beneath it. It compares by identity —
+// device and inode, through os.SameFile — rather than by string, because a string comparison
+// is case-sensitive while APFS and NTFS are not: on macOS, `~/.TRUEFORGE/credential` reaches
+// the same file as `~/.trueforge/credential` and would pass a textual check for being
+// outside it. Only when root does not exist does it fall back to comparing components.
 func within(root string, candidate string) bool {
 	if root == "" {
 		return false
 	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return withinLexically(root, candidate)
+	}
+	// Walk up from the candidate: if any of its ancestors is root, it is inside. The leaf
+	// need not exist, which is the normal case for an upload.
+	current := filepath.Clean(candidate)
+	for {
+		if info, statErr := os.Stat(current); statErr == nil && os.SameFile(rootInfo, info) {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
+}
+
+func withinLexically(root string, candidate string) bool {
 	relative, err := filepath.Rel(root, candidate)
 	if err != nil {
 		return false

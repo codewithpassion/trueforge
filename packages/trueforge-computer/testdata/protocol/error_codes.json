@@ -3,6 +3,7 @@
   "codes": [
     "bad_request",
     "denied",
+    "duplicate_id",
     "frame_too_large",
     "is_a_directory",
     "not_a_regular_file",

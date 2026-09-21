@@ -265,6 +265,7 @@ func TestErrorCodeFixtureMatchesTheConstants(t *testing.T) {
 	declared := []string{
 		protocol.ErrBadRequest,
 		protocol.ErrDenied,
+		protocol.ErrDuplicateID,
 		protocol.ErrFrameTooBig,
 		protocol.ErrIsADirectory,
 		protocol.ErrNotRegularFile,

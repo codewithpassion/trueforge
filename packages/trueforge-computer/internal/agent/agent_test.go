@@ -439,7 +439,7 @@ func TestACancelThatOvertakesItsExecStillCounts(t *testing.T) {
 // run something else entirely, so the request is refused rather than quietly stripped.
 func TestEnvironmentInjectionIsRefusedNotStripped(t *testing.T) {
 	h := newHarness(t, policy.Options{Allow: []string{`git (status|fetch)`}})
-	for _, name := range []string{"LD_PRELOAD", "GIT_SSH_COMMAND", "PATH", "BASH_ENV"} {
+	for _, name := range []string{"LD_PRELOAD", "GIT_SSH_COMMAND", "PATH", "BASH_ENV", "HOME", "KUBECONFIG", "RUSTC_WRAPPER"} {
 		reply := h.dispatch(t, "r-"+name, protocol.OpExec, map[string]any{
 			"command": "git status", "cwd": nil,
 			"env":        map[string]string{name: "/tmp/evil"},
@@ -532,6 +532,71 @@ func TestARefusedExecReleasesItsReservation(t *testing.T) {
 	h.agent.OnRefused(head)
 	h.commands.Cancel("blocker")
 	h.commands.Cancel("waiting")
+}
+
+// A request id that names something still running is not a malformed frame, and the server
+// needs to be able to tell the two apart.
+func TestADuplicateRequestIDHasItsOwnCode(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	head := protocol.Envelope{ID: "busy", Op: protocol.OpExec}
+	if err := h.agent.Prepare(head); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	defer h.agent.OnRefused(head)
+
+	err := h.agent.Prepare(head)
+	if err == nil {
+		t.Fatal("the second claim on the same id succeeded")
+	}
+	var coded interface{ ReplyCode() string }
+	if !errors.As(err, &coded) {
+		t.Fatalf("the refusal carries no wire code: %v", err)
+	}
+	if coded.ReplyCode() != protocol.ErrDuplicateID {
+		t.Fatalf("code = %q, want %q", coded.ReplyCode(), protocol.ErrDuplicateID)
+	}
+}
+
+// Replacing a file should not silently change what can read or run it.
+func TestAnUploadPreservesTheDestinationsMode(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	target := filepath.Join(h.workdir, "script.sh")
+	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	payload := []byte("new")
+	sum := sha256.Sum256(payload)
+	digest := hex.EncodeToString(sum[:])
+	reply := h.dispatch(t, "r1", protocol.OpFilePut, map[string]any{
+		"transfer_id": "x", "path": target, "seq": 0,
+		"data_b64": base64.StdEncoding.EncodeToString(payload), "final": true, "sha256": digest,
+	})
+	if reply.Error != nil {
+		t.Fatalf("file_put = %+v", reply.Error)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("mode = %v, want the destination's 0755 carried over", info.Mode().Perm())
+	}
+
+	// A file that did not exist stays owner-only.
+	fresh := filepath.Join(h.workdir, "fresh.txt")
+	if reply := h.dispatch(t, "r2", protocol.OpFilePut, map[string]any{
+		"transfer_id": "y", "path": fresh, "seq": 0,
+		"data_b64": base64.StdEncoding.EncodeToString(payload), "final": true, "sha256": digest,
+	}); reply.Error != nil {
+		t.Fatalf("file_put = %+v", reply.Error)
+	}
+	freshInfo, err := os.Stat(fresh)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if freshInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("new file mode = %v, want 0600", freshInfo.Mode().Perm())
+	}
 }
 
 func TestUnknownOpIsAnswered(t *testing.T) {

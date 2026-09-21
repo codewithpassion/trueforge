@@ -93,10 +93,13 @@ func isPlaintext(scheme string) bool {
 }
 
 // IsLoopback reports whether a host names this machine, which is the only case where
-// plaintext costs nothing because the traffic never reaches a network.
+// plaintext costs nothing because the traffic never reaches a network. Only a literal
+// loopback address and the exact name "localhost" count: a subdomain like app.localhost is
+// resolved by whatever the system's resolver says, and the static build's resolver may well
+// ask DNS for it.
 func IsLoopback(hostname string) bool {
 	lowered := strings.ToLower(strings.Trim(hostname, "[]"))
-	if lowered == "localhost" || strings.HasSuffix(lowered, ".localhost") {
+	if lowered == "localhost" {
 		return true
 	}
 	if address := net.ParseIP(lowered); address != nil {
