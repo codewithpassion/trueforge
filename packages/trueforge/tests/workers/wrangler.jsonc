@@ -32,5 +32,7 @@
     "OIDC_CLIENT_SECRET": "workers-tests-secret",
     "PUBLIC_BASE_URL": "https://trueforge.test",
     "LOG_LEVEL": "warn",
+    // As deployed: the built-in sandbox is available, and a tenant still has to enable it.
+    "TRUEFORGE_SANDBOX_BACKEND": "cloudflare-computer",
   },
 }

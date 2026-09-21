@@ -5,6 +5,7 @@ import { DurableObject } from 'cloudflare:workers';
 import configuration from '../../config';
 import type { Env } from '../env';
 import { createConsoleLogger } from '../logger';
+import type { SandboxEgressGateway } from './sandboxEgressGateway';
 import { workspaceStorage } from './workspaceStorage';
 
 /** Binding name the container egress proxy resolves back to this class. */
@@ -81,19 +82,22 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
   readonly #workspace: Workspace;
   readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'ComputerDO' } });
   #inactivityTimeoutSet = false;
+  /**
+   * Where this container's egress goes. Public so a test can drive the gateway this object built,
+   * props included, rather than one it assembled itself.
+   */
+  readonly egressGateway: Fetcher<SandboxEgressGateway>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    // The session the gateway may reach is this workspace's own name, never anything from a request.
+    this.egressGateway = ctx.exports.SandboxEgressGateway({ props: { sessionDurableObjectName: ctx.id.name } });
     this.#backend = new CloudflareContainerBackend({
       container: () => this,
       workspace: { binding: COMPUTER_DO_BINDING, id: ctx.id.toString() },
       // Every outbound request the container makes arrives at the gateway with its original URL, so
-      // Code Mode gets an address inside the Worker and the rest of egress stays reviewable. The
-      // session the gateway may reach is this workspace's own name, never anything from a request.
-      egress: {
-        mode: 'http-gateway',
-        gateway: ctx.exports.SandboxEgressGateway({ props: { sessionDurableObjectName: ctx.id.name } }),
-      },
+      // Code Mode gets an address inside the Worker and the rest of egress stays reviewable.
+      egress: { mode: 'http-gateway', gateway: this.egressGateway },
     });
     this.#workspace = new Workspace({
       storage: workspaceStorage(ctx.storage),

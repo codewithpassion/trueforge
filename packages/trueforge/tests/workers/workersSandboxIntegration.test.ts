@@ -154,8 +154,10 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND unset',
 });
 
 describe('createWorkersRuntimeDeps', () => {
-  it('leaves code execution off while the deploy sets no sandbox backend', async () => {
-    expect(configuration.TRUEFORGE_SANDBOX_BACKEND).toBeUndefined();
+  it('stays off until the tenant enables the built-in provider', async () => {
+    expect(configuration.TRUEFORGE_SANDBOX_BACKEND).toBe('cloudflare-computer');
+    await migrateDatabase();
+    await disableBuiltInSandbox();
     const { sandboxIntegration } = createWorkersRuntimeDeps(env);
     await expect(sandboxIntegration.resolveProvider(storeInput())).resolves.toBeUndefined();
     await expect(sandboxIntegration.checkSnapshotStatus(storeInput())).resolves.toBeUndefined();
@@ -163,6 +165,17 @@ describe('createWorkersRuntimeDeps', () => {
       usable: false,
       status: undefined,
     });
+  });
+
+  // Only the session object serves the bridge, so a provider the HTTP app builds cannot offer it.
+  it('hands out providers without Code Mode, because the HTTP app serves no bridge', async () => {
+    await enableBuiltInSandbox();
+    try {
+      const provider = await createWorkersRuntimeDeps(env).sandboxIntegration.resolveProvider(storeInput());
+      expect(provider?.supportsCodeMode).toBe(false);
+    } finally {
+      await disableBuiltInSandbox();
+    }
   });
 });
 

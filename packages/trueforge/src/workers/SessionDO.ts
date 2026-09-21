@@ -102,13 +102,14 @@ export class SessionDO extends DurableObject {
   /** Turns this instance runs, from start request to drain end; each promise resolves when its drain settles. */
   readonly #running = new Map<string, Promise<undefined>>();
   readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'SessionDO' } });
-  readonly #sandboxIntegration: SandboxIntegration;
+  /** Public so a test can prove the providers it hands out are bound to this object's bridge. */
+  readonly sandboxIntegration: SandboxIntegration;
   /** Code Mode channels the turns in this instance have open; their sandboxes reach them by token. */
   readonly #codeMode = new CodeModeBridgeRegistry();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.#sandboxIntegration = workersSandboxIntegrationFromEnv({ env, codeModeRegistry: this.#codeMode });
+    this.sandboxIntegration = workersSandboxIntegrationFromEnv({ env, codeModeRegistry: this.#codeMode });
     this.#events = new DurableObjectEventSubscriptions({
       sql: ctx.storage.sql,
       isEvent: isSequencedTurnStreamingEvent,
@@ -171,7 +172,7 @@ export class SessionDO extends DurableObject {
           activeTurns: this.#activeTurns,
           eventSubscriptions: this.#events,
           logger: this.#logger,
-          sandboxIntegration: this.#sandboxIntegration,
+          sandboxIntegration: this.sandboxIntegration,
           // Awaited inside `drained`, so the alarm invocation that holds the turn holds this too.
           onTurnDrained: input => notifier.deliverForTurn(input),
         },
