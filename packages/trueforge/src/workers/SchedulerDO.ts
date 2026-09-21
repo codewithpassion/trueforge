@@ -2,6 +2,7 @@ import { Sessions } from '@truefoundry/trueforge-core/agent-session';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import { DurableObject } from 'cloudflare:workers';
 import { requestContextFromCreatedBySubject } from '../auth/identity';
+import { COMPUTER_AUDIT_PRUNE_INTERVAL_MS, pruneComputerAudit } from '../computers/pruneAudit';
 import configuration from '../config';
 import { dispatchScheduledRuns, SCHEDULE_DISPATCH_INTERVAL_MS } from '../controller/scheduleDispatch';
 import { executeScheduleRun } from '../controller/scheduleRunExecution';
@@ -20,6 +21,7 @@ export const SCHEDULER_INSTANCE_NAME = 'singleton';
 /** Durable Object storage keys holding the last sweep times, in epoch ms. */
 const LAST_INTEGRATION_PRUNE_KEY = 'last_integration_prune_at';
 const LAST_DELIVERY_RETRY_KEY = 'last_delivery_retry_at';
+const LAST_COMPUTER_AUDIT_PRUNE_KEY = 'last_computer_audit_prune_at';
 
 /**
  * Schedule dispatch on Workers. Dispatch requires exactly one controller per database; a single named
@@ -54,6 +56,7 @@ export class SchedulerDO extends DurableObject {
       }
       await this.#pruneIntegrationEventsIfDue(abort.signal);
       await this.#retryDeliveriesIfDue(abort.signal);
+      await this.#pruneComputerAuditIfDue(abort.signal);
     } catch (error) {
       // Per-run failures are handled inside the pass; this is a pass that could not run at all.
       this.#logger.error('Schedule dispatch pass failed', extractErrorLogFields(error));
@@ -122,6 +125,19 @@ export class SchedulerDO extends DurableObject {
           }),
           logger: this.#logger,
           signal,
+        }),
+    });
+  }
+
+  async #pruneComputerAuditIfDue(signal: AbortSignal): Promise<void> {
+    await this.#sweepIfDue({
+      key: LAST_COMPUTER_AUDIT_PRUNE_KEY,
+      intervalMs: COMPUTER_AUDIT_PRUNE_INTERVAL_MS,
+      signal,
+      run: () =>
+        pruneComputerAudit({
+          computerStore: this.#runtimeDeps().computers.store,
+          logger: this.#logger,
         }),
     });
   }

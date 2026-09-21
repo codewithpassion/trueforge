@@ -7,6 +7,7 @@ import { createD1Persistence } from '../db/d1/persistence';
 import type { Database } from '../db/sqlite/types';
 import { createServerRuntime, type ServerPersistence } from '../runtime/createServerRuntime';
 import type { SandboxIntegration } from '../sandbox/integration';
+import { workersComputersService } from './computersService';
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
 import { assertWorkersRuntime } from './runtimeGuard';

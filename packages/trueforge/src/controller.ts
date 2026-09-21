@@ -1,8 +1,10 @@
 import type { Sessions } from '@truefoundry/trueforge-core/agent-session';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { fetch as undiciFetch, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
+import { computerAuditPruneLoop } from './computers/pruneAudit';
 import { Controller } from './controller/Controller';
 import { createHttpScheduleRunExecutor, scheduleDispatchLoop } from './controller/scheduleDispatch';
+import type { IComputerStore } from './db/computerStore';
 import type { IIntegrationStore } from './db/integrationStore';
 import type { IScheduleStore } from './db/scheduleStore';
 import type { WithTransaction } from './db/transaction';
@@ -80,6 +82,8 @@ export function createController<TTransaction>(
   params: ControllerServerTarget & {
     scheduleStore: IScheduleStore<TTransaction>;
     integrationStore: IIntegrationStore<TTransaction>;
+    /** Remote computers are served on Workers, but their activity log is swept here too. */
+    computerStore: IComputerStore<TTransaction>;
     /** Reads the turn a stalled outbox row owes a reply for. */
     sessions: Sessions;
     withTransaction: WithTransaction<TTransaction>;
@@ -91,6 +95,10 @@ export function createController<TTransaction>(
     loops: [
       integrationEventPruneLoop({
         integrationStore: params.integrationStore,
+        logger: params.logger,
+      }),
+      computerAuditPruneLoop({
+        computerStore: params.computerStore,
         logger: params.logger,
       }),
       integrationDeliveryRetryLoop({
@@ -126,6 +134,8 @@ export function runController<TTransaction>(
   params: ControllerServerTarget & {
     scheduleStore: IScheduleStore<TTransaction>;
     integrationStore: IIntegrationStore<TTransaction>;
+    /** Remote computers are served on Workers, but their activity log is swept here too. */
+    computerStore: IComputerStore<TTransaction>;
     sessions: Sessions;
     withTransaction: WithTransaction<TTransaction>;
     logger: Logger;

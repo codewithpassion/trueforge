@@ -54,6 +54,7 @@ import type { RequestContext } from './auth/identity';
 import { type DistributedServerConfiguration, type NodeServerConfiguration } from './config';
 import { createController } from './controller';
 import type { AgentRecord, IAgentStore } from './db/agentStore';
+import type { IComputerStore } from './db/computerStore';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from './db/mcpServerStore';
 import { McpServerWithAuthStore } from './db/McpServerWithAuthStore';
 import type { IModelProviderStore } from './db/modelProviderStore';
@@ -89,6 +90,11 @@ import { TrueFoundryAdminSkillStore, TrueFoundrySkillStore } from './truefoundry
 
 /** Shared persistence plus the resources this Node process owns. */
 interface NodeServerPersistence<TTransaction> extends ServerPersistence<TTransaction> {
+  /**
+   * Remote computers are served on Workers, but their tables exist here too, so the controller
+   * still has to sweep the activity log. Not on `ServerPersistence`, which the routes read.
+   */
+  computerStore: IComputerStore<TTransaction>;
   destroyDb: () => Promise<void>;
   redis: RedisClientType | undefined;
   /** One shared client for TrueFoundry store resolvers + auth; undefined when TrueFoundry mode is off. */
@@ -263,6 +269,7 @@ async function createStandalonePersistence(options: {
     modelProviderStore,
     sandboxProviderStore,
     skillStore,
+    computerStore,
   } = createSqliteStores({
     db,
     atomic: new BetterSqliteAtomicRunner(db),
@@ -285,6 +292,7 @@ async function createStandalonePersistence(options: {
     resolveImportAgentStore: () => agentStore,
     agentStore,
     turnSkillsResolverStore: skillStore,
+    computerStore,
     destroyDb: () => db.destroy(),
     redis: undefined,
     serviceFoundryClient: undefined,
@@ -319,6 +327,7 @@ async function createDistributedPersistence(options: {
       import('./db/postgres/skill-store/PostgresSkillStore'),
       import('./db/postgres/sandbox-provider-store/PostgresSandboxProviderStore'),
       import('./db/postgres/agent-store/PostgresAgentStore'),
+      import('./db/postgres/computer-store/PostgresComputerStore'),
       import('./db/postgres/schedule-store/PostgresScheduleStore'),
       import('./db/postgres/integration-store/PostgresIntegrationStore'),
     ]),
@@ -332,6 +341,7 @@ async function createDistributedPersistence(options: {
     { PostgresSkillStore },
     { PostgresSandboxProviderStore },
     { PostgresAgentStore },
+    { PostgresComputerStore },
     { PostgresScheduleStore },
     { PostgresIntegrationStore },
   ] = postgresStores;
@@ -421,6 +431,7 @@ async function createDistributedPersistence(options: {
     resolveImportAgentStore,
     agentStore,
     turnSkillsResolverStore,
+    computerStore: new PostgresComputerStore(db),
     destroyDb: () => db.destroy(),
     redis: await connectRedis({ url: redisUrl, logger }),
     serviceFoundryClient,
@@ -486,6 +497,7 @@ async function createNodeServerRuntime<TTransaction>(options: {
     ? createController({
         scheduleStore,
         integrationStore: persistence.integrationStore,
+        computerStore: persistence.computerStore,
         sessions: new Sessions({ sessionStore: persistence.sessionStore }),
         withTransaction,
         logger,

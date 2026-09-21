@@ -16,6 +16,7 @@ import { Sessions } from '@truefoundry/trueforge-core/agent-session';
 import configuration from './config';
 import { runController } from './controller';
 import { createDb } from './db/postgres/client';
+import { PostgresComputerStore } from './db/postgres/computer-store/PostgresComputerStore';
 import { PostgresIntegrationStore } from './db/postgres/integration-store/PostgresIntegrationStore';
 import { PostgresScheduleStore } from './db/postgres/schedule-store/PostgresScheduleStore';
 import { PostgresSessionStore } from './db/postgres/session-store/PostgresSessionStore';
@@ -55,6 +56,7 @@ try {
   runController({
     scheduleStore: new PostgresScheduleStore(db),
     integrationStore: new PostgresIntegrationStore(db),
+    computerStore: new PostgresComputerStore(db),
     sessions: new Sessions({ sessionStore: new PostgresSessionStore(db) }),
     withTransaction: callback => db.transaction().execute(callback),
     logger,
