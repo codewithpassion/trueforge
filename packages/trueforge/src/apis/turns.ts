@@ -230,9 +230,24 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       }
 
       // This route has no agent spec, so the computer comes from the reference the turn stored.
-      // It still needs its own tenant check, which `resolveProvider` makes by reading the row
-      // scoped to this tenant: another tenant's computer resolves to nothing.
+      // The session's own agent still has to be allowed on that machine right now: a grant taken
+      // away must stop reads too, not only commands. The reference alone proves nothing.
       const computerId = computerIdFromSandboxRef(sandboxId);
+      if (computerId !== undefined && deps.sandboxIntegration !== undefined) {
+        const usability = await deps.sandboxIntegration.resolveSandboxUsability({
+          store: deps.resolveSandboxProviderStore(c),
+          tenant_id: requestContext.tenant_id,
+          logger: deps.logger,
+          computer_id: computerId,
+          agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
+        });
+        if (!usability.usable) {
+          return c.json(
+            { error: { message: computerNotUsableMessage({ computerId, reason: usability.reason }) } },
+            403,
+          );
+        }
+      }
       const provider = await deps.sandboxIntegration?.resolveProvider({
         tenant_id: requestContext.tenant_id,
         store: deps.resolveSandboxProviderStore(c),

@@ -59,7 +59,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
         logger: deps.logger,
         // This endpoint has no spec, so it can only answer about the tenant's own provider.
         computer_id: undefined,
-        agent_name: undefined,
+        agent_id: undefined,
       });
     } catch (error) {
       deps.logger.warn('Sandbox image status check failed; reporting sandbox disabled', extractErrorLogFields(error));

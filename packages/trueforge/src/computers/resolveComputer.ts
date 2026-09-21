@@ -29,7 +29,7 @@ export function computerNotUsableMessage({
     case 'agent_not_allowed':
       return `This agent is not allowed to use computer "${computerId}" — an admin grants access per computer`;
     case 'inline_agent':
-      return 'Only a saved agent can run on a computer, because access is granted by agent name';
+      return 'A computer is granted to a saved agent: save the agent first, then have an admin grant it access';
     case 'computers_disabled':
       return 'Remote computers are not available on this server';
     case 'computer_offline':
@@ -39,8 +39,12 @@ export function computerNotUsableMessage({
 
 export interface ComputerSelection {
   computer_id: string;
-  /** `undefined` is an inline agent, `null` a reference row with no name snapshot. */
-  agent_name: string | null | undefined;
+  /**
+   * The saved agent's immutable id. `undefined` is an inline agent, which can never be granted a
+   * machine. Never the name: any tenant user can create an agent, so a name-keyed grant would let
+   * one of them take over a grant meant for someone else's agent.
+   */
+  agent_id: string | undefined;
   tenant_id: string;
 }
 
@@ -59,8 +63,8 @@ export async function resolveComputerUsability({
   if (computers === undefined) {
     return refuse('computers_disabled');
   }
-  // An inline spec has no name to put on an allowlist, so it can never be granted a machine.
-  if (selection.agent_name === undefined || selection.agent_name === null) {
+  // An inline spec has no identity to put on an allowlist, so it can never be granted a machine.
+  if (selection.agent_id === undefined) {
     return refuse('inline_agent');
   }
   const computer = await computers.store.getComputer({
@@ -77,7 +81,7 @@ export async function resolveComputerUsability({
   const allowed = await computers.store.isAgentAllowed({
     tenant_id: selection.tenant_id,
     computer_id: selection.computer_id,
-    agent_name: selection.agent_name,
+    agent_id: selection.agent_id,
   });
   if (!allowed) {
     return refuse('agent_not_allowed');

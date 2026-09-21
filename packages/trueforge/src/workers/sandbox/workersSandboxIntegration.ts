@@ -104,7 +104,7 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
           selection: {
             tenant_id: input.tenant_id,
             computer_id: input.computer_id,
-            agent_name: input.agent_name,
+            agent_id: input.agent_id,
           },
         });
       }

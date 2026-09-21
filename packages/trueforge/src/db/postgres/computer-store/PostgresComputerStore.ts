@@ -2,6 +2,7 @@ import { sql, type Kysely, type Selectable, type Transaction } from 'kysely';
 import { ComputerCapabilitiesSchema } from '../../../computers/protocol';
 import type {
   AppendComputerAuditInput,
+  ComputerAgentGrant,
   ComputerAuditRecord,
   ComputerPresenceInput,
   ComputerRecord,
@@ -121,6 +122,7 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
           computer_id: input.id,
           expires_at: new Date(input.code_expires_at),
           used_at: null,
+          redeemed_credential_hash: null,
           created_at: now(),
         })
         .execute();
@@ -155,7 +157,11 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
     }
   }
 
-  /** Every unused code goes too, so rotation locks out whoever holds the old material. */
+  /**
+   * Every unused code goes too, so rotation locks out whoever holds the old material. The
+   * statements need no identity guard between them: the opening UPDATE takes the computer row's
+   * lock, so a second rotation waits and re-evaluates instead of interleaving.
+   */
   async rotateComputer(
     input: RotateComputerInput,
     transaction?: Transaction<Database>,
@@ -184,6 +190,7 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
           computer_id: input.computer_id,
           expires_at: new Date(input.code_expires_at),
           used_at: null,
+          redeemed_credential_hash: null,
           created_at: now(),
         })
         .execute();
@@ -221,7 +228,9 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
 
   /**
    * The code is burned whatever happens next, so a revoked machine cannot retry it; only a
-   * computer that took the credential comes back.
+   * computer that took the credential comes back. The burn records the credential it minted:
+   * the row lock already serialises two redeems of one code, and the stamp keeps the enrollment
+   * row able to say which credential won.
    */
   async redeemEnrollment(
     input: RedeemEnrollmentInput,
@@ -231,7 +240,7 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
     return await this.#write(transaction, async db => {
       const burnt = await db
         .updateTable('computer_enrollment')
-        .set({ used_at: moment })
+        .set({ used_at: moment, redeemed_credential_hash: input.credential_hash })
         .where('code_hash', '=', input.code_hash)
         .where('used_at', 'is', null)
         .where('expires_at', '>', moment)
@@ -257,6 +266,23 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
         .executeTakeFirst();
       return row === undefined ? undefined : toRecord(row);
     });
+  }
+
+  async hasRedeemableEnrollment(
+    input: { code_hash: string; now: string },
+    transaction?: Transaction<Database>,
+  ): Promise<boolean> {
+    const db = transaction ?? this.#db;
+    const row = await db
+      .selectFrom('computer_enrollment')
+      .innerJoin('computer', 'computer.id', 'computer_enrollment.computer_id')
+      .select('computer_enrollment.code_hash')
+      .where('computer_enrollment.code_hash', '=', input.code_hash)
+      .where('computer_enrollment.used_at', 'is', null)
+      .where('computer_enrollment.expires_at', '>', new Date(input.now))
+      .where('computer.status', '<>', 'revoked')
+      .executeTakeFirst();
+    return row !== undefined;
   }
 
   async getComputerByCredentialHash(
@@ -304,25 +330,26 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
   async listAgentAccess(
     input: { tenant_id: string; computer_id: string },
     transaction?: Transaction<Database>,
-  ): Promise<string[]> {
+  ): Promise<ComputerAgentGrant[]> {
     const db = transaction ?? this.#db;
-    const rows = await db
+    return await db
       .selectFrom('computer_agent_access')
       .innerJoin('computer', 'computer.id', 'computer_agent_access.computer_id')
-      .select('computer_agent_access.agent_name')
+      .select(['computer_agent_access.agent_id', 'computer_agent_access.agent_name'])
       .where('computer_agent_access.computer_id', '=', input.computer_id)
       .where('computer.tenant_id', '=', input.tenant_id)
+      // Two agents may share a stale display name, so the id breaks the tie.
       .orderBy('computer_agent_access.agent_name')
+      .orderBy('computer_agent_access.agent_id')
       .execute();
-    return rows.map(row => row.agent_name);
   }
 
-  /** The names arrive as one bound jsonb array, so the statement's parameter count is fixed. */
+  /** The grants arrive as one bound jsonb array, so the statement's parameter count is fixed. */
   async putAgentAccess(
-    input: { tenant_id: string; computer_id: string; agent_names: readonly string[] },
+    input: { tenant_id: string; computer_id: string; agents: readonly ComputerAgentGrant[] },
     transaction?: Transaction<Database>,
-  ): Promise<string[] | undefined> {
-    const names = [...new Set(input.agent_names)];
+  ): Promise<ComputerAgentGrant[] | undefined> {
+    const grants = [...new Map(input.agents.map(agent => [agent.agent_id, agent])).values()];
     return await this.#write(transaction, async db => {
       const owner = await db
         .selectFrom('computer')
@@ -336,36 +363,56 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
       await db.deleteFrom('computer_agent_access').where('computer_id', '=', input.computer_id).execute();
       await db
         .insertInto('computer_agent_access')
-        .columns(['computer_id', 'agent_name', 'created_at'])
+        .columns(['computer_id', 'agent_id', 'agent_name', 'created_at'])
         .expression(
-          sql`SELECT ${input.computer_id}, name, now()
-            FROM jsonb_array_elements_text(${json(names)}) AS names(name)`,
+          sql`SELECT ${input.computer_id}, entry->>'agent_id', entry->>'agent_name', now()
+            FROM jsonb_array_elements(${json(grants)}) AS entry`,
         )
         .execute();
-      const rows = await db
+      return await db
         .selectFrom('computer_agent_access')
-        .select('agent_name')
+        .select(['agent_id', 'agent_name'])
         .where('computer_id', '=', input.computer_id)
         .orderBy('agent_name')
+        .orderBy('agent_id')
         .execute();
-      return rows.map(row => row.agent_name);
     });
   }
 
   async isAgentAllowed(
-    input: { tenant_id: string; computer_id: string; agent_name: string },
+    input: { tenant_id: string; computer_id: string; agent_id: string },
     transaction?: Transaction<Database>,
   ): Promise<boolean> {
     const db = transaction ?? this.#db;
     const row = await db
       .selectFrom('computer_agent_access')
       .innerJoin('computer', 'computer.id', 'computer_agent_access.computer_id')
-      .select('computer_agent_access.agent_name')
+      .select('computer_agent_access.agent_id')
       .where('computer_agent_access.computer_id', '=', input.computer_id)
-      .where('computer_agent_access.agent_name', '=', input.agent_name)
+      .where('computer_agent_access.agent_id', '=', input.agent_id)
       .where('computer.tenant_id', '=', input.tenant_id)
       .executeTakeFirst();
     return row !== undefined;
+  }
+
+  async deleteAgentAccessForAgent(
+    input: { tenant_id: string; agent_id: string },
+    transaction?: Transaction<Database>,
+  ): Promise<number> {
+    const db = transaction ?? this.#db;
+    const result = await db
+      .deleteFrom('computer_agent_access')
+      .where('agent_id', '=', input.agent_id)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom('computer')
+            .select('computer.id')
+            .whereRef('computer.id', '=', 'computer_agent_access.computer_id')
+            .where('computer.tenant_id', '=', input.tenant_id),
+        ),
+      )
+      .executeTakeFirst();
+    return Number(result.numDeletedRows);
   }
 
   async countAgentAccess(
@@ -393,11 +440,10 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
 
   async listAudit(input: ListComputerAuditInput, transaction?: Transaction<Database>): Promise<ComputerAuditRecord[]> {
     const db = transaction ?? this.#db;
-    let query = db
-      .selectFrom('computer_audit')
-      .selectAll()
-      .where('tenant_id', '=', input.tenant_id)
-      .where('computer_id', '=', input.computer_id);
+    let query = db.selectFrom('computer_audit').selectAll().where('tenant_id', '=', input.tenant_id);
+    if (input.computer_id !== undefined) {
+      query = query.where('computer_id', '=', input.computer_id);
+    }
     if (input.before_id !== undefined) {
       query = query.where('id', '<', input.before_id);
     }

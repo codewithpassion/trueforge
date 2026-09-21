@@ -23,8 +23,9 @@ export async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/** The code travels in the environment so it never shows up in another user's process list. */
 export function buildInstallCommand({ baseUrl, code }: { baseUrl: string; code: string }): string {
-  return `curl -fsSL ${baseUrl}/install.sh | sh -s -- --url ${baseUrl} --code ${code}`;
+  return `TRUEFORGE_ENROLL_CODE=${code} sh -c "curl -fsSL ${baseUrl}/install.sh | sh -s -- --url ${baseUrl}"`;
 }
 
 /** Null when this deploy names no client image; the install script is then the only way in. */
@@ -43,7 +44,8 @@ export function buildDockerCommand({
   return [
     'docker run -d --restart unless-stopped',
     '-v trueforge-computer:/var/lib/trueforge-computer',
+    `-e TRUEFORGE_ENROLL_CODE=${code}`,
     image,
-    `--url ${baseUrl} --code ${code}`,
+    `--url ${baseUrl}`,
   ].join(' ');
 }

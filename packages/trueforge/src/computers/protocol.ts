@@ -40,17 +40,37 @@ export const ComputerCapabilitiesSchema = z.object({
 });
 export type ComputerCapabilities = z.infer<typeof ComputerCapabilitiesSchema>;
 
+/**
+ * A POSIX user name. Narrow because it becomes part of the session directory, which is a path the
+ * server hands to a shell — anything looser is an injection waiting for a hostile or broken client.
+ */
+const RUN_AS_USER_PATTERN = /^[a-z_][a-z0-9_-]{0,31}$/;
+
+/**
+ * Bounds, not new fields: the wire shape is frozen, but a client is not trusted, and these strings
+ * are written to the database, shown in the UI and put in front of the model.
+ */
 export const HelloMessageSchema = z.object({
   type: z.literal('hello'),
   protocol_version: z.literal(PROTOCOL_VERSION),
-  hostname: z.string(),
-  os: z.string(),
-  arch: z.string(),
-  version: z.string(),
-  run_as_user: z.string(),
+  hostname: z.string().min(1).max(255),
+  os: z.string().min(1).max(32),
+  arch: z.string().min(1).max(32),
+  version: z.string().min(1).max(64),
+  run_as_user: z.string().regex(RUN_AS_USER_PATTERN),
   capabilities: ComputerCapabilitiesSchema,
 });
 export type HelloMessage = z.infer<typeof HelloMessageSchema>;
+
+/** Control characters from a machine must not reach a log line, the UI or the model's prompt. */
+export function stripControlCharacters(value: string): string {
+  let out = '';
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    out += code < 0x20 || code === 0x7f ? ' ' : character;
+  }
+  return out;
+}
 
 export const ExecRequestSchema = z.object({
   op: z.literal('exec'),

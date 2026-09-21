@@ -8,6 +8,7 @@ import { SCHEDULER_INSTANCE_NAME } from './SchedulerDO';
 // The container egress binding is built from `ctx.exports.WorkspaceProxy`, which only resolves for a
 // WorkerEntrypoint re-exported at the Worker's top level.
 export { WorkspaceProxy } from '@cloudflare/computer';
+export { RateLimitDO } from './RateLimitDO';
 export { RemoteComputerDO } from './RemoteComputerDO';
 export { ComputerDO } from './sandbox/ComputerDO';
 export { SandboxEgressGateway } from './sandbox/sandboxEgressGateway';

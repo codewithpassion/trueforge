@@ -150,7 +150,7 @@ function createTurnResolver(
           tenant_id,
           logger,
           computer_id: computerId,
-          agent_name: session.agent.type === 'reference' ? session.agent.name : undefined,
+          agent_id: session.agent.type === 'reference' ? session.agent.id : undefined,
         });
         if (!usability.usable) {
           throw new HTTPException(422, {

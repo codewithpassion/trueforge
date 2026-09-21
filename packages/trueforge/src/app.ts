@@ -43,10 +43,15 @@ import type { McpCatalog } from './catalog/McpCatalog';
 import type { ModelCatalog } from './catalog/ModelCatalog';
 import type { SandboxCatalog } from './catalog/SandboxCatalog';
 import type { SkillCatalog } from './catalog/SkillCatalog';
-import { INSTALL_SCRIPT_UNCONFIGURED, renderInstallScript } from './computers/installScript';
+import {
+  INSTALL_SCRIPT_NO_BASE_URL,
+  INSTALL_SCRIPT_UNCONFIGURED,
+  renderInstallScript,
+} from './computers/installScript';
 import type { ComputersService } from './computers/service';
 import configuration, {
   getPublicBaseUrl,
+  getPublicBaseUrlOrUndefined,
   getPublicUiBasePath,
   getTrueForgeAuthMode,
   TrueForgeAuthMode,
@@ -275,6 +280,11 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
     if (configuration.REMOTE_COMPUTER_RELEASE_BASE_URL === '') {
       return c.json({ error: { message: INSTALL_SCRIPT_UNCONFIGURED } }, 503);
     }
+    // The script has to point back at this server, and `getPublicBaseUrl` throws when it cannot
+    // say where that is. A misconfigured deploy is not an internal error to the person reading it.
+    if (getPublicBaseUrlOrUndefined() === undefined) {
+      return c.json({ error: { message: INSTALL_SCRIPT_NO_BASE_URL } }, 503);
+    }
     return c.body(
       renderInstallScript({
         baseUrl: getPublicBaseUrl(),
@@ -300,6 +310,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       createComputersRouter({
         computers: deps.computers,
         resolveRequestContext,
+        resolveAgentStore: deps.resolveAgentStore,
         publicBaseUrl: () => getPublicBaseUrl(),
         releaseBaseUrl: configuration.REMOTE_COMPUTER_RELEASE_BASE_URL,
         dockerImage: configuration.REMOTE_COMPUTER_DOCKER_IMAGE,
@@ -416,6 +427,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         resolveSkillStore: deps.resolveSkillStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
         sandboxIntegration: deps.sandboxIntegration,
+        computers: deps.computers,
         withTransaction: deps.withTransaction,
         resolveRequestContext,
         authorizer: deps.authorizer,

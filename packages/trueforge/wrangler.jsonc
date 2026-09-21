@@ -21,6 +21,7 @@
       { "name": "SCHEDULER_DO", "class_name": "SchedulerDO" },
       { "name": "COMPUTER_DO", "class_name": "ComputerDO" },
       { "name": "REMOTE_COMPUTER_DO", "class_name": "RemoteComputerDO" },
+      { "name": "RATE_LIMIT_DO", "class_name": "RateLimitDO" },
     ],
   },
   "migrations": [
@@ -28,6 +29,7 @@
     { "tag": "v2", "new_sqlite_classes": ["SchedulerDO"] },
     { "tag": "v3", "new_sqlite_classes": ["ComputerDO"] },
     { "tag": "v4", "new_sqlite_classes": ["RemoteComputerDO"] },
+    { "tag": "v5", "new_sqlite_classes": ["RateLimitDO"] },
   ],
   // One sandbox container per session, started only when TRUEFORGE_SANDBOX_BACKEND is set.
   "containers": [

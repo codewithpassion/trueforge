@@ -14,11 +14,17 @@ export function workersComputerStore(env: Pick<Env, 'DB'>): SqliteComputerStore 
   return new SqliteComputerStore(createD1Db({ queryable: env.DB }), new D1AtomicRunner(env.DB));
 }
 
-export function workersComputersService(env: Pick<Env, 'DB' | 'REMOTE_COMPUTER_DO'>): ComputersService {
+export function workersComputersService(
+  env: Pick<Env, 'DB' | 'REMOTE_COMPUTER_DO' | 'RATE_LIMIT_DO'>,
+): ComputersService {
   const store = workersComputerStore(env);
   const stubFor = (computerId: string) => env.REMOTE_COMPUTER_DO.get(env.REMOTE_COMPUTER_DO.idFromName(computerId));
   return {
     store,
+    rateLimiter: {
+      take: ({ key, limit, windowMs }) =>
+        env.RATE_LIMIT_DO.get(env.RATE_LIMIT_DO.idFromName(key)).take({ limit, windowMs }),
+    },
     relayFetch: ({ computerId, request }) => stubFor(computerId).fetch(request),
     relay: computerId => {
       const stub = stubFor(computerId);

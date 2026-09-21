@@ -189,6 +189,10 @@ export const putComputerAgentAccessRoute = createRoute({
     401: unauthorized,
     403: forbidden,
     404: notFound,
+    422: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'One of the named agents does not exist in this tenant.',
+    },
   },
 });
 
@@ -254,6 +258,31 @@ export const listComputerAuditRoute = createRoute({
   },
 });
 
+export const listTenantComputerAuditRoute = createRoute({
+  method: 'get',
+  path: '/audit',
+  tags: [OpenApiTag.COMPUTERS],
+  summary: 'List what ran on every computer',
+  description: 'Commands and file transfers across the tenant, newest first, including deleted machines.',
+  'x-fern-sdk-group-name': ['computers', 'audit'],
+  'x-fern-sdk-method-name': 'list_all',
+  'x-fern-pagination': TOKEN_PAGINATION,
+  request: { query: ListComputerAuditRequestQuerySchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ListComputerAuditResponseSchema } },
+      description: 'Paginated activity.',
+    },
+    400: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Invalid query parameters.',
+    },
+    401: unauthorized,
+    403: forbidden,
+    404: notFound,
+  },
+});
+
 /**
  * The machine's own exchange: an enrollment code for a lasting credential. Unauthenticated by
  * design, and every bad, expired or spent code answers identically. Clients read the protocol
@@ -278,5 +307,9 @@ export const enrollComputerRoute = createRoute({
     400: { content: { 'application/json': { schema: RequestErrorResponseSchema } }, description: 'Invalid body.' },
     401: { content: { 'application/json': { schema: RequestErrorResponseSchema } }, description: 'Unauthorized.' },
     404: notFound,
+    429: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Too many attempts from this address; retry after the time in `Retry-After`.',
+    },
   },
 });

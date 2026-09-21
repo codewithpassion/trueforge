@@ -1,3 +1,4 @@
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import { DurableObject } from 'cloudflare:workers';
 import {
   classifyClientFrame,
@@ -18,9 +19,11 @@ import {
   STALENESS_POLL_MS,
 } from '../computers/protocol';
 import { COMPUTER_NAME_HEADER, COMPUTER_TENANT_HEADER } from '../computers/relayHeaders';
+import configuration from '../config';
 import type { IComputerStore } from '../db/computerStore';
 import { workersComputerStore } from './computersService';
 import type { Env } from './env';
+import { createConsoleLogger } from './logger';
 
 /** Written by the alarm rather than per heartbeat, so a connected computer costs no D1 churn. */
 const LAST_SEEN_ALARM_MS = 60_000;
@@ -58,6 +61,12 @@ const EMPTY_META: StoredMeta = {
   tenant_id: null,
   computer_name: null,
 };
+
+/** The generation a socket was accepted under, or undefined when it carries no attachment. */
+function socketGeneration(socket: WebSocket): number | undefined {
+  const attachment: unknown = socket.deserializeAttachment();
+  return isSocketAttachment(attachment) ? attachment.generation : undefined;
+}
 
 function isSocketAttachment(value: unknown): value is SocketAttachment {
   if (typeof value !== 'object' || value === null) {
@@ -122,11 +131,17 @@ export interface RelayRequestInput {
  * caller is a turn that must keep going.
  */
 export class RemoteComputerDO extends DurableObject {
+  readonly #logger = createConsoleLogger({
+    level: configuration.LOG_LEVEL,
+    bindings: { component: 'RemoteComputerDO' },
+  });
   readonly #pending = new Map<string, PendingEntry>();
   readonly #queue: QueuedEntry[] = [];
   #inFlightExec = 0;
   #meta: StoredMeta = EMPTY_META;
   #hello: HelloMessage | null = null;
+  /** In memory on purpose: a hibernation ends the connection's claim to have said hello already. */
+  #helloGeneration: number | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -227,9 +242,18 @@ export class RemoteComputerDO extends DurableObject {
     if (typeof message !== 'string') {
       return;
     }
+    const attachedGeneration = socketGeneration(socket);
     const frame = classifyClientFrame(message);
     if (frame.kind === 'hello') {
+      // A hello costs a storage write and a D1 write, so exactly one is accepted per connection,
+      // and only from the socket that owns it. A client that sends a second is not following the
+      // contract, and repeating it is how a flood would multiply those writes.
+      if (attachedGeneration !== this.#meta.generation || this.#helloGeneration === this.#meta.generation) {
+        socket.close(CLOSE_REPLACED, 'one hello per connection');
+        return;
+      }
       this.#hello = frame.hello;
+      this.#helloGeneration = this.#meta.generation;
       this.ctx.waitUntil(this.ctx.storage.put('hello', frame.hello));
       // One write per connect, not per heartbeat: without it the row has no run_as_user or
       // capabilities for up to a minute, and the provider cannot derive the session directory.
@@ -245,9 +269,8 @@ export class RemoteComputerDO extends DurableObject {
     if (entry === undefined) {
       return;
     }
-    const attachment: unknown = socket.deserializeAttachment();
     // A reply from a superseded socket answers a request that was already failed as `replaced`.
-    if (!isSocketAttachment(attachment) || attachment.generation !== entry.generation) {
+    if (attachedGeneration !== entry.generation) {
       return;
     }
     this.#pending.delete(reply.id);
@@ -537,7 +560,8 @@ export class RemoteComputerDO extends DurableObject {
   async disconnect(): Promise<{ closed: number }> {
     await this.#saveMeta({ generation: this.#meta.generation + 1 });
     const closed = this.#closeSockets('credential rotated');
-    this.#failPending({ reason: 'revoked', message: `Computer ${this.#name()} had its credential rotated` });
+    // Not `revoked`: the machine is expected back with the new code, so this reads as a reconnect.
+    this.#failPending({ reason: 'replaced', message: `Computer ${this.#name()} had its credential rotated` });
     return { closed };
   }
 
@@ -633,7 +657,10 @@ export class RemoteComputerDO extends DurableObject {
               },
       });
     } catch (error) {
-      console.error('Failed to record remote computer presence', error);
+      this.#logger.warn('Could not record remote computer presence', {
+        ...extractErrorLogFields(error),
+        computer_id: computerId,
+      });
     }
   }
 

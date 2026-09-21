@@ -1,15 +1,17 @@
 import type { CodeModeTransport } from '@truefoundry/trueforge-core/core/sandbox/codeMode/CodeModeTransport';
-import type {
-  ExecResult,
-  SandboxBuild,
-  SandboxExecParams,
-  SandboxProvider,
+import {
+  shellEscape,
+  type ExecResult,
+  type SandboxBuild,
+  type SandboxExecParams,
+  type SandboxProvider,
 } from '@truefoundry/trueforge-core/core/sandbox/provider/Provider';
 import {
   SandboxFileNotFoundError,
   SandboxFileTooLargeError,
   SandboxOfflineError,
   SandboxPathIsDirectoryError,
+  SandboxPathOutsideSessionError,
 } from '@truefoundry/trueforge-core/core/sandbox/SandboxErrors';
 import { parseSandboxId } from '@truefoundry/trueforge-core/core/sandbox/sandboxRef';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
@@ -21,10 +23,11 @@ import {
   parseExecResult,
   parseFileGetResult,
   parseFilePutResult,
+  stripControlCharacters,
   type ComputerCapabilities,
   type RequestOutcome,
 } from './protocol';
-import { computerSessionDirectory, type ComputerRelayPort } from './service';
+import { computerSessionDirectory, isInsideDirectory, type ComputerRelayPort } from './service';
 
 export const REMOTE_COMPUTER_PROVIDER_TYPE = 'remote-computer';
 
@@ -66,6 +69,31 @@ const AUDIT_COMMAND_MAX_BYTES = 4096;
  */
 const UNKNOWN_HOME = '/nonexistent';
 
+/** Making the session directory is setup, not the agent's command; it gets its own short deadline. */
+const SETUP_TIMEOUT_MS = 30_000;
+
+/**
+ * What a command's output may contribute to the model's context. The client caps itself, but a
+ * client is not trusted, and an uncapped string fails twice: once on the way in and once in the
+ * model. Matches the built-in sandbox's own ceiling.
+ */
+const EXEC_OUTPUT_MAX_BYTES = 1024 * 1024;
+
+const OUTPUT_ELISION = '\n[... output truncated by the server ...]\n';
+
+function capOutput(value: string): string {
+  const encoded = new TextEncoder().encode(value);
+  if (encoded.byteLength <= EXEC_OUTPUT_MAX_BYTES) {
+    return value;
+  }
+  // Head and tail, because a build's reason for failing is at the end.
+  const half = Math.floor((EXEC_OUTPUT_MAX_BYTES - OUTPUT_ELISION.length) / 2);
+  const decoder = new TextDecoder();
+  const head = decoder.decode(encoded.subarray(0, half));
+  const tail = decoder.decode(encoded.subarray(encoded.byteLength - half));
+  return head + OUTPUT_ELISION + tail;
+}
+
 export interface RemoteComputerProviderOptions {
   relay: ComputerRelayPort;
   computerId: string;
@@ -84,8 +112,15 @@ export interface RemoteComputerProviderOptions {
   logger: Logger;
 }
 
+/** Truncates by bytes, not UTF-16 units, and never mid-code-point: the column limit is in bytes. */
 function truncateCommand(command: string): string {
-  return command.length <= AUDIT_COMMAND_MAX_BYTES ? command : `${command.slice(0, AUDIT_COMMAND_MAX_BYTES)}…`;
+  const encoded = new TextEncoder().encode(command);
+  if (encoded.byteLength <= AUDIT_COMMAND_MAX_BYTES) {
+    return command;
+  }
+  const head = new TextDecoder('utf-8', { fatal: false }).decode(encoded.subarray(0, AUDIT_COMMAND_MAX_BYTES));
+  // A split code point decodes to U+FFFD; dropping it keeps the text honest.
+  return `${head.replace(/\uFFFD$/, '')}…`;
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -155,9 +190,20 @@ export class RemoteComputerProvider implements SandboxProvider {
    * offline machine must surface at the first command with its own reason, not kill the turn here.
    */
   async createSandbox(): Promise<{ sandboxId: string }> {
-    await this.#call({
-      op: { op: 'exec', command: `mkdir -p '${this.#sessionDir}'`, cwd: null, env: {}, timeout_ms: 30_000 },
-      timeoutMs: 30_000,
+    // The path is built from what the machine reported, so it is quoted rather than interpolated.
+    const command = `mkdir -p ${shellEscape(this.#sessionDir)}`;
+    const startedAt = Date.now();
+    const outcome = await this.#call({
+      op: { op: 'exec', command, cwd: null, env: {}, timeout_ms: SETUP_TIMEOUT_MS },
+      timeoutMs: SETUP_TIMEOUT_MS,
+    });
+    await this.#audit({
+      op: 'exec',
+      command,
+      exitCode: outcome.ok ? (parseExecResult(outcome.result_json)?.exit_code ?? null) : null,
+      durationMs: Date.now() - startedAt,
+      bytesOut: 0,
+      outcome: outcome.ok ? 'ok' : outcome.reason,
     });
     return { sandboxId: this.#sandboxId };
   }
@@ -185,6 +231,7 @@ export class RemoteComputerProvider implements SandboxProvider {
         exitCode: null,
         durationMs: Date.now() - startedAt,
         bytesOut: 0,
+        outcome: outcome.reason,
       });
       return { success: false, error: outcome.message };
     }
@@ -196,6 +243,7 @@ export class RemoteComputerProvider implements SandboxProvider {
         exitCode: null,
         durationMs: Date.now() - startedAt,
         bytesOut: 0,
+        outcome: 'unreadable_reply',
       });
       return { success: false, error: `Computer ${this.#options.computerName} sent a reply this server cannot read` };
     }
@@ -205,13 +253,17 @@ export class RemoteComputerProvider implements SandboxProvider {
       exitCode: result.exit_code,
       durationMs: result.duration_ms,
       bytesOut: result.bytes_total,
+      outcome: 'ok',
     });
-    return { success: true, response: { exitCode: result.exit_code, result: result.stdout + result.stderr } };
+    // The client caps its own output, but a hostile one need not, and this string goes straight
+    // into the model's context.
+    const combined = capOutput(result.stdout + result.stderr);
+    return { success: true, response: { exitCode: result.exit_code, result: combined } };
   }
 
   getAdditionalInstructions(): string {
     return [
-      `Commands run on ${this.#options.computerName}, a real machine someone owns and keeps.`,
+      `Commands run on ${stripControlCharacters(this.#options.computerName)}, a real machine someone owns and keeps.`,
       `Nothing is thrown away between sessions, and other sessions share the machine, so work inside ${this.#sessionDir} and leave the rest of the filesystem alone unless you are asked to change it.`,
       'Installing software, editing files outside the session directory and stopping services all affect the owner, so prefer the least invasive command that answers the question.',
     ].join(' ');
@@ -239,123 +291,134 @@ export class RemoteComputerProvider implements SandboxProvider {
 
   async downloadFile(params: { sandboxId: string; path: string }): Promise<Buffer> {
     this.#assertOwnSandbox(params.sandboxId);
+    this.#assertInsideSession(params.path);
     const startedAt = Date.now();
     const chunks: Uint8Array[] = [];
     let received = 0;
-    let declaredDigest: string | null = null;
-    for (;;) {
-      const outcome = await this.#call({
-        op: { op: 'file_get', path: params.path, offset: received, max_bytes: FILE_CHUNK_BYTES },
-        timeoutMs: this.#options.defaultExecTimeoutSeconds * 1000,
-      });
-      if (!outcome.ok) {
-        await this.#audit({
-          op: 'file_get',
-          command: params.path,
-          exitCode: null,
-          durationMs: Date.now() - startedAt,
-          bytesOut: received,
+    let outcomeLabel = 'failed';
+    try {
+      let declaredDigest: string | null = null;
+      for (;;) {
+        const outcome = await this.#call({
+          op: { op: 'file_get', path: params.path, offset: received, max_bytes: FILE_CHUNK_BYTES },
+          timeoutMs: this.#options.defaultExecTimeoutSeconds * 1000,
         });
-        throw this.#fileFailure({ outcome, path: params.path });
-      }
-      const chunk = parseFileGetResult(outcome.result_json);
-      if (chunk === undefined) {
-        throw new SandboxOfflineError(`Computer ${this.#options.computerName} sent a reply this server cannot read`);
-      }
-      if (received === 0) {
-        if (chunk.size > this.#options.fileMaxBytesForDownload) {
-          throw new SandboxFileTooLargeError(params.path, chunk.size, this.#options.fileMaxBytesForDownload);
+        if (!outcome.ok) {
+          outcomeLabel = outcome.reason;
+          throw this.#fileFailure({ outcome, path: params.path });
         }
-        declaredDigest = chunk.sha256;
+        const chunk = parseFileGetResult(outcome.result_json);
+        if (chunk === undefined) {
+          outcomeLabel = 'unreadable_reply';
+          throw new SandboxOfflineError(`Computer ${this.#options.computerName} sent a reply this server cannot read`);
+        }
+        if (received === 0) {
+          if (chunk.size > this.#options.fileMaxBytesForDownload) {
+            outcomeLabel = 'too_large';
+            throw new SandboxFileTooLargeError(params.path, chunk.size, this.#options.fileMaxBytesForDownload);
+          }
+          declaredDigest = chunk.sha256;
+        }
+        const bytes = fromBase64(chunk.data_b64);
+        chunks.push(bytes);
+        received += bytes.byteLength;
+        if (received > this.#options.fileMaxBytesForDownload) {
+          outcomeLabel = 'too_large';
+          throw new SandboxFileTooLargeError(params.path, received, this.#options.fileMaxBytesForDownload);
+        }
+        if (chunk.eof) {
+          break;
+        }
+        // A client that keeps answering with nothing would otherwise spin forever.
+        if (bytes.byteLength === 0) {
+          outcomeLabel = 'stalled';
+          throw new SandboxOfflineError(`Computer ${this.#options.computerName} stopped sending ${params.path}`);
+        }
       }
-      const bytes = fromBase64(chunk.data_b64);
-      chunks.push(bytes);
-      received += bytes.byteLength;
-      if (received > this.#options.fileMaxBytesForDownload) {
-        throw new SandboxFileTooLargeError(params.path, received, this.#options.fileMaxBytesForDownload);
+      const content = Buffer.concat(chunks);
+      if (declaredDigest !== null) {
+        const actual = await sha256Hex(content);
+        if (actual !== declaredDigest) {
+          outcomeLabel = 'digest_mismatch';
+          throw new Error(`Download of ${params.path} was corrupted in transit`, {
+            cause: new Error(`expected ${declaredDigest}, got ${actual}`),
+          });
+        }
       }
-      if (chunk.eof) {
-        break;
-      }
-      // A client that keeps answering with nothing would otherwise spin forever.
-      if (bytes.byteLength === 0) {
-        throw new SandboxOfflineError(`Computer ${this.#options.computerName} stopped sending ${params.path}`);
-      }
+      outcomeLabel = 'ok';
+      return content;
+    } finally {
+      // Every path writes a row, refusals included: a read that was attempted and denied is
+      // exactly what someone reviewing a machine's activity needs to see.
+      await this.#audit({
+        op: 'file_get',
+        command: params.path,
+        exitCode: outcomeLabel === 'ok' ? 0 : null,
+        durationMs: Date.now() - startedAt,
+        bytesOut: received,
+        outcome: outcomeLabel,
+      });
     }
-    const content = Buffer.concat(chunks);
-    if (declaredDigest !== null) {
-      const actual = await sha256Hex(content);
-      if (actual !== declaredDigest) {
-        throw new Error(`Download of ${params.path} was corrupted in transit`, {
-          cause: new Error(`expected ${declaredDigest}, got ${actual}`),
-        });
-      }
-    }
-    await this.#audit({
-      op: 'file_get',
-      command: params.path,
-      exitCode: 0,
-      durationMs: Date.now() - startedAt,
-      bytesOut: content.byteLength,
-    });
-    return content;
   }
 
   async uploadFile(params: { sandboxId: string; remotePath: string; content: Buffer }): Promise<void> {
     this.#assertOwnSandbox(params.sandboxId);
+    this.#assertInsideSession(params.remotePath);
     const startedAt = Date.now();
     const transferId = newId();
-    const digest = await sha256Hex(params.content);
     const total = params.content.byteLength;
     let sent = 0;
-    let seq = 0;
-    for (;;) {
-      const slice = params.content.subarray(sent, Math.min(sent + FILE_CHUNK_BYTES, total));
-      const final = sent + slice.byteLength >= total;
-      const outcome = await this.#call({
-        op: {
-          op: 'file_put',
-          transfer_id: transferId,
-          path: params.remotePath,
-          seq,
-          data_b64: toBase64(slice),
-          final,
-          sha256: final ? digest : null,
-        },
-        timeoutMs: this.#options.defaultExecTimeoutSeconds * 1000,
-      });
-      if (!outcome.ok) {
-        await this.#audit({
-          op: 'file_put',
-          command: params.remotePath,
-          exitCode: null,
-          durationMs: Date.now() - startedAt,
-          bytesOut: sent,
+    let outcomeLabel = 'failed';
+    try {
+      const digest = await sha256Hex(params.content);
+      let seq = 0;
+      for (;;) {
+        const slice = params.content.subarray(sent, Math.min(sent + FILE_CHUNK_BYTES, total));
+        const final = sent + slice.byteLength >= total;
+        const outcome = await this.#call({
+          op: {
+            op: 'file_put',
+            transfer_id: transferId,
+            path: params.remotePath,
+            seq,
+            data_b64: toBase64(slice),
+            final,
+            sha256: final ? digest : null,
+          },
+          timeoutMs: this.#options.defaultExecTimeoutSeconds * 1000,
         });
-        throw this.#fileFailure({ outcome, path: params.remotePath });
-      }
-      const reply = parseFilePutResult(outcome.result_json);
-      if (reply === undefined) {
-        throw new SandboxOfflineError(`Computer ${this.#options.computerName} sent a reply this server cannot read`);
-      }
-      sent += slice.byteLength;
-      seq += 1;
-      if (final) {
-        if (reply.sha256 !== null && reply.sha256 !== digest) {
-          throw new Error(`Upload of ${params.remotePath} was corrupted in transit`, {
-            cause: new Error(`expected ${digest}, got ${reply.sha256}`),
-          });
+        if (!outcome.ok) {
+          outcomeLabel = outcome.reason;
+          throw this.#fileFailure({ outcome, path: params.remotePath });
         }
-        break;
+        const reply = parseFilePutResult(outcome.result_json);
+        if (reply === undefined) {
+          outcomeLabel = 'unreadable_reply';
+          throw new SandboxOfflineError(`Computer ${this.#options.computerName} sent a reply this server cannot read`);
+        }
+        sent += slice.byteLength;
+        seq += 1;
+        if (final) {
+          if (reply.sha256 !== null && reply.sha256 !== digest) {
+            outcomeLabel = 'digest_mismatch';
+            throw new Error(`Upload of ${params.remotePath} was corrupted in transit`, {
+              cause: new Error(`expected ${digest}, got ${reply.sha256}`),
+            });
+          }
+          break;
+        }
       }
+      outcomeLabel = 'ok';
+    } finally {
+      await this.#audit({
+        op: 'file_put',
+        command: params.remotePath,
+        exitCode: outcomeLabel === 'ok' ? 0 : null,
+        durationMs: Date.now() - startedAt,
+        bytesOut: sent,
+        outcome: outcomeLabel,
+      });
     }
-    await this.#audit({
-      op: 'file_put',
-      command: params.remotePath,
-      exitCode: 0,
-      durationMs: Date.now() - startedAt,
-      bytesOut: total,
-    });
   }
 
   createCodeModeTransport(): CodeModeTransport {
@@ -424,6 +487,18 @@ export class RemoteComputerProvider implements SandboxProvider {
     }
   }
 
+  /**
+   * File operations stay inside this session's directory. `exec` deliberately sees the whole
+   * machine, but a file transfer is reachable from the download route by anyone who owns the
+   * session, and an unbounded read would hand over the client's own credential file — which is
+   * enough to connect as the computer and collect other sessions' commands.
+   */
+  #assertInsideSession(path: string): void {
+    if (!isInsideDirectory({ directory: this.#sessionDir, path })) {
+      throw new SandboxPathOutsideSessionError(path);
+    }
+  }
+
   /** A record that could not be written must not fail the work it describes. */
   async #audit(input: {
     op: ComputerAuditOp;
@@ -431,11 +506,15 @@ export class RemoteComputerProvider implements SandboxProvider {
     exitCode: number | null;
     durationMs: number;
     bytesOut: number;
+    /** `ok`, or why it did not finish. Recorded so a refusal is as visible as a success. */
+    outcome: string;
   }): Promise<void> {
     const row: AppendComputerAuditInput = {
       id: newId(),
       computer_id: this.#options.computerId,
+      computer_name: this.#options.computerName,
       tenant_id: this.#options.tenantId,
+      outcome: input.outcome,
       session_id: this.#options.sessionId,
       turn_id: this.#options.turnId,
       op: input.op,

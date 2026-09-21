@@ -70,10 +70,10 @@ export interface SandboxIntegration {
     /** From `spec.config.sandbox.computer_id`; set means the computer is checked, not the provider. */
     computer_id: string | undefined;
     /**
-     * The saved agent this spec belongs to. `undefined` is an inline agent and `null` a reference
-     * row with no name snapshot; neither may use a computer, because there is nothing to allow.
+     * The immutable id of the saved agent this spec belongs to. `undefined` is an inline agent,
+     * which may not use a computer: access is granted per agent, and there is nothing to grant to.
      */
-    agent_name: string | null | undefined;
+    agent_id: string | undefined;
   }): Promise<SandboxUsability>;
   /** Whether skills can be mounted into a sandbox on this runtime. */
   isSkillMountingSupported(): boolean;

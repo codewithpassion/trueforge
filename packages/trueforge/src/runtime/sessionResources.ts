@@ -201,14 +201,14 @@ async function resolveSandboxUsabilityOrThrow({
   tenant_id,
   logger,
   computer_id,
-  agent_name,
+  agent_id,
 }: {
   sandboxIntegration: SandboxIntegration;
   sandboxProviderStore: ISandboxProviderStore;
   tenant_id: string;
   logger: Logger;
   computer_id: string | undefined;
-  agent_name: string | null | undefined;
+  agent_id: string | undefined;
 }): Promise<SandboxUsability> {
   try {
     return await sandboxIntegration.resolveSandboxUsability({
@@ -216,7 +216,7 @@ async function resolveSandboxUsabilityOrThrow({
       tenant_id,
       logger,
       computer_id,
-      agent_name,
+      agent_id,
     });
   } catch (error) {
     logger.error('Sandbox image status check failed while validating an agent spec', extractErrorLogFields(error));
@@ -235,7 +235,7 @@ async function resolveSandboxUsabilityOrThrow({
 export async function validateAgentSpec({
   spec,
   tenant_id,
-  agent_name,
+  agent_id,
   modelProviderStore,
   mcpServerStore,
   skillStore,
@@ -246,10 +246,10 @@ export async function validateAgentSpec({
   spec: AgentSpec;
   tenant_id: string;
   /**
-   * The saved agent this spec will belong to, or undefined for an inline spec. Only a named agent
-   * can be granted a computer, because access is kept per agent name.
+   * The immutable id of the saved agent this spec will belong to, or undefined for an inline spec.
+   * Only a saved agent can be granted a computer, and the grant is keyed by this id.
    */
-  agent_name: string | undefined;
+  agent_id: string | undefined;
   modelProviderStore: IModelProviderStore;
   mcpServerStore: IMcpServerStore;
   skillStore: ISkillStore;
@@ -313,7 +313,7 @@ export async function validateAgentSpec({
             tenant_id,
             logger,
             computer_id: computerId,
-            agent_name,
+            agent_id,
           });
     if (usability?.usable !== true) {
       throw new HTTPException(422, {

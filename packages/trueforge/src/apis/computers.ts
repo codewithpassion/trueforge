@@ -15,9 +15,16 @@ import {
   mintSecret,
   sha256Hex,
 } from '../computers/enrollment';
+import {
+  CONNECT_ATTEMPTS_PER_WINDOW,
+  ENROLL_ATTEMPTS_PER_WINDOW,
+  RATE_LIMIT_WINDOW_MS,
+  rateLimitKey,
+} from '../computers/rateLimit';
 import { COMPUTER_NAME_HEADER, COMPUTER_TENANT_HEADER } from '../computers/relayHeaders';
 import type { ComputersService } from '../computers/service';
-import type { ComputerRecord } from '../db/computerStore';
+import type { IAgentStore } from '../db/agentStore';
+import type { ComputerAgentGrant, ComputerAuditRecord, ComputerRecord } from '../db/computerStore';
 import { ComputerNameConflictError } from '../db/computerStoreErrors';
 import {
   createComputerRoute,
@@ -27,12 +34,13 @@ import {
   getComputerRoute,
   listComputerAuditRoute,
   listComputersRoute,
+  listTenantComputerAuditRoute,
   patchComputerRoute,
   putComputerAgentAccessRoute,
   revokeComputerRoute,
   rotateComputerEnrollmentRoute,
 } from '../routes/computerRoutes';
-import type { Computer, ComputerEnrollment } from '../schemas/computer';
+import type { Computer, ComputerAuditEntry, ComputerEnrollment } from '../schemas/computer';
 import { newId } from '../utils/id';
 
 /** Said for a computer in another tenant too, so a probe cannot tell the two apart. */
@@ -46,6 +54,8 @@ export interface ComputersRouterDeps {
   /** Undefined on a runtime that cannot reach a machine's relay. */
   computers: ComputersService | undefined;
   resolveRequestContext: ResolveRequestContext;
+  /** Grants name an agent; the store keeps its id, so the name has to be resolved here. */
+  resolveAgentStore: (c: Context) => IAgentStore;
   publicBaseUrl: () => string;
   releaseBaseUrl: string;
   dockerImage: string;
@@ -67,6 +77,50 @@ function toWireComputer(record: ComputerRecord): Computer {
     last_seen_at: record.last_seen_at,
     created_at: record.created_at,
     updated_at: record.updated_at,
+  };
+}
+
+/**
+ * A fixed window per address on each unauthenticated route. Undefined means the caller may
+ * proceed. A limiter that is itself unreachable never blocks a legitimate machine.
+ */
+async function refuseWhenRateLimited({
+  computers,
+  request,
+  route,
+  limit,
+}: {
+  computers: ComputersService;
+  request: Request;
+  route: string;
+  limit: number;
+}): Promise<{ retryAfterSeconds: string } | undefined> {
+  const limiter = computers.rateLimiter;
+  if (limiter === undefined) {
+    return undefined;
+  }
+  const outcome = await limiter.take({
+    key: rateLimitKey({ request, route }),
+    limit,
+    windowMs: RATE_LIMIT_WINDOW_MS,
+  });
+  return outcome.allowed ? undefined : { retryAfterSeconds: String(Math.ceil(outcome.retry_after_ms / 1000)) };
+}
+
+function toWireAuditEntry(row: ComputerAuditRecord): ComputerAuditEntry {
+  return {
+    id: row.id,
+    computer_id: row.computer_id,
+    computer_name: row.computer_name,
+    session_id: row.session_id,
+    turn_id: row.turn_id,
+    op: row.op,
+    command: row.command,
+    exit_code: row.exit_code,
+    outcome: row.outcome,
+    duration_ms: row.duration_ms,
+    bytes_out: row.bytes_out,
+    created_at: row.created_at,
   };
 }
 
@@ -174,12 +228,14 @@ export function createComputersRouter(deps: ComputersRouterDeps) {
     const { computer_id: computerId } = c.req.valid('param');
     const outcome = await withComputer(c, computerId, async ({ computers, tenantId }) => {
       // An agent still granted this machine would silently lose it, so deleting is refused until
-      // an admin has taken the grant away and can see what they are removing.
+      // an admin has taken the grant away and can see what they are removing. The store makes the
+      // refusal part of the write, so a grant added between a check and a delete still wins.
       const granted = await computers.store.countAgentAccess({ tenant_id: tenantId, computer_id: computerId });
-      if (granted > 0) {
-        return { deleted: false, granted } as const;
+      const deleted =
+        granted > 0 ? false : await computers.store.deleteComputer({ tenant_id: tenantId, computer_id: computerId });
+      if (!deleted) {
+        return { deleted: false, granted: Math.max(granted, 1) } as const;
       }
-      await computers.store.deleteComputer({ tenant_id: tenantId, computer_id: computerId });
       // The row is gone either way; a relay that cannot be reached is not worth failing the call.
       try {
         await computers.relay(computerId).destroy();
@@ -209,29 +265,54 @@ export function createComputersRouter(deps: ComputersRouterDeps) {
 
   const getAccessHandler: RouteHandler<typeof getComputerAgentAccessRoute> = async c => {
     const { computer_id: computerId } = c.req.valid('param');
-    const names = await withComputer(c, computerId, ({ computers, tenantId }) =>
+    const grants = await withComputer(c, computerId, ({ computers, tenantId }) =>
       computers.store.listAgentAccess({ tenant_id: tenantId, computer_id: computerId }),
     );
-    if (names === undefined) {
+    if (grants === undefined) {
       return c.json({ error: { message: NOT_FOUND } }, 404);
     }
-    return c.json({ data: { agent_names: names } }, 200);
+    return c.json({ data: { agent_names: grants.map(grant => grant.agent_name) } }, 200);
   };
 
   const putAccessHandler: RouteHandler<typeof putComputerAgentAccessRoute> = async c => {
     const { computer_id: computerId } = c.req.valid('param');
     const body = c.req.valid('json');
-    const names = await withComputer(c, computerId, ({ computers, tenantId }) =>
-      computers.store.putAgentAccess({
+    const agentStore = deps.resolveAgentStore(c);
+    const requested = [...new Set(body.agent_names)];
+    const outcome = await withComputer(c, computerId, async ({ computers, tenantId }) => {
+      // Names are resolved to ids here, and the grant is stored by id. Granting a name that
+      // nothing answers to is refused rather than left waiting: any tenant user can create an
+      // agent, so a grant waiting for a name is a machine waiting to be taken.
+      const resolved = await Promise.all(
+        requested.map(async name => ({
+          name,
+          agent: await agentStore.getAgent({ tenant_id: tenantId, name }),
+        })),
+      );
+      const unknown = resolved.filter(entry => entry.agent === undefined).map(entry => entry.name);
+      if (unknown.length > 0) {
+        return { ok: false, unknown } as const;
+      }
+      const grants: ComputerAgentGrant[] = [];
+      for (const entry of resolved) {
+        if (entry.agent !== undefined) {
+          grants.push({ agent_id: entry.agent.id, agent_name: entry.agent.name });
+        }
+      }
+      const stored = await computers.store.putAgentAccess({
         tenant_id: tenantId,
         computer_id: computerId,
-        agent_names: body.agent_names,
-      }),
-    );
-    if (names === undefined) {
+        agents: grants,
+      });
+      return stored === undefined ? undefined : ({ ok: true, stored } as const);
+    });
+    if (outcome === undefined) {
       return c.json({ error: { message: NOT_FOUND } }, 404);
     }
-    return c.json({ data: { agent_names: names } }, 200);
+    if (!outcome.ok) {
+      return c.json({ error: { message: `No such agent: ${outcome.unknown.join(', ')}` } }, 422);
+    }
+    return c.json({ data: { agent_names: outcome.stored.map(grant => grant.agent_name) } }, 200);
   };
 
   const rotateHandler: RouteHandler<typeof rotateComputerEnrollmentRoute> = async c => {
@@ -308,17 +389,33 @@ export function createComputersRouter(deps: ComputersRouterDeps) {
     const nextToken = rows.length > limit ? page[page.length - 1]?.id : undefined;
     return c.json(
       {
-        data: page.map(row => ({
-          id: row.id,
-          session_id: row.session_id,
-          turn_id: row.turn_id,
-          op: row.op,
-          command: row.command,
-          exit_code: row.exit_code,
-          duration_ms: row.duration_ms,
-          bytes_out: row.bytes_out,
-          created_at: row.created_at,
-        })),
+        data: page.map(toWireAuditEntry),
+        pagination: { limit, ...(nextToken === undefined ? {} : { next_page_token: nextToken }) },
+      },
+      200,
+    );
+  };
+
+  const tenantAuditHandler: RouteHandler<typeof listTenantComputerAuditRoute> = async c => {
+    const { computers } = deps;
+    if (computers === undefined) {
+      return c.json({ error: { message: COMPUTERS_UNSUPPORTED } }, 404);
+    }
+    const { limit, page_token: pageToken } = c.req.valid('query');
+    const tenantId = deps.resolveRequestContext(c).tenant_id;
+    // Not scoped to a computer, so it still shows what ran on a machine that has since been
+    // deleted — which is the point of keeping the rows past the delete.
+    const rows = await computers.store.listAudit({
+      tenant_id: tenantId,
+      computer_id: undefined,
+      limit: limit + 1,
+      before_id: pageToken,
+    });
+    const page = rows.slice(0, limit);
+    const nextToken = rows.length > limit ? page[page.length - 1]?.id : undefined;
+    return c.json(
+      {
+        data: page.map(toWireAuditEntry),
         pagination: { limit, ...(nextToken === undefined ? {} : { next_page_token: nextToken }) },
       },
       200,
@@ -334,6 +431,7 @@ export function createComputersRouter(deps: ComputersRouterDeps) {
   router.openapi(putComputerAgentAccessRoute, putAccessHandler);
   router.openapi(rotateComputerEnrollmentRoute, rotateHandler);
   router.openapi(revokeComputerRoute, revokeHandler);
+  router.openapi(listTenantComputerAuditRoute, tenantAuditHandler);
   router.openapi(listComputerAuditRoute, auditHandler);
   return router;
 }
@@ -353,10 +451,25 @@ export function createComputerMachineRouter(deps: {
     if (computers === undefined) {
       return c.json({ error: { message: COMPUTERS_UNSUPPORTED } }, 404);
     }
+    const limited = await refuseWhenRateLimited({
+      computers,
+      request: c.req.raw,
+      route: 'enroll',
+      limit: ENROLL_ATTEMPTS_PER_WINDOW,
+    });
+    if (limited !== undefined) {
+      return c.json({ error: { message: UNAUTHORIZED } }, 429, { 'Retry-After': limited.retryAfterSeconds });
+    }
     const body = c.req.valid('json');
+    const codeHash = await sha256Hex(body.enrollment_code);
+    // A guess costs one read. Going straight to the redeem batch would make every miss a write,
+    // which is the cheapest way to turn a brute-force attempt into a bill.
+    if (!(await computers.store.hasRedeemableEnrollment({ code_hash: codeHash, now: new Date().toISOString() }))) {
+      return c.json({ error: { message: UNAUTHORIZED } }, 401);
+    }
     const credential = mintSecret();
     const record = await computers.store.redeemEnrollment({
-      code_hash: await sha256Hex(body.enrollment_code),
+      code_hash: codeHash,
       credential_hash: await sha256Hex(credential),
       hostname: body.hostname,
       os: body.os,
@@ -394,6 +507,15 @@ export function registerComputerConnectRoute(input: {
     }
     if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
       return c.json({ error: { message: 'Expected a WebSocket upgrade' } }, 426);
+    }
+    const limited = await refuseWhenRateLimited({
+      computers,
+      request: c.req.raw,
+      route: 'connect',
+      limit: CONNECT_ATTEMPTS_PER_WINDOW,
+    });
+    if (limited !== undefined) {
+      return c.json({ error: { message: UNAUTHORIZED } }, 429, { 'Retry-After': limited.retryAfterSeconds });
     }
     const authorization = c.req.header('Authorization') ?? '';
     const match = /^Bearer (.+)$/i.exec(authorization);

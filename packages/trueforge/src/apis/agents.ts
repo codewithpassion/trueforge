@@ -7,6 +7,7 @@ import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import type { Authorizer } from '../auth/authorizer';
 import { createdBySubjectFromRequestContext, type ResolveRequestContext } from '../auth/identity';
+import type { ComputersService } from '../computers/service';
 import configuration from '../config';
 import {
   AgentExternalIdConflictError,
@@ -41,6 +42,8 @@ export interface AgentsRouterDeps<TTransaction> {
   resolveSkillStore: ResolveSkillStore<TTransaction>;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
   sandboxIntegration: SandboxIntegration | undefined;
+  /** Undefined on a runtime that serves no computers; deleting an agent then has no grants to drop. */
+  computers: ComputersService | undefined;
   withTransaction: WithTransaction<TTransaction>;
   resolveRequestContext: ResolveRequestContext;
   authorizer: Authorizer;
@@ -66,7 +69,7 @@ async function validateManifest<TTransaction>({
   sandboxProviderStore,
   sandboxIntegration,
   tenant_id,
-  agent_name,
+  agent_id,
   logger,
 }: {
   spec: AgentSpec;
@@ -76,14 +79,17 @@ async function validateManifest<TTransaction>({
   sandboxProviderStore: ISandboxProviderStore<TTransaction>;
   sandboxIntegration: SandboxIntegration | undefined;
   tenant_id: string;
-  /** The saved agent's name; a computer's allowlist is keyed by it. */
-  agent_name: string;
+  /**
+   * The saved agent's immutable id, or undefined while it is being created. A computer's allowlist
+   * is keyed by the id, so an agent that does not exist yet cannot already have been granted one.
+   */
+  agent_id: string | undefined;
   logger: Logger;
 }): Promise<AgentSpec> {
   await validateAgentSpec({
     spec,
     tenant_id,
-    agent_name,
+    agent_id,
     modelProviderStore,
     mcpServerStore,
     skillStore,
@@ -128,7 +134,9 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
       sandboxIntegration: deps.sandboxIntegration,
       tenant_id: requestContext.tenant_id,
-      agent_name: body.name,
+      // A new agent has no id yet, so it cannot already be on a computer's allowlist: naming a
+      // computer at create time is refused, and the agent is granted one after it exists.
+      agent_id: undefined,
       logger: deps.logger,
     });
     try {
@@ -210,6 +218,12 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
     if (existing === undefined) {
       return c.json({ error: { message: `Agent not found: ${agentId}` } }, 404);
     }
+    // Grants first: a grant that outlives its agent is inert, because access is keyed by the
+    // immutable id and a new agent of the same name gets a new one. Dropping them keeps the list
+    // honest, and doing it first means a failed delete never leaves a live agent without access.
+    if (deps.computers !== undefined) {
+      await deps.computers.store.deleteAgentAccessForAgent({ tenant_id: requestContext.tenant_id, agent_id: agentId });
+    }
     await deps.resolveAgentStore(c).deleteAgent({ tenant_id: requestContext.tenant_id, id: agentId });
     return c.json({}, 200);
   };
@@ -235,7 +249,7 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
       sandboxIntegration: deps.sandboxIntegration,
       tenant_id: requestContext.tenant_id,
-      agent_name: existing.name,
+      agent_id: existing.id,
       logger: deps.logger,
     });
     const record = await deps.resolveAgentStore(c).updateAgent({

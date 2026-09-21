@@ -2,6 +2,7 @@ import { sql, type CompiledQuery, type ExpressionBuilder, type Kysely, type SqlB
 import { ComputerCapabilitiesSchema } from '../../../computers/protocol';
 import type {
   AppendComputerAuditInput,
+  ComputerAgentGrant,
   ComputerAuditRecord,
   ComputerPresenceInput,
   ComputerRecord,
@@ -71,12 +72,14 @@ function toRecord(row: ComputerRow): ComputerRecord {
 const AUDIT_COLUMNS = [
   'id',
   'computer_id',
+  'computer_name',
   'tenant_id',
   'session_id',
   'turn_id',
   'op',
   'command',
   'exit_code',
+  'outcome',
   'duration_ms',
   'bytes_out',
   'created_at',
@@ -151,9 +154,9 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
         .compile(),
       db
         .insertInto('computer_enrollment')
-        .columns(['code_hash', 'computer_id', 'expires_at', 'used_at', 'created_at'])
+        .columns(['code_hash', 'computer_id', 'expires_at', 'used_at', 'redeemed_credential_hash', 'created_at'])
         .expression(
-          sql`SELECT ${input.code_hash}, ${input.id}, ${input.code_expires_at}, NULL, ${timestamp}
+          sql`SELECT ${input.code_hash}, ${input.id}, ${input.code_expires_at}, NULL, NULL, ${timestamp}
             WHERE EXISTS (SELECT 1 FROM computer WHERE id = ${input.id})`,
         )
         .compile(),
@@ -195,8 +198,9 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
 
   /**
    * Every code the machine may hold goes, including unused ones issued earlier, so rotation
-   * really does lock out whoever has the old material. Statements 2 and 3 re-check the
-   * `updated_at` stamp statement 1 wrote.
+   * really does lock out whoever has the old material. Issuing the new code is statement 1, and
+   * the later statements re-check that row: the code hash is unique to this call, where the
+   * `updated_at` stamp it used to guard on is shared by anything writing in the same millisecond.
    */
   async rotateComputer(
     input: RotateComputerInput,
@@ -204,32 +208,36 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
   ): Promise<ComputerRecord | undefined> {
     const db = transaction ?? this.#db;
     const timestamp = nowIso();
-    const written = sql<SqlBool>`EXISTS (SELECT 1 FROM computer WHERE id = ${input.computer_id} AND updated_at = ${timestamp})`;
+    const issued = sql<SqlBool>`EXISTS (SELECT 1 FROM computer_enrollment
+      WHERE code_hash = ${input.code_hash} AND computer_id = ${input.computer_id})`;
     const queries: readonly CompiledQuery[] = [
+      db
+        .insertInto('computer_enrollment')
+        .columns(['code_hash', 'computer_id', 'expires_at', 'used_at', 'redeemed_credential_hash', 'created_at'])
+        .expression(
+          sql`SELECT ${input.code_hash}, ${input.computer_id}, ${input.code_expires_at}, NULL, NULL, ${timestamp}
+            WHERE EXISTS (SELECT 1 FROM computer
+              WHERE id = ${input.computer_id} AND tenant_id = ${input.tenant_id} AND status <> 'revoked')`,
+        )
+        .compile(),
       db
         .updateTable('computer')
         .set({ credential_hash: null, status: 'pending', updated_at: timestamp })
         .where('id', '=', input.computer_id)
         .where('tenant_id', '=', input.tenant_id)
         .where('status', '<>', 'revoked')
+        .where(issued)
         .compile(),
       db
         .deleteFrom('computer_enrollment')
         .where('computer_id', '=', input.computer_id)
         .where('used_at', 'is', null)
-        .where(written)
-        .compile(),
-      db
-        .insertInto('computer_enrollment')
-        .columns(['code_hash', 'computer_id', 'expires_at', 'used_at', 'created_at'])
-        .expression(
-          sql`SELECT ${input.code_hash}, ${input.computer_id}, ${input.code_expires_at}, NULL, ${timestamp}
-            WHERE ${written}`,
-        )
+        .where('code_hash', '<>', input.code_hash)
+        .where(issued)
         .compile(),
     ];
-    const [update] = await this.#batchWrite({ executor: db, queries, nameConflict: null });
-    if ((update?.changes ?? 0) === 0) {
+    const [issue] = await this.#batchWrite({ executor: db, queries, nameConflict: null });
+    if ((issue?.changes ?? 0) === 0) {
       return undefined;
     }
     return await this.getComputer(input, transaction);
@@ -265,8 +273,10 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
 
   /**
    * Statement 1 burns the code and decides the outcome; statement 2 binds the credential only
-   * when that same burn landed. Reading the row back by its credential hash is what tells a
-   * successful enroll from a burn whose computer was already revoked.
+   * when that same burn landed. The burn is recognised by the credential it minted, not by its
+   * instant, so a second redeem in the same millisecond cannot overwrite the winner's credential.
+   * Reading the row back by its credential hash is what tells a successful enroll from a burn
+   * whose computer was already revoked.
    */
   async redeemEnrollment(
     input: RedeemEnrollmentInput,
@@ -276,7 +286,7 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
     const queries: readonly CompiledQuery[] = [
       db
         .updateTable('computer_enrollment')
-        .set({ used_at: input.now })
+        .set({ used_at: input.now, redeemed_credential_hash: input.credential_hash })
         .where('code_hash', '=', input.code_hash)
         .where('used_at', 'is', null)
         .where('expires_at', '>', input.now)
@@ -299,7 +309,8 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
         )
         .where('status', '<>', 'revoked')
         .where(
-          sql<SqlBool>`EXISTS (SELECT 1 FROM computer_enrollment WHERE code_hash = ${input.code_hash} AND used_at = ${input.now})`,
+          sql<SqlBool>`EXISTS (SELECT 1 FROM computer_enrollment
+            WHERE code_hash = ${input.code_hash} AND redeemed_credential_hash = ${input.credential_hash})`,
         )
         .compile(),
     ];
@@ -308,6 +319,23 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
       return undefined;
     }
     return await this.getComputerByCredentialHash(input.credential_hash, transaction);
+  }
+
+  async hasRedeemableEnrollment(
+    input: { code_hash: string; now: string },
+    transaction?: Kysely<Database>,
+  ): Promise<boolean> {
+    const db = transaction ?? this.#db;
+    const row = await db
+      .selectFrom('computer_enrollment')
+      .innerJoin('computer', 'computer.id', 'computer_enrollment.computer_id')
+      .select('computer_enrollment.code_hash')
+      .where('computer_enrollment.code_hash', '=', input.code_hash)
+      .where('computer_enrollment.used_at', 'is', null)
+      .where('computer_enrollment.expires_at', '>', input.now)
+      .where('computer.status', '<>', 'revoked')
+      .executeTakeFirst();
+    return row !== undefined;
   }
 
   async getComputerByCredentialHash(
@@ -355,40 +383,43 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
   async listAgentAccess(
     input: { tenant_id: string; computer_id: string },
     transaction?: Kysely<Database>,
-  ): Promise<string[]> {
+  ): Promise<ComputerAgentGrant[]> {
     const db = transaction ?? this.#db;
-    const rows = await db
+    return await db
       .selectFrom('computer_agent_access')
       .innerJoin('computer', 'computer.id', 'computer_agent_access.computer_id')
-      .select('computer_agent_access.agent_name')
+      .select(['computer_agent_access.agent_id', 'computer_agent_access.agent_name'])
       .where('computer_agent_access.computer_id', '=', input.computer_id)
       .where('computer.tenant_id', '=', input.tenant_id)
+      // Two agents may share a stale display name, so the id breaks the tie.
       .orderBy('computer_agent_access.agent_name')
+      .orderBy('computer_agent_access.agent_id')
       .execute();
-    return rows.map(row => row.agent_name);
   }
 
   /**
-   * The names arrive as one bound JSON array read through `json_each`, so the statement holds a
+   * The grants arrive as one bound JSON array read through `json_each`, so the statement holds a
    * fixed five parameters however long the allowlist is (D1 caps a statement at 100).
    */
   async putAgentAccess(
-    input: { tenant_id: string; computer_id: string; agent_names: readonly string[] },
+    input: { tenant_id: string; computer_id: string; agents: readonly ComputerAgentGrant[] },
     transaction?: Kysely<Database>,
-  ): Promise<string[] | undefined> {
+  ): Promise<ComputerAgentGrant[] | undefined> {
     const db = transaction ?? this.#db;
     if ((await this.getComputer(input, transaction)) === undefined) {
       return undefined;
     }
-    const names = [...new Set(input.agent_names)];
+    const grants = [...new Map(input.agents.map(agent => [agent.agent_id, agent])).values()];
     const owned = sql<SqlBool>`EXISTS (SELECT 1 FROM computer WHERE id = ${input.computer_id} AND tenant_id = ${input.tenant_id})`;
     const queries: readonly CompiledQuery[] = [
       db.deleteFrom('computer_agent_access').where('computer_id', '=', input.computer_id).where(owned).compile(),
       db
         .insertInto('computer_agent_access')
-        .columns(['computer_id', 'agent_name', 'created_at'])
+        .columns(['computer_id', 'agent_id', 'agent_name', 'created_at'])
         .expression(
-          sql`SELECT ${input.computer_id}, value, ${nowIso()} FROM json_each(${JSON.stringify(names)})
+          sql`SELECT ${input.computer_id}, json_extract(value, '$.agent_id'), json_extract(value, '$.agent_name'),
+              ${nowIso()}
+            FROM json_each(${JSON.stringify(grants)})
             WHERE ${owned}`,
         )
         .compile(),
@@ -398,19 +429,35 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
   }
 
   async isAgentAllowed(
-    input: { tenant_id: string; computer_id: string; agent_name: string },
+    input: { tenant_id: string; computer_id: string; agent_id: string },
     transaction?: Kysely<Database>,
   ): Promise<boolean> {
     const db = transaction ?? this.#db;
     const row = await db
       .selectFrom('computer_agent_access')
       .innerJoin('computer', 'computer.id', 'computer_agent_access.computer_id')
-      .select('computer_agent_access.agent_name')
+      .select('computer_agent_access.agent_id')
       .where('computer_agent_access.computer_id', '=', input.computer_id)
-      .where('computer_agent_access.agent_name', '=', input.agent_name)
+      .where('computer_agent_access.agent_id', '=', input.agent_id)
       .where('computer.tenant_id', '=', input.tenant_id)
       .executeTakeFirst();
     return row !== undefined;
+  }
+
+  async deleteAgentAccessForAgent(
+    input: { tenant_id: string; agent_id: string },
+    transaction?: Kysely<Database>,
+  ): Promise<number> {
+    const db = transaction ?? this.#db;
+    const result = await db
+      .deleteFrom('computer_agent_access')
+      .where('agent_id', '=', input.agent_id)
+      .where(
+        sql<SqlBool>`EXISTS (SELECT 1 FROM computer
+          WHERE computer.id = computer_agent_access.computer_id AND computer.tenant_id = ${input.tenant_id})`,
+      )
+      .executeTakeFirst();
+    return Number(result.numDeletedRows);
   }
 
   async countAgentAccess(
@@ -438,8 +485,10 @@ export class SqliteComputerStore implements IComputerStore<Kysely<Database>> {
     let query = db
       .selectFrom('computer_audit')
       .select([...AUDIT_COLUMNS])
-      .where('tenant_id', '=', input.tenant_id)
-      .where('computer_id', '=', input.computer_id);
+      .where('tenant_id', '=', input.tenant_id);
+    if (input.computer_id !== undefined) {
+      query = query.where('computer_id', '=', input.computer_id);
+    }
     if (input.before_id !== undefined) {
       query = query.where('id', '<', input.before_id);
     }

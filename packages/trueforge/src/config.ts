@@ -1017,6 +1017,12 @@ export function getPublicBaseUrl(config: ServerConfiguration = configuration): s
   return publicBaseUrl;
 }
 
+/** The same value for a caller that would rather answer than throw. */
+export function getPublicBaseUrlOrUndefined(config: ServerConfiguration = configuration): string | undefined {
+  const publicBaseUrl = effectivePublicBaseUrl(config);
+  return publicBaseUrl === '' ? undefined : publicBaseUrl;
+}
+
 /** `/` or `/custom/proxy/path/` — trailing slash for asset URLs and the boot script. Empty / standalone non-dev → `/`. */
 export function getPublicUiBasePath(config: ServerConfiguration = configuration): string {
   const publicBaseUrl = effectivePublicBaseUrl(config);

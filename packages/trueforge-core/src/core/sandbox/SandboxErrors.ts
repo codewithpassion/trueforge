@@ -41,6 +41,16 @@ export class SandboxOfflineError extends SandboxError {
   }
 }
 
+/** A file operation aimed outside the directory this session owns on a shared machine. */
+export class SandboxPathOutsideSessionError extends SandboxError {
+  readonly statusCode = 403;
+
+  constructor(path: string) {
+    super(`Path is outside this session's directory: ${path}`);
+    this.name = 'SandboxPathOutsideSessionError';
+  }
+}
+
 export class SandboxPathIsDirectoryError extends SandboxError {
   readonly statusCode = 400;
 

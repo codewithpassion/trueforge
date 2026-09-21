@@ -453,30 +453,38 @@ export interface ComputerEnrollmentTable {
   expires_at: string;
   /** Set when the code is burned; a non-null value can never be redeemed again */
   used_at: string | null;
+  /** The credential the burning redeem minted, so that redeem can recognise its own burn */
+  redeemed_credential_hash: string | null;
   created_at: string;
 }
 
 /**
- * Which agents may drive a computer.
- * PRIMARY KEY (computer_id, agent_name)
- * CREATE INDEX computer_agent_access_agent_idx ON computer_agent_access (agent_name)
+ * Which agents may drive a computer, keyed by the agent's immutable id.
+ * PRIMARY KEY (computer_id, agent_id)
+ * CREATE INDEX computer_agent_access_agent_idx ON computer_agent_access (agent_id)
  */
 export interface ComputerAgentAccessTable {
   computer_id: string;
+  agent_id: string;
+  /** display only; may name an agent that has since been renamed or deleted */
   agent_name: string;
   created_at: string;
 }
 
 /**
  * What ran on a computer. `id` is a ULID, so `id DESC` is newest-first and paginates.
+ * No foreign key to `computer`: the row outlives the machine until the retention sweep.
  * PRIMARY KEY (id)
  * CREATE INDEX computer_audit_list_idx ON computer_audit (tenant_id, computer_id, id DESC)
+ * CREATE INDEX computer_audit_tenant_idx ON computer_audit (tenant_id, id DESC)
  * CREATE INDEX computer_audit_created_idx ON computer_audit (created_at)
  */
 export interface ComputerAuditTable {
   /** application-generated (ulid); its order is the time order */
   id: string;
   computer_id: string;
+  /** the computer's name as it stood when the row was written */
+  computer_name: string;
   tenant_id: string;
   session_id: string | null;
   turn_id: string | null;
@@ -484,6 +492,8 @@ export interface ComputerAuditTable {
   /** the command, or the path for a file op */
   command: string;
   exit_code: number | null;
+  /** `ok`, or why the operation did not finish — an open vocabulary */
+  outcome: string;
   duration_ms: number;
   bytes_out: number;
   created_at: string;

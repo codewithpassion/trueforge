@@ -4,19 +4,15 @@
  */
 import { z } from '@hono/zod-openapi';
 import { TokenPaginationSchema } from '@truefoundry/trueforge-core/agent-session';
+import { ComputerCapabilitiesSchema } from '../computers/protocol';
 import { COMPUTER_AUDIT_OPS, COMPUTER_STATUSES } from '../db/computerStore';
 import { NameSchema } from './common';
 
 export const ComputerStatusSchema = z.enum(COMPUTER_STATUSES).openapi('ComputerStatus');
 export const ComputerAuditOpSchema = z.enum(COMPUTER_AUDIT_OPS).openapi('ComputerAuditOp');
 
-export const ComputerToolsSchema = z
-  .object({
-    python3: z.boolean().describe('The machine reported a python3 interpreter.'),
-    git: z.boolean().describe('The machine reported git.'),
-  })
-  .strict()
-  .openapi('ComputerTools');
+/** The wire name for the capabilities the protocol already owns; the shape is not redeclared. */
+export const ComputerToolsSchema = ComputerCapabilitiesSchema.openapi('ComputerTools');
 
 export const ComputerSchema = z
   .object({
@@ -78,7 +74,7 @@ export const UpdateComputerRequestSchema = z
 
 export const ComputerAgentAccessSchema = z
   .object({
-    agent_names: z.array(NameSchema).describe('Saved agents allowed to run on this computer.'),
+    agent_names: z.array(NameSchema).max(200).describe('Saved agents allowed to run on this computer.'),
   })
   .strict()
   .openapi('ComputerAgentAccess');
@@ -86,11 +82,16 @@ export const ComputerAgentAccessSchema = z
 export const ComputerAuditEntrySchema = z
   .object({
     id: z.string().min(1),
+    computer_id: z.string().min(1),
+    computer_name: z.string().describe('The name the computer had when this ran; it may since have gone.'),
     session_id: z.string().nullable(),
     turn_id: z.string().nullable(),
     op: ComputerAuditOpSchema,
-    command: z.string().describe('The command, or the path for a file operation. Truncated at 4 KiB.'),
+    command: z
+      .string()
+      .describe('The command, or the path for a file operation. Truncated at 4 KiB. Kept for 30 days.'),
     exit_code: z.number().int().nullable().describe('Null when the outcome never came back.'),
+    outcome: z.string().describe('`ok`, or why it did not finish — offline, revoked, too_large, denied.'),
     duration_ms: z.number().int(),
     bytes_out: z.number().int(),
     created_at: z.string(),
