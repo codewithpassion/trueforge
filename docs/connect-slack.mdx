@@ -32,8 +32,11 @@ You need:
 
 Open **Settings → Integrations → Add Slack workspace** and fill in:
 
-- **Bot name** — what Slack calls the app and the bot user. Slack allows up to 35 characters from
-  `a-z`, `0-9`, `.`, `-` and `_`, so `release-bot` works and `Release Bot` does not.
+- **Bot name** — what Slack calls the app, up to 35 characters and written however you like:
+  `TrueForge Bot` is fine. Slack restricts the bot user's own display name to `a-z`, `0-9`, `.`,
+  `-` and `_`, so that one is derived from your name — accents are folded, anything else becomes a
+  dash, and runs of dashes collapse, making `TrueForge Bot` into `@trueforge-bot`. The form shows
+  what it will be. A name that leaves nothing behind, such as `???`, is refused.
 - **Agent** — the agent that answers.
 - **Allowed channels** — channel ids, comma separated. This is an allowlist, not a filter: an empty
   list allows no channel.
@@ -93,6 +96,12 @@ than silently rebinding the integration.
 
 Editing later leaves both credential fields blank: blank keeps what is stored, and a new pair
 rotates it. Allowed channels, the direct-message policy and the agent stay editable at any time.
+Renaming the bot changes the manifest this page generates, not an app Slack has already created —
+rename that one in Slack.
+
+A bot token belongs to exactly one workspace, and an integration is bound to the workspace its
+token named. To point TrueForge at a different workspace, disconnect the integration and create a
+new one; rotating onto a token from elsewhere is refused.
 
 ## 4. Invite the bot
 
@@ -123,7 +132,7 @@ curl -X POST "$PUBLIC_BASE_URL/api/v1/settings/integrations" \
   -d '{
     "manifest": {
       "type": "slack",
-      "bot_display_name": "release-bot",
+      "bot_display_name": "TrueForge Bot",
       "default_agent_name": "support-bot",
       "allowed_channel_ids": ["C0EXAMPLE"],
       "allow_direct_messages": true,
@@ -142,7 +151,7 @@ curl -X PUT "$PUBLIC_BASE_URL/api/v1/settings/integrations/$ID" \
   -d '{
     "manifest": {
       "type": "slack",
-      "bot_display_name": "release-bot",
+      "bot_display_name": "TrueForge Bot",
       "default_agent_name": "support-bot",
       "allowed_channel_ids": ["C0EXAMPLE"],
       "allow_direct_messages": true,
@@ -189,7 +198,9 @@ display name are recorded on the session for provenance only.
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | Slack will not create the app from the manifest             | The deployment is not reachable from Slack over HTTPS, or `PUBLIC_BASE_URL` is wrong or unset. |
 | Saving the credentials reports that Slack refused the token | The bot token is not the app's current one; reinstalling the app rotates it.                   |
-| Saving the credentials reports another workspace            | The token belongs to a different Slack workspace than the integration is bound to.             |
+| Saving the credentials says it is not a bot token           | That is a user token (`xoxp-`). Copy the **Bot User** OAuth token, which starts with `xoxb-`.  |
+| Saving the credentials reports another workspace            | The token belongs to a different Slack workspace; disconnect and create a new integration.     |
+| Saving the credentials reports Slack could not be reached   | Slack or the network was unavailable. Nothing was stored; try again.                            |
 | Mentions do nothing                                         | The bot is not in the channel, or the channel is not on the allowlist.                         |
 | Direct messages do nothing                                  | Direct messages are switched off, or `message.im` was removed from the app.                    |
 | Slack reports `401` from the request URL                    | The signing secret in the integration is not the app's current one.                            |
