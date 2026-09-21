@@ -59,14 +59,19 @@ function bearerToken(header: string | null): string | undefined {
   return match?.[1];
 }
 
-function traceCarrier(headers: Headers): Record<string, string> {
+const TRACEPARENT_PATTERN = /^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/;
+const TRACESTATE_MAX_LENGTH = 512;
+
+/** The sandbox writes these headers, so only well-formed W3C values reach host traces. */
+export function sandboxTraceCarrier(headers: Headers): Record<string, string> {
   const carrier: Record<string, string> = {};
   const traceparent = headers.get('traceparent');
-  const tracestate = headers.get('tracestate');
-  if (traceparent !== null) {
-    carrier['traceparent'] = traceparent;
+  if (traceparent === null || !TRACEPARENT_PATTERN.test(traceparent)) {
+    return carrier;
   }
-  if (tracestate !== null) {
+  carrier['traceparent'] = traceparent;
+  const tracestate = headers.get('tracestate');
+  if (tracestate !== null && tracestate.length <= TRACESTATE_MAX_LENGTH) {
     carrier['tracestate'] = tracestate;
   }
   return carrier;
@@ -90,7 +95,9 @@ export class SandboxEgressGateway extends WorkerEntrypoint<Env, SandboxEgressPro
     if (url.host === CODE_MODE_BRIDGE_HOST) {
       return this.#answerCodeMode(request);
     }
-    this.#logger.info('Sandbox egress', { host: url.host, protocol: url.protocol, method: request.method });
+    // Debug only: a single package install makes hundreds of these.
+    this.#logger.debug('Sandbox egress', { host: url.host, protocol: url.protocol, method: request.method });
+    // Forwarded as the sandbox sent it; the gateway attaches no credentials of its own, and must not.
     return fetch(request);
   }
 
@@ -124,7 +131,7 @@ export class SandboxEgressGateway extends WorkerEntrypoint<Env, SandboxEgressPro
         // Forwarded as text: the session owns the wire shape, and a body that is not a Code Mode
         // request comes back as a reply blaming the caller rather than as a transport failure.
         requestJson,
-        traceCarrier: traceCarrier(request.headers),
+        traceCarrier: sandboxTraceCarrier(request.headers),
       });
     if (outcome.ok) {
       return new Response(outcome.replyJson, { headers: { 'content-type': 'application/json' } });

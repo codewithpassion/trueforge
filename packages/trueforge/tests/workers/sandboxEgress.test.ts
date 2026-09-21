@@ -1,7 +1,7 @@
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { CODE_MODE_BRIDGE_URL } from '../../src/workers/sandbox/codeModeBridge';
-import { CODE_MODE_REQUEST_MAX_BYTES } from '../../src/workers/sandbox/sandboxEgressGateway';
+import { CODE_MODE_REQUEST_MAX_BYTES, sandboxTraceCarrier } from '../../src/workers/sandbox/sandboxEgressGateway';
 
 /**
  * The gateway is reached the way the container backend reaches it: from inside `ComputerDO`, through
@@ -202,5 +202,26 @@ describe('the Code Mode hostname', () => {
     });
 
     expect(status).toBe(503);
+  });
+});
+
+describe('sandboxTraceCarrier', () => {
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  it('keeps a well-formed W3C trace context', () => {
+    expect(sandboxTraceCarrier(new Headers({ traceparent, tracestate: 'vendor=1' }))).toEqual({
+      traceparent,
+      tracestate: 'vendor=1',
+    });
+  });
+
+  it('drops a traceparent that is not W3C, and the tracestate with it', () => {
+    expect(sandboxTraceCarrier(new Headers({ traceparent: 'anything the sandbox likes', tracestate: 'a=b' }))).toEqual(
+      {},
+    );
+  });
+
+  it('drops a tracestate over 512 characters and keeps the traceparent', () => {
+    expect(sandboxTraceCarrier(new Headers({ traceparent, tracestate: 'x'.repeat(513) }))).toEqual({ traceparent });
   });
 });

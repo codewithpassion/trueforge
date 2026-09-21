@@ -44,6 +44,8 @@ export class CodeModeBridgeRegistry {
 
   /** Returns the token the sandbox must present; it is the only thing that names this channel. */
   open(channel: { dispatcher: CodeModeDispatcher; timeoutMs: number }): string {
+    // The lookup below is not constant-time; 122 random bits are what make that irrelevant, so the
+    // token must never become shorter or guessable.
     const token = crypto.randomUUID();
     this.#channels.set(token, channel);
     return token;
