@@ -1,0 +1,13 @@
+{
+  "type": "hello",
+  "protocol_version": 1,
+  "hostname": "office-box",
+  "os": "linux",
+  "arch": "arm64",
+  "version": "0.1.0",
+  "run_as_user": "trueforge",
+  "capabilities": {
+    "python3": true,
+    "git": false
+  }
+}
