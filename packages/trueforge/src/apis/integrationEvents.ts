@@ -35,7 +35,10 @@ export interface IntegrationEventsRouterDeps<TTransaction> {
 }
 
 function respond(c: Context, result: InboundRespond): Response {
-  return c.body(result.body, result.status, { 'content-type': result.content_type });
+  return c.body(result.body, result.status, {
+    'content-type': result.content_type,
+    'x-content-type-options': 'nosniff',
+  });
 }
 
 /**

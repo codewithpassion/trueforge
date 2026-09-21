@@ -99,6 +99,7 @@ async function createHarness(
     withTransaction: callback => db.transaction().execute(callback),
     resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
     publicBaseUrl: options.publicBaseUrl ?? (() => PUBLIC_BASE_URL),
+    logger: winston.createLogger({ silent: true }),
     slackAuthTest,
   });
   return { db, integrationStore, settings, authTestCalls };
@@ -255,17 +256,18 @@ describe('settings integrations router', () => {
     expect(stored?.manifest.auth).toEqual({ bot_token: 'xoxb-rotated-token', signing_secret: SIGNING_SECRET });
   });
 
-  it('refuses to move to another channel account with a redacted credential', async () => {
+  it('ignores a workspace a PUT tries to claim, credentials or not', async () => {
     harness = await createHarness();
     const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
     const { data } = (await created.json()) as { data: Integration };
 
-    // Keeping the old workspace's token against a new workspace could never authenticate.
+    // Without credentials nothing is asked of Slack, so the stored workspace simply stands.
     const response = await harness.settings.request(
       `/${data.id}`,
       jsonInit('PUT', {
         manifest: manifest({
           team_id: 'T0OTHER',
+          bot_user_id: 'U0IMPOSTOR',
           auth: {
             bot_token: toRedactedSecretValue(BOT_TOKEN),
             signing_secret: toRedactedSecretValue(SIGNING_SECRET),
@@ -273,11 +275,33 @@ describe('settings integrations router', () => {
         }),
       }),
     );
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
 
     const stored = await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: data.id });
     expect(stored?.external_account_id).toBe('T0TEAM');
+    expect(stored?.manifest.team_id).toBe('T0TEAM');
+    expect(stored?.manifest.bot_user_id).toBe('U0BOT');
     expect(stored?.manifest.auth).toEqual({ bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET });
+  });
+
+  it('ignores a workspace a create tries to reserve, so it cannot squat the unique key', async () => {
+    harness = await createHarness();
+    const response = await harness.settings.request(
+      '/',
+      jsonInit('POST', { manifest: pendingManifest({ team_id: 'T0SQUAT', bot_user_id: 'U0SQUAT' }) }),
+    );
+    expect(response.status).toBe(201);
+    const { data } = (await response.json()) as { data: Integration };
+    expect(data.status).toBe('pending');
+    expect(data.manifest.team_id).toBeUndefined();
+    expect(data.manifest.bot_user_id).toBeUndefined();
+    expect(data.external_account_id).toBe(`pending:${data.id}`);
+    expect(harness.authTestCalls).toEqual([]);
+
+    // The squatted workspace is still free for the integration that can prove it owns it.
+    const real = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    expect(real.status).toBe(201);
+    expect(((await real.json()) as { data: Integration }).data.external_account_id).toBe('T0TEAM');
   });
 
   it('creates a pending integration from a bot name alone, and asks Slack nothing', async () => {
@@ -320,9 +344,13 @@ describe('settings integrations router', () => {
     expect(harness.authTestCalls).toEqual([BOT_TOKEN]);
   });
 
-  it('answers 502 when Slack refuses the bot token, and stays pending', async () => {
+  it('answers 422 when Slack refuses the bot token, and stays pending', async () => {
     harness = await createHarness({
-      slackAuthTest: async () => ({ ok: false, error: 'Slack rejected the bot token: invalid_auth' }),
+      slackAuthTest: async () => ({
+        ok: false,
+        kind: 'rejected',
+        error: 'Slack rejected the bot token: invalid_auth',
+      }),
     });
     const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
     const { data } = (await created.json()) as { data: Integration };
@@ -333,8 +361,31 @@ describe('settings integrations router', () => {
         manifest: pendingManifest({ auth: { bot_token: 'xoxb-wrong', signing_secret: SIGNING_SECRET } }),
       }),
     );
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining('invalid_auth') } });
+
+    const stored = await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: data.id });
+    expect(stored?.manifest.auth).toBeUndefined();
+  });
+
+  it('answers 502 when Slack could not be reached, and stays pending', async () => {
+    harness = await createHarness({
+      slackAuthTest: async () => ({
+        ok: false,
+        kind: 'unavailable',
+        error: 'Slack auth.test could not be reached',
+      }),
+    });
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const { data } = (await created.json()) as { data: Integration };
+
+    const response = await harness.settings.request(
+      `/${data.id}`,
+      jsonInit('PUT', {
+        manifest: pendingManifest({ auth: { bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET } }),
+      }),
+    );
+    expect(response.status).toBe(502);
 
     const stored = await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: data.id });
     expect(stored?.manifest.auth).toBeUndefined();
@@ -364,13 +415,18 @@ describe('settings integrations router', () => {
     expect(stored?.manifest.auth).toEqual({ bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET });
   });
 
-  it('answers 409 when the credentials name a workspace other than the one claimed', async () => {
+  it('adopts the workspace the token names, not the one the create claimed', async () => {
     harness = await createHarness({
       slackAuthTest: async () => ({ ok: true, team_id: 'T0OTHER', bot_user_id: 'U0OTHERBOT' }),
     });
-    const response = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining('T0OTHER') } });
+    const response = await harness.settings.request(
+      '/',
+      jsonInit('POST', { manifest: manifest({ team_id: 'T0TEAM', bot_user_id: 'U0BOT' }) }),
+    );
+    expect(response.status).toBe(201);
+    const { data } = (await response.json()) as { data: Integration };
+    expect(data.external_account_id).toBe('T0OTHER');
+    expect(data.manifest.bot_user_id).toBe('U0OTHERBOT');
   });
 
   it('answers 409 when a rotated token would move a connected integration to another workspace', async () => {

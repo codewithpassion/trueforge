@@ -286,6 +286,42 @@ describe("IntegrationsClient", () => {
             .post("/api/v1/settings/integrations")
             .jsonBody(rawRequestBody)
             .respondWith()
+            .statusCode(422)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.settings.integrations.create({
+                manifest: {
+                    allowDirectMessages: true,
+                    allowedChannelIds: ["allowed_channel_ids", "allowed_channel_ids"],
+                    defaultAgentName: "xy",
+                    replyMode: "thread",
+                    type: "slack",
+                },
+            });
+        }).rejects.toThrow(TrueForgeTypes.UnprocessableEntityError);
+    });
+
+    test("create (5)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+        const rawRequestBody = {
+            manifest: {
+                allow_direct_messages: true,
+                allowed_channel_ids: ["allowed_channel_ids", "allowed_channel_ids"],
+                default_agent_name: "xy",
+                reply_mode: "thread",
+                type: "slack",
+            },
+        };
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .post("/api/v1/settings/integrations")
+            .jsonBody(rawRequestBody)
+            .respondWith()
             .statusCode(502)
             .jsonBody(rawResponseBody)
             .build();
@@ -590,6 +626,42 @@ describe("IntegrationsClient", () => {
     });
 
     test("update (5)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+        const rawRequestBody = {
+            manifest: {
+                allow_direct_messages: true,
+                allowed_channel_ids: ["allowed_channel_ids", "allowed_channel_ids"],
+                default_agent_name: "xy",
+                reply_mode: "thread",
+                type: "slack",
+            },
+        };
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .put("/api/v1/settings/integrations/integration_id")
+            .jsonBody(rawRequestBody)
+            .respondWith()
+            .statusCode(422)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.settings.integrations.update("integration_id", {
+                manifest: {
+                    allowDirectMessages: true,
+                    allowedChannelIds: ["allowed_channel_ids", "allowed_channel_ids"],
+                    defaultAgentName: "xy",
+                    replyMode: "thread",
+                    type: "slack",
+                },
+            });
+        }).rejects.toThrow(TrueForgeTypes.UnprocessableEntityError);
+    });
+
+    test("update (6)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
         const rawRequestBody = {

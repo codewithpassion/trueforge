@@ -12,6 +12,7 @@ import type { IntegrationBase, IntegrationCatalogServer, IntegrationSetupManifes
 import { getErrorMessage } from '@/utils/getErrorMessage.js';
 import { useToasterOptional } from '../ToasterContainer.js';
 import {
+  botUserDisplayName,
   EMPTY_INTEGRATION_FORM,
   parseAllowedChannels,
   toIntegrationForm,
@@ -34,6 +35,12 @@ function StatusBadge({ status }: { status: IntegrationBase['status'] }) {
       {connected ? 'Connected' : 'Waiting for the Slack app'}
     </span>
   );
+}
+
+/** Slack restricts the bot user's own display name, so show what the chosen name becomes. */
+function botUserPreview(name: string): string {
+  const slug = botUserDisplayName(name.trim());
+  return slug === '' || slug === name.trim() ? '' : `, and the bot as @${slug}`;
 }
 
 function FieldLabel({ htmlFor, children }: { htmlFor: string; children: string }) {
@@ -213,7 +220,8 @@ const IntegrationSettings = () => {
           className={auiInputClass('h-11')}
         />
         <p className="mt-1 text-xs text-text-secondary">
-          Lowercase letters, digits, dot, dash or underscore. Slack shows this as the app and bot name.
+          Up to 35 characters. Slack shows this as the app name{botUserPreview(form.botDisplayName)}. Renaming here
+          changes the generated manifest only — an app Slack has already created keeps its name.
         </p>
       </div>
       <div>

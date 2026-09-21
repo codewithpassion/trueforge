@@ -1,4 +1,6 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { createdBySubjectFromRequestContext, type ResolveRequestContext } from '../auth/identity';
 import { IntegrationConflictError, type IIntegrationStore, type IntegrationRecord } from '../db/integrationStore';
@@ -37,11 +39,19 @@ import {
 const CREDENTIALS_REQUIRED_MESSAGE =
   'Integration credentials are required; send real values when the channel account changes';
 
-/** The channel would not confirm the credentials, so the ids they identify cannot be filled in. */
+/** The credential itself is wrong — the caller has something to fix. */
 class ChannelRejectedCredentialsError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ChannelRejectedCredentialsError';
+  }
+}
+
+/** The channel could not be asked, so the ids it owns cannot be filled in. */
+class ChannelUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ChannelUnavailableError';
   }
 }
 
@@ -59,6 +69,7 @@ export interface IntegrationsRouterDeps<TTransaction> {
   resolveRequestContext: ResolveRequestContext;
   /** Public origin the channel posts events back to. */
   publicBaseUrl: () => string;
+  logger: Logger;
   /** Overridden in tests so no unit test reaches slack.com. */
   slackAuthTest?: SlackAuthTest;
 }
@@ -127,6 +138,16 @@ function suppliedBotToken(manifest: IntegrationManifest): string | undefined {
   return token === undefined || isRedactedSecretValue(token) ? undefined : token;
 }
 
+/**
+ * Drops the workspace and bot user a caller sent. They are the channel's answer, never the
+ * caller's: accepting them would let a request reserve a workspace it cannot prove it owns,
+ * or rewrite the bot user an installed app reported.
+ */
+function withoutClaimedIdentity(manifest: IntegrationManifest): IntegrationManifest {
+  const { team_id: _claimedTeam, bot_user_id: _claimedBotUser, ...rest } = manifest;
+  return rest;
+}
+
 function toWireIntegration(record: IntegrationRecord): Integration {
   return {
     id: record.id,
@@ -158,12 +179,17 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
     }
     const identity = await authTest({ botToken });
     if (!identity.ok) {
-      throw new ChannelRejectedCredentialsError(identity.error);
+      if (identity.kind === 'rejected') {
+        throw new ChannelRejectedCredentialsError(identity.error);
+      }
+      throw new ChannelUnavailableError(identity.error, { cause: identity.cause });
     }
-    const claimed = input.manifest.team_id ?? input.storedTeamId;
-    if (claimed !== undefined && claimed !== identity.team_id) {
+    // Only a stored workspace can be contradicted; a caller never gets to name one.
+    const stored = input.storedTeamId;
+    if (stored !== undefined && stored !== identity.team_id) {
       throw new ChannelAccountMismatchError(
-        `The bot token belongs to Slack workspace ${identity.team_id}, not ${claimed}`,
+        `The bot token belongs to Slack workspace ${identity.team_id}, not ${stored}. ` +
+          'Disconnect this integration and create a new one for that workspace.',
       );
     }
     return { ...input.manifest, team_id: identity.team_id, bot_user_id: identity.bot_user_id };
@@ -192,7 +218,10 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
     const requestContext = deps.resolveRequestContext(c);
     try {
       // Create has no prior row, so a redacted stand-in resolves to MissingStoredSecretError → 400.
-      const resolved = resolveManifestForWrite({ incoming: body.manifest, existing: undefined });
+      const resolved = resolveManifestForWrite({
+        incoming: withoutClaimedIdentity(body.manifest),
+        existing: undefined,
+      });
       const manifest = await withChannelIdentity({ manifest: resolved, storedTeamId: undefined });
       const id = newId();
       const record = await deps.resolveIntegrationStore(c).createIntegration({
@@ -212,6 +241,9 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
         return c.json({ error: { message: error.message } }, 409);
       }
       if (error instanceof ChannelRejectedCredentialsError) {
+        return c.json({ error: { message: error.message } }, 422);
+      }
+      if (error instanceof ChannelUnavailableError) {
         return c.json({ error: { message: error.message } }, 502);
       }
       throw error;
@@ -232,7 +264,7 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
       // Identity comes from the caller's own token, so it does not go stale if the stored
       // credentials change underneath: an omitted or redacted token asks the channel nothing.
       const identified = await withChannelIdentity({
-        manifest: body.manifest,
+        manifest: withoutClaimedIdentity(body.manifest),
         storedTeamId: before.manifest.team_id,
       });
 
@@ -246,13 +278,11 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
           return undefined;
         }
         const manifest = resolveManifestForWrite({ incoming: identified, existing: existing.manifest });
-        const externalAccountId = integrationExternalAccountId({ manifest, integration_id: integrationId });
-        // Moving to another channel account with a redacted credential would silently copy the
-        // old account's secret onto the new one, which would never authenticate.
+        // The account can only change when `auth.test` answered, which needs a real bot token;
+        // a redacted signing secret with nothing stored has already failed above. So there is no
+        // reachable way to land on a new account holding the old one's credentials.
         // TODO: compare (type, external_account_id) once a second channel type exists.
-        if (externalAccountId !== existing.external_account_id && suppliedBotToken(body.manifest) === undefined) {
-          throw new MissingStoredSecretError();
-        }
+        const externalAccountId = integrationExternalAccountId({ manifest, integration_id: integrationId });
         return store.updateIntegration(
           {
             tenant_id: requestContext.tenant_id,
@@ -275,6 +305,9 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
         return c.json({ error: { message: error.message } }, 409);
       }
       if (error instanceof ChannelRejectedCredentialsError) {
+        return c.json({ error: { message: error.message } }, 422);
+      }
+      if (error instanceof ChannelUnavailableError) {
         return c.json({ error: { message: error.message } }, 502);
       }
       throw error;
@@ -293,7 +326,8 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
     let publicBaseUrl: string;
     try {
       publicBaseUrl = deps.publicBaseUrl();
-    } catch {
+    } catch (error) {
+      deps.logger.error('Could not resolve the public base URL for an app manifest', extractErrorLogFields(error));
       return c.json({ error: { message: 'PUBLIC_BASE_URL must be set to build the app manifest' } }, 500);
     }
     const requestUrl = slackEventsRequestUrl({ public_base_url: publicBaseUrl, integration_id: record.id });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  botUserDisplayName,
   EMPTY_INTEGRATION_FORM,
   parseAllowedChannels,
   toIntegrationForm,
@@ -62,8 +63,27 @@ describe('validateIntegrationForm', () => {
     expect(validateIntegrationForm(EMPTY_INTEGRATION_FORM)).toBe('A bot name is required.');
   });
 
-  it.each(['Release-Bot', 'release bot', 'bot!', 'a'.repeat(36)])('rejects the bot name %p', botDisplayName => {
-    expect(validateIntegrationForm(form({ botDisplayName }))).toContain('lowercase letters');
+  it.each(['TrueForge Bot', 'Release-Bot', 'Über Bot', 'a'.repeat(35)])(
+    'accepts the human-readable bot name %p',
+    botDisplayName => {
+      expect(validateIntegrationForm(form({ botDisplayName }))).toBeUndefined();
+    },
+  );
+
+  it('refuses a bot name past Slack’s app-name limit', () => {
+    expect(validateIntegrationForm(form({ botDisplayName: 'a'.repeat(36) }))).toContain('at most 35');
+  });
+
+  it.each(['???', '---'])('refuses %p, which leaves no bot user display name', botDisplayName => {
+    expect(validateIntegrationForm(form({ botDisplayName }))).toContain('letter or a digit');
+  });
+
+  it.each([
+    ['TrueForge Bot', 'trueforge-bot'],
+    ['Über Bot', 'uber-bot'],
+    ['already-fine', 'already-fine'],
+  ])('derives the Slack bot user display name %p → %p', (name, expected) => {
+    expect(botUserDisplayName(name)).toBe(expected);
   });
 
   it('asks for an agent', () => {

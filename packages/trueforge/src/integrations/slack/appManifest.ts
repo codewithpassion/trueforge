@@ -3,6 +3,7 @@
  * the request URL while it creates the app, before any credential exists, which is why the
  * integration is created first and lends the manifest its id.
  */
+import { slackBotUserDisplayName } from '../../schemas/integration';
 import { SLACK_BOT_EVENT_SUBSCRIPTIONS, SLACK_BOT_SCOPES } from './appCapabilities';
 
 /** Where Slack accepts a pasted manifest. */
@@ -69,7 +70,8 @@ export function buildSlackAppManifest(input: { bot_display_name: string; request
       description: 'Talk to a TrueForge agent from Slack.',
     },
     features: {
-      bot_user: { display_name: input.bot_display_name, always_online: false },
+      // Slack restricts this one to `a-z 0-9 . _ -`, so it is derived rather than typed.
+      bot_user: { display_name: slackBotUserDisplayName(input.bot_display_name), always_online: false },
       app_home: { home_tab_enabled: false, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
     },
     oauth_config: { scopes: { bot: [...SLACK_BOT_SCOPES] } },

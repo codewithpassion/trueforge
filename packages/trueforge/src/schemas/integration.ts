@@ -37,15 +37,42 @@ export const IntegrationStatusSchema = z
   .describe('`pending` until the channel app is installed and its credentials are saved.')
   .openapi('IntegrationStatus');
 
+/** Slack's cap on `features.bot_user.display_name`. */
+const SLACK_BOT_USER_DISPLAY_NAME_MAX = 80;
+/** Slack's cap on `display_information.name`. */
+const SLACK_APP_NAME_MAX = 35;
+
 /**
- * Bot name, used for both the Slack app name and the bot user's display name. Slack caps the
- * app name at 35 characters and restricts the bot display name to `a-z 0-9 . _ -`, so one
- * value that satisfies both is narrower than either.
+ * Slack's bot user display name allows only `a-z 0-9 . _ -`, while the app name it sits under
+ * is free text. Rather than make people type the restricted form, the app name is what they
+ * choose and the bot display name is derived from it: accents are folded, everything else
+ * outside the set becomes a dash, and runs of dashes collapse.
+ */
+export function slackBotUserDisplayName(appName: string): string {
+  return appName
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, SLACK_BOT_USER_DISPLAY_NAME_MAX);
+}
+
+/**
+ * The name a person chooses for the bot. It becomes Slack's app name as typed, and the bot
+ * user's display name once slugged — so a name that slugs away to nothing is refused here
+ * rather than by Slack.
  */
 export const SlackBotDisplayNameSchema = z
   .string()
-  .regex(/^[a-z0-9._-]{1,35}$/)
-  .describe('Bot name in Slack: 1-35 characters, lowercase letters, digits, dot, dash or underscore.')
+  .trim()
+  .min(1)
+  .max(SLACK_APP_NAME_MAX)
+  .refine(value => slackBotUserDisplayName(value).length > 0, {
+    message: 'The name must contain a letter or a digit.',
+  })
+  .describe('Bot name in Slack, up to 35 characters. The bot user display name is derived from it.')
   .openapi('SlackBotDisplayName');
 
 /**
@@ -58,7 +85,7 @@ export const SlackBotDisplayNameSchema = z
 export const SlackIntegrationManifestSchema = z
   .object({
     type: z.literal(IntegrationTypeSchema.enum.slack).describe('Slack workspace connection.'),
-    bot_display_name: SlackBotDisplayNameSchema.default('trueforge'),
+    bot_display_name: SlackBotDisplayNameSchema.default('TrueForge'),
     team_id: z
       .string()
       .min(1)

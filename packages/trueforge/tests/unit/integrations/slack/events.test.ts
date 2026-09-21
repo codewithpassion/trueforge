@@ -1,6 +1,8 @@
+import { SLACK_BOT_EVENT_SUBSCRIPTIONS } from '../../../../src/integrations/slack/appCapabilities';
 import {
   decideSlackEvent,
   parseSlackConversationKey,
+  SlackPayloadSchema,
   stripBotMention,
   type SlackEventCallback,
   type SlackMessageEvent,
@@ -193,5 +195,47 @@ describe('decideSlackEvent', () => {
       type: 'event',
       event: { conversation_key: 'slack:T0TEAM:D0ALICE:1700000000.000100' },
     });
+  });
+});
+
+describe('every subscription the manifest asks for reaches a turn', () => {
+  // Adding a subscription without teaching `decideSlackEvent` about it would otherwise be
+  // silent: the payload would parse and then fall through to an "ignore".
+  const context: Record<
+    string,
+    { event: Partial<SlackMessageEvent>; manifest: Partial<ConnectedSlackIntegrationManifest> }
+  > = {
+    app_mention: { event: { type: 'app_mention', channel: 'C0GENERAL', channel_type: 'channel' }, manifest: {} },
+    'message.im': { event: { type: 'message', channel: 'D0ALICE', channel_type: 'im' }, manifest: {} },
+  };
+
+  it.each(Object.entries(SLACK_BOT_EVENT_SUBSCRIPTIONS))(
+    'turns a %s payload (event.type %s) into an inbound event',
+    (subscription, payloadType) => {
+      const fixture = context[subscription];
+      expect(fixture).toBeDefined();
+      expect(fixture?.event.type).toBe(payloadType);
+      const decision = decideSlackEvent({
+        integrationId: INTEGRATION_ID,
+        manifest: manifest(fixture?.manifest ?? {}),
+        payload: callback(fixture?.event ?? {}),
+      });
+      expect(decision).toMatchObject({ type: 'event' });
+    },
+  );
+
+  it('rejects a payload type nothing subscribes to', () => {
+    const parsed = SlackPayloadSchema.safeParse({
+      type: 'event_callback',
+      team_id: 'T0TEAM',
+      event_id: 'Ev002',
+      event: { type: 'reaction_added', user: 'U0ALICE', ts: '1.1', channel: 'C0GENERAL' },
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('caps the challenge it will echo', () => {
+    expect(SlackPayloadSchema.safeParse({ type: 'url_verification', challenge: 'a'.repeat(256) }).success).toBe(true);
+    expect(SlackPayloadSchema.safeParse({ type: 'url_verification', challenge: 'a'.repeat(257) }).success).toBe(false);
   });
 });

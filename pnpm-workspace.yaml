@@ -38,4 +38,8 @@ overrides:
   rollup: '4.62.2'
 
 patchedDependencies:
+  # Adds the optional `integrationCatalog` slot to `CatalogServer`, whose slots are otherwise
+  # fixed. The patch is workspace-local, and trueforge-ui's built .d.ts re-exports the new port
+  # types by name, so DO NOT PUBLISH @truefoundry/trueforge-ui until the slot ships upstream and
+  # this patch is dropped: an npm consumer on unpatched 0.1.37 fails to typecheck.
   '@truefoundry/assistant-ui-runtime@0.1.37': patches/@truefoundry__assistant-ui-runtime@0.1.37.patch

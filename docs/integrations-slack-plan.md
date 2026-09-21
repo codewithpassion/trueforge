@@ -4,6 +4,15 @@ Engineering plan, not user documentation. Intentionally left out of `docs.json` 
 
 Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4). Phase I2.5 landed on 2026-09-21: connecting a workspace is now a Settings section, reached through an `integrationCatalog` slot added to `CatalogServer` by a types-only `pnpm patch` of `@truefoundry/assistant-ui-runtime` (`patches/@truefoundry__assistant-ui-runtime@0.1.37.patch`), and TrueForge generates the Slack app manifest rather than asking people to build the app by hand (Section 3.1). Phases I3 and I4 are proposed.
 
+> **Do not publish `@truefoundry/trueforge-ui` while that patch is in place.** It is workspace-local, and the package's built `.d.ts` re-exports the new port types by name from `@truefoundry/assistant-ui-runtime/server`. Deploying this fork is unaffected, because it does not publish trueforge-ui. Publishing is unblocked when the slot ships upstream and the patch is dropped — which is also the moment the patch stops needing to be re-rolled by hand, since its filename `dist/types-hS8TQqBP.d.ts` carries a content hash and will not survive a version bump.
+>
+> Measured, not assumed: `pnpm pack` of `@truefoundry/trueforge-ui@0.3.0-rc.8` installed into a bare project alongside stock `@truefoundry/assistant-ui-runtime@0.1.37`, then `tsc --noEmit`:
+>
+> - with `skipLibCheck: false`, seven `TS2305` errors in `node_modules/@truefoundry/trueforge-ui/dist/index.d.ts` line 5 — `Module '"@truefoundry/assistant-ui-runtime/server"' has no exported member` for `CreateIntegrationRequest`, `IntegrationAuthInput`, `IntegrationBase`, `IntegrationCatalogServer`, `IntegrationSetupManifest`, `IntegrationStatus` and `UpdateIntegrationRequest`;
+> - with `skipLibCheck: true` (the usual default) those are suppressed and the imported names silently degrade, but any real use still fails: `CatalogServer['integrationCatalog']` gives `TS2339 Property 'integrationCatalog' does not exist on type 'CatalogServer<…>'`.
+>
+> **The upstream request is therefore exactly:** add an optional `integrationCatalog?: TIntegrationCatalog` slot to `CatalogServer` with a `TIntegrationCatalog extends IntegrationCatalogServer = IntegrationCatalogServer` parameter, and export `IntegrationCatalogServer`, `IntegrationBase`, `IntegrationStatus`, `IntegrationAuthInput`, `IntegrationSetupManifest`, `CreateIntegrationRequest` and `UpdateIntegrationRequest` from `src/server/types.ts` and its barrel. The patch in this repo is that change and can be sent as-is.
+
 Goal: let people talk to TrueForge agents from Slack, and let agents and schedules post results back to Slack. Build a small integrations layer first, then ship Slack as its first channel. It must run on both the Node deploy and the Workers deploy.
 
 Non-goals:

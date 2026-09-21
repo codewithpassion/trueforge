@@ -165,7 +165,9 @@ describe('slackAuthTest', () => {
   }
 
   it('reads the workspace and the bot user id, with the token only in the header', async () => {
-    const { fetchImpl, calls } = authFetch(Response.json({ ok: true, team_id: 'T0TEAM', user_id: 'U0BOT' }));
+    const { fetchImpl, calls } = authFetch(
+      Response.json({ ok: true, team_id: 'T0TEAM', user_id: 'U0BOT', bot_id: 'B0BOT' }),
+    );
 
     expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toEqual({
       ok: true,
@@ -177,39 +179,80 @@ describe('slackAuthTest', () => {
     expect(calls[0]?.body).toBeNull();
   });
 
-  it("reports Slack's own reason for refusing the token, without echoing the token", async () => {
-    const { fetchImpl } = authFetch(Response.json({ ok: false, error: 'invalid_auth' }));
+  it('refuses a user token, which carries no bot_id', async () => {
+    // `xoxp-` answers ok with a person's user_id; storing that as the bot would make the
+    // adapter read everything that person says as its own and ignore it.
+    const { fetchImpl } = authFetch(Response.json({ ok: true, team_id: 'T0TEAM', user_id: 'U0HUMAN' }));
 
-    const result = await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl });
-    expect(result).toEqual({ ok: false, error: 'Slack rejected the bot token: invalid_auth' });
-    expect(JSON.stringify(result)).not.toContain('xoxb-secret-token');
+    expect(await slackAuthTest({ botToken: 'xoxp-user-token', fetchImpl })).toEqual({
+      ok: false,
+      kind: 'rejected',
+      error: 'That is not a bot token; use the bot user OAuth token, which starts with xoxb-',
+    });
   });
 
-  it('reports an HTTP failure', async () => {
+  it.each(['invalid_auth', 'not_authed', 'account_inactive', 'token_revoked'])(
+    'reports %s as a credential the caller must fix',
+    async code => {
+      const { fetchImpl } = authFetch(Response.json({ ok: false, error: code }));
+
+      const result = await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl });
+      expect(result).toEqual({ ok: false, kind: 'rejected', error: `Slack rejected the bot token: ${code}` });
+      expect(JSON.stringify(result)).not.toContain('xoxb-secret-token');
+    },
+  );
+
+  it('treats an unrecognised Slack error as Slack being unavailable', async () => {
+    const { fetchImpl } = authFetch(Response.json({ ok: false, error: 'internal_error' }));
+
+    expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toEqual({
+      ok: false,
+      kind: 'unavailable',
+      error: 'Slack rejected the bot token: internal_error',
+    });
+  });
+
+  it('reports an HTTP failure as unavailable', async () => {
     const { fetchImpl } = authFetch(new Response('', { status: 503 }));
 
     expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toEqual({
       ok: false,
+      kind: 'unavailable',
       error: 'Slack auth.test returned HTTP 503',
     });
   });
 
-  it('reports a timeout rather than throwing', async () => {
+  it('reports a 200 that is not JSON as unavailable', async () => {
+    const { fetchImpl } = authFetch(new Response('<html>502</html>', { status: 200 }));
+
+    expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toMatchObject({
+      ok: false,
+      kind: 'unavailable',
+      error: expect.stringContaining('unreadable'),
+    });
+  });
+
+  it('reports a timeout as unavailable rather than throwing', async () => {
     const { fetchImpl } = authFetch(() => {
       throw new DOMException('timed out', 'TimeoutError');
     });
 
-    expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toEqual({
+    expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toMatchObject({
       ok: false,
+      kind: 'unavailable',
       error: 'Slack did not answer auth.test in time',
     });
   });
 
-  it('still throws a failure that is not an abort', async () => {
-    const broken: typeof fetch = () => Promise.reject(new TypeError('network is unreachable'));
+  it('reports a network failure as unavailable and keeps the original error as the cause', async () => {
+    const broken = new TypeError('network is unreachable');
+    const fetchImpl: typeof fetch = () => Promise.reject(broken);
 
-    await expect(slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl: broken })).rejects.toThrow(
-      'network is unreachable',
-    );
+    expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toEqual({
+      ok: false,
+      kind: 'unavailable',
+      error: 'Slack auth.test could not be reached',
+      cause: broken,
+    });
   });
 });

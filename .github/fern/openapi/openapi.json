@@ -4700,9 +4700,10 @@
         "type": "object"
       },
       "SlackBotDisplayName": {
-        "default": "trueforge",
-        "description": "Bot name in Slack: 1-35 characters, lowercase letters, digits, dot, dash or underscore.",
-        "pattern": "^[a-z0-9._-]{1,35}$",
+        "default": "TrueForge",
+        "description": "Bot name in Slack, up to 35 characters. The bot user display name is derived from it.",
+        "maxLength": 35,
+        "minLength": 1,
         "type": "string"
       },
       "SlackIntegrationAuth": {
@@ -9603,6 +9604,16 @@
             },
             "description": "That channel account is already connected."
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel refused the credentials; they are wrong or not a bot token."
+          },
           "502": {
             "content": {
               "application/json": {
@@ -9611,7 +9622,7 @@
                 }
               }
             },
-            "description": "The channel refused the credentials or did not answer."
+            "description": "The channel could not be reached to confirm the credentials."
           }
         },
         "summary": "Create an integration",
@@ -9776,6 +9787,16 @@
             },
             "description": "That channel account is already connected, or belongs to a different workspace."
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel refused the credentials; they are wrong or not a bot token."
+          },
           "502": {
             "content": {
               "application/json": {
@@ -9784,7 +9805,7 @@
                 }
               }
             },
-            "description": "The channel refused the credentials or did not answer."
+            "description": "The channel could not be reached to confirm the credentials."
           }
         },
         "summary": "Replace a connected integration",

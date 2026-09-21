@@ -16,6 +16,8 @@ import {
   type SlackSignatureCheck,
 } from './signature';
 
+const NOT_CONNECTED_REASON = 'Slack credentials are not saved for this integration yet';
+
 function statusLine(content: Extract<DeliveryContent, { type: 'status' }>): string {
   return content.detail;
 }
@@ -70,8 +72,11 @@ export class SlackChannelAdapter implements ChannelAdapter {
   }): Promise<InboundResult> {
     const { request } = input;
     const body = await request.text();
-    const connected = connectedSlackManifest(input.manifest);
-    if (connected === undefined) {
+    // The signing secret alone decides whether anything can be verified. Keying this on the
+    // whole connected parse would drop a row that has a secret but is missing an id into the
+    // unsigned branch, which would accept a challenge nobody signed.
+    const signingSecret = input.manifest.auth?.signing_secret;
+    if (signingSecret === undefined) {
       return this.#receivePending(body);
     }
 
@@ -79,7 +84,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
       body,
       timestamp: request.headers.get(SLACK_TIMESTAMP_HEADER),
       signature: request.headers.get(SLACK_SIGNATURE_HEADER),
-      signingSecret: connected.auth.signing_secret,
+      signingSecret,
       nowMs: this.#now(),
     });
     if (!check.valid) {
@@ -92,6 +97,10 @@ export class SlackChannelAdapter implements ChannelAdapter {
     }
     if (payload.payload.type === 'url_verification') {
       return challengeResponse(payload.payload.challenge);
+    }
+    const connected = connectedSlackManifest(input.manifest);
+    if (connected === undefined) {
+      return { type: 'not_connected', reason: NOT_CONNECTED_REASON };
     }
     return decideSlackEvent({
       integrationId: input.integration_id,
@@ -112,10 +121,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
     if (payload.payload.type === 'url_verification') {
       return challengeResponse(payload.payload.challenge);
     }
-    return {
-      type: 'not_connected',
-      reason: 'Slack credentials are not saved for this integration yet',
-    };
+    return { type: 'not_connected', reason: NOT_CONNECTED_REASON };
   }
 
   async deliver(input: {
@@ -153,7 +159,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
   }): Promise<DeliveryResult> {
     const connected: ConnectedSlackIntegrationManifest | undefined = connectedSlackManifest(input.manifest);
     if (connected === undefined) {
-      return { ok: false, error: 'Slack credentials are not saved for this integration yet' };
+      return { ok: false, error: NOT_CONNECTED_REASON };
     }
     const conversation = parseSlackConversationKey(input.conversationKey);
     if (conversation === undefined) {

@@ -22,8 +22,23 @@ export const EMPTY_INTEGRATION_FORM: IntegrationFormDraft = {
   allowDirectMessages: true,
 };
 
-/** What Slack accepts for both an app name and a bot display name. */
-const BOT_DISPLAY_NAME = /^[a-z0-9._-]{1,35}$/;
+/** Slack's cap on the app name the bot takes. */
+const BOT_NAME_MAX = 35;
+
+/**
+ * The bot user's display name Slack will derive from the chosen name. Mirrors the server so
+ * the form can refuse a name that would slug away to nothing before sending it.
+ */
+export function botUserDisplayName(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, 80);
+}
 
 export function parseAllowedChannels(value: string): string[] {
   return value
@@ -46,11 +61,15 @@ export function toIntegrationForm(integration: IntegrationBase): IntegrationForm
  * the form says why instead of surfacing a 400.
  */
 export function validateIntegrationForm(form: IntegrationFormDraft): string | undefined {
-  if (form.botDisplayName.trim().length === 0) {
+  const botName = form.botDisplayName.trim();
+  if (botName.length === 0) {
     return 'A bot name is required.';
   }
-  if (!BOT_DISPLAY_NAME.test(form.botDisplayName.trim())) {
-    return 'The bot name may use up to 35 lowercase letters, digits, dot, dash or underscore.';
+  if (botName.length > BOT_NAME_MAX) {
+    return `The bot name may be at most ${String(BOT_NAME_MAX)} characters.`;
+  }
+  if (botUserDisplayName(botName).length === 0) {
+    return 'The bot name must contain a letter or a digit.';
   }
   if (form.defaultAgentName.trim().length === 0) {
     return 'An agent name is required.';

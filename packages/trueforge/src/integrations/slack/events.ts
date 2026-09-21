@@ -10,7 +10,9 @@ import { SLACK_BOT_EVENT_SUBSCRIPTIONS } from './appCapabilities';
 /** Slack sends this once when the request URL is saved, before any event is delivered. */
 const SlackUrlVerificationSchema = z.object({
   type: z.literal('url_verification'),
-  challenge: z.string(),
+  // Slack's own challenge is ~52 characters; the cap bounds what an unsigned caller can make
+  // a pending integration echo back.
+  challenge: z.string().max(256),
 });
 
 /** Present on some message events; the bot has no `users:read` scope, so it is the only name source. */

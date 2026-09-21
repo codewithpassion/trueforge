@@ -67,6 +67,7 @@ export function createSettingsRouter<TTransaction>(deps: SettingsRouterDeps<TTra
       withTransaction: deps.withTransaction,
       resolveRequestContext: deps.resolveRequestContext,
       publicBaseUrl: deps.publicBaseUrl,
+      logger: deps.logger,
     }),
   );
   router.route(

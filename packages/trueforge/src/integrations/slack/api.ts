@@ -80,14 +80,25 @@ async function readResult(response: Response): Promise<SlackPostResult> {
   return { ok: false, error: `Slack rejected the message: ${parsed.data.error ?? 'unknown_error'}` };
 }
 
-/** `auth.test` answers with the workspace and the bot's own user id for a valid bot token. */
-const SlackAuthTestResponseSchema = z.object({
+/**
+ * `auth.test` answers with the workspace and the token's own user id. `bot_id` is present only
+ * for a bot token, which is how a user token (`xoxp-`) is told apart: its `user_id` is a person,
+ * and storing that as the bot would make the adapter ignore everything that person says.
+ */
+const SlackAuthTestBotSchema = z.object({
   ok: z.literal(true),
   team_id: z.string().min(1),
   user_id: z.string().min(1),
+  bot_id: z.string().min(1),
 });
 
-export type SlackAuthTestResult = { ok: true; team_id: string; bot_user_id: string } | { ok: false; error: string };
+/** Slack error codes that mean the credential is wrong, not that Slack could not be reached. */
+const CREDENTIAL_ERRORS = new Set(['invalid_auth', 'not_authed', 'account_inactive', 'token_revoked']);
+
+export type SlackAuthTestResult =
+  | { ok: true; team_id: string; bot_user_id: string }
+  /** `rejected` is the caller's credential to fix; `unavailable` is Slack or the network. */
+  | { ok: false; kind: 'rejected' | 'unavailable'; error: string; cause?: unknown };
 
 /** Injected wherever credentials are saved, so tests never reach slack.com. */
 export type SlackAuthTest = (input: { botToken: string; fetchImpl?: SlackFetch }) => Promise<SlackAuthTestResult>;
@@ -110,22 +121,44 @@ export const slackAuthTest: SlackAuthTest = async input => {
     });
   } catch (error) {
     const name = error instanceof DOMException ? error.name : '';
-    if (name !== 'TimeoutError' && name !== 'AbortError') {
-      throw error;
-    }
-    return { ok: false, error: 'Slack did not answer auth.test in time' };
+    const timedOut = name === 'TimeoutError' || name === 'AbortError';
+    return {
+      ok: false,
+      kind: 'unavailable',
+      error: timedOut ? 'Slack did not answer auth.test in time' : 'Slack auth.test could not be reached',
+      cause: error,
+    };
   }
   if (!response.ok) {
-    return { ok: false, error: `Slack auth.test returned HTTP ${String(response.status)}` };
+    return { ok: false, kind: 'unavailable', error: `Slack auth.test returned HTTP ${String(response.status)}` };
   }
-  const body: unknown = await response.json();
-  const parsed = SlackAuthTestResponseSchema.safeParse(body);
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (error) {
+    return { ok: false, kind: 'unavailable', error: 'Slack auth.test returned an unreadable body', cause: error };
+  }
+  const parsed = SlackAuthTestBotSchema.safeParse(body);
   if (parsed.success) {
     return { ok: true, team_id: parsed.data.team_id, bot_user_id: parsed.data.user_id };
   }
   const failure = SlackApiResponseSchema.safeParse(body);
-  const reason = failure.success ? (failure.data.error ?? 'unknown_error') : 'unreadable_response';
-  return { ok: false, error: `Slack rejected the bot token: ${reason}` };
+  if (!failure.success) {
+    return { ok: false, kind: 'unavailable', error: 'Slack auth.test returned an unreadable body' };
+  }
+  if (failure.data.ok) {
+    return {
+      ok: false,
+      kind: 'rejected',
+      error: 'That is not a bot token; use the bot user OAuth token, which starts with xoxb-',
+    };
+  }
+  const reason = failure.data.error ?? 'unknown_error';
+  return {
+    ok: false,
+    kind: CREDENTIAL_ERRORS.has(reason) ? 'rejected' : 'unavailable',
+    error: `Slack rejected the bot token: ${reason}`,
+  };
 };
 
 /**

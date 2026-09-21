@@ -137,6 +137,35 @@ describe('SlackChannelAdapter.receive', () => {
     expect(result).toMatchObject({ type: 'rejected' });
   });
 
+  it('still checks the signature when a secret is stored but an id is missing', async () => {
+    // A half-built row must not fall into the unsigned branch: it has a secret to check with.
+    const halfBuilt = new SlackChannelAdapter({ now: () => NOW_MS });
+    const halfManifest: SlackIntegrationManifest = {
+      type: 'slack',
+      bot_display_name: 'release-bot',
+      default_agent_name: 'support-bot',
+      allowed_channel_ids: ['C0GENERAL'],
+      allow_direct_messages: true,
+      reply_mode: 'thread',
+      auth: { bot_token: 'xoxb-secret-token', signing_secret: SLACK_TEST_SIGNING_SECRET },
+    };
+
+    const unsigned = await halfBuilt.receive({
+      request: unsignedRequest({ type: 'url_verification', challenge: 'chal-abc' }),
+      manifest: halfManifest,
+      integration_id: INTEGRATION_ID,
+    });
+    expect(unsigned).toMatchObject({ type: 'rejected' });
+
+    // Signed, it gets as far as the missing ids and stops there rather than running a turn.
+    const signed = await halfBuilt.receive({
+      request: await slackRequest({ payload: mentionPayload(), nowMs: NOW_MS }),
+      manifest: halfManifest,
+      integration_id: INTEGRATION_ID,
+    });
+    expect(signed).toMatchObject({ type: 'not_connected' });
+  });
+
   it('cannot post while the integration is pending', async () => {
     const adapter = new SlackChannelAdapter({ now: () => NOW_MS });
     expect(

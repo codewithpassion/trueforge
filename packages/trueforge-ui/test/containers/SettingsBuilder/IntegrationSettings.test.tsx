@@ -97,17 +97,40 @@ describe('IntegrationSettings', () => {
     });
   });
 
+  it('accepts a human-readable bot name and shows what the bot user becomes', async () => {
+    const createIntegration = vi.fn(async () => PENDING);
+    renderSection({ listIntegrations: async () => [], createIntegration });
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add Slack workspace/ }));
+    fireEvent.change(screen.getByLabelText('Bot name'), { target: { value: 'TrueForge Bot' } });
+    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'support-bot' } });
+    expect(screen.getByText(/@trueforge-bot/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(createIntegration).toHaveBeenCalledWith(expect.objectContaining({ botDisplayName: 'TrueForge Bot' }));
+    });
+  });
+
   it('says why a bot name Slack would refuse cannot be used, without calling the server', async () => {
     const createIntegration = vi.fn(async () => PENDING);
     renderSection({ listIntegrations: async () => [], createIntegration });
 
     fireEvent.click(await screen.findByRole('button', { name: /Add Slack workspace/ }));
-    fireEvent.change(screen.getByLabelText('Bot name'), { target: { value: 'Release Bot' } });
+    fireEvent.change(screen.getByLabelText('Bot name'), { target: { value: '???' } });
     fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'support-bot' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
-    expect(await screen.findByText(/lowercase letters/)).toBeInTheDocument();
+    expect(await screen.findByText(/letter or a digit/)).toBeInTheDocument();
     expect(createIntegration).not.toHaveBeenCalled();
+  });
+
+  it('warns that renaming does not rename an app Slack already created', async () => {
+    renderSection({ listIntegrations: async () => [CONNECTED] });
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+
+    expect(await screen.findByText(/keeps its name/)).toBeInTheDocument();
   });
 
   it('shows the app manifest, its request URL and where to paste it', async () => {

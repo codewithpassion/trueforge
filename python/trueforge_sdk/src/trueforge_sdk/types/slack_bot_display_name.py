@@ -2,5 +2,5 @@
 
 SlackBotDisplayName = str
 """
-Bot name in Slack: 1-35 characters, lowercase letters, digits, dot, dash or underscore.
+Bot name in Slack, up to 35 characters. The bot user display name is derived from it.
 """

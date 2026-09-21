@@ -72,9 +72,13 @@ export const createIntegrationRoute = createRoute({
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'That channel account is already connected.',
     },
+    422: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'The channel refused the credentials; they are wrong or not a bot token.',
+    },
     502: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
-      description: 'The channel refused the credentials or did not answer.',
+      description: 'The channel could not be reached to confirm the credentials.',
     },
   },
 });
@@ -135,9 +139,13 @@ export const putIntegrationRoute = createRoute({
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'That channel account is already connected, or belongs to a different workspace.',
     },
+    422: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'The channel refused the credentials; they are wrong or not a bot token.',
+    },
     502: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
-      description: 'The channel refused the credentials or did not answer.',
+      description: 'The channel could not be reached to confirm the credentials.',
     },
   },
 });
