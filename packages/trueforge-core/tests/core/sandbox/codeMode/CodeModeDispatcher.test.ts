@@ -201,4 +201,52 @@ describe('CodeModeDispatcher', () => {
       expect(server.callTool).not.toHaveBeenCalled();
     });
   });
+
+  describe('the Code Mode allow-list', () => {
+    function serverAllowing(allowed: string[] | undefined): IToolSet {
+      const server = makeMockIMCPServer({
+        name: 'github',
+        preload: true,
+        tools: [
+          { name: 'tool_a', description: 'A', inputSchema: OBJECT_INPUT_SCHEMA, preload: true },
+          { name: 'tool_b', description: 'B', inputSchema: OBJECT_INPUT_SCHEMA, preload: true },
+        ],
+      });
+      server.getAllowedToolNamesForSandbox = () => allowed;
+      jest.mocked(server.callTool).mockResolvedValue({
+        result: { content: [{ type: 'text', text: 'ok' }], isError: false },
+        wasInitialized: undefined,
+      } satisfies CallToolResponse);
+      return server;
+    }
+
+    function call(server: IToolSet, tool: string) {
+      return makeDispatcher([server]).dispatch({
+        request: { op: 'call_tool', server: 'github', tool, arguments: {} },
+        traceCarrier: {},
+      });
+    }
+
+    it('refuses a listed tool the agent did not enable, without calling it', async () => {
+      const server = serverAllowing(['tool_a']);
+
+      const reply = await call(server, 'tool_b');
+
+      expect(reply).toMatchObject({ ok: false, source: 'caller' });
+      if (reply.ok) throw new Error('unreachable');
+      expect(reply.error).toContain("tool 'tool_b' is not enabled on server 'github'");
+      expect(server.callTool).not.toHaveBeenCalled();
+    });
+
+    it('calls an enabled tool', async () => {
+      await expect(call(serverAllowing(['tool_a']), 'tool_a')).resolves.toMatchObject({ ok: true });
+    });
+
+    it.each([
+      ['no allow-list', undefined],
+      ['an empty allow-list', []],
+    ])('calls any listed tool with %s', async (_label, allowed) => {
+      await expect(call(serverAllowing(allowed), 'tool_b')).resolves.toMatchObject({ ok: true });
+    });
+  });
 });

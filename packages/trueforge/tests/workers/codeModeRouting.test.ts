@@ -25,6 +25,7 @@ const demoToolSet: IToolSet = {
       result: {
         tools: [
           { name: 'ping', inputSchema: { type: 'object' as const }, preload: true },
+          { name: 'secret', inputSchema: { type: 'object' as const }, preload: true },
           {
             name: 'wipe',
             inputSchema: { type: 'object' as const },
@@ -35,6 +36,8 @@ const demoToolSet: IToolSet = {
       },
       wasInitialized: undefined,
     }),
+  // `secret` is listed by the server but not enabled for the agent.
+  getAllowedToolNamesForSandbox: () => ['ping', 'wipe'],
   callTool: params => {
     calledTools.push(params.name);
     return Promise.resolve({
@@ -117,7 +120,10 @@ describe('Code Mode routing through the objects the deploy wires together', () =
 
     expect(answered.status).toBe(200);
     const reply = CodeModeReplySchema.parse(JSON.parse(answered.body));
-    expect(reply).toMatchObject({ ok: true, result: { tools: [{ name: 'ping' }, { name: 'wipe' }] } });
+    expect(reply).toMatchObject({
+      ok: true,
+      result: { tools: [{ name: 'ping' }, { name: 'secret' }, { name: 'wipe' }] },
+    });
   });
 
   it('refuses a live token of one session presented through another session workspace', async () => {
@@ -153,5 +159,23 @@ describe('Code Mode routing through the objects the deploy wires together', () =
       error: expect.stringContaining('is destructive'),
     });
     expect(calledTools).not.toContain('wipe');
+  });
+
+  it('refuses a tool the agent did not enable, sent straight to the gateway, without running it', async () => {
+    const token = await openChannelInSession('routing-not-enabled');
+
+    const answered = await presentThroughWorkspaceOf({
+      session_id: 'routing-not-enabled',
+      token,
+      request: { op: 'call_tool', server: 'demo', tool: 'secret', arguments: {} },
+    });
+
+    expect(answered.status).toBe(200);
+    expect(CodeModeReplySchema.parse(JSON.parse(answered.body))).toMatchObject({
+      ok: false,
+      source: 'caller',
+      error: expect.stringContaining("tool 'secret' is not enabled"),
+    });
+    expect(calledTools).not.toContain('secret');
   });
 });

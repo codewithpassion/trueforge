@@ -129,6 +129,11 @@ export class CodeModeDispatcher {
   }): Promise<unknown> {
     const { server, tool, arguments: args } = req;
     const mcp = this.getToolSet(server);
+    // The same allow-list the sandbox client receives; empty means every listed tool.
+    const allowedTools = mcp.getAllowedToolNamesForSandbox?.() ?? [];
+    if (allowedTools.length > 0 && !allowedTools.includes(tool)) {
+      throw new InvalidMCPUsageError(`Access denied: tool '${tool}' is not enabled on server '${server}'`);
+    }
     await this.ensureNonDestructive({ mcp, server, tool });
     const response = await mcp.callTool({ name: tool, arguments: args ?? {} });
     if (isAuthRequired(response)) {
