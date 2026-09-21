@@ -2,7 +2,9 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation.
 
-Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4). Phase I2.5 landed on 2026-09-21: connecting a workspace is now a Settings section, reached through an `integrationCatalog` slot added to `CatalogServer` by a types-only `pnpm patch` of `@truefoundry/assistant-ui-runtime` (`patches/@truefoundry__assistant-ui-runtime@0.1.37.patch`), and TrueForge generates the Slack app manifest rather than asking people to build the app by hand (Section 3.1). Phases I3 and I4 are proposed.
+Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4). Phase I2.5 landed on 2026-09-21: connecting a workspace is now a Settings section, reached through an `integrationCatalog` slot added to `CatalogServer` by a types-only `pnpm patch` of `@truefoundry/assistant-ui-runtime` (`patches/@truefoundry__assistant-ui-runtime@0.1.37.patch`), and TrueForge generates the Slack app manifest rather than asking people to build the app by hand (Section 3.1). Phases I3 (approvals and questions) and I4 (notification rules) landed on 2026-09-21, apart from their live workspace test, which shares I2.4's blocker.
+
+> **An app created from an earlier manifest does not have interactivity.** The generated manifest now carries an `interactivity` block pointing at `/api/v1/integrations/<id>/interactions`; an existing Slack app must be updated from the regenerated manifest before any button works. Nothing else about an installed app changes: the scopes and subscriptions are the same three and two.
 
 > **Do not publish `@truefoundry/trueforge-ui` while that patch is in place.** It is workspace-local, and the package's built `.d.ts` re-exports the new port types by name from `@truefoundry/assistant-ui-runtime/server`. Deploying this fork is unaffected, because it does not publish trueforge-ui. Publishing is unblocked when the slot ships upstream and the patch is dropped — which is also the moment the patch stops needing to be re-rolled by hand, since its filename `dist/types-hS8TQqBP.d.ts` carries a content hash and will not survive a version bump.
 >
@@ -88,8 +90,9 @@ New tables, with the migration paired across Kysely SQLite and Postgres and D1 `
 - **`integration_event`:** `integration_id`, `event_id`, `received_at`.
   - Unique on (`integration_id`, `event_id`) for replay and retry dedupe.
   - Rows older than 24 hours are pruned by the `SchedulerDO` alarm on Workers and by the controller on Node.
-- **`integration_delivery`,** the outbox: `id`, `integration_id`, `conversation_key`, `turn_id`, `status` (`pending` | `sending` | `sent` | `failed`), `attempts`, `last_error`, `created_at`, `updated_at`, `next_attempt_at`.
-  - Unique on `turn_id`, so a turn delivers at most once per conversation.
+- **`integration_delivery`,** the outbox: `id`, `integration_id`, `conversation_key`, `turn_id`, `session_external_id`, `status` (`pending` | `sending` | `sent` | `failed`), `attempts`, `last_error`, `created_at`, `updated_at`, `next_attempt_at`.
+  - Unique on (`turn_id`, `conversation_key`), so a turn delivers at most once per conversation. It was unique on `turn_id` alone until I4, which needed one schedule run to reach several channels.
+  - `session_external_id` is the session the turn belongs to. Until I4 the sweep derived it from `conversation_key`, which held while every delivery went back to the thread it came from; a rule posts to a channel the session was never keyed by.
   - `pending` to `sending` is one guarded write and is the exactly-once gate: several callers can read the same owed row, but only the one that changes it posts to the channel.
   - `attempts` and the partial index on the unsettled statuses exist for the I2 retry sweep; I1 counts the one attempt and settles the row.
   - The index covers `sending` as well as `pending`, because a process that stops between the claim and the post strands a row there. `next_attempt_at` (added in I2) is when a row is next owed — a backoff for `pending`, a deadline to finish in for `sending` — so the sweep reads due rows in due order instead of deriving two rules from `updated_at`.
@@ -134,6 +137,7 @@ Slack adapter in `src/integrations/slack/`.
 - `default_agent_name`
 - `allowed_channel_ids` (empty means none are allowed; a DM with the bot is allowed when `allow_direct_messages` is true)
 - `reply_mode` (`thread`)
+- `approver_slack_user_ids` (empty allows nobody to approve) and `notification_rules` (Phase I4)
 - `team_id`, `bot_user_id` and `auth: { bot_token, signing_secret }` — absent until the app is installed; the credentials are redacted on read
 
 ### 3.1 App setup, generated
@@ -141,7 +145,7 @@ Slack adapter in `src/integrations/slack/`.
 The app cannot exist before its request URL does, and its credentials cannot exist before the app does, so the order is fixed:
 
 1. Create the integration with a bot name and an agent. It is `pending`: no workspace, no bot user, no credentials, and `external_account_id` stands on the integration's own id so two pending integrations do not collide on the unique key.
-2. `GET /api/v1/settings/integrations/{integration_id}/app-manifest` builds the manifest from the bot name and `<PUBLIC_BASE_URL>/api/v1/integrations/<id>/events`. Scopes and event subscriptions come from `src/integrations/slack/appCapabilities.ts`, the same list `slack/events.ts` parses against, so the generated app and the adapter cannot drift. No `interactivity` block until I3.
+2. `GET /api/v1/settings/integrations/{integration_id}/app-manifest` builds the manifest from the bot name and `<PUBLIC_BASE_URL>/api/v1/integrations/<id>/events`. Scopes, event subscriptions and the interaction `action_id`s come from `src/integrations/slack/appCapabilities.ts`, the same list `slack/events.ts` and `slack/interactions.ts` parse against, so the generated app and the adapter cannot drift. Since I3 the manifest also carries `interactivity`, pointing at `<PUBLIC_BASE_URL>/api/v1/integrations/<id>/interactions`.
 3. The person pastes it into Slack. **Slack posts the `url_verification` challenge while it creates the app**, before the signing secret exists on this side, so a pending integration answers the challenge unsigned and refuses everything else with `409`. Once credentials are stored the signature is required again, challenge included — the unsigned branch is unreachable from then on.
 4. Saving the bot token calls `auth.test` (30 s timeout, token only in the Authorization header, never logged) and stores the `team_id` and `bot_user_id` it returns. A token naming another workspace is `409`; one Slack refuses is `502` and the integration stays pending.
 
@@ -216,15 +220,23 @@ Each phase follows the port process:
    - a turn cancelled by a deploy posts a status line.
 5. Deploy guide: a "Connect Slack" page under `docs/` (user documentation, added to `docs.json`) after the live test passes.
 
-### Phase I3: approvals and questions in Slack
+### Phase I3: approvals and questions in Slack (landed 2026-09-21)
 
-- **Approvals.** Tool approvals (`require_approval_for_tools`) and `ask_user_question` post Block Kit messages with buttons.
-- **Interactivity endpoint.** `POST /api/v1/integrations/{integration_id}/interactions` verifies the signature and maps the action to `user.tool_approval` or `user.tool_response` turn input.
-- **Who may approve.** Only allowed Slack users can approve; the allowlist lives in the manifest. Until per-sender identity exists, approvals are recorded with the Slack user id in metadata.
+- **Approvals and questions.** A turn that ends `done` with `required_actions` is resolved by `readPendingAction`, which reads the `model.message` the action's `source_event_id` names — one extra page read, and only for a turn that actually paused. `DeliveryContent` gained `approval_request` and `question`, and the Slack adapter renders them as Block Kit: approve/deny per held call with the tool name and a redacted, truncated argument line, or the question with one button per option plus the line saying a plain reply answers in free text. A held turn is checked **before** its text, because the model usually narrates the call it is about to make; that narration rides along as `intro`.
+- **Interactivity endpoint.** `POST /api/v1/integrations/{integration_id}/interactions`. Slack posts `application/x-www-form-urlencoded` with the JSON in `payload`, and signs the **raw form body**; the same `verifySlackSignature` and the same five-minute window apply, the `team_id` must match, and a pending integration answers `409`. The route acknowledges with `200` and does every Slack-facing and turn-starting thing afterwards through the I1 `deferDelivery` / `waitUntil` seam.
+- **Idempotency is keyed on the held turn, not the click.** Two clicks carry two `action_ts` values, so deduping on those would not stop the second one — and a second resume would fork the session. Every settlement takes one guarded `integration_event` row, `resume:<turn_id>`, whoever it comes from: a double click, a Slack retry, and a text reply racing a button all collapse onto it. The loser is told the decision was already taken; a start failure releases the row.
+- **Nothing about the pending turn is trusted from the button.** The click names a turn and a tool call; the layer then requires that turn to be the conversation's tip, finished, and still holding that call, and takes `thread_id` from the turn's own `required_actions`.
+- **Who may approve.** `approver_slack_user_ids` on the manifest, checked in the adapter because it is the channel's own user-id space, like `allowed_channel_ids`. An empty list allows nobody. A refusal is an ephemeral reply through the click's `response_url` and changes nothing; a decision replaces the original message with who decided and what, so the buttons cannot be used twice. The `response_url` is only posted to when it is a `hooks.slack.com` URL.
+- **Recording the approver.** `UserToolApprovalMessage` has no metadata field, so the Slack user id reaches the agent only in the denial `reason`, and reaches people in the replaced message. Recording it on the turn input would need a core change the plan does not allow.
+- **A plain reply answers a question**, because that is the only free-text route; a held **approval** does not accept one, since a decision needs the buttons.
 
-### Phase I4: notification rules
+### Phase I4: notification rules (landed 2026-09-21)
 
-- **Rules.** A manifest-level list of rules such as "post schedule `<name>` results to channel `<id>`". The notifier matches turns from sessions with `source.type === "schedule"`.
+- **Rules.** `notification_rules` on the manifest: `schedule_name`, `channel_id` and a required `outcome` (`any` | `success` | `failure`) — a filter that is always explicit rather than an optional flag. `TurnCompletionNotifier.deliverForTurn` branches on `source.type === 'schedule'` and enqueues through the same claim-first outbox and retry sweep.
+- **Channel, not thread.** A rule delivery's conversation key is `slack:<team>:<channel>:channel`; the sentinel reads back as "post at the top level", so `chat.postMessage` carries no `thread_ts`.
+- **One delivery per rule per turn**, collapsed per channel: two rules naming the same channel both match, and the unique `(turn_id, conversation_key)` key lets only the first row land, so nobody is told twice. That collapse is the definition of "one per rule".
+- **Rule channels are separate from `allowed_channel_ids`** — one is where the bot posts, the other where it listens — and the bot must be invited to the posting channel, because `chat:write` alone does not reach a channel it is not in. Adding `chat:write.public` would be a scope change requiring a reinstall, so the guide says "invite the bot" instead.
+- **Added D1 statements per finished schedule turn:** 1 (`listIntegrations`). If no connected integration carries a rule, that is the whole cost. Otherwise +1 `getSchedule` (the session source carries the schedule id; rules name it), +1 turn read, and per matching channel 3 (enqueue, claim, settle) — so `2 + 1 + 3N`. A turn from any other source costs nothing new.
 - **Why not MCP.** Posting stays out of the agent's tool set, so results arrive even when the agent does not call a Slack tool.
 
 ## 5. Rules

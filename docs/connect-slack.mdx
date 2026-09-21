@@ -68,9 +68,23 @@ It sets the request URL to this integration's ingress:
 <PUBLIC_BASE_URL>/api/v1/integrations/<integration_id>/events
 ```
 
+It also switches interactivity on and points it at this integration:
+
+```
+<PUBLIC_BASE_URL>/api/v1/integrations/<integration_id>/interactions
+```
+
+which is where Slack posts a click on an approve, deny or answer button.
+
 Sender display names come from what Slack puts in the event, so `users:read` is not requested;
-without it a name may show as the raw Slack user id. There is no interactivity request URL yet,
-because buttons and approvals are not handled.
+without it a name may show as the raw Slack user id.
+
+<Note>
+  **An app created before interactivity existed has no interactivity request URL.** Open the
+  integration, copy the manifest again, and in Slack use **App Manifest → Edit** to paste the new
+  one. Nothing else about the app changes — the scopes and the two subscriptions are the same —
+  but until you do, an approval button posts nowhere and the turn waits forever.
+</Note>
 
 <Note>
   **Slack checks the request URL while it creates the app**, by posting a `url_verification`
@@ -97,7 +111,8 @@ token belongs to a different workspace than the one already stored, the change i
 than silently rebinding the integration.
 
 Editing later leaves both credential fields blank: blank keeps what is stored, and a new pair
-rotates it. Allowed channels, the direct-message policy and the agent stay editable at any time.
+rotates it. Allowed channels, the direct-message policy, the agent, the approver list and the
+notification rules stay editable at any time.
 Renaming the bot changes the manifest this page generates, not an app Slack has already created —
 rename that one in Slack.
 
@@ -110,7 +125,37 @@ new one; rotating onto a token from elsewhere is refused.
 In each channel the bot should answer in, run `/invite @your-bot`. A channel the bot is not in never
 delivers events, whatever the allowlist says.
 
-## 5. Try it
+## 5. Choose who may approve
+
+Under **Approvals and notifications**, **Who may approve** is a list of Slack user ids, comma
+separated. It gates tool approvals only:
+
+- Anyone on the list can approve or deny a tool call the agent is held on.
+- Anyone else who clicks gets a short reply only they can see, and nothing changes.
+- An empty list means nobody can approve, so a held turn waits until someone is added.
+
+Answering a question is not gated: anyone who can already post in the thread could have asked
+it, so anyone in the thread can answer.
+
+Find a Slack user id under the person's profile → **More** → **Copy member ID**.
+
+## 6. Post schedule results to a channel
+
+Still under **Approvals and notifications**, **Schedule notifications** is a list of rules, each
+one a schedule, a channel id, and when to post: every run, only successful runs, or only failed
+ones. When a run of that schedule finishes, its result is posted at the top of the channel —
+not in a thread, because a scheduled run has no thread to reply into.
+
+The schedule box suggests the schedules TrueForge can list, and still accepts a name you type.
+
+<Note>
+  **Invite the bot to the channel you post to.** This is a separate list from **Allowed
+  channels**: that one is where the bot answers people, this one is where it posts results.
+  Neither implies the other, and `chat:write` cannot reach a channel the bot is not in — a rule
+  pointing at one fails with `not_in_channel` and is retried until it gives up.
+</Note>
+
+## 7. Try it
 
 In an allowed channel, mention the bot:
 
@@ -123,6 +168,11 @@ and the same session continues.
 
 Then send the bot a direct message, and mention it in one. Both should produce exactly one reply:
 Slack delivers a mention inside a DM as two events, and only one of them may start a turn.
+
+If the agent needs a tool approved, the thread gets **Approve** and **Deny** buttons naming the
+tool and a short, redacted summary of its arguments. Click one: the message is replaced by who
+decided and what, and the turn carries on. If the agent asks a question, the thread gets the
+question with a button per option — or you can simply reply in the thread in your own words.
 
 ## The same thing over the API
 
@@ -158,10 +208,17 @@ curl -X PUT "$PUBLIC_BASE_URL/api/v1/settings/integrations/$ID" \
       "allowed_channel_ids": ["C0EXAMPLE"],
       "allow_direct_messages": true,
       "reply_mode": "thread",
+      "approver_slack_user_ids": ["U0ADMIN"],
+      "notification_rules": [
+        { "schedule_name": "nightly-report", "channel_id": "C0RELEASES", "outcome": "failure" }
+      ],
       "auth": { "bot_token": "xoxb-…", "signing_secret": "…" }
     }
   }'
 ```
+
+`approver_slack_user_ids` and `notification_rules` default to empty when omitted, so an
+integration created without them approves nothing and posts no schedule results.
 
 Both credentials are redacted whenever the integration is read back; sending a redacted value on an
 update keeps the stored secret, and sending a real one rotates it. Omitting `auth` keeps it too.
@@ -186,6 +243,12 @@ Deleting the integration stops ingress at once. Sessions it opened stay.
 - **Mentioning the bot in a DM is fine.** Slack delivers that twice, and only one copy runs.
 - **Files are noted, not read.** A message that is only an attachment is ignored, because the agent
   has no way to open it yet.
+- **A decision is taken once.** Two people clicking at the same moment, a double click, or a Slack
+  retry all settle the held turn once; the later one is told it was already decided.
+- **Arguments are summarised, never dumped.** A tool call's arguments are shown as one short line,
+  with any value under a key that reads like a credential replaced by `[redacted]`.
+- **A held turn does not time out.** It waits until someone decides or answers. Nothing expires it,
+  and a new message in the thread while an approval is pending starts a separate turn.
 
 ## Who the bot acts as
 
