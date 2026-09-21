@@ -4,7 +4,7 @@ sidebarTitle: 'Cloudflare Workers'
 description: 'Run the TrueForge server and chat UI on Cloudflare Workers with D1 storage and OIDC login.'
 ---
 
-TrueForge can run on Cloudflare Workers instead of a Node server. The agent features work the same way, except for Code Mode, which is not available yet. Code execution and skills run in a Cloudflare Container, one per session, and are switched on with `TRUEFORGE_SANDBOX_BACKEND`.
+TrueForge can run on Cloudflare Workers instead of a Node server. The agent features work the same way. Code execution, skills and Code Mode run in a Cloudflare Container, one per session, and are switched on with `TRUEFORGE_SANDBOX_BACKEND`.
 
 The Workers setup is deployed from a clone of this repository. Commands below run from the repository root unless a step says otherwise.
 
@@ -156,6 +156,10 @@ Deploy, then turn it on per tenant: **Settings → Sandbox providers → Cloudfl
 
 Each session gets its own container-backed `/workspace`, which persists for the life of the session and survives an idle container, because the Durable Object's SQLite storage is the authoritative copy. Skills are downloaded into `/workspace/.trueforge/skills` on the first sandbox use of each turn, and a skill the agent no longer asks for is removed there on the next turn.
 
+Code Mode comes with the sandbox. An agent that has the sandbox and MCP servers can call those servers from a script inside a sandbox command, through the `mcp-client` CLI or `from mcp_client import call_tool`, as on the other providers. Tools marked destructive, and tools the agent has not enabled, are refused there; the model calls those directly so they go through approval.
+
+The container's outbound HTTP and HTTPS pass through a gateway in the Worker. Cloudflare terminates the container's TLS with a certificate authority it creates for each container. The sandbox trusts that CA through the system store, and every command gets `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `PIP_CERT` and `NODE_EXTRA_CA_CERTS` pointing at it. These replace any value a command sets itself, so to trust an extra CA, add it to the system store instead.
+
 Daytona is not offered on Workers — its provider cannot run there — so the sandbox provider catalog lists only the built-in entry, and a `PUT` of a Daytona manifest returns `422`. With the variable unset nothing is offered at all: the catalog is empty and both `GET` and `PUT` behave as they did before the built-in sandbox existed.
 
 <Warning>
@@ -170,8 +174,7 @@ The `containers` entry in `wrangler.jsonc` is what provisions Cloudflare Contain
 
 | Feature | What callers see |
 | --- | --- |
-| Code Mode | Not available. The model calls MCP tools directly instead, and the in-sandbox client is not installed. |
-| Sandbox and skills before the built-in provider is enabled | Reported as disabled in `GET /api/v1/capabilities`. A sandbox-enabled agent spec gets `422` with "no sandbox provider configured", and a non-inline file upload gets `422` with code `agent_sandbox_required`. Turn file downloads return `412`. |
+| Sandbox, skills and Code Mode before the built-in provider is enabled | Reported as disabled in `GET /api/v1/capabilities`. A sandbox-enabled agent spec gets `422` with "no sandbox provider configured", and a non-inline file upload gets `422` with code `agent_sandbox_required`. Turn file downloads return `412`. |
 | Daytona sandbox providers | Not offered in the catalog; a `PUT` of a Daytona manifest returns `422`. |
 | Deleting a configured skill | The settings skills API has create and replace only, so a skill stays in the tenant list once added. |
 | Session import | Returns `500` with "Session import requires Postgres". |
@@ -187,5 +190,7 @@ The `containers` entry in `wrangler.jsonc` is what provisions Cloudflare Contain
 - **The UI is served from `/`.** A Workers deployment cannot serve TrueForge under a path prefix, so `PUBLIC_BASE_URL` must be an origin without a path.
 - **Schedules run at most once per hour.** The minimum interval between runs of a schedule is 3600 seconds.
 - **A command shares the turn's 14-minute alarm run.** `SANDBOX_EXEC_TIMEOUT_SECONDS` is capped at two thirds of one alarm run, so a command cannot outlast the pass waiting for it. A skill download is bounded separately at 180 seconds. Combined stdout and stderr from one command are capped at 1 MiB, past which the head is kept and a marker names the full size.
-- **A timed-out Code Mode tool call keeps running.** Once Code Mode is available on Workers, the sandbox gets a timeout error when a tool call runs past its limit, but the MCP call itself is not cancelled and may still finish, including a write.
+- **A timed-out Code Mode tool call keeps running.** The sandbox gets a timeout error when a tool call runs past its limit, but the MCP call itself is not cancelled and may still finish, including a write.
+- **A Code Mode request is limited to 1 MiB.** A larger request body from the sandbox is refused with `413`.
+- **The first sandbox turn is slow.** A cold container start plus sandbox setup took about a minute before the model's first message in the live test, and the whole turn held its alarm for 106.8 s.
 - **A command that a signal kills is reported as a timeout.** Cloudflare Computer maps the usual signal exit codes to "cancelled", so a command the kernel kills, for example for running out of memory, reads the same as one that hit the timeout.

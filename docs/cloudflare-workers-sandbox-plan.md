@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. It follows `docs/cloudflare-workers-port-plan.md`, which shipped Phases 0 to 5 with code execution disabled.
 
-Status: proposed on 2026-09-16. Phases 7a and 7b are complete; 7c (Code Mode) is built and reviewed, with the review fixes on the branch but not yet deployed; its live acceptance test has not run. Section 8 records what 7a steps 1 to 8 found, Section 9 the 7a live acceptance test, Section 10 the Section 6 verdict, Section 11 Phase 7b: skills plus the two must-fixes 7a left behind, Section 12 the settings surface that replaced the deploy-var-only switch, and Section 13 Phase 7c: Code Mode, its design note and what is still open.
+Status: proposed on 2026-09-16. Phases 7a and 7b are complete; 7c (Code Mode) is complete: it passed its live acceptance test on 2026-09-21 on version `a630241c`. Section 8 records what 7a steps 1 to 8 found, Section 9 the 7a live acceptance test, Section 10 the Section 6 verdict, Section 11 Phase 7b: skills plus the two must-fixes 7a left behind, Section 12 the settings surface that replaced the deploy-var-only switch, and Section 13 Phase 7c: Code Mode, its design note and what is still open.
 
 Goal: restore code execution on the Workers deploy with a Cloudflare-native sandbox provider, starting with a time-boxed spike on Cloudflare Computer (`@cloudflare/computer`). The spike decides whether Computer, or the Cloudflare Sandbox SDK as the fallback, backs a new `SandboxProvider`.
 
@@ -489,45 +489,84 @@ The image needs nothing else: it already carries `mcp` 1.29.0 and `pydantic` 2.1
 | The Python client's HTTP mode: URL, bearer token, body, trace headers, retry policy, mode selection                                     | `packages/trueforge-core/tests/core/sandbox/scripts/mcp_client_http_test.py`, run in the built image by `pnpm --filter @truefoundry/trueforge test:sandbox-image` |
 | The image ships the CA helper, the entrypoint starts it in the background and becomes `computerd`                                       | `tests/unit/workers/computerImage.test.ts`, plus runs of the helper in the built image                                                                            |
 
-Local containers still do not start on this machine (Section 8), so **nothing above exercises a real container**. Whether the gateway sees real container traffic, and whether ordinary HTTPS survives interception, is the live deploy's to answer.
+Local containers still do not start on this machine (Section 8), so none of the tests above runs a real container. The live test below covers that.
 
-### Live test (7c.3): not yet run
+### Live test (7c.3): passed
 
-Deployed as Worker version `9e10a572-3299-4712-8976-e2ed03b65838` with the gate — the egress switch, the pass-through gateway and the CA entrypoint — on 2026-09-18. The remote D1 migration `0003_delivery_next_attempt.sql` applied first (5 commands, 1.46 ms). `/healthz` answers 200 and `/api/v1/capabilities` answers 401 unauthenticated. The container image rebuilt and pushed as `trueforge-computerdo@sha256:59d23276…`; `enableInternet` flips with the egress mode, so existing containers relaunch on their next command.
+Passed on 2026-09-21, run by the controller on Worker version `a630241c-8d5c-4aae-a771-eb85be6c4c88`, deployed from the branch at `1d72e9c1`.
 
-**Only the gate is deployed.** `9e10a572` is the first commit of the phase and nothing else: the transport, the registry, the routing and the provider flip are on the branch, not on the deploy, so `supportsCodeMode` is still false live and Code Mode is still off for every agent. Leaving it up costs nothing — the tenant has no sessions, and the only behaviour that changed is where a container's outbound requests go.
+**Earlier deploys.**
 
-The acceptance run did not happen: the deploy's own session had expired, and re-establishing it stops at a Clerk OAuth consent screen, which an agent must not click.
+- `9e10a572` (2026-09-18) carried only the gate.
+- `688d2bfb` (2026-09-21) carried the rebased branch before the review fixes.
 
-**The whole branch is deployed since 2026-09-21**, rebased onto `0cbddda5`, as Worker version `688d2bfb-d63c-421a-9f3b-b3ab3e18d8e7`. No D1 migration was pending. The image pushed as `trueforge-computerdo@sha256:33c4ebc5…`, and the Containers application `trueforge-computerdo` reported `ready` right after the deploy. `/healthz` answers 200 (0.60 s) and `/api/v1/capabilities` answers 401 unauthenticated. A tail over the deploy recorded 5 events, all `ok`, and no exception. That deploy carries the transport, the registry and the routing as well as the gate, so the two passes below collapse into one. The built-in sandbox is still not enabled for the tenant, so no container has run a command through the gateway, and Code Mode is unreachable until a tenant admin enables the provider in Settings.
+The acceptance run did not happen on either. The first time, the deploy's session had expired behind a Clerk consent screen. The second time, the agent had no permission to drive the signed-in browser.
 
-### Most likely to break live
+**Setup.**
 
-Check these first, in this order. None of them can be seen without a real container.
+- The Containers application `trueforge-computerdo` was `ready`.
+- `PUT /api/v1/settings/sandbox-providers` with `{ manifest: { type: 'cloudflare-computer' } }` answered 200 with `status: ready`, and capabilities then reported the sandbox and skills enabled.
+- Model `openrouter/glm-5-3-flash-1m`, MCP server `context7`, skill `algorithmic-art`. The sessions used inline agents; no named agent was created.
 
-1. **CA timing.** The first command after a cold start is the likeliest to hit HTTPS before the CA is installed. Look for `does not trust the Cloudflare egress CA` from `ComputerDO` in the tail. If the error appears, run `ls -la /etc/cloudflare/certs/` in the sandbox and look at the exit code the log gives.
-2. **Trust stores.** `curl`, `git`, `pip` and Python `urllib` each read a different setting. Probe each of them once over HTTPS, not only `curl`.
-3. **Exec env.** Run `env | grep -E 'SSL_CERT_FILE|NODE_EXTRA_CA_CERTS'` inside a command to confirm the trust env reaches exec children. If it is missing there, it is missing for every tool.
-4. **The workspace's own name.** Routing depends on `ctx.id.name` whichever way the live deploy wakes `ComputerDO`: by a named stub, by id from `WorkspaceProxy` when the container calls back, or by an alarm. The Workers tests show it only for a named stub and a cold wake by id string, and only in workerd. If it is undefined live, every Code Mode call gets 503, and the tail shows `cannot name its session`.
-5. **Same-zone fetches.** A request from the sandbox to the Worker's own custom domain goes through the gateway's `fetch`, which may fail as a same-zone loop (Cloudflare error 1042) instead of passing through. Probe it with `curl -sS https://trueforge.rockyshoreslabs.io/healthz` from inside the sandbox.
+**The tail** ran from before the deploy to after the last turn:
 
-The acceptance run stopped again before its first probe: the agent running it had no permission to drive the signed-in browser, and every probe needs an authenticated session. Nothing below has been measured. The list stays in its two-pass order.
+- 207 invocations: 204 `ok` and 3 `canceled`. The 3 are the moved 60 s fallback alarms, as in Cycle 13.
+- 0 exceptions and 0 error logs.
+- Exactly one warning: the deliberate wrong-token refusal, `Refused a Code Mode request` with status 401 from `SandboxEgressGateway`.
+- Invocations by entrypoint: `SessionDO` 17, `ComputerDO` 49, `WorkspaceProxy` 27, `SandboxEgressGateway` 25, `SchedulerDO` 10.
 
-**The review fixes are not deployed.** The CA helper, the trust env, the 1 MiB cap and the host-side destructive check all postdate `688d2bfb`. A live run needs a fresh `pnpm workers:deploy` from the branch first, and should record its version id here.
+**Gate probes.** One non-streaming sandbox turn, with no MCP server and one skill. Every command exited 0.
 
-**Pass one decides the gate, against `9e10a572` as deployed.** Stop here and report if any of it fails.
+| Probe                                                                       | Result                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getent hosts code-mode.trueforge.internal`                                 | resolves to `fd00::119:1`                                                                                                                                                                                                                             |
+| Egress CA and exec env                                                      | `/usr/local/share/ca-certificates/cloudflare-containers-ca.crt` present (648 bytes), written about 1 to 2 minutes after the deploy, at the first container start. All six trust variables set to `/etc/ssl/certs/ca-certificates.crt` in the exec env |
+| `curl https://example.com`                                                  | 200 in 0.233 s                                                                                                                                                                                                                                        |
+| `git ls-remote https://github.com/cloudflare/workers-sdk HEAD`              | ok                                                                                                                                                                                                                                                    |
+| `pip download --no-deps requests`                                           | `requests-2.34.2-py3-none-any.whl`                                                                                                                                                                                                                    |
+| Python `urllib.request.urlopen('https://pypi.org/simple/requests/')`        | 200                                                                                                                                                                                                                                                   |
+| `curl https://trueforge.rockyshoreslabs.io/healthz` from inside the sandbox | 200 in 0.803 s                                                                                                                                                                                                                                        |
+| Skill `algorithmic-art`                                                     | mounted under `/workspace/.trueforge/skills/` with its state file, so skill downloads work through the gateway                                                                                                                                        |
 
-1. From inside a sandbox, timed with `curl -w '%{time_total}'`: `curl https://example.com`, `curl http://example.com`, and `python3 -c "urllib.request.urlopen('https://example.com')"` — the last one checks the system CA path the skill downloader uses.
-2. `curl http://code-mode.trueforge.internal/` ten times, for the round trip and for whether the name is reachable at all. On the gate build the gateway passes it through, so the answer says whether the interception catches a host that resolves nowhere.
-3. A skill download, which is a `git clone` over intercepted HTTPS.
+That turn included a cold start. Its holding alarm used 106.8 s of wall time and 1793 ms of CPU. The first `model.message` appeared only after the sandbox had initialised, so for roughly the first minute the turn showed only `turn.created`.
 
-**Pass two needs a second `pnpm workers:deploy`** from the branch, and its own version id.
+**Code Mode, non-streaming**, with `context7`, finished in 187 s. Its holding alarm used 187.1 s of wall time and 760 ms of CPU.
 
-4. `mcp-client call-tool …` from the shell, not only `from mcp_client import call_tool`. The module is installed on the FUSE mount and `chmod 0555`, with the PATH link at `/usr/local/bin/mcp-client`; if the mount does not keep the mode, the CLI half of the prompt's promise is broken while the import half still works, and the module moves to the container disk.
-5. Agent `smoke-codemode` with the sandbox, Code Mode and the `context7` MCP server: a streaming turn and a non-streaming turn where a script calls two tools and returns a value.
-6. `curl http://code-mode.trueforge.internal/dispatch` with no token and with a made-up one; both must be refused without leaving the machine.
-7. From the tail: round-trip latency per dispatcher call, alarm wall and CPU, and any exception.
+- The model used `list_tools`, `get_tool_info`, then `mcp-client call-tool` from an exec.
+- Then one Python script called two tools, `resolve-library-id` then `query-docs`. It printed `DOC_CHARS=2834`, `T1_MS=2028.7` and `T2_MS=1889.6`. Those times were measured inside the script and include the remote context7 server.
+- The model once passed a malformed library id, and context7 answered "not found". That was a model mistake; the transport was fine.
 
-The likeliest failure is item 2. `http-gateway` sets `enableInternet: false`, which leaves the container only ports 80 and 443 and Cloudflare's resolvers, and whether intercept-all catches a name that resolves nowhere — before a lookup, not after it — is exactly what that probe answers. Computer's own `computer.internal` is the existence proof that some such name works, because `computerd` dials `http://computer.internal/api` from inside the container in every egress mode.
+**Code Mode, streaming**, in the same session:
 
-If HTTPS does not survive interception, the fallback needs no new protocol: Computer routes `computer.internal` to `ComputerDO.fetch` in **every** egress mode, so the same client, token, registry and dispatcher work with `egress: { mode: 'direct' }` and a path match in `ComputerDO.fetch` ahead of `backend.handleFetch`. Only the host match moves.
+- HTTP 200, first byte after 306 ms, `turn.done` at 37 s. The script printed `CALLS_OK:2`.
+- In the same turn, `curl -X POST -H 'authorization: Bearer wrong-token-000' "$TFY_CM_HTTP_URL"` from inside the sandbox answered 401.
+
+**Latency from the tail.**
+
+| Invocation                                  | n   | Wall min | Wall median | Wall max |
+| ------------------------------------------- | --- | -------- | ----------- | -------- |
+| `SandboxEgressGateway`, Code Mode calls     | 9   | 21 ms    | 1324 ms     | 2314 ms  |
+| `SandboxEgressGateway`, pass-through egress | 16  | 6 ms     | 320 ms      | 730 ms   |
+
+`SessionDO.dispatchCodeMode` ran 9 times, using 0 to 2199 ms of CPU. Its per-call wall times mean nothing, because the RPC invocation record stays open with the session; the longest was 93.8 s.
+
+**Cleanup.** Both test sessions were deleted (204), and no sessions are left. The built-in sandbox provider stays enabled, at the user's request. The live site stays on `a630241c` until the controller deploys `main`.
+
+### Most likely to break live: answered
+
+1. **CA timing.** Fine. The CA was present in the first sandbox turn, written at the first container start, and the tail has no `does not trust the Cloudflare egress CA` error.
+2. **Trust stores.** Fine for `curl`, `git`, `pip` and Python `urllib`, all over intercepted HTTPS. Node was not probed.
+3. **Exec env.** Fine. All six trust variables reached the exec env.
+4. **The workspace's own name.** Present. The wrong-token refusal logged `sessionDurableObjectName` as `default:<session id>` from a `ComputerDO` woken by the container callback, so `ctx.id.name` survives that wake path.
+5. **Same-zone fetches.** Fine. `curl https://trueforge.rockyshoreslabs.io/healthz` from the sandbox answered 200 in 0.803 s, with no 1042 loop.
+
+**Not tested live:**
+
+- The CLI exec bit on the FUSE mount was not checked on its own; the `mcp-client` command ran, so it is executable in practice.
+- A container restart and the CA re-check that follows it.
+- Approvals in the middle of a script.
+- A tool outside the allow-list.
+- Request bodies over 1 MiB.
+- npm and Node TLS.
+
+The tests above cover all of these except the FUSE exec bit and npm/Node TLS.

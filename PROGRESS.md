@@ -98,9 +98,9 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 - Don't let a caller supply a field the far side owns. A workspace id accepted from the request was enough to squat a unique key, and stripping it turned out to delete a guard as well as a bug.
 - Don't call I2 finished. The live workspace test (I2.4) still has not run, it now also has to cover the generated manifest and the unsigned challenge, and `docs/connect-slack.mdx` stays out of `docs.json` until it does.
 
-## Cycle 21 — Phase 7c: Code Mode over the container's egress (2026-09-18)
+## Cycle 21 — Phase 7c: Code Mode over the container's egress (2026-09-18 to 2026-09-21)
 
-**Goal:** Let an agent on the Cloudflare Workers runtime call its MCP servers from inside a sandbox command, the way it already can on Daytona, TrueFoundry and local — design it, build it, deploy it. The live acceptance run was the one part that could not be finished.
+**Goal:** Let an agent on the Cloudflare Workers runtime call its MCP servers from inside a sandbox command, the way it already can on Daytona, TrueFoundry and local — design it, build it, deploy it, and pass a live acceptance run. Done: it passed on 2026-09-21.
 
 **What we did:**
 
@@ -123,11 +123,19 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
   - `ComputerDO` re-checks the CA after the container host records an exit, so a container restarted within one activation no longer relies on the entrypoint loop alone.
   - The Workers suite prints an uncaught `no such table: started_turns` from a `SessionDO` alarm during teardown. It is pre-existing: the same line appears on `0cbddda5` (15 files, 119 tests, all passing). It fails nothing and is left alone.
   - Nits applied: the client ignores sandbox proxies, so the token cannot leak to one; the gateway passes on only W3C trace headers; the per-request egress line is now debug; the token-exposure and no-credentials constraints are written down; the image test is on the CI backlog.
-- Section 13 of `docs/cloudflare-workers-sandbox-plan.md` records the design, a claim-by-claim verification table, the live list in two passes and the fallback. One changeset. The deploy guide still lists Code Mode as unsupported on Workers and stays that way until the live run says otherwise.
+- **The live test passed on 2026-09-21**, run by the controller on version `a630241c-8d5c-4aae-a771-eb85be6c4c88`, deployed from `1d72e9c1`.
+  - The tail had 207 invocations and 0 exceptions. The only warning was the deliberate wrong-token 401.
+  - HTTPS through the gateway worked for `curl` (example.com 200 in 0.233 s), `git ls-remote`, `pip download` and Python `urllib`. The egress CA was present and all six trust variables reached the exec env.
+  - The Worker's own domain answered from inside the sandbox (200 in 0.803 s), and the skill downloaded.
+  - A Code Mode script called two context7 tools, 2028.7 ms and 1889.6 ms measured inside the script, in a non-streaming turn (187 s, alarm CPU 760 ms) and again in a streaming turn (first byte 306 ms, done at 37 s).
+  - Gateway Code Mode calls had a median wall time of 1324 ms (n=9), and pass-through egress 320 ms (n=16).
+  - `ctx.id.name` is present on a `ComputerDO` woken by the container callback.
+  - The built-in provider stays enabled for the tenant.
+- Section 13 of `docs/cloudflare-workers-sandbox-plan.md` records the design, the verification table, the live results and what was not tested live. The deploy guide now lists Code Mode as supported on Workers, with its known limits. Changesets: `workers-computer-code-mode`, `code-mode-dispatcher-destructive`, `code-mode-client-no-proxy`.
 
 **Lessons learned:**
 
-- **Nothing built this cycle has met a real container.** Local containers still do not start on this machine, so every test is workerd or the image in isolation. Whether the gateway sees real container traffic, and whether ordinary HTTPS survives being intercepted, is the live deploy's to answer and it has not answered.
+- **Nothing built this cycle has met a real container.** Local containers still do not start on this machine, so every test is workerd or the image in isolation. Whether the gateway sees real container traffic, and whether ordinary HTTPS survives being intercepted, was the live deploy's to answer. It answered yes on 2026-09-21, three deploys after the first one.
 - **A certificate minted per container cannot live in the image**, which is what forced the entrypoint. And failing to install it is a warning, not an exit: a container that refuses to start is reported only as "Container failed to start", so exiting there would trade a broken HTTPS call for a failure with no cause in it.
 - **`unknown` does not cross Workers RPC.** `CodeModeReply.result` is `unknown`, so `SessionDO.dispatchCodeMode` returns the dispatcher's reply already serialized and a refusal as a status plus a message. The request crosses as text for the same reason, which had the side benefit of putting parsing and validation in one place.
 - **A retry policy is about what the failure proves, not how bad it looks.** Only a refused connection or an unresolvable host prove nothing was delivered. A timeout, a reset or any HTTP status may mean the tool already ran, so they are reported and never retried — the same rule the NATS path already used.
@@ -142,8 +150,8 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 **Avoid next time:**
 
-- Don't call 7c landed. The gate is deployed, the tests are green, and no real container has spoken through it. The acceptance run stops at a Clerk OAuth consent screen an agent must not click, and it needs two passes: one against `9e10a572` for the gate, one after a second deploy from the branch for Code Mode itself.
-- Don't expect the first probe to pass. `http-gateway` sets `enableInternet: false`, and whether intercept-all catches a hostname that resolves nowhere — before the lookup, not after — is the open question the whole design rests on. Computer's own `computer.internal` is the only existence proof that some such name works inside the container.
+- Don't give a live run to an agent that cannot reach an authenticated session. Two runs here stopped before their first probe: once at a Clerk consent screen, and once because the browser tool was not permitted. The third, run by the controller, passed.
+- Don't assume a made-up hostname fails to resolve under `http-gateway`. `code-mode.trueforge.internal` resolved to `fd00::119:1` inside the container, and the interception caught it.
 - Don't run a Python script inside a tracked source directory before `__pycache__` is ignored. A `Bin` line in a diffstat is the only warning you get.
 - Don't assume the `mcp-client` CLI works because the import does. The module sits on the FUSE mount at `chmod 0555` with the PATH link at `/usr/local/bin/mcp-client`; if the mount drops the mode, the CLI half of the prompt's promise is broken while `from mcp_client import call_tool` keeps working. Item 4 of the live list exists for that.
 - Don't plan a rewrite if HTTPS turns out not to survive interception. Computer routes `computer.internal` to `ComputerDO.fetch` in every egress mode, so the same client, token, registry and dispatcher work under `egress: { mode: 'direct' }` with a path match ahead of `backend.handleFetch`. Only the host match moves.
