@@ -1,0 +1,148 @@
+---
+title: 'Remote computers'
+sidebarTitle: 'Remote computers'
+description: "Let an agent run on a machine you own instead of a sandbox — enrol it, grant agents access, and read what ran."
+---
+
+A **computer** is a machine you own — a laptop, a build box, a VM — running the TrueForge computer client. An
+agent pointed at one runs its commands there instead of in a tenant sandbox, with that machine's files,
+network and installed tools.
+
+This is not a sandbox. Commands run as a real user on a real machine, and anything the agent reads — a web
+page, a repository, a tool result — can influence what it decides to run. Read [the security model](#the-security-model)
+before you enrol anything you care about.
+
+Remote computers are available on the Cloudflare Workers deployment. On the Node server `GET /capabilities`
+reports `computers.enabled: false`, Settings has no **Computers** section, and the routes answer 404.
+
+## Add a computer
+
+1. Open **Settings → Computers** and choose **Add computer**.
+2. Give it a name — the name an agent and the audit list will show it by, such as `office-box`.
+3. TrueForge shows two commands, each with a copy button. **Copy one now.** The enrollment code inside them is
+   single-use, expires after 15 minutes, and is never shown again. If you lose it, rotate the enrollment for a
+   fresh one.
+
+Run the command on the machine. The row moves from **Waiting to enroll** to **Online** within a few seconds,
+and fills in the hostname, OS, client version, the user it runs commands as, and the tools it detected.
+
+### Bare, or in Docker
+
+The **install** command downloads the client, creates an unprivileged `trueforge` user and runs it:
+
+```bash
+curl -fsSL https://<your-trueforge>/install.sh | sh -s -- --url https://<your-trueforge> --code <code>
+```
+
+It refuses to run as root unless you pass `--allow-root`, and `--run-as <user>` picks a different account.
+
+The **Docker** command runs the same client in a container as uid 1000, with a read-only root filesystem and a
+named volume for its state:
+
+```bash
+docker run -d --restart unless-stopped \
+  -v trueforge-computer:/var/lib/trueforge-computer \
+  ghcr.io/<org>/trueforge-computer --url https://<your-trueforge> --code <code>
+```
+
+The container re-passes the code on every restart, which is fine: the client enrols only when it has no stored
+credential and ignores the code afterwards. A Docker computer sees only what you mount into it — which is often
+exactly what you want.
+
+Either way the client dials out over a WebSocket. There is no inbound port to open, so a machine behind NAT
+works unchanged.
+
+## Grant agents access
+
+A computer belongs to the tenant, not to one agent. Open the computer and add agents under **Agents allowed to
+use it**. Only saved, named agents can be granted; an unsaved draft cannot use a computer. A name nothing
+answers to is refused, and the error says which one.
+
+**Granting an agent trusts the people who can edit it.** Anyone who can edit that agent can point it at this
+machine and change what it is told to do. Grant the fewest agents that need it.
+
+## Pick the computer on an agent
+
+Open the agent's **Runtime Config**, turn the sandbox on, and set **Run on** to the computer. The list offers
+only the computers that agent has been granted — the server refuses any other one, both when the agent is
+saved and again when a turn starts.
+
+If the computer is offline the picker says so and still lets you save: a machine you own is asleep most of the
+time. A turn started while it is away fails fast with when it was last seen, rather than hanging.
+
+## The approval flag
+
+Each computer carries **Ask before each command**, on by default. Today the server stores the setting but does
+not act on it, and the UI says so — the gate that pauses a command for a person arrives in a later release.
+Turn it off now and nothing changes; leave it on and the setting is already recorded for when the gate ships.
+
+## Rotate and revoke
+
+**Rotate enrollment** mints a new one-time code, drops the current credential and closes the live connection.
+The machine has to enrol again with the new code. Use it when a code leaked, or when you lost one before
+copying it.
+
+**Revoke** drops the credential and closes the connection for good. It cannot be undone: the machine has to be
+added again from scratch. Use it when a machine is lost, sold or compromised.
+
+**Delete** removes the computer entirely. It is refused while any agent is still granted — take their access
+away first, so you can see what you are removing. Deleting a computer does not erase the audit rows for what
+ran on it.
+
+## Restricted mode and `--allow-env`
+
+By default the client runs what it is asked to run. Four flags restrict it, and the client enforces them, so a
+compromised server cannot lift them:
+
+| Flag | Effect |
+| --- | --- |
+| `--read-only` | Refuses `exec` and any write |
+| `--workdir-only` | Confines file operations to the working directory |
+| `--allow <regex>` | Only commands matching the pattern may run |
+| `--deny <regex>` | Commands matching the pattern are refused |
+
+Setting **any** of them also turns the environment into an allowlist. Only `LANG`, `LC_*`, `TZ`, `TERM`,
+`NO_COLOR`, `CI`, `TFY_*`, `TRUEFORGE_SESSION_*` and what `--allow-env` names reach a command; everything else
+refuses the exec. `--allow-env` takes a trailing `*` for a prefix, and `LD_*` / `DYLD_*` are refused on every
+computer and cannot be permitted.
+
+Two TrueForge features need a grant on a restricted computer:
+
+- skills that use git credentials need `--allow-env 'GIT_CONFIG_*'`
+- Code Mode will need `--allow-env PYTHONPATH`
+
+Granting `GIT_CONFIG_*` is close to allowing arbitrary commands, because git config names programs to run. An
+allow list is not airtight either: a repository whose `.git/config` sets `core.fsmonitor` defeats
+`--allow '^git status$'` with no environment at all. Treat these flags as a way to narrow blast radius, not as
+a sandbox.
+
+## What the audit shows
+
+Every computer keeps an **Activity** list, newest first: when it ran, the operation (`exec`, `file_put`,
+`file_get`), the session, the command or path, the exit code, the outcome and how long it took. A long command
+is truncated with a **Show more**. An exit code of `unknown` means the answer never came back — a deploy or an
+eviction took the reply with it while the command kept running on the machine.
+
+Refusals are recorded too, with the reason in the outcome: `offline`, `revoked`, `denied`, `too_large`.
+
+Rows are kept for **30 days** and are not deleted when the computer is. Commands are stored in clear, so a
+secret typed into one is readable by any admin until the sweep takes it — pass secrets through the
+environment or a file, not on the command line.
+
+## The security model
+
+- **The machine is the trust boundary.** There is no isolation between sessions on one computer beyond a
+  per-session working directory. One owner, one trust domain.
+- **Prompt injection reaches it.** The agent decides what to run from what it reads. On a real machine with
+  network access that is the largest remaining risk, and neither the deny list nor the audit prevents it —
+  they narrow it and record it.
+- **Credentials.** Enrollment codes are 32 random bytes, hashed, single-use, valid 15 minutes. The machine
+  credential is stored hashed on the server and `0600` on the machine, and travels only in a header.
+  Rotate and revoke close the live socket rather than waiting for the next connection.
+- **The user matters.** Commands get a scrubbed environment that never includes the client's own credential,
+  but they do get whatever the run-as user can reach — its SSH keys, its cloud config, its files. The
+  installer's dedicated `trueforge` user exists so that set is small. Docker makes it smaller still.
+- **Egress is yours.** A computer can reach whatever your network lets it reach. That is outside TrueForge's
+  control.
+- **Cross-tenant use is refused** in the provider and again in the relay; a forged computer id in an agent
+  spec does not reach another tenant's machine.
