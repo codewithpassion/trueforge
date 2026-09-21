@@ -10,18 +10,7 @@ describe("SandboxProvidersClient", () => {
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
 
         const rawResponseBody = {
-            data: {
-                manifest: {
-                    auth: { api_key: "api_key" },
-                    auto_archive_interval_in_minutes: 1,
-                    auto_delete_interval_in_minutes: 1,
-                    auto_stop_interval_in_minutes: 1,
-                    exec_timeout_ms: 1,
-                    type: "daytona",
-                },
-                status: "pending",
-                status_reason: "status_reason",
-            },
+            data: { manifest: { type: "cloudflare-computer" }, status: "pending", status_reason: "status_reason" },
         };
 
         server
@@ -36,14 +25,7 @@ describe("SandboxProvidersClient", () => {
         expect(response).toEqual({
             data: {
                 manifest: {
-                    auth: {
-                        apiKey: "api_key",
-                    },
-                    autoArchiveIntervalInMinutes: 1,
-                    autoDeleteIntervalInMinutes: 1,
-                    autoStopIntervalInMinutes: 1,
-                    execTimeoutMs: 1,
-                    type: "daytona",
+                    type: "cloudflare-computer",
                 },
                 status: "pending",
                 statusReason: "status_reason",
@@ -73,29 +55,9 @@ describe("SandboxProvidersClient", () => {
     test("create_or_update (1)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
-        const rawRequestBody = {
-            manifest: {
-                auth: { api_key: "api_key" },
-                auto_archive_interval_in_minutes: 1,
-                auto_delete_interval_in_minutes: 1,
-                auto_stop_interval_in_minutes: 1,
-                exec_timeout_ms: 1,
-                type: "daytona",
-            },
-        };
+        const rawRequestBody = { manifest: { type: "cloudflare-computer" } };
         const rawResponseBody = {
-            data: {
-                manifest: {
-                    auth: { api_key: "api_key" },
-                    auto_archive_interval_in_minutes: 1,
-                    auto_delete_interval_in_minutes: 1,
-                    auto_stop_interval_in_minutes: 1,
-                    exec_timeout_ms: 1,
-                    type: "daytona",
-                },
-                status: "pending",
-                status_reason: "status_reason",
-            },
+            data: { manifest: { type: "cloudflare-computer" }, status: "pending", status_reason: "status_reason" },
         };
 
         server
@@ -109,27 +71,13 @@ describe("SandboxProvidersClient", () => {
 
         const response = await client.settings.sandboxProviders.createOrUpdate({
             manifest: {
-                auth: {
-                    apiKey: "api_key",
-                },
-                autoArchiveIntervalInMinutes: 1,
-                autoDeleteIntervalInMinutes: 1,
-                autoStopIntervalInMinutes: 1,
-                execTimeoutMs: 1,
-                type: "daytona",
+                type: "cloudflare-computer",
             },
         });
         expect(response).toEqual({
             data: {
                 manifest: {
-                    auth: {
-                        apiKey: "api_key",
-                    },
-                    autoArchiveIntervalInMinutes: 1,
-                    autoDeleteIntervalInMinutes: 1,
-                    autoStopIntervalInMinutes: 1,
-                    execTimeoutMs: 1,
-                    type: "daytona",
+                    type: "cloudflare-computer",
                 },
                 status: "pending",
                 statusReason: "status_reason",
@@ -140,16 +88,7 @@ describe("SandboxProvidersClient", () => {
     test("create_or_update (2)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
-        const rawRequestBody = {
-            manifest: {
-                auth: { api_key: "x" },
-                auto_archive_interval_in_minutes: 1,
-                auto_delete_interval_in_minutes: 1,
-                auto_stop_interval_in_minutes: 1,
-                exec_timeout_ms: 1,
-                type: "daytona",
-            },
-        };
+        const rawRequestBody = { manifest: { type: "cloudflare-computer" } };
         const rawResponseBody = { error: { message: "message" } };
 
         server
@@ -164,14 +103,7 @@ describe("SandboxProvidersClient", () => {
         await expect(async () => {
             return await client.settings.sandboxProviders.createOrUpdate({
                 manifest: {
-                    auth: {
-                        apiKey: "x",
-                    },
-                    autoArchiveIntervalInMinutes: 1,
-                    autoDeleteIntervalInMinutes: 1,
-                    autoStopIntervalInMinutes: 1,
-                    execTimeoutMs: 1,
-                    type: "daytona",
+                    type: "cloudflare-computer",
                 },
             });
         }).rejects.toThrow(TrueForgeTypes.BadRequestError);
@@ -180,16 +112,7 @@ describe("SandboxProvidersClient", () => {
     test("create_or_update (3)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
-        const rawRequestBody = {
-            manifest: {
-                auth: { api_key: "x" },
-                auto_archive_interval_in_minutes: 1,
-                auto_delete_interval_in_minutes: 1,
-                auto_stop_interval_in_minutes: 1,
-                exec_timeout_ms: 1,
-                type: "daytona",
-            },
-        };
+        const rawRequestBody = { manifest: { type: "cloudflare-computer" } };
         const rawResponseBody = { error: { message: "message" } };
 
         server
@@ -204,16 +127,46 @@ describe("SandboxProvidersClient", () => {
         await expect(async () => {
             return await client.settings.sandboxProviders.createOrUpdate({
                 manifest: {
-                    auth: {
-                        apiKey: "x",
-                    },
-                    autoArchiveIntervalInMinutes: 1,
-                    autoDeleteIntervalInMinutes: 1,
-                    autoStopIntervalInMinutes: 1,
-                    execTimeoutMs: 1,
-                    type: "daytona",
+                    type: "cloudflare-computer",
                 },
             });
         }).rejects.toThrow(TrueForgeTypes.UnprocessableEntityError);
+    });
+
+    test("delete (1)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = {};
+
+        server
+            .mockEndpoint()
+            .delete("/api/v1/settings/sandbox-providers")
+            .respondWith()
+            .statusCode(200)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        const response = await client.settings.sandboxProviders.delete();
+        expect(response).toEqual({});
+    });
+
+    test("delete (2)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .delete("/api/v1/settings/sandbox-providers")
+            .respondWith()
+            .statusCode(404)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.settings.sandboxProviders.delete();
+        }).rejects.toThrow(TrueForgeTypes.NotFoundError);
     });
 });

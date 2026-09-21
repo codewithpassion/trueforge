@@ -4,6 +4,7 @@ import typing
 
 from ...core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
 from ...core.request_options import RequestOptions
+from ...types.delete_sandbox_provider_response import DeleteSandboxProviderResponse
 from ...types.get_sandbox_provider_response import GetSandboxProviderResponse
 from ...types.sandbox_provider_manifest import SandboxProviderManifest
 from .raw_client import AsyncRawSandboxProvidersClient, RawSandboxProvidersClient
@@ -58,7 +59,7 @@ class SandboxProvidersClient:
         self, *, manifest: SandboxProviderManifest, request_options: typing.Optional[RequestOptions] = None
     ) -> GetSandboxProviderResponse:
         """
-        Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).
+        Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). The built-in provider takes no credentials and is ready at once.
 
         Parameters
         ----------
@@ -74,29 +75,44 @@ class SandboxProvidersClient:
 
         Examples
         --------
-        from trueforge_sdk import (
-            DaytonaSandboxProviderAuth,
-            SandboxProviderManifest,
-            TrueForge,
-        )
+        from trueforge_sdk import CloudflareComputerSandboxProvider, TrueForge
 
         client = TrueForge(
             token="YOUR_TOKEN",
             base_url="https://yourhost.com/path/to/api",
         )
         client.settings.sandbox_providers.create_or_update(
-            manifest=SandboxProviderManifest(
-                auth=DaytonaSandboxProviderAuth(
-                    api_key="api_key",
-                ),
-                auto_archive_interval_in_minutes=1,
-                auto_delete_interval_in_minutes=1,
-                auto_stop_interval_in_minutes=1,
-                exec_timeout_ms=1,
-            ),
+            manifest=CloudflareComputerSandboxProvider(),
         )
         """
         _response = self._raw_client.create_or_update(manifest=manifest, request_options=request_options)
+        return _response.data
+
+    def delete(self, *, request_options: typing.Optional[RequestOptions] = None) -> DeleteSandboxProviderResponse:
+        """
+        Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DeleteSandboxProviderResponse
+            The sandbox provider was removed.
+
+        Examples
+        --------
+        from trueforge_sdk import TrueForge
+
+        client = TrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+        client.settings.sandbox_providers.delete()
+        """
+        _response = self._raw_client.delete(request_options=request_options)
         return _response.data
 
 
@@ -154,7 +170,7 @@ class AsyncSandboxProvidersClient:
         self, *, manifest: SandboxProviderManifest, request_options: typing.Optional[RequestOptions] = None
     ) -> GetSandboxProviderResponse:
         """
-        Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).
+        Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). The built-in provider takes no credentials and is ready at once.
 
         Parameters
         ----------
@@ -172,11 +188,7 @@ class AsyncSandboxProvidersClient:
         --------
         import asyncio
 
-        from trueforge_sdk import (
-            AsyncTrueForge,
-            DaytonaSandboxProviderAuth,
-            SandboxProviderManifest,
-        )
+        from trueforge_sdk import AsyncTrueForge, CloudflareComputerSandboxProvider
 
         client = AsyncTrueForge(
             token="YOUR_TOKEN",
@@ -186,19 +198,46 @@ class AsyncSandboxProvidersClient:
 
         async def main() -> None:
             await client.settings.sandbox_providers.create_or_update(
-                manifest=SandboxProviderManifest(
-                    auth=DaytonaSandboxProviderAuth(
-                        api_key="api_key",
-                    ),
-                    auto_archive_interval_in_minutes=1,
-                    auto_delete_interval_in_minutes=1,
-                    auto_stop_interval_in_minutes=1,
-                    exec_timeout_ms=1,
-                ),
+                manifest=CloudflareComputerSandboxProvider(),
             )
 
 
         asyncio.run(main())
         """
         _response = await self._raw_client.create_or_update(manifest=manifest, request_options=request_options)
+        return _response.data
+
+    async def delete(self, *, request_options: typing.Optional[RequestOptions] = None) -> DeleteSandboxProviderResponse:
+        """
+        Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DeleteSandboxProviderResponse
+            The sandbox provider was removed.
+
+        Examples
+        --------
+        import asyncio
+
+        from trueforge_sdk import AsyncTrueForge
+
+        client = AsyncTrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+
+
+        async def main() -> None:
+            await client.settings.sandbox_providers.delete()
+
+
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.delete(request_options=request_options)
         return _response.data

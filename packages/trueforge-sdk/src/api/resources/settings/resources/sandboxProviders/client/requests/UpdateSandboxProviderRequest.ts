@@ -6,14 +6,7 @@ import type * as TrueForge from "../../../../../../index.js";
  * @example
  *     {
  *         manifest: {
- *             auth: {
- *                 apiKey: "api_key"
- *             },
- *             autoArchiveIntervalInMinutes: 1,
- *             autoDeleteIntervalInMinutes: 1,
- *             autoStopIntervalInMinutes: 1,
- *             execTimeoutMs: 1,
- *             type: "daytona"
+ *             type: "cloudflare-computer"
  *         }
  *     }
  */

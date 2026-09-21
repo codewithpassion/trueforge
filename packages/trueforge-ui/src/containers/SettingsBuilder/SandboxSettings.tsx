@@ -15,10 +15,15 @@ import type {
   SandboxSnapshotSyncStatus,
 } from '../../server/types.js';
 import { getErrorMessage } from '../../utils/getErrorMessage.js';
+import { CLOUDFLARE_COMPUTER_SANDBOX_TYPE } from '../../utils/sandboxProviderType.js';
 import { useToasterOptional } from '../ToasterContainer.js';
 import ConfigureSandboxForm, { type SandboxConfigDraft } from './ConfigureSandboxForm.js';
 
 const SNAPSHOT_STATUS_POLL_INTERVAL_MS = 10000;
+
+/** The built-in provider has no credentials and nothing to tune, so it skips the form. */
+const isBuiltIn = (entry: { catalogId: string } | { type: string }): boolean =>
+  ('type' in entry ? entry.type : entry.catalogId) === CLOUDFLARE_COMPUTER_SANDBOX_TYPE;
 
 const configFrom = ({
   execTimeoutMs,
@@ -218,6 +223,22 @@ const SandboxSettings = () => {
     }).catch(() => {});
   };
 
+  const handleEnable = (entry: SandboxProviderCatalogEntry) => {
+    void runMutation(async () => {
+      await sandboxCatalog.createSandboxProvider({
+        catalogId: entry.id,
+        name: entry.name,
+        type: entry.type,
+        ...configFrom(entry),
+        apiKey: '',
+      });
+    })
+      .then(() => {
+        toaster?.showSuccess({ title: `${entry.name} enabled` });
+      })
+      .catch(() => {});
+  };
+
   const formOpen = createEntry != null || updateProvider != null;
   const isUpdate = updateProvider != null;
   const formTitle = updateProvider
@@ -308,18 +329,20 @@ const SandboxSettings = () => {
                               Retry
                             </Button.Ghost>
                           ) : null}
-                          <Button.Secondary
-                            size="small"
-                            type="button"
-                            disabled={busy}
-                            onClick={() => {
-                              setFormError(null);
-                              setCreateEntry(null);
-                              setUpdateProvider(provider);
-                            }}
-                          >
-                            Update
-                          </Button.Secondary>
+                          {isBuiltIn(provider) ? null : (
+                            <Button.Secondary
+                              size="small"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => {
+                                setFormError(null);
+                                setCreateEntry(null);
+                                setUpdateProvider(provider);
+                              }}
+                            >
+                              Update
+                            </Button.Secondary>
+                          )}
 
                           {sandboxCatalog.deleteSandboxProvider ? (
                             <Button.Ghost
@@ -331,7 +354,7 @@ const SandboxSettings = () => {
                                 handleRemove(provider);
                               }}
                             >
-                              Remove
+                              {isBuiltIn(provider) ? 'Disable' : 'Remove'}
                             </Button.Ghost>
                           ) : null}
                         </div>
@@ -376,12 +399,16 @@ const SandboxSettings = () => {
                           type="button"
                           disabled={busy}
                           onClick={() => {
+                            if (isBuiltIn(entry)) {
+                              handleEnable(entry);
+                              return;
+                            }
                             setFormError(null);
                             setUpdateProvider(null);
                             setCreateEntry(entry);
                           }}
                         >
-                          Configure
+                          {isBuiltIn(entry) ? 'Enable' : 'Configure'}
                         </Button.Secondary>
                       </article>
                     ))}

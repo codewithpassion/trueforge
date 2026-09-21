@@ -1,10 +1,14 @@
 /**
  * Maps trueforge-ui sandbox-settings calls onto Harness
- * `/api/v1/settings/sandbox-providers` (singleton upsert, no delete).
+ * `/api/v1/settings/sandbox-providers` (singleton upsert).
  *
  * UI: multi-row providers with `id` / `catalogId` / `name` / flat `apiKey`.
- * Harness: one Daytona provider per tenant; catalog YAML has no name — synthetic
- * identity uses `type` (`daytona`) as id/catalogId and display name `Daytona`.
+ * Harness: one provider per tenant; the wire rows have no name — synthetic
+ * identity uses `type` as id/catalogId and a display name per type.
+ *
+ * The built-in Cloudflare provider carries no credentials and nothing to tune.
+ * `SandboxProviderConfig` still requires the four Daytona numbers, so they are
+ * zero for it and the settings UI never shows them.
  */
 import type { TrueForge } from '@truefoundry/trueforge-sdk';
 import { TrueForgeApi } from '@truefoundry/trueforge-sdk';
@@ -15,24 +19,36 @@ import type {
   SandboxProviderConfig,
   SandboxProviderListEntry,
 } from '../../../server/types.js';
+import { CLOUDFLARE_COMPUTER_SANDBOX_TYPE } from '../../../utils/sandboxProviderType.js';
 
 export type UiSandboxProvider = SandboxProviderBase;
 export type UiSandboxProviderCatalogEntry = SandboxProviderCatalogEntry;
 export type UiSandboxProviderListEntry = SandboxProviderListEntry;
 
 const DAYTONA_TYPE = 'daytona';
-const DAYTONA_DISPLAY_NAME = 'Daytona';
+
+const DISPLAY_NAMES: Record<string, string> = {
+  [DAYTONA_TYPE]: 'Daytona',
+  [CLOUDFLARE_COMPUTER_SANDBOX_TYPE]: 'Cloudflare Computer',
+};
+
+const NO_CONFIG: SandboxProviderConfig = {
+  execTimeoutMs: 0,
+  autoStopIntervalInMinutes: 0,
+  autoArchiveIntervalInMinutes: 0,
+  autoDeleteIntervalInMinutes: 0,
+};
 
 function displayNameForType(type: string): string {
-  if (type === DAYTONA_TYPE) {
-    return DAYTONA_DISPLAY_NAME;
-  }
-  return type;
+  return DISPLAY_NAMES[type] ?? type;
 }
 
 export function configFromHarness(
   provider: TrueForgeApi.CatalogSandboxProvider | TrueForgeApi.SandboxProviderManifest,
 ): SandboxProviderConfig {
+  if (provider.type === CLOUDFLARE_COMPUTER_SANDBOX_TYPE) {
+    return NO_CONFIG;
+  }
   return {
     execTimeoutMs: provider.execTimeoutMs,
     autoStopIntervalInMinutes: provider.autoStopIntervalInMinutes,
@@ -96,6 +112,9 @@ export function toHarnessManifest(
     apiKey: string;
   } & SandboxProviderConfig,
 ): TrueForgeApi.SandboxProviderManifest {
+  if (req.type === CLOUDFLARE_COMPUTER_SANDBOX_TYPE) {
+    return { type: CLOUDFLARE_COMPUTER_SANDBOX_TYPE };
+  }
   if (req.type !== DAYTONA_TYPE) {
     throw new Error(`Unsupported sandbox provider type: ${req.type}`);
   }
@@ -109,7 +128,7 @@ export function toHarnessManifest(
   };
 }
 
-/** Settings sandbox-catalog port for `createTrueFoundryServer`. Delete omitted (no BE route). */
+/** Settings sandbox-catalog port for `createTrueFoundryServer`. */
 export function createSandboxProviderCatalog(client: TrueForge): SandboxCatalogServer {
   async function resolveApiKey(apiKey: string | undefined): Promise<string> {
     const trimmed = apiKey?.trim();
@@ -117,6 +136,9 @@ export function createSandboxProviderCatalog(client: TrueForge): SandboxCatalogS
       return trimmed;
     }
     const existing = await client.settings.sandboxProviders.get();
+    if (existing.data.manifest.type !== DAYTONA_TYPE) {
+      throw new Error('The configured sandbox provider has no API key');
+    }
     return existing.data.manifest.auth.apiKey;
   }
 
@@ -153,10 +175,12 @@ export function createSandboxProviderCatalog(client: TrueForge): SandboxCatalogS
       return toUiSandboxProvider(body.data.manifest);
     },
     updateSandboxProvider: async req => {
-      const apiKey = await resolveApiKey(req.apiKey);
+      // The synthetic id is the provider type, so it says which manifest to rebuild.
+      const type = req.id === CLOUDFLARE_COMPUTER_SANDBOX_TYPE ? CLOUDFLARE_COMPUTER_SANDBOX_TYPE : DAYTONA_TYPE;
+      const apiKey = type === DAYTONA_TYPE ? await resolveApiKey(req.apiKey) : '';
       const body = await client.settings.sandboxProviders.createOrUpdate({
         manifest: toHarnessManifest({
-          type: DAYTONA_TYPE,
+          type,
           apiKey,
           execTimeoutMs: req.execTimeoutMs,
           autoStopIntervalInMinutes: req.autoStopIntervalInMinutes,
@@ -165,6 +189,9 @@ export function createSandboxProviderCatalog(client: TrueForge): SandboxCatalogS
         }),
       });
       return toUiSandboxProvider(body.data.manifest);
+    },
+    deleteSandboxProvider: async () => {
+      await client.settings.sandboxProviders.delete();
     },
   };
 }

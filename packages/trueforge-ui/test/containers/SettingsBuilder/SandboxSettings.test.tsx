@@ -56,14 +56,48 @@ function sandboxEntry({
   };
 }
 
-function createFakeHost(initial: SandboxProviderListEntry[] = []) {
+/** What a Workers deploy with the built-in sandbox available offers: no Daytona, no settings. */
+const builtInCatalogEntry: SandboxProviderCatalogEntry = {
+  id: 'cloudflare-computer',
+  name: 'Cloudflare Computer',
+  type: 'cloudflare-computer',
+  execTimeoutMs: 0,
+  autoStopIntervalInMinutes: 0,
+  autoArchiveIntervalInMinutes: 0,
+  autoDeleteIntervalInMinutes: 0,
+};
+
+const builtInProvider: SandboxProviderBase = {
+  id: 'cloudflare-computer',
+  name: 'Cloudflare Computer',
+  catalogId: 'cloudflare-computer',
+  isConnected: true,
+  execTimeoutMs: 0,
+  autoStopIntervalInMinutes: 0,
+  autoArchiveIntervalInMinutes: 0,
+  autoDeleteIntervalInMinutes: 0,
+};
+
+function createFakeHost(
+  initial: SandboxProviderListEntry[] = [],
+  options: { catalog?: SandboxProviderCatalogEntry[]; withDelete?: boolean } = {},
+) {
   let providers = [...initial];
   let listCalls = 0;
   const created: CreateSandboxProviderRequest[] = [];
   const updated: UpdateSandboxProviderRequest[] = [];
+  const deleted: string[] = [];
 
   const sandboxCatalog = {
-    getSandboxProviderCatalog: async () => [catalogEntry],
+    ...(options.withDelete === true
+      ? {
+          deleteSandboxProvider: async ({ id }: { id: string }) => {
+            deleted.push(id);
+            providers = providers.filter(entry => entry.data.id !== id);
+          },
+        }
+      : {}),
+    getSandboxProviderCatalog: async () => options.catalog ?? [catalogEntry],
     listSandboxProviders: async () => {
       listCalls += 1;
       return providers;
@@ -114,6 +148,7 @@ function createFakeHost(initial: SandboxProviderListEntry[] = []) {
   return {
     created,
     updated,
+    deleted,
     getListCalls: () => listCalls,
     getProviders: () => providers,
     setProviders: (next: SandboxProviderListEntry[]) => {
@@ -377,5 +412,65 @@ describe('SandboxSettings', () => {
       autoDeleteIntervalInMinutes: 10080,
     });
     expect(host.updated[0]).not.toHaveProperty('apiKey');
+  });
+
+  describe('the built-in provider', () => {
+    it('enables straight from the list, with no form and no credentials', async () => {
+      const host = createFakeHost([], { catalog: [builtInCatalogEntry], withDelete: true });
+      const { wrapper: Wrapper } = host;
+      render(
+        <Wrapper>
+          <SandboxSettings />
+        </Wrapper>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Cloudflare Computer')).toBeTruthy();
+      });
+      // Daytona is not offered here, so there is nothing to configure.
+      expect(screen.queryByText('Daytona')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Configure' })).toBeNull();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+
+      await waitFor(() => {
+        expect(host.created).toHaveLength(1);
+      });
+      // One click enabled it: no form was opened and no credential was collected.
+      expect(host.created[0]).toMatchObject({
+        catalogId: 'cloudflare-computer',
+        type: 'cloudflare-computer',
+        apiKey: '',
+      });
+      expect(screen.getByRole('dialog', { hidden: true }).hasAttribute('open')).toBe(false);
+    });
+
+    it('shows a status line and disables again, with nothing to update', async () => {
+      const host = createFakeHost([sandboxEntry({ provider: builtInProvider })], {
+        catalog: [builtInCatalogEntry],
+        withDelete: true,
+      });
+      const { wrapper: Wrapper } = host;
+      render(
+        <Wrapper>
+          <SandboxSettings />
+        </Wrapper>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Connected')).toBeTruthy();
+      });
+      expect(screen.queryByRole('button', { name: 'Update' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
+
+      await waitFor(() => {
+        expect(host.deleted).toEqual(['cloudflare-computer']);
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Enable' })).toBeTruthy();
+      });
+    });
   });
 });

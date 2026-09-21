@@ -140,7 +140,7 @@ curl "http://localhost:8787/cdn-cgi/local/scheduled"
 
 ## Code execution and skills
 
-Set `TRUEFORGE_SANDBOX_BACKEND` in `vars` to turn on the `exec` tool, skills, non-inline file uploads, and turn file downloads:
+Set `TRUEFORGE_SANDBOX_BACKEND` in `vars` to offer the built-in sandbox on this deploy:
 
 ```jsonc packages/trueforge/wrangler.jsonc
 "vars": {
@@ -148,9 +148,11 @@ Set `TRUEFORGE_SANDBOX_BACKEND` in `vars` to turn on the `exec` tool, skills, no
 },
 ```
 
-Each session gets its own container-backed `/workspace`, which persists for the life of the session and survives an idle container, because the Durable Object's SQLite storage is the authoritative copy. Skills are downloaded into `/workspace/.trueforge/skills` on the first sandbox use of each turn, and a skill the agent no longer asks for is removed there on the next turn. `GET /api/v1/capabilities` then reports both sandbox and skills as enabled, and the UI shows them.
+Deploy, then turn it on per tenant: **Settings → Sandbox providers → Cloudflare Computer → Enable**. There is no form and no API key. **Disable** on the same row turns it back off. Enabling is what switches on the `exec` tool, skills, non-inline file uploads, and turn file downloads; `GET /api/v1/capabilities` reports sandbox and skills as enabled from that point, and the UI shows them.
 
-There is no per-tenant sandbox provider record on Workers: the backend comes from this variable, so the sandbox provider settings routes stay unavailable (`GET` returns `404`, `PUT` returns `422`).
+Each session gets its own container-backed `/workspace`, which persists for the life of the session and survives an idle container, because the Durable Object's SQLite storage is the authoritative copy. Skills are downloaded into `/workspace/.trueforge/skills` on the first sandbox use of each turn, and a skill the agent no longer asks for is removed there on the next turn.
+
+Daytona is not offered on Workers — its provider cannot run there — so the sandbox provider catalog lists only the built-in entry, and a `PUT` of a Daytona manifest returns `422`. With the variable unset nothing is offered at all: the catalog is empty and both `GET` and `PUT` behave as they did before the built-in sandbox existed.
 
 <Warning>
   Cloudflare Computer is a preview and its own README says it is not ready for production. Leave `TRUEFORGE_SANDBOX_BACKEND` unset if that matters to you.
@@ -165,8 +167,8 @@ The `containers` entry in `wrangler.jsonc` is what provisions Cloudflare Contain
 | Feature | What callers see |
 | --- | --- |
 | Code Mode | Not available. The model calls MCP tools directly instead, and the in-sandbox client is not installed. |
-| Sandbox and skills with `TRUEFORGE_SANDBOX_BACKEND` unset | Reported as disabled in `GET /api/v1/capabilities`. A sandbox-enabled agent spec gets `422` with "no sandbox provider configured", and a non-inline file upload gets `422` with code `agent_sandbox_required`. Turn file downloads return `412`. |
-| Sandbox provider settings | `GET` returns `404`, `PUT` returns `422`. |
+| Sandbox and skills before the built-in provider is enabled | Reported as disabled in `GET /api/v1/capabilities`. A sandbox-enabled agent spec gets `422` with "no sandbox provider configured", and a non-inline file upload gets `422` with code `agent_sandbox_required`. Turn file downloads return `412`. |
+| Daytona sandbox providers | Not offered in the catalog; a `PUT` of a Daytona manifest returns `422`. |
 | Deleting a configured skill | The settings skills API has create and replace only, so a skill stays in the tenant list once added. |
 | Session import | Returns `500` with "Session import requires Postgres". |
 | TrueFoundry mode | Rejected at startup. Setting `TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL` stops the Worker from starting. |

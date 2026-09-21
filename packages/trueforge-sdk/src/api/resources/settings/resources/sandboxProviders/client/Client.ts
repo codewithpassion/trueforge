@@ -109,7 +109,7 @@ export class SandboxProvidersClient {
     }
 
     /**
-     * Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).
+     * Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). The built-in provider takes no credentials and is ready at once.
      *
      * @param {TrueForge.settings.UpdateSandboxProviderRequest} request
      * @param {SandboxProvidersClient.RequestOptions} requestOptions - Request-specific configuration.
@@ -122,14 +122,7 @@ export class SandboxProvidersClient {
      * @example
      *     await client.settings.sandboxProviders.createOrUpdate({
      *         manifest: {
-     *             auth: {
-     *                 apiKey: "api_key"
-     *             },
-     *             autoArchiveIntervalInMinutes: 1,
-     *             autoDeleteIntervalInMinutes: 1,
-     *             autoStopIntervalInMinutes: 1,
-     *             execTimeoutMs: 1,
-     *             type: "daytona"
+     *             type: "cloudflare-computer"
      *         }
      *     })
      */
@@ -226,6 +219,91 @@ export class SandboxProvidersClient {
             _response.error,
             _response.rawResponse,
             "PUT",
+            "/api/v1/settings/sandbox-providers",
+        );
+    }
+
+    /**
+     * Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.
+     *
+     * @param {SandboxProvidersClient.RequestOptions} requestOptions - Request-specific configuration.
+     *
+     * @throws {@link TrueForge.NotFoundError}
+     * @throws {@link errors.TrueForgeError}
+     * @throws {@link errors.TrueForgeTimeoutError}
+     *
+     * @example
+     *     await client.settings.sandboxProviders.delete()
+     */
+    public delete(
+        requestOptions?: SandboxProvidersClient.RequestOptions,
+    ): core.HttpResponsePromise<TrueForge.DeleteSandboxProviderResponse> {
+        return core.HttpResponsePromise.fromPromise(this.__delete(requestOptions));
+    }
+
+    private async __delete(
+        requestOptions?: SandboxProvidersClient.RequestOptions,
+    ): Promise<core.WithRawResponse<TrueForge.DeleteSandboxProviderResponse>> {
+        const _authRequest: core.AuthRequest = await this._options.authProvider.getAuthRequest();
+        const _headers: core.Fetcher.Args["headers"] = mergeHeaders(
+            _authRequest.headers,
+            this._options?.headers,
+            requestOptions?.headers,
+        );
+        const _response = await (this._options.fetcher ?? core.fetcher)({
+            url: core.url.join(
+                (await core.Supplier.get(this._options.baseUrl)) ??
+                    (await core.Supplier.get(this._options.environment)),
+                "api/v1/settings/sandbox-providers",
+            ),
+            method: "DELETE",
+            headers: _headers,
+            queryString: core.url.queryBuilder().mergeAdditional(requestOptions?.queryParams).build(),
+            timeoutMs: (requestOptions?.timeoutInSeconds ?? this._options?.timeoutInSeconds ?? 60) * 1000,
+            maxRetries: requestOptions?.maxRetries ?? this._options?.maxRetries,
+            abortSignal: requestOptions?.abortSignal,
+            fetchFn: this._options?.fetch,
+            logging: this._options.logging,
+        });
+        if (_response.ok) {
+            return {
+                data: serializers.DeleteSandboxProviderResponse.parseOrThrow(_response.body, {
+                    unrecognizedObjectKeys: "passthrough",
+                    allowUnrecognizedUnionMembers: true,
+                    allowUnrecognizedEnumValues: true,
+                    skipValidation: true,
+                    breadcrumbsPrefix: ["response"],
+                }),
+                rawResponse: _response.rawResponse,
+            };
+        }
+
+        if (_response.error.reason === "status-code") {
+            switch (_response.error.statusCode) {
+                case 404:
+                    throw new TrueForge.NotFoundError(
+                        serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
+                            unrecognizedObjectKeys: "passthrough",
+                            allowUnrecognizedUnionMembers: true,
+                            allowUnrecognizedEnumValues: true,
+                            skipValidation: true,
+                            breadcrumbsPrefix: ["response"],
+                        }),
+                        _response.rawResponse,
+                    );
+                default:
+                    throw new errors.TrueForgeError({
+                        statusCode: _response.error.statusCode,
+                        body: _response.error.body,
+                        rawResponse: _response.rawResponse,
+                    });
+            }
+        }
+
+        return handleNonStatusCodeError(
+            _response.error,
+            _response.rawResponse,
+            "DELETE",
             "/api/v1/settings/sandbox-providers",
         );
     }

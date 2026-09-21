@@ -4072,7 +4072,7 @@ await client.settings.sandboxProviders.get();
 <dl>
 <dd>
 
-Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).
+Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). The built-in provider takes no credentials and is ready at once.
 </dd>
 </dl>
 </dd>
@@ -4089,14 +4089,7 @@ Upserts the single sandbox provider for this tenant: creates it or replaces its 
 ```typescript
 await client.settings.sandboxProviders.createOrUpdate({
     manifest: {
-        auth: {
-            apiKey: "api_key"
-        },
-        autoArchiveIntervalInMinutes: 1,
-        autoDeleteIntervalInMinutes: 1,
-        autoStopIntervalInMinutes: 1,
-        execTimeoutMs: 1,
-        type: "daytona"
+        type: "cloudflare-computer"
     }
 });
 
@@ -4118,6 +4111,61 @@ await client.settings.sandboxProviders.createOrUpdate({
     
 </dd>
 </dl>
+
+<dl>
+<dd>
+
+**requestOptions:** `SandboxProvidersClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.settings.sandboxProviders.<a href="/src/api/resources/settings/resources/sandboxProviders/client/Client.ts">delete</a>() -> TrueForge.DeleteSandboxProviderResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+await client.settings.sandboxProviders.delete();
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
 
 <dl>
 <dd>

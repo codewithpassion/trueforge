@@ -534,6 +534,46 @@
         ],
         "type": "object"
       },
+      "CatalogDaytonaSandboxProvider": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_archive_interval_in_minutes": {
+            "description": "Minutes before Daytona auto-archives the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_delete_interval_in_minutes": {
+            "description": "Minutes before Daytona auto-deletes the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_stop_interval_in_minutes": {
+            "description": "Minutes of idle time before Daytona auto-stops the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exec_timeout_ms": {
+            "description": "Default sandbox command exec timeout in milliseconds.",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "description": "Daytona sandbox provider.",
+            "enum": [
+              "daytona"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "exec_timeout_ms",
+          "auto_stop_interval_in_minutes",
+          "auto_archive_interval_in_minutes",
+          "auto_delete_interval_in_minutes"
+        ],
+        "type": "object"
+      },
       "CatalogMCPServer": {
         "additionalProperties": false,
         "properties": {
@@ -609,44 +649,21 @@
         ]
       },
       "CatalogSandboxProvider": {
-        "additionalProperties": false,
-        "properties": {
-          "auto_archive_interval_in_minutes": {
-            "description": "Minutes before Daytona auto-archives the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
+        "discriminator": {
+          "mapping": {
+            "cloudflare-computer": "#/components/schemas/CloudflareComputerSandboxProvider",
+            "daytona": "#/components/schemas/CatalogDaytonaSandboxProvider"
           },
-          "auto_delete_interval_in_minutes": {
-            "description": "Minutes before Daytona auto-deletes the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "auto_stop_interval_in_minutes": {
-            "description": "Minutes of idle time before Daytona auto-stops the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "exec_timeout_ms": {
-            "description": "Default sandbox command exec timeout in milliseconds.",
-            "exclusiveMinimum": 0,
-            "type": "integer"
-          },
-          "type": {
-            "description": "Daytona sandbox provider.",
-            "enum": [
-              "daytona"
-            ],
-            "type": "string"
-          }
+          "propertyName": "type"
         },
-        "required": [
-          "type",
-          "exec_timeout_ms",
-          "auto_stop_interval_in_minutes",
-          "auto_archive_interval_in_minutes",
-          "auto_delete_interval_in_minutes"
-        ],
-        "type": "object"
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/CatalogDaytonaSandboxProvider"
+          },
+          {
+            "$ref": "#/components/schemas/CloudflareComputerSandboxProvider"
+          }
+        ]
       },
       "CatalogSkill": {
         "additionalProperties": false,
@@ -846,6 +863,22 @@
           "id",
           "type",
           "function"
+        ],
+        "type": "object"
+      },
+      "CloudflareComputerSandboxProvider": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "description": "Built-in Cloudflare Computer sandbox.",
+            "enum": [
+              "cloudflare-computer"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
         ],
         "type": "object"
       },
@@ -1216,6 +1249,50 @@
         ],
         "type": "object"
       },
+      "DaytonaSandboxProvider": {
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "$ref": "#/components/schemas/DaytonaSandboxProviderAuth"
+          },
+          "auto_archive_interval_in_minutes": {
+            "description": "Minutes before Daytona auto-archives the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_delete_interval_in_minutes": {
+            "description": "Minutes before Daytona auto-deletes the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_stop_interval_in_minutes": {
+            "description": "Minutes of idle time before Daytona auto-stops the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exec_timeout_ms": {
+            "description": "Default sandbox command exec timeout in milliseconds.",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "description": "Daytona sandbox provider.",
+            "enum": [
+              "daytona"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "exec_timeout_ms",
+          "auto_stop_interval_in_minutes",
+          "auto_archive_interval_in_minutes",
+          "auto_delete_interval_in_minutes",
+          "auth"
+        ],
+        "type": "object"
+      },
       "DaytonaSandboxProviderAuth": {
         "additionalProperties": false,
         "description": "Daytona authentication credentials.",
@@ -1236,6 +1313,10 @@
         "type": "object"
       },
       "DeleteIntegrationResponse": {
+        "properties": {},
+        "type": "object"
+      },
+      "DeleteSandboxProviderResponse": {
         "properties": {},
         "type": "object"
       },
@@ -3807,48 +3888,21 @@
         "type": "object"
       },
       "SandboxProviderManifest": {
-        "additionalProperties": false,
-        "properties": {
-          "auth": {
-            "$ref": "#/components/schemas/DaytonaSandboxProviderAuth"
+        "discriminator": {
+          "mapping": {
+            "cloudflare-computer": "#/components/schemas/CloudflareComputerSandboxProvider",
+            "daytona": "#/components/schemas/DaytonaSandboxProvider"
           },
-          "auto_archive_interval_in_minutes": {
-            "description": "Minutes before Daytona auto-archives the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "auto_delete_interval_in_minutes": {
-            "description": "Minutes before Daytona auto-deletes the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "auto_stop_interval_in_minutes": {
-            "description": "Minutes of idle time before Daytona auto-stops the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "exec_timeout_ms": {
-            "description": "Default sandbox command exec timeout in milliseconds.",
-            "exclusiveMinimum": 0,
-            "type": "integer"
-          },
-          "type": {
-            "description": "Daytona sandbox provider.",
-            "enum": [
-              "daytona"
-            ],
-            "type": "string"
-          }
+          "propertyName": "type"
         },
-        "required": [
-          "type",
-          "auth",
-          "exec_timeout_ms",
-          "auto_stop_interval_in_minutes",
-          "auto_archive_interval_in_minutes",
-          "auto_delete_interval_in_minutes"
-        ],
-        "type": "object"
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DaytonaSandboxProvider"
+          },
+          {
+            "$ref": "#/components/schemas/CloudflareComputerSandboxProvider"
+          }
+        ]
       },
       "Schedule": {
         "additionalProperties": false,
@@ -10060,6 +10114,40 @@
       }
     },
     "/api/v1/settings/sandbox-providers": {
+      "delete": {
+        "description": "Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteSandboxProviderResponse"
+                }
+              }
+            },
+            "description": "The sandbox provider was removed."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No sandbox provider configured."
+          }
+        },
+        "summary": "Remove the sandbox provider",
+        "tags": [
+          "Sandboxes"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "sandboxProviders"
+        ],
+        "x-fern-sdk-method-name": "delete"
+      },
       "get": {
         "description": "The single configured sandbox provider for this tenant. `auth.api_key` is redacted.",
         "responses": {
@@ -10095,7 +10183,7 @@
         "x-fern-sdk-method-name": "get"
       },
       "put": {
-        "description": "Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).",
+        "description": "Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). The built-in provider takes no credentials and is ready at once.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -10135,7 +10223,7 @@
                 }
               }
             },
-            "description": "Daytona rejected the provided API key."
+            "description": "The provider type is unavailable on this server, or Daytona rejected the provided API key."
           }
         },
         "summary": "Create or replace the sandbox provider",

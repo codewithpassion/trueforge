@@ -2,14 +2,14 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. It follows `docs/cloudflare-workers-port-plan.md`, which shipped Phases 0 to 5 with code execution disabled.
 
-Status: proposed on 2026-09-16. Phases 7a and 7b are complete; 7c (Code Mode) is next. Section 8 records what 7a steps 1 to 8 found, Section 9 the 7a live acceptance test, Section 10 the Section 6 verdict, and Section 11 Phase 7b: skills, plus the two must-fixes 7a left behind.
+Status: proposed on 2026-09-16. Phases 7a and 7b are complete; 7c (Code Mode) is next. Section 8 records what 7a steps 1 to 8 found, Section 9 the 7a live acceptance test, Section 10 the Section 6 verdict, and Section 11 Phase 7b: skills, plus the two must-fixes 7a left behind. Section 12 records the settings surface that replaced the deploy-var-only switch.
 
 Goal: restore code execution on the Workers deploy with a Cloudflare-native sandbox provider, starting with a time-boxed spike on Cloudflare Computer (`@cloudflare/computer`). The spike decides whether Computer, or the Cloudflare Sandbox SDK as the fallback, backs a new `SandboxProvider`.
 
 Non-goals for this plan:
 
 - Changing the Node deployments. Daytona, TrueFoundry, and the local sandbox stay as they are.
-- Exposing the new provider through the settings API. The settings OpenAPI stays Daytona-only, so there is no SDK or OpenAPI regeneration.
+- ~~Exposing the new provider through the settings API. The settings OpenAPI stays Daytona-only, so there is no SDK or OpenAPI regeneration.~~ Revised: the deploy var alone left Settings offering only Daytona, which cannot work on Workers. Section 12 records the settings surface that replaced it.
 - Production readiness while Computer is a preview. Its README says it is "NOT suitable for production use at this time".
 
 ## 1. What exists today
@@ -104,14 +104,14 @@ Worker (HTTP) ──RPC──► SessionDO (tenant:session)          turn loop, 
   - **`buildImage` and `getImageBuildStatus`:** return `ready`, because `wrangler deploy` builds and rolls the image. There are no runtime builds.
   - **`getAdditionalInstructions`:** a short note that `/workspace` persists across the session and the container may restart.
   - **`createCodeModeTransport`:** throws in 7a and 7b. Phase 7c replaces this.
-- **Provider selection.** The provider is deploy-configured, not settings-configured.
+- **Provider selection.** Written here as deploy-configured, not settings-configured; Section 12 replaced that with a deploy var that makes the provider _available_ and a settings record that turns it on.
   - `TRUEFORGE_SANDBOX_BACKEND=cloudflare-computer` in `wrangler.jsonc` vars enables it.
   - `WorkersSandboxIntegration` implements `SandboxIntegration`:
     - `resolveProvider` returns the Computer provider when enabled and `undefined` otherwise.
-    - `isSandboxUsableWithoutStoredRecord` returns `true` when enabled: the workspace comes from the deploy var and never has a stored record. (Written here as `isLocalFallbackEnabled` returning `false`; Section 9 found that rejects every sandbox-enabled agent, and the flag was renamed in 7b to say what it means.)
+    - `isSandboxUsableWithoutStoredRecord` returns `true` when enabled: the workspace comes from the deploy var and never has a stored record. (Written here as `isLocalFallbackEnabled` returning `false`; Section 9 found that rejects every sandbox-enabled agent, and the flag was renamed in 7b to say what it means. Section 12 took it back to `false` once there is a stored record.)
     - `checkSnapshotStatus` returns `ready`.
     - The Daytona helpers throw a typed "not supported on Workers" error. The existing settings routes already return `404` and `422` on Workers.
-  - If a stored record type is needed, add `cloudflare-computer` to `StoredSandboxProviderManifestSchema` only (store and runtime, not OpenAPI), the same way `truefoundry` is handled.
+  - If a stored record type is needed, add `cloudflare-computer` to `StoredSandboxProviderManifestSchema` only (store and runtime, not OpenAPI), the same way `truefoundry` is handled. Section 12 needed one, and put it on the wire as well.
 - **Egress.** The spike starts with `egress: { mode: "direct" }`. Phase 7d moves to an `http-gateway` allowlist.
 - **Image.** A new `packages/trueforge/workers/computer.Dockerfile` builds `FROM` the pinned TrueForge sandbox image digest.
   - It copies `computerd` from `ghcr.io/cloudflare/computer-computerd-linux-x64:<exact version>` and installs `fuse3`.
@@ -393,3 +393,19 @@ The download fits the 14-minute alarm window with room to spare: the worst obser
 - A turn whose skill pin has not moved still pays about 1.1 s, because the downloader runs on every init to reconcile state. That is the price of cleanup being automatic.
 - Streaming a turn through a browser tab is limited by the tool driving it, not by the server: one streaming turn here was cut off client-side after 45 s and finished as `cancelled` with `reason: client-cancelled`. The server behaved correctly; re-run long turns non-streaming when the client has a short ceiling.
 - Test data removed afterwards: agent `smoke-skills` and its sessions; the tenant ends with zero agents and zero sessions. The tenant skill `algorithmic-art` stays configured, because the settings skills API has no delete.
+
+## 12. Turning the built-in sandbox on from Settings
+
+Section 3's "the provider is deploy-configured, not settings-configured" and the non-goal above both had to go. On a live Workers deploy, Settings → Sandbox providers offered exactly one card, Daytona, whose `PUT` answers `422` on that runtime, and there was no way to turn the Computer sandbox on at all — only a redeploy could.
+
+**The split that replaced them.** `TRUEFORGE_SANDBOX_BACKEND=cloudflare-computer` (with the `COMPUTER_DO` binding) now means the built-in provider is _available_ on this deploy. A tenant _enables_ it by storing a sandbox-provider record of the new manifest variant `cloudflare-computer`, which carries no credentials and no settings. Both must hold; either alone reports the sandbox off.
+
+**What changed.**
+
+- `SandboxProviderManifest` is a real `z.discriminatedUnion('type', …)` of `DaytonaSandboxProvider` and `CloudflareComputerSandboxProvider`, and so is the catalog wire type (`CatalogDaytonaSandboxProvider` plus the same credential-free `CloudflareComputerSandboxProvider`). The shipped `sandbox-catalog.yaml` stays Daytona-only; the built-in entry is synthesized by the catalog route. The store's jsonb gained a third member, which is additive — no migration.
+- `GET /api/v1/catalogs/sandbox-providers` is runtime-aware: the Daytona presets only where `isDaytonaSettingsSupported()`, the built-in entry only where `isCloudflareComputerSettingsSupported()`. On Workers that is one entry, or none with the var unset. Node is unchanged.
+- `DELETE /api/v1/settings/sandbox-providers` is new, so a tenant can disable. It exists on Node too, which is how the settings UI's "Remove" button finally has a route behind it.
+- `SandboxIntegration.isSandboxConfigured({ store, tenant_id })` is the one source for "is a sandbox configured". `validateAgentSpec` asks it instead of testing row presence, and the Workers integration answers it, `checkSnapshotStatus` and `resolveProvider` from the same check. `isSandboxUsableWithoutStoredRecord()` is `false` on Workers again, which is where Section 9 started.
+- The settings UI shows the built-in provider with an **Enable** action that opens no form, the existing status line, and **Disable**. No Daytona card appears on Workers.
+
+**Why the UI DTO has zeros.** `@truefoundry/assistant-ui-runtime`'s `SandboxConfig` requires the four Daytona interval numbers and `CreateSandboxRequest` requires an `apiKey`. Rather than patch the package for one credential-free provider, the adapter maps the built-in entry to zeros and an empty key, and the settings section never shows those fields for it. Patch the runtime package only if a second credential-free provider arrives.

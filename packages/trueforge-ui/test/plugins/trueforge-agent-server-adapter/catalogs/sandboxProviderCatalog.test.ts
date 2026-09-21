@@ -110,6 +110,44 @@ describe('sandboxProviderCatalog mappers', () => {
     );
   });
 
+  it('gives the credential-free built-in provider an identity and zeroed settings', () => {
+    const builtIn = { type: 'cloudflare-computer' as const };
+    const zeroed = {
+      execTimeoutMs: 0,
+      autoStopIntervalInMinutes: 0,
+      autoArchiveIntervalInMinutes: 0,
+      autoDeleteIntervalInMinutes: 0,
+    };
+
+    assert.deepEqual(toUiCatalogEntry(builtIn), {
+      id: 'cloudflare-computer',
+      name: 'Cloudflare Computer',
+      type: 'cloudflare-computer',
+      ...zeroed,
+    });
+    assert.deepEqual(toUiSandboxProvider(builtIn), {
+      id: 'cloudflare-computer',
+      name: 'Cloudflare Computer',
+      catalogId: 'cloudflare-computer',
+      isConnected: true,
+      ...zeroed,
+    });
+  });
+
+  it('sends the built-in provider with no credentials and no settings', () => {
+    assert.deepEqual(
+      toHarnessManifest({
+        type: 'cloudflare-computer',
+        apiKey: '',
+        execTimeoutMs: 1,
+        autoStopIntervalInMinutes: 1,
+        autoArchiveIntervalInMinutes: 1,
+        autoDeleteIntervalInMinutes: 1,
+      }),
+      { type: 'cloudflare-computer' },
+    );
+  });
+
   it('rejects unsupported sandbox provider types', () => {
     assert.throws(
       () =>

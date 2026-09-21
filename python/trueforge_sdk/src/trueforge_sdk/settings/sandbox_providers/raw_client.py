@@ -13,6 +13,7 @@ from ...core.unchecked_base_model import construct_type
 from ...errors.bad_request_error import BadRequestError
 from ...errors.not_found_error import NotFoundError
 from ...errors.unprocessable_entity_error import UnprocessableEntityError
+from ...types.delete_sandbox_provider_response import DeleteSandboxProviderResponse
 from ...types.get_sandbox_provider_response import GetSandboxProviderResponse
 from ...types.request_error_response import RequestErrorResponse
 from ...types.sandbox_provider_manifest import SandboxProviderManifest
@@ -81,7 +82,7 @@ class RawSandboxProvidersClient:
         self, *, manifest: SandboxProviderManifest, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[GetSandboxProviderResponse]:
         """
-        Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).
+        Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). The built-in provider takes no credentials and is ready at once.
 
         Parameters
         ----------
@@ -132,6 +133,57 @@ class RawSandboxProvidersClient:
                 )
             if _response.status_code == 422:
                 raise UnprocessableEntityError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        except ValidationError as e:
+            raise ParsingError(
+                status_code=_response.status_code, headers=dict(_response.headers), body=_response.json(), cause=e
+            )
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def delete(
+        self, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[DeleteSandboxProviderResponse]:
+        """
+        Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[DeleteSandboxProviderResponse]
+            The sandbox provider was removed.
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "api/v1/settings/sandbox-providers",
+            method="DELETE",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    DeleteSandboxProviderResponse,
+                    construct_type(
+                        type_=DeleteSandboxProviderResponse,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 404:
+                raise NotFoundError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -210,7 +262,7 @@ class AsyncRawSandboxProvidersClient:
         self, *, manifest: SandboxProviderManifest, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[GetSandboxProviderResponse]:
         """
-        Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).
+        Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). The built-in provider takes no credentials and is ready at once.
 
         Parameters
         ----------
@@ -261,6 +313,57 @@ class AsyncRawSandboxProvidersClient:
                 )
             if _response.status_code == 422:
                 raise UnprocessableEntityError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        except ValidationError as e:
+            raise ParsingError(
+                status_code=_response.status_code, headers=dict(_response.headers), body=_response.json(), cause=e
+            )
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def delete(
+        self, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[DeleteSandboxProviderResponse]:
+        """
+        Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[DeleteSandboxProviderResponse]
+            The sandbox provider was removed.
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "api/v1/settings/sandbox-providers",
+            method="DELETE",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    DeleteSandboxProviderResponse,
+                    construct_type(
+                        type_=DeleteSandboxProviderResponse,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 404:
+                raise NotFoundError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,

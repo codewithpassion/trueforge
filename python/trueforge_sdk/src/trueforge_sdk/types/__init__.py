@@ -29,6 +29,7 @@ if typing.TYPE_CHECKING:
     from .cancel_session_response import CancelSessionResponse
     from .capabilities_data import CapabilitiesData
     from .catalog_custom_model_provider import CatalogCustomModelProvider
+    from .catalog_daytona_sandbox_provider import CatalogDaytonaSandboxProvider
     from .catalog_mcp_server import CatalogMcpServer
     from .catalog_mcp_server_type import CatalogMcpServerType
     from .catalog_model import CatalogModel
@@ -44,6 +45,7 @@ if typing.TYPE_CHECKING:
     from .chat_completion_content_part_text import ChatCompletionContentPartText
     from .chat_completion_message_tool_call import ChatCompletionMessageToolCall
     from .chat_completion_message_tool_call_function import ChatCompletionMessageToolCallFunction
+    from .cloudflare_computer_sandbox_provider import CloudflareComputerSandboxProvider
     from .compaction_config import CompactionConfig
     from .configured_mcp_server import ConfiguredMcpServer
     from .configured_model import ConfiguredModel
@@ -56,9 +58,11 @@ if typing.TYPE_CHECKING:
     from .created_by_subject import CreatedBySubject
     from .cron_expression import CronExpression
     from .custom_model_provider import CustomModelProvider
+    from .daytona_sandbox_provider import DaytonaSandboxProvider
     from .daytona_sandbox_provider_auth import DaytonaSandboxProviderAuth
     from .delete_agent_response import DeleteAgentResponse
     from .delete_integration_response import DeleteIntegrationResponse
+    from .delete_sandbox_provider_response import DeleteSandboxProviderResponse
     from .delete_schedule_response import DeleteScheduleResponse
     from .dynamic_sub_agents_config import DynamicSubAgentsConfig
     from .extended_chunk_delta_tool_call import ExtendedChunkDeltaToolCall
@@ -268,6 +272,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "CancelSessionResponse": ".cancel_session_response",
     "CapabilitiesData": ".capabilities_data",
     "CatalogCustomModelProvider": ".catalog_custom_model_provider",
+    "CatalogDaytonaSandboxProvider": ".catalog_daytona_sandbox_provider",
     "CatalogMcpServer": ".catalog_mcp_server",
     "CatalogMcpServerType": ".catalog_mcp_server_type",
     "CatalogModel": ".catalog_model",
@@ -283,6 +288,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "ChatCompletionContentPartText": ".chat_completion_content_part_text",
     "ChatCompletionMessageToolCall": ".chat_completion_message_tool_call",
     "ChatCompletionMessageToolCallFunction": ".chat_completion_message_tool_call_function",
+    "CloudflareComputerSandboxProvider": ".cloudflare_computer_sandbox_provider",
     "CompactionConfig": ".compaction_config",
     "ConfiguredMcpServer": ".configured_mcp_server",
     "ConfiguredModel": ".configured_model",
@@ -295,9 +301,11 @@ _dynamic_imports: typing.Dict[str, str] = {
     "CreatedBySubject": ".created_by_subject",
     "CronExpression": ".cron_expression",
     "CustomModelProvider": ".custom_model_provider",
+    "DaytonaSandboxProvider": ".daytona_sandbox_provider",
     "DaytonaSandboxProviderAuth": ".daytona_sandbox_provider_auth",
     "DeleteAgentResponse": ".delete_agent_response",
     "DeleteIntegrationResponse": ".delete_integration_response",
+    "DeleteSandboxProviderResponse": ".delete_sandbox_provider_response",
     "DeleteScheduleResponse": ".delete_schedule_response",
     "DynamicSubAgentsConfig": ".dynamic_sub_agents_config",
     "ExtendedChunkDeltaToolCall": ".extended_chunk_delta_tool_call",
@@ -531,6 +539,7 @@ __all__ = [
     "CancelSessionResponse",
     "CapabilitiesData",
     "CatalogCustomModelProvider",
+    "CatalogDaytonaSandboxProvider",
     "CatalogMcpServer",
     "CatalogMcpServerType",
     "CatalogModel",
@@ -546,6 +555,7 @@ __all__ = [
     "ChatCompletionContentPartText",
     "ChatCompletionMessageToolCall",
     "ChatCompletionMessageToolCallFunction",
+    "CloudflareComputerSandboxProvider",
     "CompactionConfig",
     "ConfiguredMcpServer",
     "ConfiguredModel",
@@ -558,9 +568,11 @@ __all__ = [
     "CreatedBySubject",
     "CronExpression",
     "CustomModelProvider",
+    "DaytonaSandboxProvider",
     "DaytonaSandboxProviderAuth",
     "DeleteAgentResponse",
     "DeleteIntegrationResponse",
+    "DeleteSandboxProviderResponse",
     "DeleteScheduleResponse",
     "DynamicSubAgentsConfig",
     "ExtendedChunkDeltaToolCall",

@@ -9,17 +9,7 @@ describe("SandboxProvidersClient", () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
 
-        const rawResponseBody = {
-            data: [
-                {
-                    auto_archive_interval_in_minutes: 1,
-                    auto_delete_interval_in_minutes: 1,
-                    auto_stop_interval_in_minutes: 1,
-                    exec_timeout_ms: 1,
-                    type: "daytona",
-                },
-            ],
-        };
+        const rawResponseBody = { data: [{ type: "cloudflare-computer" }] };
 
         server
             .mockEndpoint()
@@ -33,11 +23,7 @@ describe("SandboxProvidersClient", () => {
         expect(response).toEqual({
             data: [
                 {
-                    autoArchiveIntervalInMinutes: 1,
-                    autoDeleteIntervalInMinutes: 1,
-                    autoStopIntervalInMinutes: 1,
-                    execTimeoutMs: 1,
-                    type: "daytona",
+                    type: "cloudflare-computer",
                 },
             ],
         });

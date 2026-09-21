@@ -4782,7 +4782,7 @@ client.settings.sandbox_providers.get()
 <dl>
 <dd>
 
-Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).
+Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). The built-in provider takes no credentials and is ready at once.
 </dd>
 </dl>
 </dd>
@@ -4797,7 +4797,7 @@ Upserts the single sandbox provider for this tenant: creates it or replaces its 
 <dd>
 
 ```python
-from trueforge_sdk import TrueForge, SandboxProviderManifest, DaytonaSandboxProviderAuth
+from trueforge_sdk import TrueForge, CloudflareComputerSandboxProvider
 
 client = TrueForge(
     token="<token>",
@@ -4805,15 +4805,8 @@ client = TrueForge(
 )
 
 client.settings.sandbox_providers.create_or_update(
-    manifest=SandboxProviderManifest(
-        auth=DaytonaSandboxProviderAuth(
-            api_key="api_key",
-        ),
-        auto_archive_interval_in_minutes=1,
-        auto_delete_interval_in_minutes=1,
-        auto_stop_interval_in_minutes=1,
-        exec_timeout_ms=1,
-        type="daytona",
+    manifest=CloudflareComputerSandboxProvider(
+        type="cloudflare-computer",
     ),
 )
 
@@ -4835,6 +4828,68 @@ client.settings.sandbox_providers.create_or_update(
     
 </dd>
 </dl>
+
+<dl>
+<dd>
+
+**request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.settings.sandbox_providers.<a href="src/trueforge_sdk/settings/sandbox_providers/client.py">delete</a>() -> DeleteSandboxProviderResponse</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```python
+from trueforge_sdk import TrueForge
+
+client = TrueForge(
+    token="<token>",
+    base_url="https://yourhost.com/path/to/api",
+)
+
+client.settings.sandbox_providers.delete()
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
 
 <dl>
 <dd>
