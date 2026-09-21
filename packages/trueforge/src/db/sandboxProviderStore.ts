@@ -58,4 +58,6 @@ export interface ISandboxProviderStore<TTransaction = never> {
     input: UpdateSandboxStatusInput,
     transaction?: TTransaction,
   ): Promise<SandboxProviderRecord | undefined>;
+  /** Removes the tenant's provider. Returns false when there was nothing to remove. */
+  deleteSandboxProvider(tenantId: string, transaction?: TTransaction): Promise<boolean>;
 }

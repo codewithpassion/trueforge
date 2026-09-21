@@ -1,3 +1,4 @@
+import { OpenAPIHono } from '@hono/zod-openapi';
 import {
   AgentSpecSchema,
   InMemorySessionStore,
@@ -6,14 +7,22 @@ import {
   type SessionHandle,
 } from '@truefoundry/trueforge-core/agent-session';
 import { HTTPException } from 'hono/http-exception';
+import { createLogger } from 'winston';
+import { createCapabilitiesRouter } from '../../../src/apis/capabilities';
+import { resolveRequestContext } from '../../../src/auth/identity';
+import { createAuthMiddleware } from '../../../src/auth/middleware';
+import { StandaloneAuthenticator } from '../../../src/auth/standaloneAuthenticator';
 import { validateGitAgentSkills } from '../../../src/db/gitSkillMounts';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
+import type { ISandboxProviderStore } from '../../../src/db/sandboxProviderStore';
 import type { ISkillStore } from '../../../src/db/skillStore';
 import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
+import type { WithTransaction } from '../../../src/db/transaction';
+import { GetCapabilitiesResponseSchema } from '../../../src/routes/capabilityRoutes';
 import {
   buildGatewayMetadata,
   getModelDetails,
@@ -22,9 +31,11 @@ import {
   withGatewayMetadataHeaders,
   X_TFY_METADATA,
 } from '../../../src/runtime/sessionResources';
+import type { SandboxIntegration } from '../../../src/sandbox/integration';
 import type { LocalSandboxSupportResult } from '../../../src/sandbox/local/provider/LocalSandboxProvider';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import type { ReasoningEffort } from '../../../src/schemas/modelProvider';
+import { SANDBOX_READY_STATUS } from '../../../src/schemas/sandboxProvider';
 
 const LOCAL_SUPPORTED: LocalSandboxSupportResult = {
   supported: true,
@@ -473,6 +484,106 @@ describe('validateAgentSpec', () => {
     ).rejects.toMatchObject({
       status: 422,
       message: 'Skill "echo": preload is not supported for git skills',
+    });
+  });
+
+  /**
+   * Cycle 18: the capability endpoint said yes while the validator said no, because they read
+   * "is a sandbox configured" from different places. Both now go through the integration, so
+   * this pins them together on the runtime where they drifted.
+   */
+  describe('agreement with GET /capabilities on the built-in Workers sandbox', () => {
+    function workersIntegration(backendAvailable: boolean): SandboxIntegration {
+      const isEnabled = async ({ store, tenant_id }: { store: ISandboxProviderStore; tenant_id: string }) =>
+        backendAvailable && (await store.getSandboxProvider(tenant_id))?.manifest.type === 'cloudflare-computer';
+      return {
+        ...createNodeSandboxIntegration({ localSupport: undefined }),
+        isDaytonaSettingsSupported: () => false,
+        isCloudflareComputerSettingsSupported: () => backendAvailable,
+        isSandboxUsableWithoutStoredRecord: () => false,
+        isSandboxConfigured: isEnabled,
+        checkSnapshotStatus: async input => ((await isEnabled(input)) ? SANDBOX_READY_STATUS : undefined),
+      };
+    }
+
+    async function bothAnswers({
+      sandboxIntegration,
+      sandboxProviderStore,
+      stores,
+    }: {
+      sandboxIntegration: SandboxIntegration;
+      sandboxProviderStore: SqliteSandboxProviderStore;
+      stores: Awaited<ReturnType<typeof setup>>;
+    }): Promise<{ capability: boolean; validator: boolean }> {
+      // The capability handler is read-only; it never opens the transaction it is handed.
+      const withTransaction: WithTransaction<never> = () => Promise.reject(new Error('unused'));
+      const router = new OpenAPIHono();
+      router.use('*', createAuthMiddleware(new StandaloneAuthenticator()));
+      router.route(
+        '/',
+        createCapabilitiesRouter({
+          resolveSandboxProviderStore: () => sandboxProviderStore,
+          withTransaction,
+          logger: createLogger({ silent: true }),
+          resolveRequestContext,
+          sandboxIntegration,
+        }),
+      );
+      const body: unknown = await (await router.request('/')).json();
+      const capability = GetCapabilitiesResponseSchema.parse(body).data.sandbox.enabled;
+      const validator = await validateAgentSpec({
+        spec: AgentSpecSchema.parse({
+          model: { name: 'test-provider/test-model' },
+          instructions: 'test',
+          config: { sandbox: { enabled: true } },
+        }),
+        tenant_id: 'default',
+        ...stores,
+        sandboxIntegration,
+      }).then(
+        () => true,
+        () => false,
+      );
+      return { capability, validator };
+    }
+
+    it.each([
+      ['before enabling', false, false],
+      ['after enabling', true, true],
+    ])('agrees %s', async (_label, enable, expected) => {
+      const stores = await setup();
+      const sandboxIntegration = workersIntegration(true);
+      if (enable) {
+        await stores.sandboxProviderStore.upsertSandboxProvider({
+          tenant_id: 'default',
+          manifest: { type: 'cloudflare-computer' },
+          ...SANDBOX_READY_STATUS,
+        });
+      }
+
+      const answers = await bothAnswers({
+        sandboxIntegration,
+        sandboxProviderStore: stores.sandboxProviderStore,
+        stores,
+      });
+      expect(answers).toEqual({ capability: expected, validator: expected });
+    });
+
+    // The deploy var was removed while a record stayed behind: both must read "off".
+    it('agrees when the record outlives the deploy var', async () => {
+      const stores = await setup();
+      await stores.sandboxProviderStore.upsertSandboxProvider({
+        tenant_id: 'default',
+        manifest: { type: 'cloudflare-computer' },
+        ...SANDBOX_READY_STATUS,
+      });
+
+      const answers = await bothAnswers({
+        sandboxIntegration: workersIntegration(false),
+        sandboxProviderStore: stores.sandboxProviderStore,
+        stores,
+      });
+      expect(answers).toEqual({ capability: false, validator: false });
     });
   });
 });

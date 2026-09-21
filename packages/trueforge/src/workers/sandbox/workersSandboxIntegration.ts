@@ -2,15 +2,13 @@ import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import { SkillMounter } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { HTTPException } from 'hono/http-exception';
 import configuration from '../../config';
+import type { ISandboxProviderStore } from '../../db/sandboxProviderStore';
 import type { SandboxIntegration } from '../../sandbox/integration';
-import type { SandboxStatus } from '../../schemas/sandboxProvider';
+import { SANDBOX_READY_STATUS } from '../../schemas/sandboxProvider';
 import type { Env } from '../env';
 import { sessionDurableObjectName } from '../sessionScope';
 import { CloudflareComputerProvider } from './CloudflareComputerProvider';
 import type { ComputerDO } from './ComputerDO';
-
-/** `wrangler deploy` rolls the container image, so the workspace is ready as soon as it exists. */
-const READY_STATUS: SandboxStatus = { status: 'ready', status_reason: null, build_metadata: null };
 
 const NOT_SUPPORTED_MESSAGE = 'Daytona sandbox providers are not supported on the Cloudflare Workers runtime';
 
@@ -38,29 +36,41 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
     throw new HTTPException(422, { message: NOT_SUPPORTED_MESSAGE });
   }
 
+  /**
+   * The deploy var says the built-in sandbox is *available*; a stored record says the tenant
+   * turned it on. Both must hold, so the capability endpoint, the spec validator and the turn
+   * all read the same answer.
+   */
+  async function isEnabledForTenant(input: { store: ISandboxProviderStore; tenant_id: string }): Promise<boolean> {
+    if (options.backend === undefined) {
+      return false;
+    }
+    const record = await input.store.getSandboxProvider(input.tenant_id);
+    return record?.manifest.type === 'cloudflare-computer';
+  }
+
   return {
-    resolveProvider: ({ tenant_id, sessionId }) => {
-      if (options.backend === undefined) {
-        return Promise.resolve(undefined);
+    resolveProvider: async ({ tenant_id, store, sessionId }) => {
+      if (!(await isEnabledForTenant({ store, tenant_id }))) {
+        return undefined;
       }
       const sandboxId = sessionDurableObjectName({ tenant_id, session_id: sessionId });
-      return Promise.resolve(
-        new CloudflareComputerProvider({
-          computer: options.namespace.get(options.namespace.idFromName(sandboxId)),
-          sandboxId,
-          defaultExecTimeoutSeconds: options.defaultExecTimeoutSeconds,
-          fileMaxBytesForDownload: options.fileMaxBytesForDownload,
-        }),
-      );
+      return new CloudflareComputerProvider({
+        computer: options.namespace.get(options.namespace.idFromName(sandboxId)),
+        sandboxId,
+        defaultExecTimeoutSeconds: options.defaultExecTimeoutSeconds,
+        fileMaxBytesForDownload: options.fileMaxBytesForDownload,
+      });
     },
-    // The workspace comes from the deploy var, not from a stored settings record, so a
-    // sandbox-enabled agent is valid with nothing in the sandbox-provider table.
-    isSandboxUsableWithoutStoredRecord: () => options.backend !== undefined,
+    isSandboxUsableWithoutStoredRecord: () => false,
+    isSandboxConfigured: isEnabledForTenant,
     // The container image is the release sandbox image, so the skill downloader has the python3,
     // pydantic and git it needs; skills follow the workspace.
     isSkillMountingSupported: () => options.backend !== undefined,
     isDaytonaSettingsSupported: () => false,
-    checkSnapshotStatus: () => Promise.resolve(options.backend === undefined ? undefined : READY_STATUS),
+    isCloudflareComputerSettingsSupported: () => options.backend !== undefined,
+    // `wrangler deploy` rolls the container image, so an enabled workspace is ready at once.
+    checkSnapshotStatus: async input => ((await isEnabledForTenant(input)) ? SANDBOX_READY_STATUS : undefined),
     createDaytonaProvider: notSupported,
     isDaytonaAuthError: () => false,
     isDaytonaPermissionError: () => false,

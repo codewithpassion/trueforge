@@ -7,7 +7,7 @@ import { env } from 'cloudflare:workers';
 import configuration from '../../src/config';
 import { validateAgentSpec } from '../../src/runtime/sessionResources';
 import type { SandboxIntegration } from '../../src/sandbox/integration';
-import type { SandboxProviderManifest } from '../../src/schemas/sandboxProvider';
+import { SANDBOX_READY_STATUS, type DaytonaSandboxProvider } from '../../src/schemas/sandboxProvider';
 import { createConsoleLogger } from '../../src/workers/logger';
 import { createWorkersRuntimeDeps } from '../../src/workers/runtime';
 import {
@@ -20,7 +20,7 @@ import { d1Persistence, FakeComputer, migrateDatabase, TENANT_ID, upsertMockProv
 
 const logger = createConsoleLogger({ level: 'error', bindings: {} });
 
-const DAYTONA_MANIFEST: SandboxProviderManifest = {
+const DAYTONA_MANIFEST: DaytonaSandboxProvider = {
   type: 'daytona',
   auth: { api_key: 'dtn-test' },
   exec_timeout_ms: 60_000,
@@ -64,6 +64,20 @@ function storeInput() {
   return { tenant_id: TENANT_ID, sessionId: 'session-1', store: d1Persistence().sandboxProviderStore, logger };
 }
 
+/** Turning the built-in sandbox on is what a tenant does from Settings. */
+async function enableBuiltInSandbox(): Promise<void> {
+  await migrateDatabase();
+  await d1Persistence().sandboxProviderStore.upsertSandboxProvider({
+    tenant_id: TENANT_ID,
+    manifest: { type: 'cloudflare-computer' },
+    ...SANDBOX_READY_STATUS,
+  });
+}
+
+async function disableBuiltInSandbox(): Promise<void> {
+  await d1Persistence().sandboxProviderStore.deleteSandboxProvider(TENANT_ID);
+}
+
 /** The agent-create and session-create gate, which reads the sandbox-provider table. */
 async function validateSandboxSpec(sandboxIntegration: SandboxIntegration): Promise<void> {
   await migrateDatabase();
@@ -93,6 +107,11 @@ function build(backend: 'cloudflare-computer' | undefined) {
 }
 
 describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND unset', () => {
+  beforeAll(async () => {
+    await migrateDatabase();
+    await disableBuiltInSandbox();
+  });
+
   it('resolves no provider, which is what keeps code execution off', async () => {
     await expect(build(undefined).resolveProvider(storeInput())).resolves.toBeUndefined();
   });
@@ -104,6 +123,20 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND unset',
   it('offers no sandbox without a stored record, so a sandbox-enabled spec is rejected', async () => {
     expect(build(undefined).isSandboxUsableWithoutStoredRecord()).toBe(false);
     await expect(validateSandboxSpec(build(undefined))).rejects.toThrow(/no sandbox provider is configured/);
+  });
+
+  // A record left behind by a deploy that has since dropped the var must not re-enable anything.
+  it('ignores a stored record, so nothing the tenant enabled survives the var going away', async () => {
+    await enableBuiltInSandbox();
+    try {
+      const integration = build(undefined);
+      expect(integration.isCloudflareComputerSettingsSupported()).toBe(false);
+      await expect(integration.checkSnapshotStatus(storeInput())).resolves.toBeUndefined();
+      await expect(integration.resolveProvider(storeInput())).resolves.toBeUndefined();
+      await expect(validateSandboxSpec(integration)).rejects.toThrow(/no sandbox provider is configured/);
+    } finally {
+      await disableBuiltInSandbox();
+    }
   });
 });
 
@@ -118,6 +151,10 @@ describe('createWorkersRuntimeDeps', () => {
 });
 
 describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudflare-computer', () => {
+  beforeAll(async () => {
+    await enableBuiltInSandbox();
+  });
+
   it('binds the provider to this session own workspace', async () => {
     const provider = await build('cloudflare-computer').resolveProvider(storeInput());
     expect(provider?.type).toBe(CLOUDFLARE_COMPUTER_PROVIDER_TYPE);
@@ -125,11 +162,22 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
   });
 
   it('reports the rolled container image as ready', async () => {
-    await expect(build('cloudflare-computer').checkSnapshotStatus(storeInput())).resolves.toEqual({
-      status: 'ready',
-      status_reason: null,
-      build_metadata: null,
-    });
+    await expect(build('cloudflare-computer').checkSnapshotStatus(storeInput())).resolves.toEqual(SANDBOX_READY_STATUS);
+  });
+
+  // The var only makes the provider available; a tenant still has to turn it on in Settings.
+  it('stays off until the tenant enables it, and goes off again when they disable it', async () => {
+    const integration = build('cloudflare-computer');
+    await disableBuiltInSandbox();
+    try {
+      expect(integration.isSandboxUsableWithoutStoredRecord()).toBe(false);
+      await expect(integration.checkSnapshotStatus(storeInput())).resolves.toBeUndefined();
+      await expect(integration.resolveProvider(storeInput())).resolves.toBeUndefined();
+      await expect(validateSandboxSpec(integration)).rejects.toThrow(/no sandbox provider is configured/);
+    } finally {
+      await enableBuiltInSandbox();
+    }
+    await expect(integration.resolveProvider(storeInput())).resolves.toBeDefined();
   });
 
   // An agent that drops its last skill still has to reach the downloader, or the old install stays.
@@ -195,8 +243,8 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
     expect(builder.build()).toContain('/workspace/.trueforge/skills/demo');
   });
 
-  it('accepts a sandbox-enabled spec with nothing in the sandbox-provider table', async () => {
-    expect(build('cloudflare-computer').isSandboxUsableWithoutStoredRecord()).toBe(true);
+  it('accepts a sandbox-enabled spec once the tenant has enabled the built-in provider', async () => {
+    await enableBuiltInSandbox();
     await expect(validateSandboxSpec(build('cloudflare-computer'))).resolves.toBeUndefined();
   });
 });
@@ -204,10 +252,15 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
 describe.each([undefined, 'cloudflare-computer' as const])(
   'createWorkersSandboxIntegration (backend %s) runtime support',
   backend => {
-    it('follows the workspace with skills, and offers no Daytona settings surface', () => {
+    beforeAll(async () => {
+      await enableBuiltInSandbox();
+    });
+
+    it('follows the workspace with skills, and offers the built-in provider instead of Daytona', () => {
       const integration = build(backend);
       expect(integration.isSkillMountingSupported()).toBe(backend !== undefined);
       expect(integration.isDaytonaSettingsSupported()).toBe(false);
+      expect(integration.isCloudflareComputerSettingsSupported()).toBe(backend !== undefined);
       expect(integration.isDaytonaAuthError(new Error('x'))).toBe(false);
       expect(integration.isDaytonaPermissionError(new Error('x'))).toBe(false);
     });

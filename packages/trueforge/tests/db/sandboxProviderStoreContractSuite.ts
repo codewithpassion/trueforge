@@ -3,7 +3,7 @@
  * Runs under jest against a fresh store per test (see backend test files).
  */
 import type { ISandboxProviderStore, UpsertSandboxProviderInput } from '../../src/db/sandboxProviderStore';
-import type { SandboxBuildMetadata, SandboxProviderManifest } from '../../src/schemas/sandboxProvider';
+import type { DaytonaSandboxProvider, SandboxBuildMetadata } from '../../src/schemas/sandboxProvider';
 
 const TENANT = 'default';
 
@@ -12,7 +12,7 @@ const BUILD_METADATA: SandboxBuildMetadata = {
   image_uri: 'tfy.jfrog.io/tfy-images/sandbox:029ea5ff',
 };
 
-function manifest(overrides: Partial<SandboxProviderManifest> = {}): SandboxProviderManifest {
+function manifest(overrides: Partial<DaytonaSandboxProvider> = {}): DaytonaSandboxProvider {
   return {
     type: 'daytona',
     auth: { api_key: 'dtn-test' },
@@ -82,8 +82,49 @@ export function runSandboxProviderStoreContractSuite(getStore: () => ISandboxPro
 
     const forDefault = await store.getSandboxProvider(TENANT);
     const forOther = await store.getSandboxProvider('other-tenant');
-    expect(forDefault?.manifest.exec_timeout_ms).toBe(60000);
-    expect(forOther?.manifest.exec_timeout_ms).toBe(120000);
+    expect(forDefault?.manifest).toEqual(manifest());
+    expect(forOther?.manifest).toEqual(manifest({ exec_timeout_ms: 120000 }));
+  });
+
+  it('round-trips the credential-free cloudflare-computer manifest', async () => {
+    const store = getStore();
+    const created = await store.upsertSandboxProvider(
+      upsertInput({ manifest: { type: 'cloudflare-computer' }, status: 'ready', status_reason: null }),
+    );
+
+    expect(created.manifest).toEqual({ type: 'cloudflare-computer' });
+    expect(created.status).toBe('ready');
+    expect((await store.getSandboxProvider(TENANT))?.manifest).toEqual({ type: 'cloudflare-computer' });
+  });
+
+  it('upsert replaces a daytona provider with the built-in one, keeping one row per tenant', async () => {
+    const store = getStore();
+    const created = await store.upsertSandboxProvider(upsertInput());
+    const replaced = await store.upsertSandboxProvider(
+      upsertInput({ manifest: { type: 'cloudflare-computer' }, build_metadata: null }),
+    );
+
+    expect(replaced.manifest).toEqual({ type: 'cloudflare-computer' });
+    expect(replaced.build_metadata).toBeNull();
+    expect(replaced.created_at).toBe(created.created_at);
+  });
+
+  it('delete removes the provider and reports whether there was one', async () => {
+    const store = getStore();
+    await store.upsertSandboxProvider(upsertInput());
+
+    expect(await store.deleteSandboxProvider(TENANT)).toBe(true);
+    expect(await store.getSandboxProvider(TENANT)).toBeUndefined();
+    expect(await store.deleteSandboxProvider(TENANT)).toBe(false);
+  });
+
+  it('delete is scoped to a single tenant', async () => {
+    const store = getStore();
+    await store.upsertSandboxProvider(upsertInput());
+    await store.upsertSandboxProvider(upsertInput({ tenant_id: 'other-tenant' }));
+
+    expect(await store.deleteSandboxProvider(TENANT)).toBe(true);
+    expect(await store.getSandboxProvider('other-tenant')).toBeDefined();
   });
 
   it('updateSandboxStatus refreshes only the build status, keeping the manifest', async () => {

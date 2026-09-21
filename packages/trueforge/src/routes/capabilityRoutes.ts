@@ -31,7 +31,7 @@ const CapabilitiesDataSchema = z
   })
   .openapi('CapabilitiesData');
 
-const GetCapabilitiesResponseSchema = z
+export const GetCapabilitiesResponseSchema = z
   .object({
     data: CapabilitiesDataSchema,
   })

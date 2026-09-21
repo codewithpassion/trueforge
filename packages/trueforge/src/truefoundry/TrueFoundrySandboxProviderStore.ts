@@ -100,4 +100,10 @@ export class TrueFoundrySandboxProviderStore<TTransaction = never> implements IS
     void transaction;
     return trueFoundryManaged();
   }
+
+  deleteSandboxProvider(tenantId: string, transaction?: TTransaction): Promise<boolean> {
+    void tenantId;
+    void transaction;
+    return trueFoundryManaged();
+  }
 }

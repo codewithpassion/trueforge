@@ -8,6 +8,7 @@ import { SkillCatalog } from '../../../src/catalog/SkillCatalog';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import { TRUEFOUNDRY_MANAGED_MESSAGE, trueFoundryManaged } from '../../../src/truefoundry/errors';
 
 const putBody = {
@@ -62,6 +63,7 @@ describe('skills routers', () => {
       mcpCatalog: McpCatalog.load(),
       skillCatalog: SkillCatalog.load(),
       sandboxCatalog: SandboxCatalog.load(),
+      sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
     });
     availableRouter = createAvailableSkillsRouter({
       resolveSkillStore: () => skillStore,

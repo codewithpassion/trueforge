@@ -234,8 +234,7 @@ export async function validateAgentSpec({
     // Without an integration a stored record is unusable, so it does not count as configured.
     const configured =
       sandboxIntegration !== undefined &&
-      ((await sandboxProviderStore.getSandboxProvider(tenant_id)) !== undefined ||
-        sandboxIntegration.isSandboxUsableWithoutStoredRecord());
+      (await sandboxIntegration.isSandboxConfigured({ store: sandboxProviderStore, tenant_id }));
     if (!configured) {
       throw new HTTPException(422, {
         message: hasSkills

@@ -10,13 +10,17 @@ import {
   listSandboxProviderCatalogRoute,
   listSkillCatalogRoute,
 } from '../routes/catalogRoutes';
+import type { SandboxIntegration } from '../sandbox/integration';
 import type { CatalogModelProvider } from '../schemas/modelCatalog';
+import type { CatalogSandboxProvider } from '../schemas/sandboxCatalog';
 
 export interface CatalogRouterDeps {
   modelCatalog: ModelCatalog;
   mcpCatalog: McpCatalog;
   skillCatalog: SkillCatalog;
   sandboxCatalog: SandboxCatalog;
+  /** Undefined when this runtime cannot run sandboxes; the sandbox catalog is then empty. */
+  sandboxIntegration: SandboxIntegration | undefined;
 }
 
 export function createCatalogRouter(deps: CatalogRouterDeps) {
@@ -39,8 +43,18 @@ export function createCatalogRouter(deps: CatalogRouterDeps) {
     return c.json({ data: [...deps.skillCatalog.list()] }, 200);
   };
 
+  // Only offer what this deploy can actually run: the shipped Daytona presets, the built-in
+  // provider, or neither.
   const listSandboxProvidersHandler: RouteHandler<typeof listSandboxProviderCatalogRoute> = c => {
-    return c.json({ data: [...deps.sandboxCatalog.list()] }, 200);
+    const integration = deps.sandboxIntegration;
+    const providers: CatalogSandboxProvider[] = [];
+    if (integration?.isDaytonaSettingsSupported() === true) {
+      providers.push(...deps.sandboxCatalog.list());
+    }
+    if (integration?.isCloudflareComputerSettingsSupported() === true) {
+      providers.push({ type: 'cloudflare-computer' });
+    }
+    return c.json({ data: providers }, 200);
   };
 
   const router = new OpenAPIHono();

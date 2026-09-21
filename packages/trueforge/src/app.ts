@@ -289,6 +289,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         mcpCatalog: deps.mcpCatalog,
         skillCatalog: deps.skillCatalog,
         sandboxCatalog: deps.sandboxCatalog,
+        sandboxIntegration: deps.sandboxIntegration,
       }),
       authMiddleware,
     ),

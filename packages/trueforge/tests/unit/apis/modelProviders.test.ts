@@ -118,6 +118,7 @@ async function createRouters(): Promise<{
       mcpCatalog: McpCatalog.load(),
       skillCatalog: SkillCatalog.load(),
       sandboxCatalog: SandboxCatalog.load(),
+      sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
     }),
     modelsRouter: createModelsRouter({
       resolveModelProviderStore: () => modelProviderStore,

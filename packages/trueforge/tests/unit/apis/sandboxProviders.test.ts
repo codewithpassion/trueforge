@@ -77,12 +77,31 @@ function putInit(manifest: unknown): RequestInit {
   };
 }
 
+/**
+ * What the Cloudflare Workers runtime reports: no Daytona surface, the built-in provider
+ * offered only while the deploy var is set, and every "configured" answer read from the store.
+ */
+function workersIntegration(backendAvailable: boolean): SandboxIntegration {
+  const isEnabled = async ({ store, tenant_id }: { store: ISandboxProviderStore; tenant_id: string }) =>
+    backendAvailable && (await store.getSandboxProvider(tenant_id))?.manifest.type === 'cloudflare-computer';
+  return {
+    ...sandboxIntegration,
+    isDaytonaSettingsSupported: () => false,
+    isCloudflareComputerSettingsSupported: () => backendAvailable,
+    isSandboxUsableWithoutStoredRecord: () => false,
+    isSandboxConfigured: isEnabled,
+    checkSnapshotStatus: async input =>
+      (await isEnabled(input)) ? { status: 'ready', status_reason: null, build_metadata: null } : undefined,
+  };
+}
+
 // Options object so an explicit `sandboxIntegration: undefined` is not replaced by the default.
 async function createRouters(
   options: { sandboxIntegration: SandboxIntegration | undefined } = { sandboxIntegration },
 ): Promise<{
   settingsRouter: ReturnType<typeof createSandboxProvidersRouter>;
-  sandboxProviderStore: ISandboxProviderStore;
+  catalogRouter: ReturnType<typeof createCatalogRouter>;
+  sandboxProviderStore: SqliteSandboxProviderStore;
 }> {
   const db = createSqliteDb(':memory:');
   await migrateSqliteToLatest(db);
@@ -93,6 +112,13 @@ async function createRouters(
       withTransaction: callback => db.transaction().execute(callback),
       logger: silentLogger,
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+      sandboxIntegration: options.sandboxIntegration,
+    }),
+    catalogRouter: createCatalogRouter({
+      modelCatalog: ModelCatalog.load(),
+      mcpCatalog: McpCatalog.load(),
+      skillCatalog: SkillCatalog.load(),
+      sandboxCatalog: SandboxCatalog.load(),
       sandboxIntegration: options.sandboxIntegration,
     }),
     sandboxProviderStore,
@@ -128,6 +154,7 @@ describe('sandboxProviders router', () => {
       mcpCatalog: McpCatalog.load(),
       skillCatalog: SkillCatalog.load(),
       sandboxCatalog: SandboxCatalog.load(),
+      sandboxIntegration,
     });
   });
 
@@ -135,6 +162,30 @@ describe('sandboxProviders router', () => {
     const response = await catalogRouter.request('/sandbox-providers');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ data: [...SandboxCatalog.load().list()] });
+  });
+
+  it('PUT rejects the built-in provider, which this runtime cannot run', async () => {
+    const { settingsRouter: router, sandboxProviderStore: store } = await createRouters();
+
+    const response = await router.request('/', putInit({ type: 'cloudflare-computer' }));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: { message: 'Sandbox providers are not supported by this server' },
+    });
+    expect(await store.getSandboxProvider('default')).toBeUndefined();
+  });
+
+  it('DELETE removes a configured provider, then reports there is none', async () => {
+    const { settingsRouter: router, sandboxProviderStore: store } = await createRouters();
+    expect((await router.request('/', putInit(putBody))).status).toBe(200);
+
+    const removed = await router.request('/', { method: 'DELETE' });
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({});
+    expect(await store.getSandboxProvider('default')).toBeUndefined();
+
+    const again = await router.request('/', { method: 'DELETE' });
+    expect(again.status).toBe(404);
   });
 
   it('GET / returns 404 when none configured', async () => {
@@ -275,6 +326,95 @@ describe('sandboxProviders router on a runtime without the Daytona settings surf
     expect(response.status).toBe(422);
     expect(await response.json()).toEqual(unsupported);
     expect(mockProviderFactory).not.toHaveBeenCalled();
+    expect(await sandboxProviderStore.getSandboxProvider('default')).toBeUndefined();
+  });
+});
+
+describe('sandboxProviders router on a runtime that offers the built-in sandbox', () => {
+  const builtIn = { type: 'cloudflare-computer' as const };
+
+  it('offers only the built-in provider in the catalog', async () => {
+    const { catalogRouter } = await createRouters({ sandboxIntegration: workersIntegration(true) });
+
+    const response = await catalogRouter.request('/sandbox-providers');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ data: [builtIn] });
+  });
+
+  it('enables it without credentials and reports it ready at once', async () => {
+    const { settingsRouter, sandboxProviderStore } = await createRouters({
+      sandboxIntegration: workersIntegration(true),
+    });
+
+    const put = await settingsRouter.request('/', putInit(builtIn));
+    expect(put.status).toBe(200);
+    expect(await put.json()).toEqual({ data: { manifest: builtIn, status: 'ready', status_reason: null } });
+    expect(await sandboxProviderStore.getSandboxProvider('default')).toMatchObject({ manifest: builtIn });
+
+    const get = await settingsRouter.request('/');
+    expect(get.status).toBe(200);
+    expect(await get.json()).toEqual({ data: { manifest: builtIn, status: 'ready', status_reason: null } });
+  });
+
+  it('lists nothing until it is enabled, and nothing again after it is disabled', async () => {
+    const { settingsRouter } = await createRouters({ sandboxIntegration: workersIntegration(true) });
+
+    expect((await settingsRouter.request('/')).status).toBe(404);
+    expect((await settingsRouter.request('/', putInit(builtIn))).status).toBe(200);
+    expect((await settingsRouter.request('/', { method: 'DELETE' })).status).toBe(200);
+    expect((await settingsRouter.request('/')).status).toBe(404);
+  });
+
+  it('keeps one provider per tenant: enabling replaces whatever was stored', async () => {
+    const { settingsRouter, sandboxProviderStore } = await createRouters({
+      sandboxIntegration: workersIntegration(true),
+    });
+    await sandboxProviderStore.upsertSandboxProvider({
+      tenant_id: 'default',
+      manifest: putBody,
+      status: 'ready',
+      status_reason: null,
+      build_metadata: null,
+    });
+
+    expect((await settingsRouter.request('/', putInit(builtIn))).status).toBe(200);
+    expect(await sandboxProviderStore.getSandboxProvider('default')).toMatchObject({ manifest: builtIn });
+  });
+
+  it('refuses Daytona, which cannot run here', async () => {
+    const { settingsRouter, sandboxProviderStore } = await createRouters({
+      sandboxIntegration: workersIntegration(true),
+    });
+
+    const response = await settingsRouter.request('/', putInit(putBody));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: { message: 'Sandbox providers are not supported by this server' },
+    });
+    expect(mockProviderFactory).not.toHaveBeenCalled();
+    expect(await sandboxProviderStore.getSandboxProvider('default')).toBeUndefined();
+  });
+});
+
+describe('sandboxProviders router on a runtime with the sandbox backend unset', () => {
+  const unsupported = { error: { message: 'Sandbox providers are not supported by this server' } };
+
+  it('offers no provider at all', async () => {
+    const { catalogRouter } = await createRouters({ sandboxIntegration: workersIntegration(false) });
+
+    const response = await catalogRouter.request('/sandbox-providers');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ data: [] });
+  });
+
+  it('refuses to enable the built-in provider and persists nothing', async () => {
+    const { settingsRouter, sandboxProviderStore } = await createRouters({
+      sandboxIntegration: workersIntegration(false),
+    });
+
+    const response = await settingsRouter.request('/', putInit({ type: 'cloudflare-computer' }));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual(unsupported);
     expect(await sandboxProviderStore.getSandboxProvider('default')).toBeUndefined();
   });
 });

@@ -101,4 +101,10 @@ export class PostgresSandboxProviderStore implements ISandboxProviderStore<Trans
       .executeTakeFirst();
     return row === undefined ? undefined : toRecord(row);
   }
+
+  async deleteSandboxProvider(tenantId: string, transaction?: Transaction<Database>): Promise<boolean> {
+    const db = transaction ?? this.#db;
+    const result = await db.deleteFrom('sandbox_provider').where('tenant_id', '=', tenantId).executeTakeFirst();
+    return Number(result.numDeletedRows) > 0;
+  }
 }

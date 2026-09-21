@@ -5,10 +5,16 @@ import type { Context } from 'hono';
 import type { ResolveRequestContext } from '../auth/identity';
 import type { ISandboxProviderStore, SandboxProviderRecord } from '../db/sandboxProviderStore';
 import type { WithTransaction } from '../db/transaction';
-import { getSandboxProviderRoute, putSandboxProviderRoute } from '../routes/sandboxProviderRoutes';
+import {
+  deleteSandboxProviderRoute,
+  getSandboxProviderRoute,
+  putSandboxProviderRoute,
+} from '../routes/sandboxProviderRoutes';
 import type { SandboxIntegration } from '../sandbox/integration';
 import {
+  SANDBOX_READY_STATUS,
   toSandboxStatus,
+  type DaytonaSandboxProvider,
   type SandboxProviderManifest,
   type UpdateSandboxProviderRequest,
 } from '../schemas/sandboxProvider';
@@ -27,12 +33,36 @@ export interface SandboxProvidersRouterDeps<TTransaction> {
   sandboxIntegration: SandboxIntegration | undefined;
 }
 
-/** The integration only when this runtime serves the settings-managed Daytona provider. */
-function daytonaSettingsIntegration(integration: SandboxIntegration | undefined): SandboxIntegration | undefined {
-  return integration?.isDaytonaSettingsSupported() === true ? integration : undefined;
+/** The integration only when this runtime serves at least one settings-managed provider. */
+function settingsIntegration(integration: SandboxIntegration | undefined): SandboxIntegration | undefined {
+  if (integration === undefined) {
+    return undefined;
+  }
+  return integration.isDaytonaSettingsSupported() || integration.isCloudflareComputerSettingsSupported()
+    ? integration
+    : undefined;
+}
+
+/** Whether this runtime serves the provider the caller asked for. */
+function supportsManifest({
+  integration,
+  manifest,
+}: {
+  integration: SandboxIntegration;
+  manifest: SandboxProviderManifest;
+}): boolean {
+  switch (manifest.type) {
+    case 'daytona':
+      return integration.isDaytonaSettingsSupported();
+    case 'cloudflare-computer':
+      return integration.isCloudflareComputerSettingsSupported();
+  }
 }
 
 function redactSandboxProvider(manifest: SandboxProviderManifest): SandboxProviderManifest {
+  if (manifest.type !== 'daytona') {
+    return manifest;
+  }
   return {
     ...manifest,
     auth: { api_key: toRedactedSecretValue(manifest.auth.api_key) },
@@ -42,16 +72,18 @@ function redactSandboxProvider(manifest: SandboxProviderManifest): SandboxProvid
 /** Admin/settings sandbox provider surface (mounted at /api/v1/settings/sandbox-providers). */
 export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvidersRouterDeps<TTransaction>) {
   const getHandler: RouteHandler<typeof getSandboxProviderRoute> = async c => {
-    const integration = daytonaSettingsIntegration(deps.sandboxIntegration);
+    const integration = settingsIntegration(deps.sandboxIntegration);
     if (integration === undefined) {
       return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 404);
     }
     const requestContext = deps.resolveRequestContext(c);
     const store = deps.resolveSandboxProviderStore(c);
     const record = await store.getSandboxProvider(requestContext.tenant_id);
-    if (record?.manifest.type !== 'daytona') {
+    // `truefoundry` rows are env-synthesized, not settings-managed.
+    if (record === undefined || record.manifest.type === 'truefoundry') {
       return c.json({ error: { message: 'No sandbox provider configured' } }, 404);
     }
+    const manifest = record.manifest;
     // Refresh the persisted build status (and re-activate an idle snapshot) on every GET.
     const status = await integration.checkSnapshotStatus({
       store,
@@ -61,7 +93,7 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
     return c.json(
       {
         data: {
-          manifest: redactSandboxProvider(record.manifest),
+          manifest: redactSandboxProvider(manifest),
           status: status?.status ?? record.status,
           status_reason: status?.status_reason ?? record.status_reason,
         },
@@ -71,15 +103,27 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
   };
 
   const putHandler: RouteHandler<typeof putSandboxProviderRoute> = async c => {
-    const integration = daytonaSettingsIntegration(deps.sandboxIntegration);
-    if (integration === undefined) {
+    const integration = settingsIntegration(deps.sandboxIntegration);
+    const body: UpdateSandboxProviderRequest = c.req.valid('json');
+    const incoming = body.manifest;
+    if (integration === undefined || !supportsManifest({ integration, manifest: incoming })) {
       return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 422);
     }
-    const body: UpdateSandboxProviderRequest = c.req.valid('json');
     const requestContext = deps.resolveRequestContext(c);
     const store = deps.resolveSandboxProviderStore(c);
-    const incoming = body.manifest;
-    const resolveManifest = (existing: SandboxProviderRecord | undefined): SandboxProviderManifest => ({
+
+    if (incoming.type === 'cloudflare-computer') {
+      // The container image ships with the deploy, so there is nothing to build or authenticate.
+      const saved = await deps.withTransaction(transaction =>
+        store.upsertSandboxProvider(
+          { tenant_id: requestContext.tenant_id, manifest: incoming, ...SANDBOX_READY_STATUS },
+          transaction,
+        ),
+      );
+      return c.json({ data: { manifest: incoming, status: saved.status, status_reason: saved.status_reason } }, 200);
+    }
+
+    const resolveManifest = (existing: SandboxProviderRecord | undefined): DaytonaSandboxProvider => ({
       ...incoming,
       auth: {
         api_key: resolveStoredSecretValue({
@@ -142,8 +186,25 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
     }
   };
 
+  const deleteHandler: RouteHandler<typeof deleteSandboxProviderRoute> = async c => {
+    const integration = settingsIntegration(deps.sandboxIntegration);
+    if (integration === undefined) {
+      return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 404);
+    }
+    const requestContext = deps.resolveRequestContext(c);
+    const store = deps.resolveSandboxProviderStore(c);
+    const removed = await deps.withTransaction(transaction =>
+      store.deleteSandboxProvider(requestContext.tenant_id, transaction),
+    );
+    if (!removed) {
+      return c.json({ error: { message: 'No sandbox provider configured' } }, 404);
+    }
+    return c.json({}, 200);
+  };
+
   const router = new OpenAPIHono();
   router.openapi(getSandboxProviderRoute, getHandler);
   router.openapi(putSandboxProviderRoute, putHandler);
+  router.openapi(deleteSandboxProviderRoute, deleteHandler);
   return router;
 }

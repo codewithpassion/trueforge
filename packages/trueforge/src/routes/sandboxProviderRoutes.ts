@@ -5,7 +5,11 @@
  */
 import { createRoute } from '@hono/zod-openapi';
 import { RequestErrorResponseSchema } from '../schemas/errors';
-import { GetSandboxProviderResponseSchema, UpdateSandboxProviderRequestSchema } from '../schemas/sandboxProvider';
+import {
+  DeleteSandboxProviderResponseSchema,
+  GetSandboxProviderResponseSchema,
+  UpdateSandboxProviderRequestSchema,
+} from '../schemas/sandboxProvider';
 import { OpenApiTag } from './openapiTags';
 
 export const getSandboxProviderRoute = createRoute({
@@ -35,7 +39,8 @@ export const putSandboxProviderRoute = createRoute({
   summary: 'Create or replace the sandbox provider',
   description:
     'Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. ' +
-    '`auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).',
+    'For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). ' +
+    'The built-in provider takes no credentials and is ready at once.',
   'x-fern-sdk-group-name': ['settings', 'sandboxProviders'],
   'x-fern-sdk-method-name': 'create_or_update',
   request: {
@@ -55,7 +60,27 @@ export const putSandboxProviderRoute = createRoute({
     },
     422: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
-      description: 'Daytona rejected the provided API key.',
+      description: 'The provider type is unavailable on this server, or Daytona rejected the provided API key.',
+    },
+  },
+});
+
+export const deleteSandboxProviderRoute = createRoute({
+  method: 'delete',
+  path: '/',
+  tags: [OpenApiTag.SANDBOXES],
+  summary: 'Remove the sandbox provider',
+  description: 'Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.',
+  'x-fern-sdk-group-name': ['settings', 'sandboxProviders'],
+  'x-fern-sdk-method-name': 'delete',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: DeleteSandboxProviderResponseSchema } },
+      description: 'The sandbox provider was removed.',
+    },
+    404: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'No sandbox provider configured.',
     },
   },
 });

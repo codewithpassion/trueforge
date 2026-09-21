@@ -103,4 +103,10 @@ export class SqliteSandboxProviderStore implements ISandboxProviderStore<Kysely<
       .returning(recordColumns)
       .executeTakeFirst();
   }
+
+  async deleteSandboxProvider(tenantId: string, transaction?: Kysely<Database>): Promise<boolean> {
+    const db = transaction ?? this.#db;
+    const result = await db.deleteFrom('sandbox_provider').where('tenant_id', '=', tenantId).executeTakeFirst();
+    return Number(result.numDeletedRows) > 0;
+  }
 }

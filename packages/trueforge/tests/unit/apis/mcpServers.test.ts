@@ -14,6 +14,7 @@ import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import { mcpOAuthCallbackUrl } from '../../../src/mcp/auth/mcpOAuthHelpers';
+import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 
 const putBody = {
   type: 'remote' as const,
@@ -118,6 +119,7 @@ describe('mcp-servers routers', () => {
       mcpCatalog: McpCatalog.load(),
       skillCatalog: SkillCatalog.load(),
       sandboxCatalog: SandboxCatalog.load(),
+      sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
     });
     mcpServersRouter = createMcpServersRouter({
       resolveMcpServerStore: () => mcpServerStore,

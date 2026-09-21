@@ -4,7 +4,7 @@
  *
  * Singleton per tenant — no identity `name` (unlike model providers / skills).
  *
- * Settings OpenAPI stays Daytona-only (`SandboxProviderManifest`), matching main.
+ * Settings OpenAPI covers the providers a tenant can configure (`SandboxProviderManifest`).
  * Env-synthesized truefoundry records use `StoredSandboxProviderManifest` (store/runtime only).
  */
 import { z } from '@hono/zod-openapi';
@@ -24,32 +24,49 @@ const DaytonaSandboxProviderAuthSchema = z
   .describe('Daytona authentication credentials.')
   .openapi('DaytonaSandboxProviderAuth');
 
+/** Discriminator and tunable settings, shared with the credential-free catalog view. */
+export const DAYTONA_SANDBOX_PROVIDER_SHAPE = {
+  type: z.literal('daytona').describe('Daytona sandbox provider.'),
+  exec_timeout_ms: z.number().int().positive().describe('Default sandbox command exec timeout in milliseconds.'),
+  auto_stop_interval_in_minutes: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Minutes of idle time before Daytona auto-stops the sandbox (0 disables).'),
+  auto_archive_interval_in_minutes: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Minutes before Daytona auto-archives the sandbox (0 disables).'),
+  auto_delete_interval_in_minutes: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Minutes before Daytona auto-deletes the sandbox (0 disables).'),
+};
+
 /**
  * Daytona-backed sandbox provider config. Persisted as `sandbox_provider.manifest`.
  */
 export const DaytonaSandboxProviderSchema = z
   .object({
-    type: z.literal('daytona').describe('Daytona sandbox provider.'),
+    ...DAYTONA_SANDBOX_PROVIDER_SHAPE,
     auth: DaytonaSandboxProviderAuthSchema,
-    exec_timeout_ms: z.number().int().positive().describe('Default sandbox command exec timeout in milliseconds.'),
-    auto_stop_interval_in_minutes: z
-      .number()
-      .int()
-      .nonnegative()
-      .describe('Minutes of idle time before Daytona auto-stops the sandbox (0 disables).'),
-    auto_archive_interval_in_minutes: z
-      .number()
-      .int()
-      .nonnegative()
-      .describe('Minutes before Daytona auto-archives the sandbox (0 disables).'),
-    auto_delete_interval_in_minutes: z
-      .number()
-      .int()
-      .nonnegative()
-      .describe('Minutes before Daytona auto-deletes the sandbox (0 disables).'),
   })
-  .strict();
-export const SandboxProviderManifestSchema = DaytonaSandboxProviderSchema.openapi('SandboxProviderManifest');
+  .strict()
+  .openapi('DaytonaSandboxProvider');
+
+/** Built-in sandbox of the Cloudflare Workers deploy. Needs no credentials and has no settings. */
+export const CloudflareComputerSandboxProviderSchema = z
+  .object({
+    type: z.literal('cloudflare-computer').describe('Built-in Cloudflare Computer sandbox.'),
+  })
+  .strict()
+  .openapi('CloudflareComputerSandboxProvider');
+
+export const SandboxProviderManifestSchema = z
+  .discriminatedUnion('type', [DaytonaSandboxProviderSchema, CloudflareComputerSandboxProviderSchema])
+  .openapi('SandboxProviderManifest');
 
 /**
  * TrueFoundry (on-prem) sandbox config — env-synthesized store records only.
@@ -65,11 +82,12 @@ export const TrueFoundrySandboxProviderSchema = z
   .strict();
 
 /**
- * Store / runtime jsonb: Daytona settings rows plus env-synthesized truefoundry.
+ * Store / runtime jsonb: settings-managed rows plus env-synthesized truefoundry.
  * Not an OpenAPI component.
  */
 export const StoredSandboxProviderManifestSchema = z.discriminatedUnion('type', [
   DaytonaSandboxProviderSchema,
+  CloudflareComputerSandboxProviderSchema,
   TrueFoundrySandboxProviderSchema,
 ]);
 
@@ -118,10 +136,13 @@ export const GetSandboxProviderResponseSchema = z
   })
   .openapi('GetSandboxProviderResponse');
 
-/** Settings / OpenAPI — Daytona only. */
+export const DeleteSandboxProviderResponseSchema = z.object({}).openapi('DeleteSandboxProviderResponse');
+
+/** Settings / OpenAPI — the providers a tenant can configure. */
 export type SandboxProviderManifest = z.infer<typeof SandboxProviderManifestSchema>;
 export type DaytonaSandboxProvider = z.infer<typeof DaytonaSandboxProviderSchema>;
-/** Store/runtime jsonb — may be Daytona or env-synthesized truefoundry. */
+export type CloudflareComputerSandboxProvider = z.infer<typeof CloudflareComputerSandboxProviderSchema>;
+/** Store/runtime jsonb — settings-managed or env-synthesized truefoundry. */
 export type StoredSandboxProviderManifest = z.infer<typeof StoredSandboxProviderManifestSchema>;
 export type TrueFoundrySandboxProvider = z.infer<typeof TrueFoundrySandboxProviderSchema>;
 export type SandboxBuildStatus = z.infer<typeof SandboxBuildStatusSchema>;
@@ -131,7 +152,7 @@ export type ConfiguredSandboxProvider = z.infer<typeof ConfiguredSandboxProvider
 export type UpdateSandboxProviderRequest = z.infer<typeof UpdateSandboxProviderRequestSchema>;
 
 /** Wire/persisted snake_case → Daytona client credentials + provider settings. */
-export function toDaytonaSandboxProviderInput(manifest: SandboxProviderManifest): {
+export function toDaytonaSandboxProviderInput(manifest: DaytonaSandboxProvider): {
   apiKey: string;
 } & Pick<
   DaytonaSandboxProviderOptions,
@@ -145,6 +166,9 @@ export function toDaytonaSandboxProviderInput(manifest: SandboxProviderManifest)
     autoDeleteIntervalInMinutes: manifest.auto_delete_interval_in_minutes,
   };
 }
+
+/** Status of a provider whose image needs no build. */
+export const SANDBOX_READY_STATUS: SandboxStatus = { status: 'ready', status_reason: null, build_metadata: null };
 
 /** Maps a core `SandboxBuild` onto the persisted/wire status shape (metadata passes through). */
 export function toSandboxStatus(build: SandboxBuild): SandboxStatus {

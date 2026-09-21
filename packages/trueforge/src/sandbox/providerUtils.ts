@@ -11,9 +11,11 @@ import type { ISandboxProviderStore, SandboxProviderRecord } from '../db/sandbox
 import {
   toDaytonaSandboxProviderInput,
   toSandboxStatus,
+  type CloudflareComputerSandboxProvider,
+  type DaytonaSandboxProvider as DaytonaSandboxProviderConfig,
   type SandboxBuildMetadata,
-  type SandboxProviderManifest,
   type SandboxStatus,
+  type StoredSandboxProviderManifest,
 } from '../schemas/sandboxProvider';
 
 /** Daytona rejected the credentials (401 unauthorized); retrying the same key cannot succeed. */
@@ -39,7 +41,7 @@ export function toDaytonaSandboxProvider({
   logger,
   build_metadata,
 }: {
-  manifest: SandboxProviderManifest;
+  manifest: DaytonaSandboxProviderConfig;
   tenant_id: string;
   logger: Logger;
   build_metadata?: SandboxBuildMetadata | null;
@@ -57,8 +59,16 @@ export function toDaytonaSandboxProvider({
   });
 }
 
+/** Whether a stored manifest names a provider the Node runtime can attach to. */
+export function isNodeRunnableManifest(
+  manifest: StoredSandboxProviderManifest,
+): manifest is Exclude<StoredSandboxProviderManifest, CloudflareComputerSandboxProvider> {
+  return manifest.type !== 'cloudflare-computer';
+}
+
 /**
  * Builds the runtime SandboxProvider for a store record. One switch on `manifest.type`.
+ * Undefined when the record names a provider this runtime cannot attach to.
  * No network I/O until a provider method is called.
  */
 export function toSandboxProviderFromRecord({
@@ -69,8 +79,11 @@ export function toSandboxProviderFromRecord({
   record: SandboxProviderRecord;
   tenant_id: string;
   logger: Logger;
-}): SandboxProvider {
+}): SandboxProvider | undefined {
   switch (record.manifest.type) {
+    // Workers-only: the workspace lives in a Durable Object this process cannot reach.
+    case 'cloudflare-computer':
+      return undefined;
     case 'daytona':
       return toDaytonaSandboxProvider({
         manifest: record.manifest,
@@ -115,6 +128,11 @@ export async function checkSnapshotStatus({
 }): Promise<SandboxStatus | undefined> {
   const record = await store.getSandboxProvider(tenant_id);
   if (!record) {
+    return undefined;
+  }
+
+  // A record this runtime cannot attach to reads the same as no record at all.
+  if (!isNodeRunnableManifest(record.manifest)) {
     return undefined;
   }
 

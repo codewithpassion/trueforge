@@ -9,6 +9,7 @@ import {
   checkSnapshotStatus,
   isDaytonaAuthError,
   isDaytonaPermissionError,
+  isNodeRunnableManifest,
   toDaytonaSandboxProvider,
   toSandboxProviderFromRecord,
 } from './providerUtils';
@@ -30,13 +31,18 @@ export function createNodeSandboxIntegration({
 }: {
   localSupport: LocalSandboxSupportResult | undefined;
 }): SandboxIntegration {
+  // Never in TrueFoundry mode: that mode is distributed-only.
+  const isLocalFallbackUsable = (): boolean =>
+    configuration.RUNTIME === 'standalone' && localSupport?.supported === true;
+
   return {
     resolveProvider: async ({ tenant_id, store, logger, sessionId }) => {
       const record = await store.getSandboxProvider(tenant_id);
-      if (record !== undefined) {
-        return toSandboxProviderFromRecord({ record, tenant_id, logger });
+      const stored = record === undefined ? undefined : toSandboxProviderFromRecord({ record, tenant_id, logger });
+      if (stored !== undefined) {
+        return stored;
       }
-      if (configuration.RUNTIME !== 'standalone' || localSupport?.supported !== true) {
+      if (!isLocalFallbackUsable() || localSupport === undefined) {
         return undefined;
       }
       return new LocalSandboxProvider({
@@ -47,11 +53,17 @@ export function createNodeSandboxIntegration({
         logger,
       });
     },
-    // Never in TrueFoundry mode: that mode is distributed-only.
-    isSandboxUsableWithoutStoredRecord: () =>
-      configuration.RUNTIME === 'standalone' && localSupport?.supported === true,
+    isSandboxUsableWithoutStoredRecord: isLocalFallbackUsable,
+    isSandboxConfigured: async ({ store, tenant_id }) => {
+      const record = await store.getSandboxProvider(tenant_id);
+      if (record !== undefined && isNodeRunnableManifest(record.manifest)) {
+        return true;
+      }
+      return isLocalFallbackUsable();
+    },
     isSkillMountingSupported: () => true,
     isDaytonaSettingsSupported: () => true,
+    isCloudflareComputerSettingsSupported: () => false,
     checkSnapshotStatus,
     createDaytonaProvider: toDaytonaSandboxProvider,
     isDaytonaAuthError,
