@@ -9,7 +9,8 @@ import { toMrkdwn } from './mrkdwn';
 
 /** Slack refuses a button label over 75 characters and a `value` over 2,000. */
 const BUTTON_TEXT_MAX = 75;
-const BUTTON_VALUE_MAX = 2000;
+/** Leaves room for the ids and the JSON around it, so the encoded value always fits. */
+const BUTTON_VALUE_OPTION_MAX = 1500;
 /** Slack refuses a section `text` over 3,000 characters. */
 const SECTION_TEXT_MAX = 3000;
 /** Slack allows at most five elements in one actions block; `ask_user_question` caps at five too. */
@@ -76,8 +77,14 @@ export interface SlackActionValue {
   option?: string;
 }
 
+/**
+ * Cutting the encoded JSON would make the value undecodable and the button dead, so the one
+ * part that can be long is cut before it is encoded.
+ */
 export function encodeActionValue(value: SlackActionValue): string {
-  return clamp(JSON.stringify(value), BUTTON_VALUE_MAX);
+  return JSON.stringify(
+    value.option === undefined ? value : { ...value, option: clamp(value.option, BUTTON_VALUE_OPTION_MAX) },
+  );
 }
 
 export function decodeActionValue(raw: string): SlackActionValue | undefined {

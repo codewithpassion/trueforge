@@ -149,9 +149,13 @@ describe('the value a button carries', () => {
     expect(decodeActionValue(encodeActionValue(value))).toEqual(value);
   });
 
-  it('stays inside the 2,000 characters Slack allows', () => {
+  it('stays inside the 2,000 characters Slack allows, and still decodes', () => {
     const encoded = encodeActionValue({ turn_id: TURN_ID, tool_call_id: 'call-1', option: 'o'.repeat(4000) });
+
     expect(encoded.length).toBeLessThanOrEqual(2000);
+    // Cutting the encoded JSON instead of the option would leave a value nothing can read back.
+    expect(decodeActionValue(encoded)).toMatchObject({ turn_id: TURN_ID, tool_call_id: 'call-1' });
+    expect(decodeActionValue(encoded)?.option).toMatch(/^o+…$/);
   });
 
   it.each(['', 'not json', '"a string"', '{"turn_id":1}', '{"tool_call_id":"c"}', '{"turn_id":"t"}'])(

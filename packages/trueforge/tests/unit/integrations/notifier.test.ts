@@ -4,8 +4,10 @@ import {
   type CreatedBySubject,
   type SessionHandle,
   type SessionSource,
+  type TerminalTurnState,
   type TurnStreamingEvent,
 } from '@truefoundry/trueforge-core/agent-session';
+import { EventType } from '@truefoundry/trueforge-core/core/events/schema';
 import type { Kysely } from 'kysely';
 import { createLogger } from 'winston';
 import {
@@ -428,6 +430,46 @@ async function scheduleHarness(input: { rules: IntegrationNotificationRule[]; co
   return harness;
 }
 
+/** Leaves the harness turn finished but waiting on a tool approval, the way a real pause looks. */
+async function holdTurnOnApproval(harness: Harness): Promise<void> {
+  const scope = { session_id: SESSION_ID, turn_id: TURN_ID };
+  await harness.sessionStore.appendToEvents({
+    ...scope,
+    events: [
+      {
+        type: EventType.MODEL_MESSAGE,
+        id: 'evt-model',
+        thread_id: 'main',
+        created_at: new Date().toISOString(),
+        content: null,
+        tool_calls: [
+          {
+            id: 'call-1',
+            type: 'function',
+            function: { name: 'restart_service', arguments: '{"service":"api"}' },
+            tool_info: { type: 'truefoundry-system', name: 'restart_service' },
+          },
+        ],
+      },
+    ],
+  });
+  const state: TerminalTurnState = {
+    status: 'done',
+    output: null,
+    required_actions: [
+      {
+        type: EventType.TOOL_APPROVAL_REQUIRED,
+        id: 'evt-approval',
+        created_at: new Date().toISOString(),
+        thread_id: 'main',
+        tool_calls: [{ id: 'call-1', source_event_id: 'evt-model' }],
+      },
+    ],
+    completed_at: new Date().toISOString(),
+  };
+  await harness.sessionStore.updateTurnState({ ...scope, state, turn_done_event: makeTurnDoneEvent(state) });
+}
+
 function rule(overrides: Partial<IntegrationNotificationRule> = {}): IntegrationNotificationRule {
   return { schedule_name: SCHEDULE_NAME, channel_id: 'C0RELEASES', outcome: 'any', ...overrides };
 }
@@ -532,6 +574,23 @@ describe('notification rules for a finished schedule run', () => {
     await runTurn({ harness, notifier: notifierFor({ harness, fake, scheduleName: null }) });
 
     expect(fake.delivered).toHaveLength(0);
+  });
+
+  it('reports a held run rather than posting buttons a channel click could never resume', async () => {
+    harness = await scheduleHarness({ rules: [rule()] });
+    const fake = fakeChannelAdapter();
+    const notifier = notifierFor({ harness, fake });
+
+    // A rule posts to a channel, so a click there names a conversation the run was never keyed
+    // by; buttons on it could not be resumed, and the run is reported as held instead.
+    await holdTurnOnApproval(harness);
+    const session = await sessionHandle(harness);
+    if (session === undefined) {
+      throw new Error('session was not created');
+    }
+    await notifier.deliverForTurn({ session, turn_id: TURN_ID });
+
+    expect(fake.delivered.map(delivery => delivery.content.type)).toEqual(['status']);
   });
 
   it('a second pass over the same turn posts nothing more', async () => {

@@ -11,10 +11,13 @@ question with its options. Deciding goes to the new signature-verified
 `POST /api/v1/integrations/{integration_id}/interactions`, which acknowledges inside Slack's
 three seconds and resumes the turn afterwards. Only Slack users on the manifest's
 `approver_slack_user_ids` may approve; anyone else gets an ephemeral refusal and nothing
-changes. A plain reply in the thread answers a pending question in free text.
+changes. A plain reply in the thread answers a pending question in free text; a thread held on
+an approval is pointed back at the buttons instead.
 
 Manifest-level `notification_rules` post a finished schedule run to a channel, filtered by
-outcome, through the same claim-first outbox and retry sweep on both runtimes. The generated
+outcome, through the same claim-first outbox and retry sweep on both runtimes. A rule posts at
+the top of the channel and never carries buttons: a click there could not name the run's own
+session, so a held run is reported as waiting rather than offered a dead Approve. The generated
 Slack app manifest now carries the `interactivity` block, so **an app created from an earlier
 manifest must be updated from the regenerated one** before any button works.
 

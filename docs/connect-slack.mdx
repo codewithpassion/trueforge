@@ -247,8 +247,11 @@ Deleting the integration stops ingress at once. Sessions it opened stay.
   retry all settle the held turn once; the later one is told it was already decided.
 - **Arguments are summarised, never dumped.** A tool call's arguments are shown as one short line,
   with any value under a key that reads like a credential replaced by `[redacted]`.
-- **A held turn does not time out.** It waits until someone decides or answers. Nothing expires it,
-  and a new message in the thread while an approval is pending starts a separate turn.
+- **A held turn does not time out.** It waits until someone decides or answers. Nothing expires it.
+- **Typing while an approval is pending gets a nudge, not an answer.** A decision needs the buttons;
+  a question is the only thing a plain reply can answer.
+- **A schedule result posted by a rule never carries buttons.** A run held on an approval says so;
+  the decision is taken in TrueForge, because a click in the channel cannot reach the run's thread.
 
 ## Who the bot acts as
 

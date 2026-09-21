@@ -19,6 +19,22 @@ export interface TurnCompletionNotifierDeps<TTransaction> {
   logger: Logger;
 }
 
+/**
+ * A rule posts to a channel, not to the thread the run lives in, and a click there names a
+ * conversation the run's session was never keyed by — so the buttons could never resume it.
+ * The run is reported as held instead, and the decision is taken in TrueForge.
+ */
+function withoutButtons(content: DeliveryContent): DeliveryContent {
+  if (content.type !== 'approval_request' && content.type !== 'question') {
+    return content;
+  }
+  return {
+    type: 'status',
+    state: 'done',
+    detail: 'The run is waiting for a decision, which can only be taken in TrueForge.',
+  };
+}
+
 /** A finished schedule run counts as a success only when the agent actually answered. */
 function scheduleOutcome(state: TerminalTurnState): 'success' | 'failure' {
   return state.status === 'done' ? 'success' : 'failure';
@@ -139,7 +155,7 @@ export class TurnCompletionNotifier<TTransaction> {
         return;
       }
       const outcome = scheduleOutcome(turnState);
-      const content = await buildDeliveryContent({ turn, turn_id: turnId, state: turnState });
+      const content = withoutButtons(await buildDeliveryContent({ turn, turn_id: turnId, state: turnState }));
 
       for (const integration of integrations) {
         const channelIds = new Set(

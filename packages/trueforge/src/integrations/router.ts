@@ -7,7 +7,7 @@ import type { TurnExecutor, TurnExecutorFailure, TurnStores } from '../runtime/t
 import { newId } from '../utils/id';
 import { toSessionExternalId } from './conversationKey';
 import { firstAttemptDueAt } from './deliverySchedule';
-import { readPendingAction, type PendingQuestion } from './pendingActions';
+import { readPendingAction, type PendingAction } from './pendingActions';
 import type { TurnCompletionNotifier } from './TurnCompletionNotifier';
 import type { ChannelAdapter, InboundEvent, InboundInteraction, InboundSender } from './types';
 
@@ -21,6 +21,13 @@ const METADATA_VALUE_MAX_LENGTH = 128;
  */
 export const BUSY_CONVERSATION_NOTICE =
   'Still working on the previous message in this thread — I will reply when it is done.';
+
+/**
+ * What a conversation hears when it types instead of deciding. A tool approval is not something
+ * free text can settle, and a user message sent into a thread holding tool calls is refused.
+ */
+export const APPROVAL_PENDING_NOTICE =
+  'This thread is waiting on a tool approval — use the Approve or Deny buttons above.';
 
 export type IntegrationRouteResult =
   | { type: 'started'; turn_id: string; session_id: string }
@@ -150,8 +157,14 @@ export class IntegrationRouter<TTransaction> {
     }
 
     // A thread waiting on a question is answered by a plain reply, which is the only way to
-    // answer in free text. A thread waiting on an approval is not: that needs the buttons.
-    const question = tip === undefined ? undefined : await this.#pendingQuestion(tip);
+    // answer in free text. A thread waiting on an approval is not: a decision needs the buttons,
+    // and sending a user message into a thread that is holding tool calls is refused anyway.
+    const pending = tip === undefined ? undefined : await this.#pendingAction(tip);
+    if (pending?.type === 'approval' && tip !== undefined) {
+      this.#notice({ integration, adapter, event, session_id: session.session_id, text: APPROVAL_PENDING_NOTICE });
+      return { type: 'busy', running_turn_id: tip.id };
+    }
+    const question = pending?.type === 'question' ? pending.question : undefined;
     let turnInput: TurnInputItem[] = [{ type: 'user.message', content: event.text }];
     if (question !== undefined && tip !== undefined) {
       // A button click and this reply are two ways to settle one held turn, so they take the
@@ -292,13 +305,9 @@ export class IntegrationRouter<TTransaction> {
     };
   }
 
-  /** The question a finished tip is waiting on, if it is waiting on one. */
-  async #pendingQuestion(tip: Awaited<ReturnType<typeof tipTurn>>): Promise<PendingQuestion | undefined> {
-    if (tip === undefined || tip.state.status === 'running') {
-      return undefined;
-    }
-    const pending = await readPendingAction({ turn: tip, state: tip.state });
-    return pending?.type === 'question' ? pending.question : undefined;
+  /** What a finished tip is waiting on, if anything. Costs nothing for a tip holding nothing. */
+  async #pendingAction(tip: NonNullable<Awaited<ReturnType<typeof tipTurn>>>): Promise<PendingAction | undefined> {
+    return tip.state.status === 'running' ? undefined : readPendingAction({ turn: tip, state: tip.state });
   }
 
   #notice(input: {
@@ -306,13 +315,14 @@ export class IntegrationRouter<TTransaction> {
     adapter: ChannelAdapter;
     event: InboundEvent;
     session_id: string;
+    text?: string;
   }): void {
     const { integration, adapter, event } = input;
     this.#deps.deferDelivery(async () => {
       const posted = await adapter.notice({
         manifest: integration.manifest,
         conversation_key: event.conversation_key,
-        text: BUSY_CONVERSATION_NOTICE,
+        text: input.text ?? BUSY_CONVERSATION_NOTICE,
       });
       if (!posted.ok) {
         this.#deps.logger.warn('Integration busy notice was not posted', {

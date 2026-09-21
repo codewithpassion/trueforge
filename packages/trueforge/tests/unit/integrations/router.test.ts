@@ -23,7 +23,7 @@ import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkill
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
 import { ASK_USER_QUESTION_TOOL } from '../../../src/integrations/pendingActions';
-import { BUSY_CONVERSATION_NOTICE, IntegrationRouter } from '../../../src/integrations/router';
+import { APPROVAL_PENDING_NOTICE, BUSY_CONVERSATION_NOTICE, IntegrationRouter } from '../../../src/integrations/router';
 import { TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
 import type {
   InboundEvent,
@@ -685,10 +685,11 @@ describe('a plain reply while the thread is held', () => {
       adapter: harness.channel.adapter,
       event: inboundEvent({ event_id: 'Ev0002', text: 'go ahead' }),
     });
+    await harness.flush();
 
-    // A held approval is not running, so this is a fresh message, not a busy thread.
-    expect(replied.type).toBe('started');
-    expect(harness.executor.starts[1]?.input).toEqual([{ type: 'user.message', content: 'go ahead' }]);
+    expect(replied).toMatchObject({ type: 'busy' });
+    expect(harness.executor.starts).toHaveLength(1);
+    expect(harness.channel.notices).toEqual([APPROVAL_PENDING_NOTICE]);
   });
 
   it('loses to a button click that already claimed the turn', async () => {
