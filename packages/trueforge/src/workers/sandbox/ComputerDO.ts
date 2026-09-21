@@ -5,6 +5,7 @@ import { DurableObject } from 'cloudflare:workers';
 import configuration from '../../config';
 import type { Env } from '../env';
 import { createConsoleLogger } from '../logger';
+import { COMPUTER_TLS_TRUST_ENV, COMPUTER_TRUST_EGRESS_CA_BIN, COMPUTER_WORKSPACE_ROOT } from './computerPaths';
 import type { SandboxEgressGateway } from './sandboxEgressGateway';
 import { workspaceStorage } from './workspaceStorage';
 
@@ -16,6 +17,9 @@ export const COMPUTER_DO_BINDING = 'COMPUTER_DO';
  * uncapped result would fail opaquely there and then again on the way into the model's context.
  */
 export const COMPUTER_EXEC_OUTPUT_MAX_BYTES = 1024 * 1024;
+
+/** How long the first command waits for the egress CA to appear before running without it. */
+const EGRESS_CA_WAIT_SECONDS = 5;
 
 /** Idle time before the platform stops the container; a later command starts a fresh one. */
 const CONTAINER_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
@@ -70,6 +74,11 @@ function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
+/** A command's env with the TLS trust settings on top, so a caller cannot unset them. */
+export function withTlsTrustEnv(env: Readonly<Record<string, string>>): Record<string, string> {
+  return { ...env, ...COMPUTER_TLS_TRUST_ENV };
+}
+
 /** What `CloudflareComputerProvider` calls; everything crossing it is serializable over Workers RPC. */
 export interface ComputerWorkspace {
   execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome>;
@@ -82,6 +91,7 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
   readonly #workspace: Workspace;
   readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'ComputerDO' } });
   #inactivityTimeoutSet = false;
+  #egressCaTrusted = false;
   /**
    * Where this container's egress goes. Public so a test can drive the gateway this object built,
    * props included, rather than one it assembled itself.
@@ -111,9 +121,10 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
   }
 
   async execCommand(request: ComputerExecRequest): Promise<ComputerExecOutcome> {
+    await this.#trustEgressCa();
     using handle = await this.#workspace.runtime.exec(request.command, {
       cwd: request.cwd,
-      env: request.env,
+      env: withTlsTrustEnv(request.env),
       timeoutMs: request.timeoutMs,
       encoding: 'utf8',
     });
@@ -132,6 +143,37 @@ export class ComputerDO extends withWorkspaceContainer(class extends DurableObje
       syncPending: result.sync.status === 'pending',
       syncError: result.sync.status === 'pending' ? result.sync.error : undefined,
     };
+  }
+
+  /**
+   * The container's entrypoint installs the egress CA in the background once it appears; this makes
+   * sure it has before the first command, and says so in the log when it has not, because the
+   * command itself would only see a certificate error. Retried on every command until it succeeds.
+   */
+  async #trustEgressCa(): Promise<void> {
+    if (this.#egressCaTrusted) {
+      return;
+    }
+    try {
+      using handle = await this.#workspace.runtime.exec(
+        `${COMPUTER_TRUST_EGRESS_CA_BIN} ${String(EGRESS_CA_WAIT_SECONDS)}`,
+        { cwd: COMPUTER_WORKSPACE_ROOT, env: {}, timeoutMs: (EGRESS_CA_WAIT_SECONDS + 10) * 1000, encoding: 'utf8' },
+      );
+      const result = await handle.result();
+      if (result.exitCode === 0) {
+        this.#egressCaTrusted = true;
+        return;
+      }
+      this.#logger.error('The sandbox does not trust the Cloudflare egress CA; its HTTPS requests will fail', {
+        exitCode: result.exitCode,
+        output: (result.stdout + result.stderr).slice(0, 500),
+      });
+    } catch (error) {
+      this.#logger.error(
+        'Could not check that the sandbox trusts the Cloudflare egress CA',
+        extractErrorLogFields(error),
+      );
+    }
   }
 
   /**

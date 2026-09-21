@@ -19,7 +19,8 @@ RUN apt-get update \
 
 COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd
 COPY computer-entrypoint.sh /usr/local/bin/trueforge-entrypoint
-RUN chmod 0555 /usr/local/bin/trueforge-entrypoint
+COPY trust-egress-ca.sh /usr/local/bin/trueforge-trust-egress-ca
+RUN chmod 0555 /usr/local/bin/trueforge-entrypoint /usr/local/bin/trueforge-trust-egress-ca
 
 # FUSE_MOUNT=auto takes real FUSE on Cloudflare Containers, where /dev/fuse is exposed, and the
 # userspace shim under `wrangler dev`, where it is not. The backend pins PORT to 8080 at launch.
@@ -28,6 +29,6 @@ ENV MOUNT_POINT=/workspace
 ENV FUSE_MOUNT=auto
 EXPOSE 8080
 
-# The entrypoint installs the CA Cloudflare mints for intercepted HTTPS egress, which only exists
-# once the container is running, and then becomes computerd.
+# The entrypoint starts installing the CA Cloudflare mints for intercepted HTTPS egress, which only
+# exists once the container is running, and then becomes computerd.
 ENTRYPOINT ["/usr/local/bin/trueforge-entrypoint"]

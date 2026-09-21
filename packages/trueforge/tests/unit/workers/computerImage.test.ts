@@ -1,10 +1,12 @@
 import { SANDBOX_IMAGE_URI } from '@truefoundry/trueforge-core/core/sandbox/sandboxImage';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { COMPUTER_TRUST_EGRESS_CA_BIN } from '../../../src/workers/sandbox/computerPaths';
 
 const packageDir = path.join(__dirname, '../../..');
 const dockerfile = readFileSync(path.join(packageDir, 'workers/computer.Dockerfile'), 'utf8');
 const entrypoint = readFileSync(path.join(packageDir, 'workers/computer-entrypoint.sh'), 'utf8');
+const trustEgressCa = readFileSync(path.join(packageDir, 'workers/trust-egress-ca.sh'), 'utf8');
 
 interface BaseImage {
   /** Everything before `@sha256:` — what the version and URI pins are compared against. */
@@ -61,24 +63,28 @@ describe('workers/computer.Dockerfile', () => {
     expect(dockerfile).toContain('ENV MOUNT_POINT=/workspace');
   });
 
-  it('starts through the entrypoint that trusts the egress CA', () => {
+  it('starts through the entrypoint and ships the helper that trusts the egress CA', () => {
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/trueforge-entrypoint"]');
     expect(dockerfile).toContain('COPY computer-entrypoint.sh /usr/local/bin/trueforge-entrypoint');
+    expect(dockerfile).toContain(`COPY trust-egress-ca.sh ${COMPUTER_TRUST_EGRESS_CA_BIN}`);
+  });
+});
+
+describe('workers/trust-egress-ca.sh', () => {
+  it('installs the CA Cloudflare mints for intercepted HTTPS into the system trust store', () => {
+    expect(trustEgressCa).toContain('/etc/cloudflare/certs/cloudflare-containers-ca.crt');
+    expect(trustEgressCa).toContain('/usr/local/share/ca-certificates/cloudflare-containers-ca.crt');
+    expect(trustEgressCa).toContain('update-ca-certificates');
   });
 });
 
 describe('workers/computer-entrypoint.sh', () => {
-  it('installs the CA Cloudflare mints for intercepted HTTPS into the system trust store', () => {
-    expect(entrypoint).toContain('/etc/cloudflare/certs/cloudflare-containers-ca.crt');
-    expect(entrypoint).toContain('/usr/local/share/ca-certificates/cloudflare-containers-ca.crt');
-    expect(entrypoint).toContain('update-ca-certificates');
+  // The CA appears only after the Worker sets up interception, which follows the container start.
+  it('installs the CA in the background instead of waiting for it', () => {
+    expect(entrypoint).toMatch(new RegExp(`^${COMPUTER_TRUST_EGRESS_CA_BIN} \\d+ &$`, 'm'));
   });
 
   it('becomes computerd, so nothing is left between the platform and the runtime', () => {
     expect(entrypoint).toContain('exec /usr/local/bin/computerd "$@"');
-  });
-
-  it('starts anyway when no CA appears, because direct egress needs none', () => {
-    expect(entrypoint).not.toContain('exit 1');
   });
 });

@@ -5,7 +5,8 @@ import {
 } from '@truefoundry/trueforge-core/core/sandbox/SandboxErrors';
 import { env } from 'cloudflare:workers';
 import { CloudflareComputerProvider } from '../../src/workers/sandbox/CloudflareComputerProvider';
-import { capOutput, COMPUTER_EXEC_OUTPUT_MAX_BYTES } from '../../src/workers/sandbox/ComputerDO';
+import { capOutput, COMPUTER_EXEC_OUTPUT_MAX_BYTES, withTlsTrustEnv } from '../../src/workers/sandbox/ComputerDO';
+import { COMPUTER_CA_BUNDLE, COMPUTER_TLS_TRUST_ENV } from '../../src/workers/sandbox/computerPaths';
 
 /**
  * Drives the real Durable Object over real RPC. The container backend connects lazily, so the
@@ -144,5 +145,26 @@ describe('exec output cap', () => {
     expect(capped.outputTruncated).toBe(true);
     expect(capped.output.startsWith('\u20ac\u20ac')).toBe(true);
     expect(capped.output).toContain('[output truncated at');
+  });
+});
+
+describe('withTlsTrustEnv', () => {
+  it('points every TLS client in the image at the system bundle', () => {
+    const merged = withTlsTrustEnv({});
+    for (const name of [
+      'SSL_CERT_FILE',
+      'REQUESTS_CA_BUNDLE',
+      'CURL_CA_BUNDLE',
+      'GIT_SSL_CAINFO',
+      'PIP_CERT',
+      'NODE_EXTRA_CA_CERTS',
+    ]) {
+      expect(merged[name]).toBe(COMPUTER_CA_BUNDLE);
+    }
+  });
+
+  it('keeps the command env and lets no caller override the trust settings', () => {
+    const merged = withTlsTrustEnv({ TFY_CM_HTTP_TOKEN: 'token', SSL_CERT_FILE: '/dev/null', NODE_EXTRA_CA_CERTS: '' });
+    expect(merged).toEqual({ TFY_CM_HTTP_TOKEN: 'token', ...COMPUTER_TLS_TRUST_ENV });
   });
 });
