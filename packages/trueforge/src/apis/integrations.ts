@@ -144,8 +144,10 @@ function suppliedBotToken(manifest: IntegrationManifest): string | undefined {
  * or rewrite the bot user an installed app reported.
  */
 function withoutClaimedIdentity(manifest: IntegrationManifest): IntegrationManifest {
-  const { team_id: _claimedTeam, bot_user_id: _claimedBotUser, ...rest } = manifest;
-  return rest;
+  const stripped = { ...manifest };
+  delete stripped.team_id;
+  delete stripped.bot_user_id;
+  return stripped;
 }
 
 function toWireIntegration(record: IntegrationRecord): Integration {
