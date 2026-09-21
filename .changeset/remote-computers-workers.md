@@ -1,0 +1,5 @@
+---
+'@truefoundry/trueforge': patch
+---
+
+Agents can now run on a machine you own. An admin enrolls a computer from `/api/v1/computers`, copies one command onto a Linux or macOS box, and the client dials out — no inbound port. The computer belongs to the tenant, and an admin says which saved agents may use it; an agent selects one with `config.sandbox.computer_id`, and a computer it may not use is refused both when the agent is saved and again when a turn starts. One machine serves many sessions, each in its own directory, with four commands at a time and a bounded queue behind them. A machine that is asleep is not an error: the turn starts and the command comes back with when it was last seen. Rotating or revoking a computer closes its live connection rather than waiting for the next one. Every command and file transfer is recorded for thirty days. Remote computers run on the Cloudflare Workers deployment; on the Node server `GET /capabilities` reports them off and the routes answer 404.

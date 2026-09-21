@@ -26,6 +26,7 @@ from ..errors.forbidden_error import ForbiddenError
 from ..errors.gone_error import GoneError
 from ..errors.not_found_error import NotFoundError
 from ..errors.precondition_failed_error import PreconditionFailedError
+from ..errors.service_unavailable_error import ServiceUnavailableError
 from ..errors.unauthorized_error import UnauthorizedError
 from ..errors.unprocessable_entity_error import UnprocessableEntityError
 from ..types.cancel_session_response import CancelSessionResponse
@@ -1292,6 +1293,17 @@ class RawSessionsClient:
                         )
                     if _response.status_code == 424:
                         raise FailedDependencyError(
+                            headers=dict(_response.headers),
+                            body=typing.cast(
+                                RequestErrorResponse,
+                                construct_type(
+                                    type_=RequestErrorResponse,  # type: ignore
+                                    object_=_response.json(),
+                                ),
+                            ),
+                        )
+                    if _response.status_code == 503:
+                        raise ServiceUnavailableError(
                             headers=dict(_response.headers),
                             body=typing.cast(
                                 RequestErrorResponse,
@@ -2819,6 +2831,17 @@ class AsyncRawSessionsClient:
                         )
                     if _response.status_code == 424:
                         raise FailedDependencyError(
+                            headers=dict(_response.headers),
+                            body=typing.cast(
+                                RequestErrorResponse,
+                                construct_type(
+                                    type_=RequestErrorResponse,  # type: ignore
+                                    object_=_response.json(),
+                                ),
+                            ),
+                        )
+                    if _response.status_code == 503:
+                        raise ServiceUnavailableError(
                             headers=dict(_response.headers),
                             body=typing.cast(
                                 RequestErrorResponse,

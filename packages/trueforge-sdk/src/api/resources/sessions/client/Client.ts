@@ -1449,6 +1449,7 @@ export class SessionsClient {
      * @throws {@link TrueForge.PreconditionFailedError}
      * @throws {@link TrueForge.ContentTooLargeError}
      * @throws {@link TrueForge.FailedDependencyError}
+     * @throws {@link TrueForge.ServiceUnavailableError}
      * @throws {@link errors.TrueForgeError}
      * @throws {@link errors.TrueForgeTimeoutError}
      */
@@ -1573,6 +1574,17 @@ export class SessionsClient {
                     );
                 case 424:
                     throw new TrueForge.FailedDependencyError(
+                        serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
+                            unrecognizedObjectKeys: "passthrough",
+                            allowUnrecognizedUnionMembers: true,
+                            allowUnrecognizedEnumValues: true,
+                            skipValidation: true,
+                            breadcrumbsPrefix: ["response"],
+                        }),
+                        _response.rawResponse,
+                    );
+                case 503:
+                    throw new TrueForge.ServiceUnavailableError(
                         serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
                             unrecognizedObjectKeys: "passthrough",
                             allowUnrecognizedUnionMembers: true,

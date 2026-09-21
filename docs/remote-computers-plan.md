@@ -1,6 +1,6 @@
 # Remote computers: agents that run on a real machine (Phase 8 PRD)
 
-Status: approved by the owner on 2026-09-21 with the decisions in Section 9; Phase 8a (spike) is next. Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. Nothing in this plan is implemented.
+Status: approved by the owner on 2026-09-21 with the decisions in Section 9. Phase 8a (spike) is done and reported in Section 10. Phase 8b's server and client halves are done; its Settings UI and its live test are not. Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. The wire contract is frozen and published separately as `docs/remote-computers-protocol.md`.
 
 ## 1. Problem, goal, non-goals
 
@@ -68,25 +68,32 @@ The in-memory pending map is safe because `SessionDO`'s RPC holds the object act
 
 ## 5. Data model and API
 
-Tables (Kysely, SQLite, Postgres and D1 migrations, snake_case):
+Tables as built (Kysely, SQLite, Postgres and D1 migrations, snake_case):
 
-- `computer`: `id`, `tenant_id`, `name` (unique per tenant), `owner_subject`, `credential_hash` (unique), `status` (`pending | online | offline | revoked`), `hostname`, `os`, `arch`, `agent_version`, `capabilities` jsonb (`python3`, `git`, `skills`), `run_as_user`, `last_seen_at`, `created_at`, `updated_at`.
-- `computer_enrollment`: `code_hash`, `computer_id`, `expires_at`, `used_at`.
-- `computer_audit`: `id`, `computer_id`, `tenant_id`, `session_id`, `turn_id`, `op`, `command` (truncated to 4 KiB), `exit_code`, `duration_ms`, `bytes_out`, `created_at`, with a 30-day retention sweep on `SchedulerDO` and the Node controller.
+- `computer`: `id`, `tenant_id`, `name` (unique per tenant), `owner_subject`, `credential_hash` (unique; null until the machine enrolls), `status` (`pending | online | offline | revoked`), `hostname`, `os`, `arch`, `agent_version`, `capabilities` jsonb (`python3`, `git`), `run_as_user`, `require_approval` (default true, stored but not yet enforced — the gate is 8d), `last_seen_at`, `created_at`, `updated_at`.
+- `computer_enrollment`: `code_hash` (primary key), `computer_id`, `expires_at`, `used_at`, `created_at`.
+- `computer_agent_access`: `computer_id`, `agent_name`, `created_at`, primary key on the pair. Section 9's allowlist; it replaces the per-agent attachment Sections 3 and 4 describe.
+- `computer_audit`: `id` (ULID, so `id DESC` is a time order and pages), `computer_id`, `tenant_id`, `session_id`, `turn_id`, `op` (`exec | file_put | file_get`), `command` (truncated to 4 KiB; the path for a file op), `exit_code` (**nullable**: null means the outcome never came back, which is what a reset relay leaves), `duration_ms`, `bytes_out`, `created_at`, with a 30-day retention sweep on `SchedulerDO` and the Node controller.
 
-Routes (OpenAPI, then SDK regen through CI and `pnpm changeset:sdk-regen`):
+`capabilities` is derived from `hello` rather than set by a person, so there is no manifest jsonb and the create body is flat.
 
-| Route                                   | Purpose                                                                     |
-| --------------------------------------- | --------------------------------------------------------------------------- |
-| `GET/POST /api/v1/computers`            | List and create; create returns the one-time `enrollment_code` and commands |
-| `PATCH /api/v1/computers/{computer_id}` | Rename                                                                      |
-| `POST .../{computer_id}/enrollment`     | Rotate: issue a new code and invalidate the credential                      |
-| `POST .../{computer_id}/revoke`         | Revoke: close the socket                                                    |
-| `DELETE .../{computer_id}`              | Delete (409 while attached)                                                 |
-| `POST /api/v1/computers/enroll`         | Unauthenticated; code in, `machine_credential` out                          |
-| `GET /api/v1/computers/connect`         | WebSocket; bearer credential                                                |
+Routes as built (OpenAPI, then SDK regen through CI and `pnpm changeset:sdk-regen`). Everything except the last two is admin-only; those two are mounted in front of the admin shell, because a machine carries its own credential rather than a session:
 
-Capabilities: `GET /capabilities` gains `computers.enabled`. `resolveSandboxUsability` (`packages/trueforge/src/workers/sandbox/workersSandboxIntegration.ts:78`, `packages/trueforge/src/sandbox/nodeSandboxIntegration.ts:55`) takes the optional `computer_id`. An attached computer is `usable` when it exists in the tenant and is not revoked; being offline is a turn-time reason, not a spec-validation failure, since a laptop is offline often. UI: Settings → Computers beside `SandboxSettings.tsx`, and a picker in the agent's sandbox section.
+| Route                                | Purpose                                                                            |
+| ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `GET/POST /api/v1/computers`         | List and create; create returns the one-time code with install and docker commands |
+| `GET/PATCH/DELETE .../{computer_id}` | Read, rename or change the approval flag, delete (409 while an agent is allowed)   |
+| `GET/PUT .../{computer_id}/agents`   | Read and replace the agent allowlist                                               |
+| `POST .../{computer_id}/enrollment`  | Rotate: new code, credential dropped, socket closed                                |
+| `POST .../{computer_id}/revoke`      | Revoke: credential dropped, socket closed, terminal                                |
+| `GET .../{computer_id}/audit`        | What ran, newest first, token-paginated                                            |
+| `POST /api/v1/computers/enroll`      | Unauthenticated; code in, `machine_credential` out; every failure an identical 401 |
+| `GET /api/v1/computers/connect`      | WebSocket; bearer credential; every failure an identical 401                       |
+| `GET /install.sh`                    | The installer script, built from `PUBLIC_BASE_URL` and the configured release base |
+
+Capabilities: `GET /capabilities` gains `computers.enabled`, false on Node until 8c. `resolveProvider` and `resolveSandboxUsability` take an optional `computer_id`; the latter also takes the agent's name, because the allowlist is keyed by it. `SandboxUsability` carries a `reason` (`unknown_computer | computer_revoked | agent_not_allowed | inline_agent | computers_disabled | computer_offline`), and only `computer_offline` stays `usable: true` — a machine someone owns is asleep most of the time, so refusing to save or start an agent for that would be wrong. A turn-time refusal is thrown from the sandbox factory inside `SessionHandle.createTurn`, which means it surfaces as the **HTTP status of `POST /api/v1/sessions/{id}/turns`** (422 for every computer refusal), not as a turn error event; `tests/unit/apis/turnHarnessErrorStatus.test.ts` is the existing proof of that path. UI: Settings → Computers beside `SandboxSettings.tsx`, and a picker in the agent's sandbox section — still to come.
+
+**Delete's 409 counts allowlist rows only,** not agent manifests that still name the computer. A stale `sandbox.computer_id` is refused at spec validation and again at turn time as `unknown_computer`, which is the coherent answer, and scanning every manifest on a delete would be a table scan for a worse message.
 
 ## 6. Security
 

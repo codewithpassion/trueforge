@@ -8,6 +8,11 @@ from ..core.unchecked_base_model import UncheckedBaseModel
 
 
 class SandboxConfig(UncheckedBaseModel):
+    computer_id: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    Run this agent on the named remote computer instead of the tenant sandbox provider.
+    """
+
     enabled: bool = pydantic.Field()
     """
     Give the agent a sandbox. Required for skills and Code Mode.

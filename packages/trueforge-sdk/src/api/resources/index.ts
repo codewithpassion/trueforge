@@ -2,6 +2,8 @@ export * from "./agents/client/requests/index.js";
 export * as agents from "./agents/index.js";
 export * as auth from "./auth/index.js";
 export * as catalogs from "./catalogs/index.js";
+export * from "./computers/client/requests/index.js";
+export * as computers from "./computers/index.js";
 export * from "./internal/client/requests/index.js";
 export * as internal from "./internal/index.js";
 export * from "./mcpServers/client/requests/index.js";

@@ -494,6 +494,9 @@
       },
       "CapabilitiesData": {
         "properties": {
+          "computers": {
+            "$ref": "#/components/schemas/ComputersCapability"
+          },
           "sandbox": {
             "$ref": "#/components/schemas/SandboxCapability"
           },
@@ -507,7 +510,8 @@
         "required": [
           "sandbox",
           "skill",
-          "settings"
+          "settings",
+          "computers"
         ],
         "type": "object"
       },
@@ -900,6 +904,254 @@
         },
         "type": "object"
       },
+      "Computer": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "arch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "hostname": {
+            "description": "Reported by the machine; null before it first connects.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "last_seen_at": {
+            "description": "ISO-8601 instant of the last heartbeat, or null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
+          "os": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "require_approval": {
+            "description": "Ask a person before each command. Stored now; the gate itself arrives in a later release.",
+            "type": "boolean"
+          },
+          "run_as_user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ComputerStatus"
+          },
+          "tools": {
+            "$ref": "#/components/schemas/ComputerTools"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "hostname",
+          "os",
+          "arch",
+          "agent_version",
+          "tools",
+          "run_as_user",
+          "require_approval",
+          "last_seen_at",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ComputerAgentAccess": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_names": {
+            "description": "Saved agents allowed to run on this computer.",
+            "items": {
+              "$ref": "#/components/schemas/ResourceName"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "agent_names"
+        ],
+        "type": "object"
+      },
+      "ComputerAuditEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes_out": {
+            "type": "integer"
+          },
+          "command": {
+            "description": "The command, or the path for a file operation. Truncated at 4 KiB.",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "exit_code": {
+            "description": "Null when the outcome never came back.",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "op": {
+            "$ref": "#/components/schemas/ComputerAuditOp"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "turn_id",
+          "op",
+          "command",
+          "exit_code",
+          "duration_ms",
+          "bytes_out",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ComputerAuditOp": {
+        "enum": [
+          "exec",
+          "file_put",
+          "file_get"
+        ],
+        "type": "string"
+      },
+      "ComputerEnrollment": {
+        "additionalProperties": false,
+        "properties": {
+          "docker_command": {
+            "description": "Ready to paste, or null when this server has no client image configured.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enrollment_code": {
+            "description": "Single-use, valid for 15 minutes. Shown once.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "install_command": {
+            "description": "Ready to paste on the machine.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_code",
+          "install_command",
+          "docker_command"
+        ],
+        "type": "object"
+      },
+      "ComputerStatus": {
+        "enum": [
+          "pending",
+          "online",
+          "offline",
+          "revoked"
+        ],
+        "type": "string"
+      },
+      "ComputerTools": {
+        "additionalProperties": false,
+        "description": "What the machine reported it has; null before it connects.",
+        "properties": {
+          "git": {
+            "description": "The machine reported git.",
+            "type": "boolean"
+          },
+          "python3": {
+            "description": "The machine reported a python3 interpreter.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "python3",
+          "git"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "ComputerWithEnrollment": {
+        "additionalProperties": false,
+        "properties": {
+          "computer": {
+            "$ref": "#/components/schemas/Computer"
+          },
+          "enrollment": {
+            "$ref": "#/components/schemas/ComputerEnrollment"
+          }
+        },
+        "required": [
+          "computer",
+          "enrollment"
+        ],
+        "type": "object"
+      },
+      "ComputersCapability": {
+        "properties": {
+          "enabled": {
+            "description": "Whether agents can be run on machines this tenant has enrolled.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
       "ConfiguredMCPServer": {
         "additionalProperties": false,
         "properties": {
@@ -1037,6 +1289,45 @@
           "name",
           "description",
           "manifest"
+        ],
+        "type": "object"
+      },
+      "CreateComputerEnrollmentResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerEnrollment"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "CreateComputerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
+          "require_approval": {
+            "default": true,
+            "description": "Default: true.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "CreateComputerResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerWithEnrollment"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
@@ -1312,6 +1603,10 @@
         "properties": {},
         "type": "object"
       },
+      "DeleteComputerResponse": {
+        "properties": {},
+        "type": "object"
+      },
       "DeleteIntegrationResponse": {
         "properties": {},
         "type": "object"
@@ -1335,6 +1630,73 @@
             "type": "boolean"
           }
         },
+        "type": "object"
+      },
+      "EnrollComputerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "arch": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "enrollment_code": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "hostname": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "os": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_code",
+          "hostname",
+          "os",
+          "arch",
+          "version"
+        ],
+        "type": "object"
+      },
+      "EnrollComputerResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EnrolledComputer"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "EnrolledComputer": {
+        "additionalProperties": false,
+        "properties": {
+          "computer_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "machine_credential": {
+            "description": "Presented as a bearer token on every connect. Shown once.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "computer_id",
+          "machine_credential"
+        ],
         "type": "object"
       },
       "ExecuteScheduleRunRequest": {
@@ -1491,6 +1853,28 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/CapabilitiesData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "GetComputerAgentAccessResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerAgentAccess"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "GetComputerResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Computer"
           }
         },
         "required": [
@@ -2553,6 +2937,38 @@
           "data": {
             "items": {
               "$ref": "#/components/schemas/AvailableSkill"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ListComputerAuditResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ComputerAuditEntry"
+            },
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/TokenPagination"
+          }
+        },
+        "required": [
+          "data",
+          "pagination"
+        ],
+        "type": "object"
+      },
+      "ListComputersResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Computer"
             },
             "type": "array"
           }
@@ -3998,6 +4414,11 @@
           "file_downloads": true
         },
         "properties": {
+          "computer_id": {
+            "description": "Run this agent on the named remote computer instead of the tenant sandbox provider.",
+            "minLength": 1,
+            "type": "string"
+          },
           "enabled": {
             "description": "Give the agent a sandbox. Required for skills and Code Mode.",
             "type": "boolean"
@@ -5819,6 +6240,18 @@
         ],
         "type": "object"
       },
+      "UpdateComputerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
+          "require_approval": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "UpdateIntegrationRequest": {
         "additionalProperties": false,
         "properties": {
@@ -7317,6 +7750,847 @@
           "skills"
         ],
         "x-fern-sdk-method-name": "list"
+      }
+    },
+    "/api/v1/computers": {
+      "get": {
+        "description": "Machines this tenant has enrolled, newest first.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListComputersResponse"
+                }
+              }
+            },
+            "description": "The computers."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "List computers",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "list"
+      },
+      "post": {
+        "description": "Registers a machine and returns its single-use enrollment code with commands to run there.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateComputerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateComputerResponse"
+                }
+              }
+            },
+            "description": "The computer and its one-time enrollment code."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "A computer with this name already exists."
+          }
+        },
+        "summary": "Create a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "create"
+      }
+    },
+    "/api/v1/computers/enroll": {
+      "post": {
+        "description": "Called once by the client on the machine. Any code that is unknown, expired or used answers 401.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollComputerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollComputerResponse"
+                }
+              }
+            },
+            "description": "The computer id and its lasting credential."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "Exchange an enrollment code for a machine credential",
+        "tags": [
+          "Computers"
+        ],
+        "x-excluded": true,
+        "x-fern-ignore": true
+      }
+    },
+    "/api/v1/computers/{computer_id}": {
+      "delete": {
+        "description": "Removes the machine, its access list and its activity. Refused while any agent may use it.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteComputerResponse"
+                }
+              }
+            },
+            "description": "Deleted."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "An agent is still allowed to use this computer."
+          }
+        },
+        "summary": "Delete a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "delete"
+      },
+      "get": {
+        "description": "One machine, with what it last reported about itself.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerResponse"
+                }
+              }
+            },
+            "description": "The computer."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "Get a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "get"
+      },
+      "patch": {
+        "description": "Renames the machine or changes whether its commands need approval.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateComputerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerResponse"
+                }
+              }
+            },
+            "description": "The computer."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "A computer with this name already exists."
+          }
+        },
+        "summary": "Update a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "update"
+      }
+    },
+    "/api/v1/computers/{computer_id}/agents": {
+      "get": {
+        "description": "Saved agents that may run on this machine.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerAgentAccessResponse"
+                }
+              }
+            },
+            "description": "The allowed agents."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "List the agents allowed on a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers",
+          "agents"
+        ],
+        "x-fern-sdk-method-name": "list"
+      },
+      "put": {
+        "description": "Sets the whole list. An agent removed here stops being able to use the machine at once.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputerAgentAccess"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerAgentAccessResponse"
+                }
+              }
+            },
+            "description": "The allowed agents."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "Replace the agents allowed on a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers",
+          "agents"
+        ],
+        "x-fern-sdk-method-name": "create_or_update"
+      }
+    },
+    "/api/v1/computers/{computer_id}/audit": {
+      "get": {
+        "description": "Commands and file transfers this machine has served, newest first.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page size. Max 100.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Page size. Max 100.",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque cursor from a previous response.",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "description": "Opaque cursor from a previous response.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListComputerAuditResponse"
+                }
+              }
+            },
+            "description": "Paginated activity."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid query parameters."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "List what ran on a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-pagination": {
+          "cursor": "$request.page_token",
+          "next_cursor": "$response.pagination.next_page_token",
+          "results": "$response.data"
+        },
+        "x-fern-sdk-group-name": [
+          "computers",
+          "audit"
+        ],
+        "x-fern-sdk-method-name": "list"
+      }
+    },
+    "/api/v1/computers/{computer_id}/enrollment": {
+      "post": {
+        "description": "Invalidates the current credential, disconnects the machine, and returns a fresh single-use code.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateComputerEnrollmentResponse"
+                }
+              }
+            },
+            "description": "The new one-time enrollment code."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "Issue a new enrollment code",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "rotate_enrollment"
+      }
+    },
+    "/api/v1/computers/{computer_id}/revoke": {
+      "post": {
+        "description": "Drops the credential and closes the live connection. The machine cannot come back without a new code.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerResponse"
+                }
+              }
+            },
+            "description": "The computer."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "Revoke a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "revoke"
       }
     },
     "/api/v1/integrations/{integration_id}/events": {
@@ -9466,6 +10740,16 @@
               }
             },
             "description": "Sandbox infrastructure error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The machine backing this sandbox is offline; retry when it reconnects."
           }
         },
         "summary": "Download a file from the turn sandbox",
@@ -10909,6 +12193,9 @@
     },
     {
       "name": "Sandboxes"
+    },
+    {
+      "name": "Computers"
     },
     {
       "name": "Agents"

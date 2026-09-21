@@ -47,12 +47,23 @@ if typing.TYPE_CHECKING:
     from .chat_completion_message_tool_call_function import ChatCompletionMessageToolCallFunction
     from .cloudflare_computer_sandbox_provider import CloudflareComputerSandboxProvider
     from .compaction_config import CompactionConfig
+    from .computer import Computer
+    from .computer_agent_access import ComputerAgentAccess
+    from .computer_audit_entry import ComputerAuditEntry
+    from .computer_audit_op import ComputerAuditOp
+    from .computer_enrollment import ComputerEnrollment
+    from .computer_status import ComputerStatus
+    from .computer_tools import ComputerTools
+    from .computer_with_enrollment import ComputerWithEnrollment
+    from .computers_capability import ComputersCapability
     from .configured_mcp_server import ConfiguredMcpServer
     from .configured_model import ConfiguredModel
     from .configured_model_provider import ConfiguredModelProvider
     from .configured_sandbox_provider import ConfiguredSandboxProvider
     from .configured_skill import ConfiguredSkill
     from .context_management_config import ContextManagementConfig
+    from .create_computer_enrollment_response import CreateComputerEnrollmentResponse
+    from .create_computer_response import CreateComputerResponse
     from .create_schedule_run_response import CreateScheduleRunResponse
     from .create_session_agent import CreateSessionAgent
     from .created_by_subject import CreatedBySubject
@@ -61,6 +72,7 @@ if typing.TYPE_CHECKING:
     from .daytona_sandbox_provider import DaytonaSandboxProvider
     from .daytona_sandbox_provider_auth import DaytonaSandboxProviderAuth
     from .delete_agent_response import DeleteAgentResponse
+    from .delete_computer_response import DeleteComputerResponse
     from .delete_integration_response import DeleteIntegrationResponse
     from .delete_sandbox_provider_response import DeleteSandboxProviderResponse
     from .delete_schedule_response import DeleteScheduleResponse
@@ -74,6 +86,8 @@ if typing.TYPE_CHECKING:
     from .get_agent_response import GetAgentResponse
     from .get_available_mcp_server_response import GetAvailableMcpServerResponse
     from .get_capabilities_response import GetCapabilitiesResponse
+    from .get_computer_agent_access_response import GetComputerAgentAccessResponse
+    from .get_computer_response import GetComputerResponse
     from .get_integration_app_manifest_response import GetIntegrationAppManifestResponse
     from .get_integration_response import GetIntegrationResponse
     from .get_mcp_server_catalog_response import GetMcpServerCatalogResponse
@@ -110,6 +124,8 @@ if typing.TYPE_CHECKING:
     from .list_available_mcp_servers_response import ListAvailableMcpServersResponse
     from .list_available_models_response import ListAvailableModelsResponse
     from .list_available_skills_response import ListAvailableSkillsResponse
+    from .list_computer_audit_response import ListComputerAuditResponse
+    from .list_computers_response import ListComputersResponse
     from .list_integration_decisions_response import ListIntegrationDecisionsResponse
     from .list_integrations_response import ListIntegrationsResponse
     from .list_mcp_server_tools_response import ListMcpServerToolsResponse
@@ -299,12 +315,23 @@ _dynamic_imports: typing.Dict[str, str] = {
     "ChatCompletionMessageToolCallFunction": ".chat_completion_message_tool_call_function",
     "CloudflareComputerSandboxProvider": ".cloudflare_computer_sandbox_provider",
     "CompactionConfig": ".compaction_config",
+    "Computer": ".computer",
+    "ComputerAgentAccess": ".computer_agent_access",
+    "ComputerAuditEntry": ".computer_audit_entry",
+    "ComputerAuditOp": ".computer_audit_op",
+    "ComputerEnrollment": ".computer_enrollment",
+    "ComputerStatus": ".computer_status",
+    "ComputerTools": ".computer_tools",
+    "ComputerWithEnrollment": ".computer_with_enrollment",
+    "ComputersCapability": ".computers_capability",
     "ConfiguredMcpServer": ".configured_mcp_server",
     "ConfiguredModel": ".configured_model",
     "ConfiguredModelProvider": ".configured_model_provider",
     "ConfiguredSandboxProvider": ".configured_sandbox_provider",
     "ConfiguredSkill": ".configured_skill",
     "ContextManagementConfig": ".context_management_config",
+    "CreateComputerEnrollmentResponse": ".create_computer_enrollment_response",
+    "CreateComputerResponse": ".create_computer_response",
     "CreateScheduleRunResponse": ".create_schedule_run_response",
     "CreateSessionAgent": ".create_session_agent",
     "CreatedBySubject": ".created_by_subject",
@@ -313,6 +340,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "DaytonaSandboxProvider": ".daytona_sandbox_provider",
     "DaytonaSandboxProviderAuth": ".daytona_sandbox_provider_auth",
     "DeleteAgentResponse": ".delete_agent_response",
+    "DeleteComputerResponse": ".delete_computer_response",
     "DeleteIntegrationResponse": ".delete_integration_response",
     "DeleteSandboxProviderResponse": ".delete_sandbox_provider_response",
     "DeleteScheduleResponse": ".delete_schedule_response",
@@ -326,6 +354,8 @@ _dynamic_imports: typing.Dict[str, str] = {
     "GetAgentResponse": ".get_agent_response",
     "GetAvailableMcpServerResponse": ".get_available_mcp_server_response",
     "GetCapabilitiesResponse": ".get_capabilities_response",
+    "GetComputerAgentAccessResponse": ".get_computer_agent_access_response",
+    "GetComputerResponse": ".get_computer_response",
     "GetIntegrationAppManifestResponse": ".get_integration_app_manifest_response",
     "GetIntegrationResponse": ".get_integration_response",
     "GetMcpServerCatalogResponse": ".get_mcp_server_catalog_response",
@@ -362,6 +392,8 @@ _dynamic_imports: typing.Dict[str, str] = {
     "ListAvailableMcpServersResponse": ".list_available_mcp_servers_response",
     "ListAvailableModelsResponse": ".list_available_models_response",
     "ListAvailableSkillsResponse": ".list_available_skills_response",
+    "ListComputerAuditResponse": ".list_computer_audit_response",
+    "ListComputersResponse": ".list_computers_response",
     "ListIntegrationDecisionsResponse": ".list_integration_decisions_response",
     "ListIntegrationsResponse": ".list_integrations_response",
     "ListMcpServerToolsResponse": ".list_mcp_server_tools_response",
@@ -575,12 +607,23 @@ __all__ = [
     "ChatCompletionMessageToolCallFunction",
     "CloudflareComputerSandboxProvider",
     "CompactionConfig",
+    "Computer",
+    "ComputerAgentAccess",
+    "ComputerAuditEntry",
+    "ComputerAuditOp",
+    "ComputerEnrollment",
+    "ComputerStatus",
+    "ComputerTools",
+    "ComputerWithEnrollment",
+    "ComputersCapability",
     "ConfiguredMcpServer",
     "ConfiguredModel",
     "ConfiguredModelProvider",
     "ConfiguredSandboxProvider",
     "ConfiguredSkill",
     "ContextManagementConfig",
+    "CreateComputerEnrollmentResponse",
+    "CreateComputerResponse",
     "CreateScheduleRunResponse",
     "CreateSessionAgent",
     "CreatedBySubject",
@@ -589,6 +632,7 @@ __all__ = [
     "DaytonaSandboxProvider",
     "DaytonaSandboxProviderAuth",
     "DeleteAgentResponse",
+    "DeleteComputerResponse",
     "DeleteIntegrationResponse",
     "DeleteSandboxProviderResponse",
     "DeleteScheduleResponse",
@@ -602,6 +646,8 @@ __all__ = [
     "GetAgentResponse",
     "GetAvailableMcpServerResponse",
     "GetCapabilitiesResponse",
+    "GetComputerAgentAccessResponse",
+    "GetComputerResponse",
     "GetIntegrationAppManifestResponse",
     "GetIntegrationResponse",
     "GetMcpServerCatalogResponse",
@@ -638,6 +684,8 @@ __all__ = [
     "ListAvailableMcpServersResponse",
     "ListAvailableModelsResponse",
     "ListAvailableSkillsResponse",
+    "ListComputerAuditResponse",
+    "ListComputersResponse",
     "ListIntegrationDecisionsResponse",
     "ListIntegrationsResponse",
     "ListMcpServerToolsResponse",

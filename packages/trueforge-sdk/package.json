@@ -77,6 +77,17 @@
             },
             "default": "./dist/cjs/api/resources/server/exports.js"
         },
+        "./computers": {
+            "import": {
+                "types": "./dist/esm/api/resources/computers/exports.d.mts",
+                "default": "./dist/esm/api/resources/computers/exports.mjs"
+            },
+            "require": {
+                "types": "./dist/cjs/api/resources/computers/exports.d.ts",
+                "default": "./dist/cjs/api/resources/computers/exports.js"
+            },
+            "default": "./dist/cjs/api/resources/computers/exports.js"
+        },
         "./mcpServers": {
             "import": {
                 "types": "./dist/esm/api/resources/mcpServers/exports.d.mts",
@@ -186,6 +197,28 @@
                 "default": "./dist/cjs/api/resources/catalogs/resources/skills/exports.js"
             },
             "default": "./dist/cjs/api/resources/catalogs/resources/skills/exports.js"
+        },
+        "./computers/agents": {
+            "import": {
+                "types": "./dist/esm/api/resources/computers/resources/agents/exports.d.mts",
+                "default": "./dist/esm/api/resources/computers/resources/agents/exports.mjs"
+            },
+            "require": {
+                "types": "./dist/cjs/api/resources/computers/resources/agents/exports.d.ts",
+                "default": "./dist/cjs/api/resources/computers/resources/agents/exports.js"
+            },
+            "default": "./dist/cjs/api/resources/computers/resources/agents/exports.js"
+        },
+        "./computers/audit": {
+            "import": {
+                "types": "./dist/esm/api/resources/computers/resources/audit/exports.d.mts",
+                "default": "./dist/esm/api/resources/computers/resources/audit/exports.mjs"
+            },
+            "require": {
+                "types": "./dist/cjs/api/resources/computers/resources/audit/exports.d.ts",
+                "default": "./dist/cjs/api/resources/computers/resources/audit/exports.js"
+            },
+            "default": "./dist/cjs/api/resources/computers/resources/audit/exports.js"
         },
         "./internal/metrics": {
             "import": {

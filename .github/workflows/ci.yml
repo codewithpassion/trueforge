@@ -76,6 +76,8 @@ jobs:
               - '.github/workflows/ci.yml'
             store:
               - 'packages/trueforge/src/db/**'
+              # The computer store's row types come from the wire protocol.
+              - 'packages/trueforge/src/computers/**'
               - 'packages/trueforge/tests/db/**'
               - 'packages/trueforge/migrations/**'
               - 'packages/trueforge/jest.store.postgres.config.cjs'

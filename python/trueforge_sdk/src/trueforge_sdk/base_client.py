@@ -12,6 +12,7 @@ if typing.TYPE_CHECKING:
     from .agents.client import AgentsClient, AsyncAgentsClient
     from .auth.client import AsyncAuthClient, AuthClient
     from .catalogs.client import AsyncCatalogsClient, CatalogsClient
+    from .computers.client import AsyncComputersClient, ComputersClient
     from .internal.client import AsyncInternalClient, InternalClient
     from .mcp_servers.client import AsyncMcpServersClient, McpServersClient
     from .models.client import AsyncModelsClient, ModelsClient
@@ -101,6 +102,7 @@ class BaseTrueForge:
         self._agents: typing.Optional[AgentsClient] = None
         self._auth: typing.Optional[AuthClient] = None
         self._server: typing.Optional[ServerClient] = None
+        self._computers: typing.Optional[ComputersClient] = None
         self._mcp_servers: typing.Optional[McpServersClient] = None
         self._models: typing.Optional[ModelsClient] = None
         self._schedules: typing.Optional[SchedulesClient] = None
@@ -140,6 +142,14 @@ class BaseTrueForge:
 
             self._server = ServerClient(client_wrapper=self._client_wrapper)
         return self._server
+
+    @property
+    def computers(self):
+        if self._computers is None:
+            from .computers.client import ComputersClient  # noqa: E402
+
+            self._computers = ComputersClient(client_wrapper=self._client_wrapper)
+        return self._computers
 
     @property
     def mcp_servers(self):
@@ -298,6 +308,7 @@ class AsyncBaseTrueForge:
         self._agents: typing.Optional[AsyncAgentsClient] = None
         self._auth: typing.Optional[AsyncAuthClient] = None
         self._server: typing.Optional[AsyncServerClient] = None
+        self._computers: typing.Optional[AsyncComputersClient] = None
         self._mcp_servers: typing.Optional[AsyncMcpServersClient] = None
         self._models: typing.Optional[AsyncModelsClient] = None
         self._schedules: typing.Optional[AsyncSchedulesClient] = None
@@ -337,6 +348,14 @@ class AsyncBaseTrueForge:
 
             self._server = AsyncServerClient(client_wrapper=self._client_wrapper)
         return self._server
+
+    @property
+    def computers(self):
+        if self._computers is None:
+            from .computers.client import AsyncComputersClient  # noqa: E402
+
+            self._computers = AsyncComputersClient(client_wrapper=self._client_wrapper)
+        return self._computers
 
     @property
     def mcp_servers(self):

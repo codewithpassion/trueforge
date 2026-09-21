@@ -11,6 +11,7 @@ describe("ServerClient", () => {
 
         const rawResponseBody = {
             data: {
+                computers: { enabled: true },
                 sandbox: { enabled: true },
                 settings: { enabled: true },
                 skill: { enabled: true, reason: "reason" },
@@ -28,6 +29,9 @@ describe("ServerClient", () => {
         const response = await client.server.getCapabilities();
         expect(response).toEqual({
             data: {
+                computers: {
+                    enabled: true,
+                },
                 sandbox: {
                     enabled: true,
                 },

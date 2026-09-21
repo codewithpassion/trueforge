@@ -165,6 +165,9 @@ describe('connect', () => {
   it('refuses every bad credential with the same 401', async () => {
     const computers = testComputersService();
     const app = computersApp({ computers });
+    // A real machine is enrolled first, so a lookup that ignored the credential would find it.
+    const enrolled = await createComputer({ app, name: uniqueName('bad-credential') });
+    expect((await enroll({ app, code: enrolled.enrollmentCode })).status).toBe(200);
     for (const headers of [
       { Upgrade: 'websocket' },
       { Upgrade: 'websocket', Authorization: 'Bearer nope' },

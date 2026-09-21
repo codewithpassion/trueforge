@@ -115,9 +115,10 @@ The client answers exactly one reply per `id`.
 }
 ```
 
-`cwd` is `null` when the server has no preference. The client runs the command under `sh -c` in its own
-process group with `setsid`, kills the group at the deadline and reports exit **124**, and reports the
-real signal-derived code otherwise (`kill -TERM $$` is 143, not 1).
+`cwd` is `null` when the server has no preference; `cwd` and `sha256` are always present as explicit
+`null` rather than omitted. The client runs the command under `sh -c` in its own process group with
+`setsid`. Exit codes: **124** at the deadline, **128 + signal** when signalled (143 for SIGTERM), **137**
+for a cancel, and **127** when the shell could not start.
 
 `cancel`:
 
@@ -142,6 +143,12 @@ real signal-derived code otherwise (`kill -TERM $$` is 143, not 1).
 
 `sha256` is the hex digest of the whole file and is sent on the final chunk only. `seq` starts at 0. A
 `seq` of 0 truncates or creates the file; later chunks append.
+
+Chunks may arrive out of order — the client waits for a predecessor rather than failing — so a small
+window may be pipelined. A transfer may not open at a `seq` of 32 or more, a chunk whose predecessor never
+arrives abandons the transfer after 60 s with `bad_request`, and a redelivered chunk is idempotent. A
+socket drop discards open uploads and deletes their partial files, so a transfer restarts from `seq` 0
+after a reconnect rather than resuming.
 
 `file_get`:
 
@@ -173,14 +180,25 @@ narrows it.
 | `file_put` | `bytes_written`, `sha256` (non-null on the final chunk only)                 |
 | `file_get` | `data_b64`, `eof`, `size`, `sha256` (non-null on the `offset: 0` chunk only) |
 
-Error codes the server maps to sandbox errors: `not_found`, `is_directory`, `too_large`. Anything else is
-reported to the caller verbatim.
+Error codes: `denied`, `read_only`, `queue_full`, `bad_request`, `not_found`, `is_a_directory`,
+`frame_too_large`, `unknown_op`, `op_failed`. The server maps `not_found` and `is_a_directory` onto
+distinct sandbox errors, so they must stay separate; anything else reaches the caller verbatim.
+
+`cancel` is always answered, with `{"cancelled": false}` for an id the client does not know. The client's
+exec registry outlives the socket, so a `cancel` sent after a reconnect still reaches a command the
+previous connection started.
 
 ### Output truncation
 
 `stdout` and `stderr` are already-truncated strings. The client counts every byte in `bytes_total`, sets
-`truncated`, and keeps **head and tail** with a visible elision marker between them — build and test
-failures are at the end. There is no wire change for truncation; the marker lives inside the strings.
+`truncated`, and keeps **head and tail** within 1 MiB across both streams, with a
+`\n[... N bytes dropped ...]\n` marker between them — build and test failures are at the end. There is no
+wire change for truncation; the marker lives inside the strings.
+
+The client clamps `file_get`'s `max_bytes` to 256 KiB whatever the server asks for, and refuses to send a
+frame over 8 MiB with `frame_too_large`, because the platform enforces its own 32 MiB limit by closing
+the socket rather than failing one request. A reply whose socket has closed is dropped rather than
+written to the next one, so the server never receives an answer it has no pending request for.
 
 ## 5. Concurrency and timeouts
 
