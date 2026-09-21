@@ -195,7 +195,11 @@ const IntegrationSettings = () => {
 
   if (integrationCatalog === undefined) return null;
 
-  const settingsFields = (form: IntegrationFormDraft, setForm: (next: IntegrationFormDraft) => void, idPrefix: string) => (
+  const settingsFields = (
+    form: IntegrationFormDraft,
+    setForm: (next: IntegrationFormDraft) => void,
+    idPrefix: string,
+  ) => (
     <>
       <div>
         <FieldLabel htmlFor={`${idPrefix}-bot-name`}>Bot name</FieldLabel>
@@ -326,8 +330,8 @@ const IntegrationSettings = () => {
                   2 · Paste the credentials
                 </h4>
                 <p className="mt-2 text-sm text-text-secondary">
-                  Install the app, then copy its bot user OAuth token and signing secret. The workspace and bot user
-                  ids are read from Slack, so there is nothing else to type. Leave both blank to keep what is stored.
+                  Install the app, then copy its bot user OAuth token and signing secret. The workspace and bot user ids
+                  are read from Slack, so there is nothing else to type. Leave both blank to keep what is stored.
                 </p>
                 <div className="mt-3 flex flex-col gap-4">
                   <div>
@@ -361,8 +365,14 @@ const IntegrationSettings = () => {
                 )}
               </section>
 
-              <section aria-labelledby="slack-settings-heading" className="rounded-xl border border-border bg-card-bg p-4">
-                <h4 id="slack-settings-heading" className="text-[0.8125rem] font-semibold uppercase text-text-secondary">
+              <section
+                aria-labelledby="slack-settings-heading"
+                className="rounded-xl border border-border bg-card-bg p-4"
+              >
+                <h4
+                  id="slack-settings-heading"
+                  className="text-[0.8125rem] font-semibold uppercase text-text-secondary"
+                >
                   Settings
                 </h4>
                 <div className="mt-3 flex flex-col gap-4">{settingsFields(detailForm, setDetailForm, 'detail')}</div>

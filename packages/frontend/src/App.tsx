@@ -19,8 +19,8 @@ import { createAuthAwareFetch } from './authFetch';
 import { probeSession, type SessionState } from './authSession';
 import { parseAuthErrorReason, shouldShowAuthErrorScreen, stripAuthErrorSearch } from './authStatusSearch';
 import { GetStartedScreen } from './GetStartedScreen';
-import { NewAgentWelcomeScreen } from './NewAgentWelcomeScreen';
 import { LogoutButton } from './LogoutButton';
+import { NewAgentWelcomeScreen } from './NewAgentWelcomeScreen';
 import { API_BASE_URL, uiRouterBasename } from './publicPath';
 
 /** Shared cookie/OIDC fetch for boot helpers and `<TrueForgeUI server />`. */

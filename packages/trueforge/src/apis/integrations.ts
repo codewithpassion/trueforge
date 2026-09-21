@@ -6,9 +6,9 @@ import type { WithTransaction } from '../db/transaction';
 import { slackAuthTest, type SlackAuthTest } from '../integrations/slack/api';
 import {
   buildSlackAppManifest,
+  SLACK_CREATE_APP_URL,
   slackAppManifestJson,
   slackEventsRequestUrl,
-  SLACK_CREATE_APP_URL,
 } from '../integrations/slack/appManifest';
 import {
   createIntegrationRoute,

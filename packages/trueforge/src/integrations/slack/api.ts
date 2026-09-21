@@ -87,9 +87,7 @@ const SlackAuthTestResponseSchema = z.object({
   user_id: z.string().min(1),
 });
 
-export type SlackAuthTestResult =
-  | { ok: true; team_id: string; bot_user_id: string }
-  | { ok: false; error: string };
+export type SlackAuthTestResult = { ok: true; team_id: string; bot_user_id: string } | { ok: false; error: string };
 
 /** Injected wherever credentials are saved, so tests never reach slack.com. */
 export type SlackAuthTest = (input: { botToken: string; fetchImpl?: SlackFetch }) => Promise<SlackAuthTestResult>;

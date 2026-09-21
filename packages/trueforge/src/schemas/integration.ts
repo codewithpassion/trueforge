@@ -165,9 +165,7 @@ export type CreateIntegrationRequest = z.infer<typeof CreateIntegrationRequestSc
 export type UpdateIntegrationRequest = z.infer<typeof UpdateIntegrationRequestSchema>;
 
 /** The manifest narrowed to an installed app, or undefined while the integration is pending. */
-export function connectedSlackManifest(
-  manifest: IntegrationManifest,
-): ConnectedSlackIntegrationManifest | undefined {
+export function connectedSlackManifest(manifest: IntegrationManifest): ConnectedSlackIntegrationManifest | undefined {
   const parsed = ConnectedSlackIntegrationManifestSchema.safeParse(manifest);
   return parsed.success ? parsed.data : undefined;
 }
@@ -185,9 +183,6 @@ export function integrationStatus(manifest: IntegrationManifest): IntegrationSta
  * A pending integration has no channel account yet, so it stands on its own id: the column is
  * `NOT NULL` and two pending integrations must not collide with each other.
  */
-export function integrationExternalAccountId(input: {
-  manifest: IntegrationManifest;
-  integration_id: string;
-}): string {
+export function integrationExternalAccountId(input: { manifest: IntegrationManifest; integration_id: string }): string {
   return input.manifest.team_id ?? `pending:${input.integration_id}`;
 }

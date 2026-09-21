@@ -1,0 +1,5 @@
+---
+'@truefoundry/trueforge': patch
+---
+
+Generate the Slack app manifest instead of asking people to build the app by hand. An integration is now created from a bot name and an agent alone and starts out pending; `GET /api/v1/settings/integrations/{integration_id}/app-manifest` returns the manifest to paste into Slack, carrying the scopes, the event subscriptions and that integration's own request URL. Saving the bot token calls Slack `auth.test` to fill `team_id` and `bot_user_id`, so neither has to be copied by hand; a token from another workspace is refused and one Slack rejects is reported as a channel failure. Scopes and subscriptions come from one list the event parser also reads, so the generated app cannot ask for something the adapter ignores. A pending integration answers Slack's request-URL challenge, which Slack sends while it creates the app and therefore cannot sign against a secret that does not exist yet, and refuses every other request; once credentials are stored the signature is required again, challenge included.

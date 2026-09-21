@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation.
 
-Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4). Connecting a workspace is a host page in `packages/frontend`; folding it into the Settings drawer needs an `integrationCatalog` slot on `CatalogServer` in `@truefoundry/assistant-ui-runtime`, whose slots are fixed. Phases I3 and I4 are proposed.
+Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4). Phase I2.5 landed on 2026-09-21: connecting a workspace is now a Settings section, reached through an `integrationCatalog` slot added to `CatalogServer` by a types-only `pnpm patch` of `@truefoundry/assistant-ui-runtime` (`patches/@truefoundry__assistant-ui-runtime@0.1.37.patch`), and TrueForge generates the Slack app manifest rather than asking people to build the app by hand (Section 3.1). Phases I3 and I4 are proposed.
 
 Goal: let people talk to TrueForge agents from Slack, and let agents and schedules post results back to Slack. Build a small integrations layer first, then ship Slack as its first channel. It must run on both the Node deploy and the Workers deploy.
 
@@ -121,22 +121,26 @@ Slack adapter in `src/integrations/slack/`.
 
 **Manifest (`type: "slack"`):**
 
-- `team_id`
-- `bot_user_id`
+- `bot_display_name`, the name the person chooses for the app and its bot user
 - `default_agent_name`
 - `allowed_channel_ids` (empty means none are allowed; a DM with the bot is allowed when `allow_direct_messages` is true)
 - `reply_mode` (`thread`)
-- `auth: { bot_token, signing_secret }`, both redacted
+- `team_id`, `bot_user_id` and `auth: { bot_token, signing_secret }` — absent until the app is installed; the credentials are redacted on read
 
-**App setup (documented, not automated in I2):**
+### 3.1 App setup, generated
 
-- Create a Slack app with bot scopes `app_mentions:read`, `chat:write`, `im:history`, `im:read`, and `reactions:write`.
-- Subscribe to the `app_mention` and `message.im` events.
-- Set the request URL to `<PUBLIC_BASE_URL>/api/v1/integrations/<id>/events`.
-- Install to the workspace, then paste the bot token and signing secret into the settings UI.
+The app cannot exist before its request URL does, and its credentials cannot exist before the app does, so the order is fixed:
+
+1. Create the integration with a bot name and an agent. It is `pending`: no workspace, no bot user, no credentials, and `external_account_id` stands on the integration's own id so two pending integrations do not collide on the unique key.
+2. `GET /api/v1/settings/integrations/{integration_id}/app-manifest` builds the manifest from the bot name and `<PUBLIC_BASE_URL>/api/v1/integrations/<id>/events`. Scopes and event subscriptions come from `src/integrations/slack/appCapabilities.ts`, the same list `slack/events.ts` parses against, so the generated app and the adapter cannot drift. No `interactivity` block until I3.
+3. The person pastes it into Slack. **Slack posts the `url_verification` challenge while it creates the app**, before the signing secret exists on this side, so a pending integration answers the challenge unsigned and refuses everything else with `409`. Once credentials are stored the signature is required again, challenge included — the unsigned branch is unreachable from then on.
+4. Saving the bot token calls `auth.test` (30 s timeout, token only in the Authorization header, never logged) and stores the `team_id` and `bot_user_id` it returns. A token naming another workspace is `409`; one Slack refuses is `502` and the integration stays pending.
+
+Bot names are constrained to what both Slack fields accept — up to 35 characters of `a-z`, `0-9`, `.`, `-`, `_` — since `display_information.name` caps at 35 and `features.bot_user.display_name` restricts the character set.
 
 **Inbound flow:**
 
+0. **A pending integration** parses the body and answers only `url_verification`; see 3.1.
 1. **Verify the signature** before parsing JSON:
    - The base string is `v0:<X-Slack-Request-Timestamp>:<raw body>`.
    - Compute HMAC-SHA256 with the signing secret and compare it in constant time to `X-Slack-Signature`.
@@ -185,7 +189,7 @@ Each phase follows the port process:
 ### Phase I2: Slack messaging
 
 1. The Slack adapter: signature verification, parsing, filtering, mention stripping, mrkdwn conversion, chunking, and `chat.postMessage` over `fetch`. No Slack SDK is needed.
-2. A settings UI section in `packages/frontend` to connect Slack (manifest form with redacted secrets), and a changeset for the frontend.
+2. A settings UI section to connect Slack. It shipped first as a host page in `packages/frontend`, and moved into `SettingsBuilder` in I2.5 once `CatalogServer` gained an `integrationCatalog` slot through a types-only `pnpm patch`; the host page, its route helper and its nav override were deleted in the same change.
 3. Tests:
    - signature fixtures (valid, bad signature, stale timestamp, wrong secret),
    - `url_verification`,

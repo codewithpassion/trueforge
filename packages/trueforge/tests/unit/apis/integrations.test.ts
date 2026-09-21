@@ -19,8 +19,8 @@ import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteS
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
-import type { SlackAuthTest } from '../../../src/integrations/slack/api';
 import { createIntegrationAdapters, type IntegrationAdapterRegistry } from '../../../src/integrations/registry';
+import type { SlackAuthTest } from '../../../src/integrations/slack/api';
 import type { ChannelAdapter, InboundResult } from '../../../src/integrations/types';
 import type { Integration, IntegrationManifest } from '../../../src/schemas/integration';
 import { newId } from '../../../src/utils/id';

@@ -25,7 +25,9 @@ const CONNECTED: IntegrationBase = { ...PENDING, status: 'connected', externalAc
 
 const MANIFEST_JSON = JSON.stringify({ display_information: { name: 'release-bot' } }, null, 2);
 
-function renderSection(catalog: Partial<IntegrationCatalogServer> & { listIntegrations: () => Promise<IntegrationBase[]> }) {
+function renderSection(
+  catalog: Partial<IntegrationCatalogServer> & { listIntegrations: () => Promise<IntegrationBase[]> },
+) {
   const integrationCatalog: IntegrationCatalogServer = {
     createIntegration: unavailable,
     updateIntegration: unavailable,

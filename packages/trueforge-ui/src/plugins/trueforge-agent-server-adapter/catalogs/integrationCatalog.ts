@@ -43,9 +43,7 @@ export function toUiSetupManifest(manifest: TrueForgeApi.IntegrationAppManifest)
  * The workspace, the bot user and the credentials are never sent from the UI: the server
  * reads them from the channel when the credentials are saved.
  */
-function toHarnessManifest(
-  req: CreateIntegrationRequest | UpdateIntegrationRequest,
-): TrueForgeApi.IntegrationManifest {
+function toHarnessManifest(req: CreateIntegrationRequest | UpdateIntegrationRequest): TrueForgeApi.IntegrationManifest {
   const auth = 'auth' in req ? req.auth : undefined;
   return {
     type: SLACK_TYPE,
