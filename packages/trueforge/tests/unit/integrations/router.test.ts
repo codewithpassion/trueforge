@@ -94,7 +94,7 @@ function interaction(overrides: {
     conversation_key: inboundEvent().conversation_key,
     sender: overrides.sender ?? APPROVER,
     turn_id: overrides.turn_id,
-    tool_call_id: overrides.tool_call_id ?? APPROVAL_CALL_ID,
+    ...(overrides.tool_call_id === undefined ? {} : { tool_call_id: overrides.tool_call_id }),
     decision: overrides.decision ?? { type: 'approval', approved: true },
     reply_context: 'https://hooks.slack.com/actions/T0TEAM/1/abc',
   };
@@ -109,7 +109,7 @@ interface Harness {
   executor: RecordingTurnExecutor;
   sessions: Sessions;
   /** Leaves a started turn finished but waiting on a human, the way a real pause looks. */
-  holdTurn: (input: { turn_id: string; held: 'approval' | 'question' }) => Promise<void>;
+  holdTurn: (input: { turn_id: string; held: 'approval' | 'question'; calls?: number }) => Promise<void>;
   /** Awaits the flushes the router handed to `deferDelivery`, which a request would not wait on. */
   flush: () => Promise<void>;
 }
@@ -153,6 +153,7 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
     },
     integrationStore,
     sessions,
+    sessionStore,
     agentStore,
     turnExecutor: executor,
     // The recording executor ignores these; the real stores keep the shape honest.
@@ -192,6 +193,12 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
         throw new Error('the conversation has no session to hold');
       }
       const scope = { session_id: session.session_id, turn_id: input.turn_id };
+      const ids =
+        input.held === 'approval'
+          ? Array.from({ length: input.calls ?? 1 }, (_, index) =>
+              index === 0 ? APPROVAL_CALL_ID : `${APPROVAL_CALL_ID}-${String(index + 1)}`,
+            )
+          : [QUESTION_CALL_ID];
       // The call's name and arguments live on the model message the required action points at.
       await sessionStore.appendToEvents({
         ...scope,
@@ -202,20 +209,18 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
             thread_id: 'main',
             created_at: new Date().toISOString(),
             content: null,
-            tool_calls: [
-              {
-                id: input.held === 'approval' ? APPROVAL_CALL_ID : QUESTION_CALL_ID,
-                type: 'function',
-                function:
-                  input.held === 'approval'
-                    ? { name: 'restart_service', arguments: '{"service":"api"}' }
-                    : {
-                        name: ASK_USER_QUESTION_TOOL,
-                        arguments: JSON.stringify({ question: 'Which one?', options: ['staging', 'production'] }),
-                      },
-                tool_info: { type: 'truefoundry-system', name: 'held' },
-              },
-            ],
+            tool_calls: ids.map(id => ({
+              id,
+              type: 'function',
+              function:
+                input.held === 'approval'
+                  ? { name: 'restart_service', arguments: '{"service":"api"}' }
+                  : {
+                      name: ASK_USER_QUESTION_TOOL,
+                      arguments: JSON.stringify({ question: 'Which one?', options: ['staging', 'production'] }),
+                    },
+              tool_info: { type: 'truefoundry-system', name: 'held' },
+            })),
           },
         ],
       });
@@ -228,12 +233,7 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
             id: `evt-${input.held}`,
             created_at: new Date().toISOString(),
             thread_id: 'main',
-            tool_calls: [
-              {
-                id: input.held === 'approval' ? APPROVAL_CALL_ID : QUESTION_CALL_ID,
-                source_event_id: MODEL_EVENT_ID,
-              },
-            ],
+            tool_calls: ids.map(id => ({ id, source_event_id: MODEL_EVENT_ID })),
           },
         ],
         completed_at: new Date().toISOString(),
@@ -282,6 +282,7 @@ describe('IntegrationRouter', () => {
       throw new Error('expected the turn to start');
     }
     const delivery = await harness.integrationStore.getPendingDelivery({
+      integration_id: harness.integration.id,
       turn_id: routed.turn_id,
       conversation_key: inboundEvent().conversation_key,
     });
@@ -447,6 +448,7 @@ describe('IntegrationRouter', () => {
     // route() returned without waiting on delivery; the row is still owed until the flush runs.
     expect(
       await harness.integrationStore.getPendingDelivery({
+        integration_id: harness.integration.id,
         turn_id: routed.turn_id,
         conversation_key: inboundEvent().conversation_key,
       }),
@@ -463,7 +465,7 @@ describe('IntegrationRouter.resume', () => {
   });
 
   /** Starts a turn for the conversation, then leaves it held on `held`. */
-  async function heldTurn(input: { held: 'approval' | 'question' }): Promise<{ turn_id: string }> {
+  async function heldTurn(input: { held: 'approval' | 'question'; calls?: number }): Promise<{ turn_id: string }> {
     const routed = await harness.router.route({
       integration: harness.integration,
       adapter: harness.channel.adapter,
@@ -472,7 +474,7 @@ describe('IntegrationRouter.resume', () => {
     if (routed.type !== 'started') {
       throw new Error('expected the turn to start');
     }
-    await harness.holdTurn({ turn_id: routed.turn_id, held: input.held });
+    await harness.holdTurn({ turn_id: routed.turn_id, held: input.held, calls: input.calls ?? 1 });
     await harness.flush();
     return { turn_id: routed.turn_id };
   }
@@ -586,13 +588,17 @@ describe('IntegrationRouter.resume', () => {
     expect(await harness.db.selectFrom('integration_event').selectAll().execute()).toHaveLength(1);
   });
 
-  it('refuses a click naming a call the turn is not holding', async () => {
+  it('refuses an answer naming a call the turn is not holding', async () => {
     harness = await createHarness();
-    const { turn_id } = await heldTurn({ held: 'approval' });
+    const { turn_id } = await heldTurn({ held: 'question' });
 
     const resumed = await harness.router.resume({
       integration: harness.integration,
-      interaction: interaction({ turn_id, tool_call_id: 'call-not-held' }),
+      interaction: interaction({
+        turn_id,
+        tool_call_id: 'call-not-held',
+        decision: { type: 'answer', text: 'production' },
+      }),
     });
 
     expect(resumed).toMatchObject({ type: 'not_pending' });
@@ -609,6 +615,67 @@ describe('IntegrationRouter.resume', () => {
     });
 
     expect(resumed).toMatchObject({ type: 'not_pending' });
+  });
+
+  it('settles every held call with one decision, because core refuses a partial resume', async () => {
+    harness = await createHarness();
+    const { turn_id } = await heldTurn({ held: 'approval', calls: 2 });
+
+    const resumed = await harness.router.resume({
+      integration: harness.integration,
+      interaction: interaction({ turn_id }),
+    });
+
+    expect(resumed.type).toBe('resumed');
+    expect(harness.executor.starts[1]?.input).toEqual([
+      { type: 'user.tool_approval', thread_id: 'main', tool_call_id: 'call-approve', approval: { status: 'allow' } },
+      { type: 'user.tool_approval', thread_id: 'main', tool_call_id: 'call-approve-2', approval: { status: 'allow' } },
+    ]);
+  });
+
+  it('refuses a click from an integration that does not own the conversation', async () => {
+    harness = await createHarness();
+    const { turn_id } = await heldTurn({ held: 'approval' });
+    // A second integration for the same workspace shares the conversation key, so only the
+    // source on the session says whose turn this is.
+    const other = await harness.integrationStore.createIntegration({
+      id: newId(),
+      tenant_id: TENANT,
+      type: 'slack',
+      external_account_id: 'T0OTHER',
+      manifest: manifest(),
+      created_by_subject: CREATED_BY,
+    });
+
+    const resumed = await harness.router.resume({
+      integration: other,
+      interaction: interaction({ turn_id }),
+    });
+
+    expect(resumed).toMatchObject({ type: 'not_pending' });
+    expect(harness.executor.starts).toHaveLength(1);
+  });
+
+  it('records who decided on the session, not only in a message Slack admins can edit', async () => {
+    harness = await createHarness();
+    const { turn_id } = await heldTurn({ held: 'approval' });
+
+    await harness.router.resume({
+      integration: harness.integration,
+      interaction: interaction({ turn_id, decision: { type: 'approval', approved: false } }),
+    });
+
+    const session = await harness.sessions.getByExternalId({
+      tenant_id: TENANT,
+      external_id: inboundEvent().conversation_key,
+    });
+    expect(session?.record.metadata).toMatchObject({
+      'integration.decided_by_id': 'U0ADMIN',
+      'integration.decided_by_name': 'Admin',
+      'integration.decision': 'tool_approval:deny',
+    });
+    // The sender the thread started with is still there; metadata is merged, not replaced.
+    expect(session?.record.metadata).toMatchObject({ 'integration.sender_id': 'U0HUMAN' });
   });
 
   it('records the reply owed for the resumed turn', async () => {

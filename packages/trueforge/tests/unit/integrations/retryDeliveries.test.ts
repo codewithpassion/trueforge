@@ -11,6 +11,7 @@ import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite
 import { SqliteIntegrationStore } from '../../../src/db/sqlite/integration-store/SqliteIntegrationStore';
 import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteSessionStore';
 import type { Database } from '../../../src/db/sqlite/types';
+import { deliveryIsInteractive } from '../../../src/integrations/deliveryContent';
 import { DELIVERY_RETRY_BASE_MS, MAX_DELIVERY_ATTEMPTS } from '../../../src/integrations/deliverySchedule';
 import { retryIntegrationDeliveries } from '../../../src/integrations/retryDeliveries';
 import { TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
@@ -56,6 +57,7 @@ const soon = (msAhead = 60_000): Date => new Date(Date.now() + msAhead);
 interface Harness {
   db: Kysely<Database>;
   integrationStore: SqliteIntegrationStore;
+  integrationId: string;
   channel: FakeChannelAdapter;
   sweep: (signal?: AbortSignal) => Promise<void>;
   row: () => Promise<Selectable<Database['integration_delivery']> | undefined>;
@@ -121,11 +123,21 @@ async function createHarness(
   return {
     db,
     integrationStore,
+    integrationId,
     channel,
     sweep: signal => retryIntegrationDeliveries({ ...deps, signal }),
     row: () => db.selectFrom('integration_delivery').selectAll().where('id', '=', DELIVERY_ID).executeTakeFirst(),
   };
 }
+
+describe('what a retried rule delivery posts', () => {
+  it('reads the same way as the first attempt, from the row itself', () => {
+    // The sweep and the drain hook answer "can a click here reach the turn?" from one
+    // comparison, so a rule delivery cannot regain buttons on a retry.
+    expect(deliveryIsInteractive({ conversation_key: 'slack:T:C:1', session_external_id: 'slack:T:C:1' })).toBe(true);
+    expect(deliveryIsInteractive({ conversation_key: 'slack:T:C:channel', session_external_id: 'run-77' })).toBe(false);
+  });
+});
 
 describe('retryIntegrationDeliveries', () => {
   let harness: Harness;
@@ -156,6 +168,7 @@ describe('retryIntegrationDeliveries', () => {
   it('reclaims a claim whose deadline passed, and leaves one that still has time', async () => {
     harness = await createHarness();
     await harness.integrationStore.claimDelivery({
+      integration_id: harness.integrationId,
       turn_id: TURN_ID,
       conversation_key: CONVERSATION_KEY,
       next_attempt_at: soon(5 * 60_000),

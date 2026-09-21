@@ -5,7 +5,7 @@ import type { IIntegrationStore, IntegrationDeliveryRecord, IntegrationRecord } 
 import type { IScheduleStore } from '../db/scheduleStore';
 import { connectedSlackManifest, type IntegrationNotificationRule } from '../schemas/integration';
 import { newId } from '../utils/id';
-import { buildDeliveryContent } from './deliveryContent';
+import { buildDeliveryContent, deliveryIsInteractive } from './deliveryContent';
 import { claimDeadlineAt, firstAttemptDueAt, MAX_DELIVERY_ATTEMPTS, nextAttemptAt } from './deliverySchedule';
 import type { IntegrationAdapterRegistry } from './registry';
 import { slackChannelKey } from './slack/events';
@@ -20,30 +20,22 @@ export interface TurnCompletionNotifierDeps<TTransaction> {
 }
 
 /**
- * A rule posts to a channel, not to the thread the run lives in, and a click there names a
- * conversation the run's session was never keyed by — so the buttons could never resume it.
- * The run is reported as held instead, and the decision is taken in TrueForge.
+ * A run held on a decision has finished nothing yet, so it is neither: only an `any` rule
+ * reports it, and what that rule posts is the status line, not a result.
  */
-function withoutButtons(content: DeliveryContent): DeliveryContent {
-  if (content.type !== 'approval_request' && content.type !== 'question') {
-    return content;
-  }
-  return {
-    type: 'status',
-    state: 'done',
-    detail: 'The run is waiting for a decision, which can only be taken in TrueForge.',
-  };
-}
+type ScheduleOutcome = 'success' | 'failure' | 'held';
 
-/** A finished schedule run counts as a success only when the agent actually answered. */
-function scheduleOutcome(state: TerminalTurnState): 'success' | 'failure' {
-  return state.status === 'done' ? 'success' : 'failure';
+function scheduleOutcome(state: TerminalTurnState): ScheduleOutcome {
+  if (state.status !== 'done') {
+    return 'failure';
+  }
+  return state.required_actions.length > 0 ? 'held' : 'success';
 }
 
 function ruleMatches(input: {
   rule: IntegrationNotificationRule;
   schedule_name: string;
-  outcome: 'success' | 'failure';
+  outcome: ScheduleOutcome;
 }): boolean {
   const { rule } = input;
   return rule.schedule_name === input.schedule_name && (rule.outcome === 'any' || rule.outcome === input.outcome);
@@ -84,10 +76,8 @@ export class TurnCompletionNotifier<TTransaction> {
     const { integrationStore, logger } = this.#deps;
     try {
       const conversationKey = source.conversation_key;
-      if (
-        (await integrationStore.getPendingDelivery({ turn_id: turnId, conversation_key: conversationKey })) ===
-        undefined
-      ) {
+      const target = { integration_id: source.id, turn_id: turnId, conversation_key: conversationKey };
+      if ((await integrationStore.getPendingDelivery(target)) === undefined) {
         return;
       }
       const turn = await session.getTurn(turnId);
@@ -102,17 +92,18 @@ export class TurnCompletionNotifier<TTransaction> {
       }
 
       // Past this point exactly one caller holds the row, so the channel is posted to once.
-      const delivery = await integrationStore.claimDelivery({
-        turn_id: turnId,
-        conversation_key: conversationKey,
-        next_attempt_at: claimDeadlineAt(),
-      });
+      const delivery = await integrationStore.claimDelivery({ ...target, next_attempt_at: claimDeadlineAt() });
       if (delivery === undefined) {
         return;
       }
       await this.deliverClaimed({
         delivery,
-        content: await buildDeliveryContent({ turn, turn_id: turnId, state: turnState }),
+        content: await buildDeliveryContent({
+          turn,
+          turn_id: turnId,
+          state: turnState,
+          interactive: deliveryIsInteractive(delivery),
+        }),
       });
     } catch (error) {
       logger.error('Integration delivery failed', {
@@ -154,8 +145,15 @@ export class TurnCompletionNotifier<TTransaction> {
       if (turn === undefined || turnState === undefined || turnState.status === 'running') {
         return;
       }
+      // A rule posts to a channel the run's session was never keyed by, so no button there
+      // could resume it; `interactive: false` reports a held run instead of offering one.
+      const content = await buildDeliveryContent({
+        turn,
+        turn_id: turnId,
+        state: turnState,
+        interactive: false,
+      });
       const outcome = scheduleOutcome(turnState);
-      const content = withoutButtons(await buildDeliveryContent({ turn, turn_id: turnId, state: turnState }));
 
       for (const integration of integrations) {
         const channelIds = new Set(
@@ -208,6 +206,7 @@ export class TurnCompletionNotifier<TTransaction> {
       return;
     }
     const delivery = await integrationStore.claimDelivery({
+      integration_id: integration.id,
       turn_id: input.turn_id,
       conversation_key: conversationKey,
       next_attempt_at: claimDeadlineAt(),

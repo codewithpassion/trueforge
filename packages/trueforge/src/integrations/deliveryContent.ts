@@ -18,6 +18,17 @@ function assistantText(content: ModelMessageEvent['content']): string {
 }
 
 /**
+ * Whether a click on the message being built could reach the turn it is about. True only when
+ * the message goes back to the conversation the turn's own session is keyed by: a notification
+ * rule posts to a channel the session was never bound to, so a button there could never resume
+ * anything. Both the drain hook and the retry sweep answer it the same way, from this one
+ * comparison, so they cannot drift.
+ */
+export function deliveryIsInteractive(input: { conversation_key: string; session_external_id: string }): boolean {
+  return input.conversation_key === input.session_external_id;
+}
+
+/**
  * What the channel posts for a finished turn: the final assistant message, the decision the
  * turn is held on, or a short status line when it produced neither.
  *
@@ -27,6 +38,8 @@ export async function buildDeliveryContent(input: {
   turn: Pick<TurnHandle, 'listEvents'>;
   turn_id: string;
   state: TerminalTurnState;
+  /** False posts a status line where buttons would go, because nothing could click them. */
+  interactive: boolean;
 }): Promise<DeliveryContent> {
   const { state } = input;
   switch (state.status) {
@@ -35,7 +48,7 @@ export async function buildDeliveryContent(input: {
       // A held turn is checked before its text, because the model often narrates the call it is
       // about to make; posting only that narration would leave the turn waiting forever.
       if (state.required_actions.length > 0) {
-        const pending = await readPendingAction({ turn: input.turn, state });
+        const pending = input.interactive ? await readPendingAction({ turn: input.turn, state }) : undefined;
         if (pending?.type === 'approval') {
           return { type: 'approval_request', turn_id: input.turn_id, intro: text, approvals: pending.approvals };
         }
@@ -43,7 +56,13 @@ export async function buildDeliveryContent(input: {
           return { type: 'question', turn_id: input.turn_id, intro: text, question: pending.question };
         }
         if (text.length === 0) {
-          return { type: 'status', state: 'done', detail: 'The agent is waiting for input it cannot ask for here.' };
+          return {
+            type: 'status',
+            state: 'done',
+            detail: input.interactive
+              ? 'The agent is waiting for input it cannot ask for here.'
+              : 'The run is waiting for a decision, which can only be taken in TrueForge.',
+          };
         }
       }
       if (text.length > 0) {

@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import type { Sessions } from '@truefoundry/trueforge-core/agent-session';
+import type { ISessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
@@ -31,6 +31,8 @@ export interface IntegrationEventsRouterDeps<TTransaction> {
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
   /** Persistence agent store (the integration's agent binding is not caller-scoped). */
   agentStore: IAgentStore<TTransaction>;
+  /** Records who decided an approval on the session, so the trace outlives the Slack message. */
+  sessionStore: Pick<ISessionStore, 'updateSession'>;
   /** Notification rules name a schedule; the notifier resolves that name from its id. */
   scheduleStore: Pick<IScheduleStore<TTransaction>, 'getSchedule'>;
   turnSkillsResolverStore: Pick<ISkillStore, 'resolveTurnSkills'>;
@@ -80,6 +82,7 @@ export function createIntegrationEventsRouter<TTransaction>(deps: IntegrationEve
       integrationStore: deps.integrationStore,
       sessions: deps.sessions,
       agentStore: deps.agentStore,
+      sessionStore: deps.sessionStore,
       turnExecutor: deps.turnExecutor,
       deferDelivery: deferOutsideResponse(c, deps.logger),
       resolveTurnStores: (agent: AgentRecord) => ({

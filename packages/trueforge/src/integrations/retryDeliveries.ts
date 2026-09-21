@@ -3,7 +3,7 @@ import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/err
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { ControlLoop } from '../controller/Controller';
 import type { IIntegrationStore, IntegrationDeliveryRecord } from '../db/integrationStore';
-import { buildDeliveryContent } from './deliveryContent';
+import { buildDeliveryContent, deliveryIsInteractive } from './deliveryContent';
 import { claimDeadlineAt, MAX_DELIVERY_ATTEMPTS } from './deliverySchedule';
 import type { TurnCompletionNotifier } from './TurnCompletionNotifier';
 
@@ -114,7 +114,14 @@ async function retryOneDelivery<TTransaction>(
     }
     await notifier.deliverClaimed({
       delivery: claimed,
-      content: await buildDeliveryContent({ turn, turn_id: row.turn_id, state: turnState }),
+      content: await buildDeliveryContent({
+        turn,
+        turn_id: row.turn_id,
+        state: turnState,
+        // A rule delivery's channel is not the session's conversation, so it gets no buttons
+        // on a retry either — the same comparison the first attempt made.
+        interactive: deliveryIsInteractive(row),
+      }),
       signal,
       now,
     });

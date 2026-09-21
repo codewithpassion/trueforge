@@ -78,7 +78,11 @@ export interface InboundInteraction {
   sender: InboundSender;
   /** The paused turn the message named. The layer still checks the turn is really waiting. */
   turn_id: string;
-  tool_call_id: string;
+  /**
+   * The call an answer belongs to. An approval decision settles every call the turn holds —
+   * core refuses a resume that leaves one unresolved — so it names none.
+   */
+  tool_call_id?: string;
   decision: InteractionDecision;
   /**
    * Channel-owned handle for answering this click. Opaque to the layer: only the adapter that

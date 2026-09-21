@@ -31,7 +31,7 @@ describe('buildApprovalMessage', () => {
     argument_summary: 'service: api',
   };
 
-  it('offers an approve and a deny button carrying the turn and the call', () => {
+  it('offers an approve and a deny button naming the turn the decision settles', () => {
     const message = buildApprovalMessage({ turn_id: TURN_ID, intro: '', approvals: [approval] });
     const elements = buttons(message.blocks);
 
@@ -39,9 +39,11 @@ describe('buildApprovalMessage', () => {
       SLACK_INTERACTION_ACTIONS.approve,
       SLACK_INTERACTION_ACTIONS.deny,
     ]);
+    // No call id: core refuses a resume that leaves a held call unresolved, so one decision
+    // covers all of them and the resume reads the set off the turn itself.
     expect(elements.map(element => decodeActionValue(element.value))).toEqual([
-      { turn_id: TURN_ID, tool_call_id: 'call-1' },
-      { turn_id: TURN_ID, tool_call_id: 'call-1' },
+      { turn_id: TURN_ID },
+      { turn_id: TURN_ID },
     ]);
   });
 
@@ -62,14 +64,55 @@ describe('buildApprovalMessage', () => {
     expect(texts(message.blocks)[0]).toBe('I am about to restart *api*.');
   });
 
-  it('gives every held call its own pair of buttons', () => {
+  it('lists every held call under one decision, because a partial resume is refused', () => {
     const message = buildApprovalMessage({
       turn_id: TURN_ID,
       intro: '',
       approvals: [approval, { ...approval, tool_call_id: 'call-2', tool_name: 'drop_table' }],
     });
-    expect(buttons(message.blocks)).toHaveLength(4);
+
+    expect(buttons(message.blocks)).toHaveLength(2);
+    expect(buttons(message.blocks).map(element => element.text.text)).toEqual(['Approve all', 'Deny all']);
+    expect(texts(message.blocks)).toContain('*Approval needed* for 2 tool calls');
+    expect(texts(message.blocks)).toContain('`drop_table`');
     expect(message.text).toBe('Approval needed: restart_service, drop_table');
+  });
+
+  it('stays inside Slack’s block limit when a turn holds far too many calls', () => {
+    const message = buildApprovalMessage({
+      turn_id: TURN_ID,
+      intro: 'x',
+      approvals: Array.from({ length: 40 }, (_, index) => ({ ...approval, tool_call_id: `call-${String(index)}` })),
+    });
+
+    expect(message.blocks.length).toBeLessThanOrEqual(50);
+    expect(texts(message.blocks)).toContain('…and 20 more, all covered by one decision.');
+    // Still one decision, so the overflow is decided too.
+    expect(buttons(message.blocks)).toHaveLength(2);
+  });
+
+  it.each([
+    ['<!channel> deploy now', '&lt;!channel&gt; deploy now'],
+    ['<@U0OTHER>', '&lt;@U0OTHER&gt;'],
+    ['<https://evil.test|Approve here>', '&lt;https://evil.test|Approve here&gt;'],
+    ['a & b', 'a &amp; b'],
+  ])('escapes %p in the argument line, so a tool argument cannot mark up the message', (raw, escaped) => {
+    const message = buildApprovalMessage({
+      turn_id: TURN_ID,
+      intro: '',
+      approvals: [{ ...approval, argument_summary: raw }],
+    });
+    expect(texts(message.blocks)).toContain(escaped);
+  });
+
+  it('escapes the tool name too, since the model chose it', () => {
+    const message = buildApprovalMessage({
+      turn_id: TURN_ID,
+      intro: '',
+      approvals: [{ ...approval, tool_name: '<!here>' }],
+    });
+    expect(texts(message.blocks)).toContain('`&lt;!here&gt;`');
+    expect(message.text).toBe('Approval needed: &lt;!here&gt;');
   });
 
   it('cuts an argument line Slack would refuse rather than dropping the block', () => {
@@ -133,6 +176,15 @@ describe('buildQuestionMessage', () => {
     expect(buttons(message.blocks)[0]?.text.text.length).toBeLessThanOrEqual(75);
   });
 
+  it('escapes the question, since the model wrote it', () => {
+    const message = buildQuestionMessage({
+      turn_id: TURN_ID,
+      intro: '',
+      question: { ...question, question: 'Deploy <!channel>?' },
+    });
+    expect(texts(message.blocks)).toContain('Deploy &lt;!channel&gt;?');
+  });
+
   it('never offers more buttons than Slack accepts in one actions block', () => {
     const message = buildQuestionMessage({
       turn_id: TURN_ID,
@@ -158,7 +210,11 @@ describe('the value a button carries', () => {
     expect(decodeActionValue(encoded)?.option).toMatch(/^o+…$/);
   });
 
-  it.each(['', 'not json', '"a string"', '{"turn_id":1}', '{"tool_call_id":"c"}', '{"turn_id":"t"}'])(
+  it('carries the turn alone for an approval', () => {
+    expect(decodeActionValue(encodeActionValue({ turn_id: TURN_ID }))).toEqual({ turn_id: TURN_ID });
+  });
+
+  it.each(['', 'not json', '"a string"', '{"turn_id":1}', '{"tool_call_id":"c"}'])(
     'refuses %p rather than resuming something it cannot name',
     raw => {
       expect(decodeActionValue(raw)).toBeUndefined();

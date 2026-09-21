@@ -101,14 +101,46 @@ describe('summarizeToolArguments', () => {
     expect(summarizeToolArguments(JSON.stringify(wide)).length).toBeLessThanOrEqual(600);
   });
 
-  it('still reads when the model did not emit JSON', () => {
-    expect(summarizeToolArguments('not json at all')).toBe('not json at all');
+  // There are no keys to redact by, so nothing of it is shown.
+  it('hides arguments the model did not emit as JSON', () => {
+    const raw = 'Authorization: Bearer sk-live-abcdef';
+    expect(summarizeToolArguments(raw)).toBe(`(${String(raw.length)} characters of non-JSON arguments, hidden)`);
+    expect(summarizeToolArguments(raw)).not.toContain('sk-live');
   });
 
-  it('summarizes a nested value without spilling it', () => {
-    const summary = summarizeToolArguments(JSON.stringify({ filter: { owner: 'ada', token: 'nested-secret' } }));
-    expect(summary).toContain('filter: {');
-    expect(summary.length).toBeLessThanOrEqual(600);
+  it('redacts a credential nested under a harmless key', () => {
+    const summary = summarizeToolArguments(
+      JSON.stringify({ request: { headers: { Authorization: 'Bearer sk-live-abcdef' } } }),
+    );
+    expect(summary).toBe('request: {headers: {Authorization: [redacted]}}');
+    expect(summary).not.toContain('sk-live');
+  });
+
+  it('redacts a credential inside an array', () => {
+    const summary = summarizeToolArguments(JSON.stringify({ headers: [{ name: 'auth', value: 'Bearer sk-live-x' }] }));
+    expect(summary).not.toContain('sk-live');
+  });
+
+  it.each([
+    'Bearer sk-live-abcdef012345',
+    'sk-proj-abcdefghijklmnop',
+    'xoxb-1111-2222-abcdefghijk',
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc',
+    'ghp_abcdefghijklmnopqrstuvwxyz012345',
+  ])('redacts %p however innocent its key is', value => {
+    expect(summarizeToolArguments(JSON.stringify({ note: value }))).toBe('note: [redacted]');
+  });
+
+  it('leaves ordinary prose alone', () => {
+    expect(summarizeToolArguments(JSON.stringify({ note: 'restart the api service please' }))).toBe(
+      'note: restart the api service please',
+    );
+  });
+
+  it('stops naming keys past a sane depth rather than stringifying what is under them', () => {
+    const deep = { a: { b: { c: { d: { secret_thing: 'sk-live-abcdef012345' } } } } };
+    const summary = summarizeToolArguments(JSON.stringify(deep));
+    expect(summary).not.toContain('sk-live');
   });
 });
 
@@ -188,7 +220,9 @@ describe('readPendingAction', () => {
     expect(pending?.type === 'question' ? pending.question.options : undefined).toEqual([]);
   });
 
-  it('prefers the approval when a turn is held on both', async () => {
+  // Core refuses a resume that leaves a pending call unresolved, and one click cannot carry
+  // both a decision and an answer, so the set is not offered at all.
+  it('offers nothing when a turn is held on an approval and a question at once', async () => {
     const both: TerminalTurnState = {
       status: 'done',
       output: null,
@@ -221,7 +255,31 @@ describe('readPendingAction', () => {
       state: both,
     });
 
-    expect(pending?.type).toBe('approval');
+    expect(pending).toBeUndefined();
+  });
+
+  it('offers nothing when one held call cannot be read back', async () => {
+    const pending = await readPendingAction({
+      // Only `call-1` is in the page; `call-2` is held too, so the batch cannot be completed.
+      turn: turnEventReader([toolCallMessage([{ id: 'call-1', name: 'delete_index', args: '{}' }])]),
+      state: heldOnApproval(['call-1', 'call-2']),
+    });
+
+    expect(pending).toBeUndefined();
+  });
+
+  it('offers nothing when two client-side calls are waiting', async () => {
+    const pending = await readPendingAction({
+      turn: turnEventReader([
+        toolCallMessage([
+          { id: 'call-q', name: ASK_USER_QUESTION_TOOL, args: JSON.stringify({ question: 'Which?' }) },
+          { id: 'call-x', name: 'render_ui', args: '{}' },
+        ]),
+      ]),
+      state: heldOnResponse(['call-q', 'call-x']),
+    });
+
+    expect(pending).toBeUndefined();
   });
 
   it('is nothing when a client tool other than the question tool is waiting', async () => {

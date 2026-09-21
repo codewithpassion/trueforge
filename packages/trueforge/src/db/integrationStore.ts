@@ -54,7 +54,7 @@ export interface IntegrationDeliveryRecord {
   id: string;
   tenant_id: string;
   integration_id: string;
-  /** Where the message goes. Unique with `turn_id`, so one turn posts once per conversation. */
+  /** Where the message goes. Unique with the integration and turn, so each posts once. */
   conversation_key: string;
   turn_id: string;
   /**
@@ -162,8 +162,13 @@ export interface EnqueueIntegrationDeliveryInput {
   next_attempt_at: Date;
 }
 
-/** One outbox row is identified by its turn and where that turn's result is owed. */
+/**
+ * One outbox row is identified by the integration that owes it, the turn, and where it goes.
+ * Two integrations on one workspace can both have a rule for the same channel, and each owes
+ * its own post.
+ */
 export interface DeliveryTargetInput {
+  integration_id: string;
   turn_id: string;
   conversation_key: string;
 }
@@ -253,7 +258,7 @@ export interface IIntegrationStore<TTransaction = never> {
   // --- integration_delivery ---
   /**
    * Adds the outbox row owed for one terminal turn in one conversation. `enqueued` is false
-   * when that pair already has a row, or when the integration no longer exists.
+   * when that integration already owes that pair, or when the integration no longer exists.
    */
   enqueueDelivery(input: EnqueueIntegrationDeliveryInput, transaction?: TTransaction): Promise<{ enqueued: boolean }>;
   /** The turn's outbox row while it is still owed; undefined once it is claimed, sent or failed. */

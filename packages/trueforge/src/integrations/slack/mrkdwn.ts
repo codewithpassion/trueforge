@@ -6,8 +6,17 @@
 /** Marks where a code span was lifted out, so no other rule can rewrite its contents. */
 const PLACEHOLDER_MARK = '\u0000';
 
-function escapeForSlack(text: string): string {
+/**
+ * The three characters Slack's mrkdwn parser reads as markup. Anything a model produced goes
+ * through this before it reaches a block, or `<!channel>` in a tool argument pings the channel
+ * and `<https://evil|Approve here>` renders as a disguised link.
+ */
+export function escapeSlackText(text: string): string {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function escapeForSlack(text: string): string {
+  return escapeSlackText(text);
 }
 
 /** Fenced blocks first, then inline spans, so a backtick inside a fence is not treated as a span. */

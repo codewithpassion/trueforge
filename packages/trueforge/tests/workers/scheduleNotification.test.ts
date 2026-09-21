@@ -138,6 +138,7 @@ describe('notification rules inside SessionDO', () => {
     });
     expect(rows).toEqual([]);
     const delivery = await stores.integrationStore.getPendingDelivery({
+      integration_id: `int-${sessionId}`,
       turn_id: started.turn.id,
       conversation_key: `slack:T0TEAM:${CHANNEL_ID}:channel`,
     });

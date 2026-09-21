@@ -154,6 +154,7 @@ async function createIngress(options: { adapters: IntegrationAdapterRegistry; pe
       }),
     resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
     agentStore,
+    sessionStore,
     scheduleStore: { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) },
     turnSkillsResolverStore: new SqliteSkillStore(db),
     logger: winston.createLogger({ silent: true }),
@@ -602,6 +603,7 @@ describe('integration events ingress', () => {
       expect(deliveries).toHaveLength(1);
       expect(
         await integrationStore.getPendingDelivery({
+          integration_id: deliveries[0]?.integration_id ?? '',
           turn_id: deliveries[0]?.turn_id ?? '',
           conversation_key: deliveries[0]?.conversation_key ?? '',
         }),

@@ -1,10 +1,11 @@
 /**
  * OpenAI-compatible chat completions served to the Worker through miniflare's outbound service.
  * The base URL picks the behavior: https://llm.test/<scenario>/v1, where scenario is `text`,
- * `tools-<K>` (K datetime tool calls, then text), `sandbox` (one sandbox exec, then text), `slow`
- * (one delta, then a stalled stream), `gap` (one
- * delta, a second after `GAP_MS`, then a stalled stream), `delay-<ms>` (a text reply after ms), or `huge` (one
- * reply larger than D1 stores per value).
+ * `tools-<K>` (K datetime tool calls, then text), `ask-<K>` (K `ask_user_question` calls in ONE
+ * message, so the turn pauses holding all of them, then text), `sandbox` (one sandbox exec, then
+ * text), `slow` (one delta, then a stalled stream), `gap` (one delta, a second after `GAP_MS`,
+ * then a stalled stream), `delay-<ms>` (a text reply after ms), or `huge` (one reply larger than
+ * D1 stores per value).
  */
 export const HUGE_REPLY_BYTES = 2_100_000;
 
@@ -36,6 +37,24 @@ function textReply(text: string): Response {
   return sse(`${chunk({ role: 'assistant', content: text }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`);
 }
 
+interface MockToolCall {
+  name: string;
+  arguments: string;
+}
+
+/** One assistant message carrying every call, which is what makes a turn hold more than one. */
+function toolCallsReply(calls: MockToolCall[]): Response {
+  const toolCalls = calls.map((call, index) => ({
+    index,
+    id: `call_${String(index + 1)}`,
+    type: 'function',
+    function: { name: call.name, arguments: call.arguments },
+  }));
+  return sse(
+    `${chunk({ role: 'assistant', content: null, tool_calls: toolCalls }, null)}${chunk({}, 'tool_calls')}data: [DONE]\n\n`,
+  );
+}
+
 function toolCallReply(input: { toolName: string; callIndex: number; args?: Record<string, string> }): Response {
   const toolCall = {
     index: 0,
@@ -46,6 +65,10 @@ function toolCallReply(input: { toolName: string; callIndex: number; args?: Reco
   return sse(
     `${chunk({ role: 'assistant', content: null, tool_calls: [toolCall] }, null)}${chunk({}, 'tool_calls')}data: [DONE]\n\n`,
   );
+}
+
+function namedTool(body: ChatRequestBody, fragment: string): string | undefined {
+  return (body.tools ?? []).map(tool => tool.function?.name).find(name => name?.includes(fragment));
 }
 
 /** Bounded so a turn whose Durable Object was torn down cannot hold the test process open. */
@@ -125,6 +148,21 @@ export async function handleMockLlmRequest(request: Request): Promise<Response> 
       callIndex: 1,
       args: { intent: 'check the Code Mode client', command: 'mcp-client call-tool context7 query-docs {}' },
     });
+  }
+  const asks = /^ask-(\d+)$/.exec(scenario);
+  if (asks?.[1] !== undefined) {
+    const askName = namedTool(body, 'ask_user_question');
+    const answered = (body.messages ?? []).filter(message => message.role === 'tool').length;
+    if (answered > 0 || askName === undefined) {
+      return textReply('Finished after the question.');
+    }
+    // One message carrying them all, which is what makes the turn hold more than one call.
+    return toolCallsReply(
+      Array.from({ length: Number(asks[1]) }, (_unused, index) => ({
+        name: askName,
+        arguments: JSON.stringify({ question: `Question ${String(index + 1)}?`, options: ['staging', 'production'] }),
+      })),
+    );
   }
   const toolCalls = /^tools-(\d+)$/.exec(scenario);
   if (toolCalls?.[1] !== undefined) {

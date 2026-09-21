@@ -260,7 +260,9 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
             AND i.tenant_id = ${input.tenant_id}
             AND NOT EXISTS (
               SELECT 1 FROM integration_delivery AS d
-              WHERE d.turn_id = ${input.turn_id} AND d.conversation_key = ${input.conversation_key}
+              WHERE d.integration_id = ${input.integration_id}
+                AND d.turn_id = ${input.turn_id}
+                AND d.conversation_key = ${input.conversation_key}
             )`,
       )
       .onConflict(oc => oc.doNothing())
@@ -277,6 +279,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
     return await db
       .selectFrom('integration_delivery')
       .select([...DELIVERY_COLUMNS])
+      .where('integration_id', '=', input.integration_id)
       .where('turn_id', '=', input.turn_id)
       .where('conversation_key', '=', input.conversation_key)
       .where('status', '=', 'pending')
@@ -300,6 +303,7 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
         updated_at: nowIso(),
         next_attempt_at: input.next_attempt_at.toISOString(),
       })
+      .where('integration_id', '=', input.integration_id)
       .where('turn_id', '=', input.turn_id)
       .where('conversation_key', '=', input.conversation_key)
       .where('status', '=', 'pending')

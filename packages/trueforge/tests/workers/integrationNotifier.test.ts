@@ -132,7 +132,11 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
     const turn = await d1Persistence().sessionStore.getTurn({ session_id: sessionId, turn_id: started.turn.id });
     expect(turn?.state.status).toBe('done');
     expect(
-      await stores.integrationStore.getPendingDelivery({ turn_id: started.turn.id, conversation_key: conversationKey }),
+      await stores.integrationStore.getPendingDelivery({
+        integration_id: integrationId,
+        turn_id: started.turn.id,
+        conversation_key: conversationKey,
+      }),
     ).toBeUndefined();
   });
 
@@ -189,7 +193,11 @@ describe('TurnCompletionNotifier inside SessionDO', () => {
 
     expect(delivered).toHaveLength(1);
     expect(
-      await stores.integrationStore.getPendingDelivery({ turn_id: started.turn.id, conversation_key: conversationKey }),
+      await stores.integrationStore.getPendingDelivery({
+        integration_id: integrationId,
+        turn_id: started.turn.id,
+        conversation_key: conversationKey,
+      }),
     ).toBeUndefined();
   });
 

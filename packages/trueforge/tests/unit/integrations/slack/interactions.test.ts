@@ -51,7 +51,7 @@ function clickPayload(
     actions: [
       {
         action_id: overrides.action_id ?? SLACK_INTERACTION_ACTIONS.approve,
-        value: overrides.value ?? encodeActionValue({ turn_id: TURN_ID, tool_call_id: 'call-1' }),
+        value: overrides.value ?? encodeActionValue({ turn_id: TURN_ID }),
       },
     ],
   };
@@ -162,7 +162,6 @@ describe('what a verified click becomes', () => {
         integration_id: INTEGRATION_ID,
         conversation_key: 'slack:T0TEAM:C0GENERAL:1700000000.000100',
         turn_id: TURN_ID,
-        tool_call_id: 'call-1',
         decision: { type: 'approval', approved: true },
         sender: { id: APPROVER, display_name: 'ada' },
       },
@@ -249,14 +248,17 @@ describe('what a verified click becomes', () => {
   });
 
   // The reply URL is a capability: posting to whatever a payload names would be an SSRF.
-  it('refuses a reply URL that is not one of Slack’s hooks', async () => {
+  // The signature verified, so this is acknowledged and dropped rather than reported as a 401.
+  it.each([
+    'https://attacker.test/collect',
+    'https://hooks.slack.com.attacker.test/collect',
+    'https://hooks.slack.com@attacker.test/collect',
+    'http://hooks.slack.com/actions/T0TEAM/1/abc',
+  ])('ignores the reply URL %p, which is not one of Slack’s hooks', async responseUrl => {
     const received = await receiveInteraction(
-      await slackInteractionRequest({
-        payload: clickPayload({ response_url: 'https://attacker.test/collect' }),
-        nowMs: NOW_MS,
-      }),
+      await slackInteractionRequest({ payload: clickPayload({ response_url: responseUrl }), nowMs: NOW_MS }),
     );
-    expect(received).toEqual({ type: 'rejected', reason: 'Slack response URL is not a Slack hook URL' });
+    expect(received).toEqual({ type: 'ignore', reason: 'Slack response URL is not a Slack hook URL' });
   });
 });
 

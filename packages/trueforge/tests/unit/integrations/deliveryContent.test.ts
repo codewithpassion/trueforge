@@ -30,6 +30,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        interactive: true,
         state: {
           status: 'done',
           output: modelMessage('  the deploy is green  '),
@@ -45,6 +46,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        interactive: true,
         state: {
           status: 'done',
           output: modelMessage([
@@ -63,6 +65,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        interactive: true,
         state: { status: 'done', output: null, required_actions: [], completed_at: COMPLETED_AT },
       }),
     ).toEqual({ type: 'status', state: 'done', detail: 'The agent finished without a reply.' });
@@ -73,6 +76,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        interactive: true,
         state: {
           status: 'cancelled',
           reason: CancellationReason.ClientCancelled,
@@ -87,6 +91,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        interactive: true,
         state: { status: 'error', message: 'model timed out', completed_at: COMPLETED_AT },
       }),
     ).toEqual({
@@ -119,6 +124,7 @@ describe('buildDeliveryContent', () => {
     const content = await buildDeliveryContent({
       turn: turnEventReader([narration]),
       turn_id: TURN_ID,
+      interactive: true,
       state: {
         status: 'done',
         output: narration,
@@ -155,6 +161,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        interactive: true,
         state: { status: 'done', output: null, required_actions: [authRequired], completed_at: COMPLETED_AT },
       }),
     ).toEqual({ type: 'status', state: 'done', detail: 'The agent is waiting for input it cannot ask for here.' });

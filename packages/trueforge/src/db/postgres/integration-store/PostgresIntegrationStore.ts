@@ -239,7 +239,9 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
             AND i.tenant_id = ${input.tenant_id}
             AND NOT EXISTS (
               SELECT 1 FROM integration_delivery AS d
-              WHERE d.turn_id = ${input.turn_id} AND d.conversation_key = ${input.conversation_key}
+              WHERE d.integration_id = ${input.integration_id}
+                AND d.turn_id = ${input.turn_id}
+                AND d.conversation_key = ${input.conversation_key}
             )`,
       )
       .onConflict(oc => oc.doNothing())
@@ -256,6 +258,7 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     const row = await db
       .selectFrom('integration_delivery')
       .selectAll()
+      .where('integration_id', '=', input.integration_id)
       .where('turn_id', '=', input.turn_id)
       .where('conversation_key', '=', input.conversation_key)
       .where('status', '=', 'pending')
@@ -280,6 +283,7 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
         updated_at: now(),
         next_attempt_at: input.next_attempt_at,
       })
+      .where('integration_id', '=', input.integration_id)
       .where('turn_id', '=', input.turn_id)
       .where('conversation_key', '=', input.conversation_key)
       .where('status', '=', 'pending')

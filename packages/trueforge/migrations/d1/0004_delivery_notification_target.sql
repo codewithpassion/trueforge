@@ -11,4 +11,4 @@ UPDATE integration_delivery SET session_external_id = conversation_key;
 DROP INDEX IF EXISTS integration_delivery_turn_uq;
 
 CREATE UNIQUE INDEX integration_delivery_target_uq
-  ON integration_delivery (turn_id, conversation_key);
+  ON integration_delivery (integration_id, turn_id, conversation_key);

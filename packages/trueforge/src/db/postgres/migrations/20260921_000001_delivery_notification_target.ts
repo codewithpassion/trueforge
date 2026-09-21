@@ -6,9 +6,9 @@ import { sql, type Kysely } from 'kysely';
  * migrations/d1/0004_delivery_notification_target.sql.
  *
  * A notification rule posts a finished schedule run to a channel, and a second rule may post
- * the same run somewhere else, so "one delivery per turn" becomes "one per turn and
- * conversation". That also breaks the assumption that the conversation key names the session
- * the turn belongs to, which the retry sweep relied on, hence `session_external_id`.
+ * the same run somewhere else, so "one delivery per turn" becomes "one per integration, turn
+ * and conversation". That also breaks the assumption that the conversation key names the
+ * session the turn belongs to, which the retry sweep relied on, hence `session_external_id`.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`SET LOCAL lock_timeout = '5s'`.execute(db);
@@ -22,9 +22,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`UPDATE integration_delivery SET session_external_id = conversation_key`.execute(db);
 
   await sql`DROP INDEX IF EXISTS integration_delivery_turn_uq`.execute(db);
+  // Two integrations on one workspace can both hold a rule for the same channel, and each owes
+  // its own post, so the integration is part of what makes a delivery unique.
   await sql`
     CREATE UNIQUE INDEX integration_delivery_target_uq
-      ON integration_delivery (turn_id, conversation_key)
+      ON integration_delivery (integration_id, turn_id, conversation_key)
   `.execute(db);
 }
 

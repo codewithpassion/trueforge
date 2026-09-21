@@ -108,7 +108,9 @@ export function decideSlackInteraction(input: {
   }
   const replyContext = replyContextOf(payload.response_url);
   if (replyContext === undefined) {
-    return { type: 'rejected', reason: 'Slack response URL is not a Slack hook URL' };
+    // The signature verified, so this is not an authentication failure; there is simply
+    // nowhere safe to answer. Acknowledged and dropped rather than reported as a 401.
+    return { type: 'ignore', reason: 'Slack response URL is not a Slack hook URL' };
   }
 
   const action = payload.actions.find(candidate => slackInteractionKind(candidate.action_id) !== undefined);
@@ -153,7 +155,7 @@ export function decideSlackInteraction(input: {
       }),
       sender: senderOf(payload.user),
       turn_id: value.turn_id,
-      tool_call_id: value.tool_call_id,
+      ...(value.tool_call_id === undefined ? {} : { tool_call_id: value.tool_call_id }),
       decision,
       reply_context: replyContext,
     },

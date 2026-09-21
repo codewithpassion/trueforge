@@ -5,7 +5,7 @@
  */
 import type { PendingQuestion, PendingToolApproval } from '../pendingActions';
 import { SLACK_INTERACTION_ACTIONS } from './appCapabilities';
-import { toMrkdwn } from './mrkdwn';
+import { escapeSlackText, toMrkdwn } from './mrkdwn';
 
 /** Slack refuses a button label over 75 characters and a `value` over 2,000. */
 const BUTTON_TEXT_MAX = 75;
@@ -15,6 +15,11 @@ const BUTTON_VALUE_OPTION_MAX = 1500;
 const SECTION_TEXT_MAX = 3000;
 /** Slack allows at most five elements in one actions block; `ask_user_question` caps at five too. */
 const MAX_OPTION_BUTTONS = 5;
+/**
+ * Slack refuses a message over 50 blocks. Each listed call costs two, so this leaves room for
+ * the intro, the header, the overflow note and the one actions block.
+ */
+const MAX_LISTED_APPROVALS = 20;
 
 interface SlackTextObject {
   type: 'mrkdwn' | 'plain_text';
@@ -72,7 +77,8 @@ function context(text: string): SlackContextBlock {
  */
 export interface SlackActionValue {
   turn_id: string;
-  tool_call_id: string;
+  /** Present on an answer button; an approval settles every call the turn holds, so it has none. */
+  tool_call_id?: string;
   /** Present on an answer button: the option text that becomes the tool response. */
   option?: string;
 }
@@ -101,15 +107,20 @@ export function decodeActionValue(raw: string): SlackActionValue | undefined {
   const turnId = record['turn_id'];
   const toolCallId = record['tool_call_id'];
   const option = record['option'];
-  if (typeof turnId !== 'string' || typeof toolCallId !== 'string') {
+  if (typeof turnId !== 'string') {
+    return undefined;
+  }
+  if (toolCallId !== undefined && typeof toolCallId !== 'string') {
     return undefined;
   }
   if (option !== undefined && typeof option !== 'string') {
     return undefined;
   }
-  return option === undefined
-    ? { turn_id: turnId, tool_call_id: toolCallId }
-    : { turn_id: turnId, tool_call_id: toolCallId, option };
+  return {
+    turn_id: turnId,
+    ...(toolCallId === undefined ? {} : { tool_call_id: toolCallId }),
+    ...(option === undefined ? {} : { option }),
+  };
 }
 
 function introBlocks(intro: string): SlackBlock[] {
@@ -117,51 +128,58 @@ function introBlocks(intro: string): SlackBlock[] {
 }
 
 /**
- * One message per held turn, with an approve/deny pair per tool call. The argument line is
- * already redacted and truncated by the layer, so nothing here has to guess what is secret.
+ * One message per held turn, and **one** decision for all of it. Core refuses a resume that
+ * leaves any pending call unresolved, so a per-call button pair would produce a turn nothing
+ * could ever settle; the pair therefore covers every call the message lists.
+ *
+ * The argument line is already redacted and truncated by the layer, so nothing here has to
+ * guess what is secret — but everything a model produced is escaped, or `<!channel>` in a tool
+ * argument would ping the channel from inside a block.
  */
 export function buildApprovalMessage(input: {
   turn_id: string;
   intro: string;
   approvals: readonly PendingToolApproval[];
 }): SlackBlockMessage {
+  const total = input.approvals.length;
+  const listed = input.approvals.slice(0, MAX_LISTED_APPROVALS);
   const blocks: SlackBlock[] = [
     ...introBlocks(input.intro),
-    section(
-      input.approvals.length === 1
-        ? '*Approval needed*'
-        : `*Approval needed* for ${String(input.approvals.length)} tool calls`,
-    ),
+    section(total === 1 ? '*Approval needed*' : `*Approval needed* for ${String(total)} tool calls`),
   ];
-  for (const approval of input.approvals) {
-    blocks.push(section(`\`${approval.tool_name}\``));
+  for (const approval of listed) {
+    blocks.push(section(`\`${escapeSlackText(approval.tool_name)}\``));
     if (approval.argument_summary.length > 0) {
-      blocks.push(context(approval.argument_summary));
+      blocks.push(context(escapeSlackText(approval.argument_summary)));
     }
-    const value = encodeActionValue({ turn_id: input.turn_id, tool_call_id: approval.tool_call_id });
-    blocks.push({
-      type: 'actions',
-      block_id: `approval:${clamp(approval.tool_call_id, 200)}`,
-      elements: [
-        {
-          type: 'button',
-          action_id: SLACK_INTERACTION_ACTIONS.approve,
-          text: { type: 'plain_text', text: 'Approve', emoji: false },
-          value,
-          style: 'primary',
-        },
-        {
-          type: 'button',
-          action_id: SLACK_INTERACTION_ACTIONS.deny,
-          text: { type: 'plain_text', text: 'Deny', emoji: false },
-          value,
-          style: 'danger',
-        },
-      ],
-    });
   }
-  const names = input.approvals.map(approval => approval.tool_name).join(', ');
-  return { text: `Approval needed: ${names}`, blocks };
+  if (total > listed.length) {
+    blocks.push(context(`…and ${String(total - listed.length)} more, all covered by one decision.`));
+  }
+  const value = encodeActionValue({ turn_id: input.turn_id });
+  const allOfThem = total > 1;
+  blocks.push({
+    type: 'actions',
+    block_id: `approval:${clamp(input.turn_id, 200)}`,
+    elements: [
+      {
+        type: 'button',
+        action_id: SLACK_INTERACTION_ACTIONS.approve,
+        text: { type: 'plain_text', text: allOfThem ? 'Approve all' : 'Approve', emoji: false },
+        value,
+        style: 'primary',
+      },
+      {
+        type: 'button',
+        action_id: SLACK_INTERACTION_ACTIONS.deny,
+        text: { type: 'plain_text', text: allOfThem ? 'Deny all' : 'Deny', emoji: false },
+        value,
+        style: 'danger',
+      },
+    ],
+  });
+  const names = listed.map(approval => approval.tool_name).join(', ');
+  return { text: `Approval needed: ${escapeSlackText(names)}`, blocks };
 }
 
 /**
@@ -174,7 +192,7 @@ export function buildQuestionMessage(input: {
   question: PendingQuestion;
 }): SlackBlockMessage {
   const { question } = input;
-  const blocks: SlackBlock[] = [...introBlocks(input.intro), section(toMrkdwn(question.question))];
+  const blocks: SlackBlock[] = [...introBlocks(input.intro), section(escapeSlackText(question.question))];
   const options = question.options.slice(0, MAX_OPTION_BUTTONS);
   if (options.length > 0) {
     blocks.push({
@@ -189,7 +207,7 @@ export function buildQuestionMessage(input: {
     });
   }
   blocks.push(context('Reply in this thread to answer in your own words.'));
-  return { text: `Question: ${question.question}`, blocks };
+  return { text: `Question: ${escapeSlackText(question.question)}`, blocks };
 }
 
 /** Replaces the buttons with who decided and what, so the message cannot be acted on twice. */

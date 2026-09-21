@@ -134,8 +134,12 @@ separated. It gates tool approvals only:
 - Anyone else who clicks gets a short reply only they can see, and nothing changes.
 - An empty list means nobody can approve, so a held turn waits until someone is added.
 
-Answering a question is not gated: anyone who can already post in the thread could have asked
-it, so anyone in the thread can answer.
+Answering a question is not gated, whether by clicking an option button or by replying in the
+thread: anyone who can already post there could have asked the question, so anyone there can
+answer it. Only **Approve** and **Deny** need the list.
+
+Who decided is recorded on the session as well as in the thread, so it survives an edit to the
+Slack message.
 
 Find a Slack user id under the person's profile → **More** → **Copy member ID**.
 
@@ -252,6 +256,12 @@ Deleting the integration stops ingress at once. Sessions it opened stay.
   a question is the only thing a plain reply can answer.
 - **A schedule result posted by a rule never carries buttons.** A run held on an approval says so;
   the decision is taken in TrueForge, because a click in the channel cannot reach the run's thread.
+- **One decision covers the whole turn.** When an agent asks for several tool calls at once the
+  thread gets one **Approve all** / **Deny all** pair, because a turn cannot be resumed with only
+  part of it settled.
+- **A mixed hold is not offered here.** A turn waiting on both an approval and a question needs two
+  decisions, which one click cannot carry; the thread says so and the decision is taken in
+  TrueForge.
 
 ## Who the bot acts as
 

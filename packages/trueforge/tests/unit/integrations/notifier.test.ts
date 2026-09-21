@@ -208,7 +208,11 @@ describe('TurnCompletionNotifier on Node', () => {
     expect(fake.delivered).toHaveLength(1);
     expect(fake.delivered[0]).toMatchObject({ id: 'del-1', conversation_key: CONVERSATION_KEY, turn_id: TURN_ID });
     expect(
-      await harness.integrationStore.getPendingDelivery({ turn_id: TURN_ID, conversation_key: CONVERSATION_KEY }),
+      await harness.integrationStore.getPendingDelivery({
+        integration_id: harness.integrationId,
+        turn_id: TURN_ID,
+        conversation_key: CONVERSATION_KEY,
+      }),
     ).toBeUndefined();
 
     // Re-running the hook finds nothing pending, so the conversation is not answered twice.
@@ -280,7 +284,11 @@ describe('TurnCompletionNotifier on Node', () => {
     await runTurn({ harness, notifier });
 
     expect(
-      await harness.integrationStore.getPendingDelivery({ turn_id: TURN_ID, conversation_key: CONVERSATION_KEY }),
+      await harness.integrationStore.getPendingDelivery({
+        integration_id: harness.integrationId,
+        turn_id: TURN_ID,
+        conversation_key: CONVERSATION_KEY,
+      }),
     ).toBeUndefined();
     const [row] = await harness.db.selectFrom('integration_delivery').selectAll().execute();
     expect(row).toMatchObject({ status: 'failed', attempts: 1, last_error: 'No adapter for integration type slack' });
@@ -332,6 +340,7 @@ describe('TurnCompletionNotifier on Node', () => {
     // Burn every attempt but the last, the way repeated sweeps would.
     for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS - 1; attempt += 1) {
       const claimed = await harness.integrationStore.claimDelivery({
+        integration_id: harness.integrationId,
         turn_id: TURN_ID,
         conversation_key: CONVERSATION_KEY,
         next_attempt_at: new Date(),
@@ -377,7 +386,11 @@ describe('TurnCompletionNotifier on Node', () => {
 
     expect(fake.delivered).toHaveLength(0);
     expect(
-      await harness.integrationStore.getPendingDelivery({ turn_id: TURN_ID, conversation_key: CONVERSATION_KEY }),
+      await harness.integrationStore.getPendingDelivery({
+        integration_id: harness.integrationId,
+        turn_id: TURN_ID,
+        conversation_key: CONVERSATION_KEY,
+      }),
     ).toMatchObject({
       status: 'pending',
     });
@@ -591,6 +604,21 @@ describe('notification rules for a finished schedule run', () => {
     await notifier.deliverForTurn({ session, turn_id: TURN_ID });
 
     expect(fake.delivered.map(delivery => delivery.content.type)).toEqual(['status']);
+  });
+
+  it('does not report a held run as a success, because it has finished nothing', async () => {
+    harness = await scheduleHarness({ rules: [rule({ outcome: 'success' })] });
+    const fake = fakeChannelAdapter();
+    const notifier = notifierFor({ harness, fake });
+
+    await holdTurnOnApproval(harness);
+    const session = await sessionHandle(harness);
+    if (session === undefined) {
+      throw new Error('session was not created');
+    }
+    await notifier.deliverForTurn({ session, turn_id: TURN_ID });
+
+    expect(fake.delivered).toHaveLength(0);
   });
 
   it('a second pass over the same turn posts nothing more', async () => {

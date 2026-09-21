@@ -1,5 +1,6 @@
-import type { SessionHandle, Sessions, TurnInputItem } from '@truefoundry/trueforge-core/agent-session';
+import type { ISessionStore, SessionHandle, Sessions, TurnInputItem } from '@truefoundry/trueforge-core/agent-session';
 import { EventType } from '@truefoundry/trueforge-core/core/events/schema';
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IIntegrationStore, IntegrationRecord } from '../db/integrationStore';
@@ -54,6 +55,8 @@ export interface IntegrationRouterDeps<TTransaction> {
   turnExecutor: TurnExecutor;
   /** Stores bound to the integration's creator for the conversation's agent. */
   resolveTurnStores: (agent: AgentRecord) => TurnStores;
+  /** Writes who decided onto the session; the store is the only place that outlives Slack. */
+  sessionStore: Pick<ISessionStore, 'updateSession'>;
   notifier: TurnCompletionNotifier<TTransaction>;
   /**
    * Runs the post-start delivery flush outside the acknowledgement the channel is waiting on
@@ -80,6 +83,16 @@ function senderMetadata(sender: InboundSender): Record<string, string> {
 /** A denial names who denied it, because that is the only record the agent ever sees. */
 function denialReason(sender: InboundSender): string {
   return `Denied by ${sender.display_name} (${sender.id}) from the channel.`;
+}
+
+/** Short, fixed vocabulary, because it is read back out of session metadata. */
+function decisionMetadataValue(interaction: InboundInteraction): string {
+  const { decision } = interaction;
+  return decision.type === 'approval'
+    ? decision.approved
+      ? 'tool_approval:allow'
+      : 'tool_approval:deny'
+    : 'tool_response:answered';
 }
 
 /** The line that replaces the buttons, so the thread shows who decided and what. */
@@ -250,6 +263,13 @@ export class IntegrationRouter<TTransaction> {
       await release();
       return { type: 'not_pending', reason: 'That conversation no longer has a session' };
     }
+    // Two integrations for one workspace share a conversation key, so the session has to be
+    // this integration's: otherwise one integration's approvers could settle the other's turn.
+    const source = session.record.source;
+    if (source?.type !== 'integration' || source.id !== integration.id) {
+      await release();
+      return { type: 'not_pending', reason: 'That conversation belongs to another integration' };
+    }
 
     const stale = {
       type: 'not_pending',
@@ -285,7 +305,7 @@ export class IntegrationRouter<TTransaction> {
       session,
       session_external_id: sessionExternalId,
       conversation_key: interaction.conversation_key,
-      input: [turnInput],
+      input: turnInput,
     });
     if (!started.ok) {
       await release();
@@ -297,12 +317,44 @@ export class IntegrationRouter<TTransaction> {
       });
       return { type: 'turn_failed', failure: started.failure };
     }
+    await this.#recordDecider({ session, interaction });
     return {
       type: 'resumed',
       turn_id: started.turn_id,
       session_id: session.session_id,
       summary: decisionSummary({ interaction }),
     };
+  }
+
+  /**
+   * Keeps who decided on the session, not only in a Slack message a workspace admin can edit.
+   * Metadata is a full replace, and the guard row means at most one resume per turn, so the
+   * merge cannot race itself. Best-effort: a decision that was taken must not be undone by a
+   * bookkeeping failure.
+   */
+  async #recordDecider(input: { session: SessionHandle; interaction: InboundInteraction }): Promise<void> {
+    const { session, interaction } = input;
+    try {
+      await this.#deps.sessionStore.updateSession({
+        tenant_id: session.tenant_id,
+        session_id: session.session_id,
+        agent: undefined,
+        title: undefined,
+        metadata: {
+          ...session.record.metadata,
+          'integration.decided_by_id': interaction.sender.id.slice(0, METADATA_VALUE_MAX_LENGTH),
+          'integration.decided_by_name': interaction.sender.display_name.slice(0, METADATA_VALUE_MAX_LENGTH),
+          'integration.decided_at': new Date().toISOString(),
+          'integration.decision': decisionMetadataValue(interaction),
+        },
+      });
+    } catch (error) {
+      this.#deps.logger.warn('Integration decision was applied but not recorded on the session', {
+        integrationId: interaction.integration_id,
+        turnId: interaction.turn_id,
+        ...extractErrorLogFields(error),
+      });
+    }
   }
 
   /** What a finished tip is waiting on, if anything. Costs nothing for a tip holding nothing. */
@@ -394,35 +446,40 @@ export function resumeEventId(turnId: string): string {
   return `resume:${turnId}`;
 }
 
-/** The turn input a decision becomes, or undefined when the turn is not holding that call. */
+/**
+ * The whole batch a decision becomes, or undefined when the turn is not holding what the click
+ * names. Core refuses a send that leaves any pending call unresolved, so one approval decision
+ * settles every held call — which is exactly what the single button pair offered.
+ */
 function resumeInput(input: {
   interaction: InboundInteraction;
-  pending: Awaited<ReturnType<typeof readPendingAction>>;
-}): TurnInputItem | undefined {
+  pending: PendingAction | undefined;
+}): TurnInputItem[] | undefined {
   const { interaction, pending } = input;
   const { decision } = interaction;
   if (decision.type === 'approval') {
     if (pending?.type !== 'approval') {
       return undefined;
     }
-    const held = pending.approvals.find(approval => approval.tool_call_id === interaction.tool_call_id);
-    if (held === undefined) {
-      return undefined;
-    }
-    return {
+    const approval = decision.approved
+      ? ({ status: 'allow' } as const)
+      : ({ status: 'deny', reason: denialReason(interaction.sender) } as const);
+    return pending.approvals.map(held => ({
       type: EventType.USER_TOOL_APPROVAL,
       thread_id: held.thread_id,
       tool_call_id: held.tool_call_id,
-      approval: decision.approved ? { status: 'allow' } : { status: 'deny', reason: denialReason(interaction.sender) },
-    };
+      approval,
+    }));
   }
   if (pending?.type !== 'question' || pending.question.tool_call_id !== interaction.tool_call_id) {
     return undefined;
   }
-  return {
-    type: EventType.USER_TOOL_RESPONSE,
-    thread_id: pending.question.thread_id,
-    tool_call_id: pending.question.tool_call_id,
-    content: decision.text,
-  };
+  return [
+    {
+      type: EventType.USER_TOOL_RESPONSE,
+      thread_id: pending.question.thread_id,
+      tool_call_id: pending.question.tool_call_id,
+      content: decision.text,
+    },
+  ];
 }

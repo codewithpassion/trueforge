@@ -21,7 +21,14 @@ session, so a held run is reported as waiting rather than offered a dead Approve
 Slack app manifest now carries the `interactivity` block, so **an app created from an earlier
 manifest must be updated from the regenerated one** before any button works.
 
-Schema: `integration_delivery` is now unique on `(turn_id, conversation_key)` rather than
-`turn_id`, so one turn can owe a message to several channels, and carries `session_external_id`
-because a rule's channel no longer names the session. Migration paired on SQLite, Postgres and
-D1 (`0004_delivery_notification_target.sql`).
+One decision settles the whole turn: core refuses a resume that leaves any held tool call
+unresolved, so several gated calls get one **Approve all** / **Deny all** pair, and a set one
+interaction cannot settle — an approval plus a question, say — is not offered buttons at all.
+Everything a model produced is escaped before it reaches a block, argument summaries redact
+credentials recursively and by value shape, and non-JSON arguments are never shown.
+
+Schema: `integration_delivery` is now unique on `(integration_id, turn_id, conversation_key)`
+rather than `turn_id`, so one turn can owe a message to several channels and two integrations
+can each owe the same one, and it carries `session_external_id` because a rule's channel no
+longer names the session. Migration paired on SQLite, Postgres and D1
+(`0004_delivery_notification_target.sql`).
