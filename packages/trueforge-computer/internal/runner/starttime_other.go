@@ -8,7 +8,3 @@ package runner
 func processStartTime(_ int) (uint64, bool) {
 	return 0, false
 }
-
-func processCmdline(_ int) (string, bool) {
-	return "", false
-}

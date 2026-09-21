@@ -15,8 +15,3 @@ func processStartTime(pid int) (uint64, bool) {
 	started := info.Proc.P_starttime
 	return uint64(started.Sec)*1_000_000 + uint64(started.Usec), true
 }
-
-// processCmdline has no cheap equivalent here; the start time alone identifies the process.
-func processCmdline(_ int) (string, bool) {
-	return "", false
-}

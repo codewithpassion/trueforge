@@ -71,8 +71,13 @@ func Open(stateDir string, options Options) (*Log, error) {
 	if options.MaxBytes <= 0 {
 		options.MaxBytes = DefaultMaxBytes
 	}
-	if options.Keep < 0 {
+	// Zero would mean "rotate by deleting the log", which is nobody's intent from a zero
+	// value; an operator who wants that passes a negative Keep.
+	if options.Keep == 0 {
 		options.Keep = DefaultKeep
+	}
+	if options.Keep < 0 {
+		options.Keep = 0
 	}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", stateDir, err)

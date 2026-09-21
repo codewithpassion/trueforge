@@ -25,11 +25,17 @@ import (
 
 type harness struct {
 	agent    *agent.Agent
+	commands *runner.Runner
 	stateDir string
 	workdir  string
 }
 
 func newHarness(t *testing.T, options policy.Options) *harness {
+	t.Helper()
+	return newHarnessWithRunner(t, options, runner.Options{})
+}
+
+func newHarnessWithRunner(t *testing.T, options policy.Options, runnerOptions runner.Options) *harness {
 	t.Helper()
 	stateDir := t.TempDir()
 	workdir := filepath.Join(stateDir, "sessions")
@@ -51,13 +57,13 @@ func newHarness(t *testing.T, options policy.Options) *harness {
 		t.Fatalf("audit: %v", err)
 	}
 	t.Cleanup(func() { _ = log.Close() })
-	commands := runner.New(runner.Options{
-		StateDir:   stateDir,
-		DefaultCwd: workdir,
-		Logger:     discardLogger(),
-	})
+	runnerOptions.StateDir = stateDir
+	runnerOptions.DefaultCwd = workdir
+	runnerOptions.Logger = discardLogger()
+	commands := runner.New(runnerOptions)
 	return &harness{
 		agent:    agent.New(rules, commands, files.NewTransfers(files.Options{ResolveWrite: rules.CheckWrite}), log, discardLogger()),
+		commands: commands,
 		stateDir: stateDir,
 		workdir:  options.Workdir,
 	}
@@ -480,6 +486,52 @@ func TestTheStateDirectoryIsNotReachableByDefault(t *testing.T) {
 			t.Fatalf("%s was readable: %+v", path, reply)
 		}
 	}
+}
+
+// A refused exec must not leave its reservation behind: under sustained overload — the very
+// case the queue cap exists for — every refusal would otherwise leak a map entry.
+func TestARefusedExecReleasesItsReservation(t *testing.T) {
+	h := newHarnessWithRunner(t, policy.Options{}, runner.Options{MaxConcurrent: 1, MaxQueue: 1})
+
+	go func() {
+		frame, _ := json.Marshal(map[string]any{
+			"id": "blocker", "op": protocol.OpExec, "command": "sleep 5",
+			"cwd": nil, "env": map[string]string{}, "timeout_ms": 30000,
+		})
+		h.agent.Dispatch(protocol.Envelope{ID: "blocker", Op: protocol.OpExec}, frame)
+	}()
+	go func() {
+		frame, _ := json.Marshal(map[string]any{
+			"id": "waiting", "op": protocol.OpExec, "command": "sleep 5",
+			"cwd": nil, "env": map[string]string{}, "timeout_ms": 30000,
+		})
+		h.agent.Dispatch(protocol.Envelope{ID: "waiting", Op: protocol.OpExec}, frame)
+	}()
+	time.Sleep(700 * time.Millisecond)
+
+	head := protocol.Envelope{ID: "overflow", Op: protocol.OpExec}
+	if err := h.agent.Prepare(head); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	frame, _ := json.Marshal(map[string]any{
+		"id": "overflow", "op": protocol.OpExec, "command": "true",
+		"cwd": nil, "env": map[string]string{}, "timeout_ms": 5000,
+	})
+	var reply protocol.Reply
+	if err := json.Unmarshal(h.agent.Dispatch(head, frame), &reply); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if reply.Error == nil || reply.Error.Code != protocol.ErrQueueFull {
+		t.Fatalf("reply = %+v, want queue_full", reply)
+	}
+
+	// The id must be free again, which it is not if the refusal left the reservation behind.
+	if err := h.agent.Prepare(head); err != nil {
+		t.Fatalf("the refused exec leaked its reservation: %v", err)
+	}
+	h.agent.OnRefused(head)
+	h.commands.Cancel("blocker")
+	h.commands.Cancel("waiting")
 }
 
 func TestUnknownOpIsAnswered(t *testing.T) {

@@ -20,10 +20,12 @@ type groupRecord struct {
 	RequestID string `json:"request_id"`
 	Command   string `json:"command"`
 	StartedAt string `json:"started_at"`
-	// StartTime is the kernel's start tick for the group leader and Cmdline is its argv.
-	// Together with the pid they identify the process we started; a pid alone is recycled.
+	// StartTime is the kernel's start tick for the group leader. With the pid it identifies
+	// the process we started; a pid alone is recycled within hours. Deliberately the only
+	// identity check: argv is not, because a shell replaces itself with a lone command
+	// (dash and bash do, busybox ash does not), and the start tick survives that exec while
+	// argv does not — comparing it would skip exactly the orphan the spike documented.
 	StartTime uint64 `json:"start_time"`
-	Cmdline   string `json:"cmdline"`
 }
 
 type records struct {
@@ -39,14 +41,12 @@ func (r *records) add(pgid int, requestID string, command string) error {
 		return fmt.Errorf("create %s: %w", r.dir, err)
 	}
 	startTime, _ := processStartTime(pgid)
-	cmdline, _ := processCmdline(pgid)
 	encoded, err := json.Marshal(groupRecord{
 		PGID:      pgid,
 		RequestID: requestID,
 		Command:   truncate(command, 4096),
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
 		StartTime: startTime,
-		Cmdline:   cmdline,
 	})
 	if err != nil {
 		return fmt.Errorf("encode group record: %w", err)
@@ -123,12 +123,6 @@ func stillOurs(record groupRecord) (bool, string) {
 	}
 	if current != record.StartTime {
 		return false, "the pid has been reused by a newer process"
-	}
-	if record.Cmdline != "" {
-		cmdline, readable := processCmdline(record.PGID)
-		if readable && cmdline != record.Cmdline {
-			return false, "the pid now runs a different command"
-		}
 	}
 	return true, ""
 }

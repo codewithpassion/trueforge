@@ -237,9 +237,10 @@ func (r *Runner) claim(id string) (*execution, error) {
 		r.running[id] = entry
 	}
 	if r.queued >= r.options.MaxQueue {
-		if !reserved {
-			delete(r.running, id)
-		}
+		// The request is refused either way, so the reservation goes too — otherwise
+		// sustained overload leaves an entry and a live context behind for every refusal.
+		delete(r.running, id)
+		entry.cancel()
 		return nil, ErrQueueFull
 	}
 	r.queued++

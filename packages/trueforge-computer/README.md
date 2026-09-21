@@ -75,7 +75,8 @@ docker run -d --restart unless-stopped \
 The entrypoint is `trueforge-computer run`, so any extra arguments are `run`'s. The first
 start enrols and serves; a restart finds the credential in the volume and skips straight to
 serving, so leaving the now spent code in place does no harm. `--url` and `--code` work as
-arguments too, but `docker inspect` shows them and the environment is the better place.
+arguments too, but then the code is visible in `ps` on the host for as long as the container
+runs; in the environment it is at least confined to `docker inspect`.
 
 The image is busybox-based, because `exec` needs a shell. It runs as uid 1000, keeps its state
 in the named volume, and carries a CA bundle — without one the client cannot verify the

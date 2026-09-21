@@ -393,6 +393,23 @@ func TestSweepNeverKillsOnExistenceAlone(t *testing.T) {
 	}
 }
 
+// A simple command is the case the spike documented (`/bin/sh -c sleep 400` reparented to
+// PID 1), and it is the one a shell may exec into — dash and bash replace themselves for a
+// lone command, busybox ash does not. The sweep must reap it either way, so it identifies a
+// group by pid and start tick and not by what the pid is currently running.
+func TestSweepKillsASimpleCommandTheShellMayHaveExecedInto(t *testing.T) {
+	stateDir := t.TempDir()
+	r := newTestRunner(t, runner.Options{StateDir: stateDir})
+	go func() { run(t, r, "orphan", "sleep 30", 120*time.Second) }()
+	waitFor(t, 5*time.Second, func() bool { return countRecords(t, stateDir) == 1 })
+	// Long enough for a shell that execs to have done so.
+	time.Sleep(500 * time.Millisecond)
+
+	if killed := runner.Sweep(stateDir, discardLogger()); killed != 1 {
+		t.Fatalf("swept %d groups, want 1", killed)
+	}
+}
+
 func TestSweepIgnoresRecordsWhoseProcessIsGone(t *testing.T) {
 	stateDir := t.TempDir()
 	r := newTestRunner(t, runner.Options{StateDir: stateDir})
