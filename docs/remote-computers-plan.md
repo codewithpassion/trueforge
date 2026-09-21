@@ -113,6 +113,24 @@ Capabilities: `GET /capabilities` gains `computers.enabled`. `resolveSandboxUsab
 
 **Config and operation.** Flags, env (`TRUEFORGE_URL`, `TRUEFORGE_ENROLL_CODE`, `TRUEFORGE_STATE_DIR`) or `config.toml`. JSON logs to stderr (journald under systemd) plus a local audit file. Commands: `enroll | run | install-service | uninstall-service | status`.
 
+### The client as built (Phase 8b)
+
+`packages/trueforge-computer` is the binary; `packages/trueforge-computer/README.md` is its operator documentation. Where it differs from the paragraphs above:
+
+- **Config is `config.json`, not `config.toml`.** It holds only the server URL, the computer id and the reported hostname; everything else is a flag or an environment variable. JSON needs no dependency and the repository already reads it everywhere.
+- **`run` can enroll itself.** Section 3's `docker run` command re-passes a single-use code on every restart. `run --url --code` therefore enrolls only when `<state_dir>/credential` is absent and ignores the code otherwise, and the image's entrypoint is `trueforge-computer run` so the copied command is just the two flags.
+- **`enroll --name` overrides the reported hostname**, at enrollment and on every later `hello`; the enrollment body itself stays the frozen `{ enrollment_code, hostname, os, arch, version }`.
+- **`install-service` and `uninstall-service` are stubs** that print how to install the unit and exit 4; a working systemd unit with `KillMode=control-group` ships at `packages/trueforge-computer/packaging/trueforge-computer.service`. Phase 8d replaces them.
+- **Exit codes:** 0 clean, 1 failure, 2 usage or not enrolled or refusing root, 3 revoked, 4 not ready (`status` unenrolled, or a deferred command).
+- **Output truncation keeps head and tail** inside one 1 MiB budget across both streams, 256 KiB of each end per stream, with `[... N bytes dropped ...]` naming the loss and both seams cut back to rune boundaries. This is change 9 of Section 10, implemented.
+- **The frame guard is 8 MiB**, an eighth of the measured platform limit, because JSON escaping can multiply a capped 1 MiB of output several times over. An answer above it is replaced with a `frame_too_large` error reply rather than written.
+- **A reply whose socket has closed is dropped**, never written to a newer one, so the relay cannot receive an answer it has no pending entry for. The consequence is that every op is at-least-once once the relay reissues; the README states it.
+- **The exec registry outlives any one socket.** A `cancel` arriving after a reconnect still reaches a command the previous connection started, which is what change 11 needs from this side.
+- **4409 waits at least five minutes** (jittered to 7.5), and a 401 on the upgrade takes the same slow path. Neither disturbs the exponential step, which only resets after a connection that lasted 60 s. This is change 17.
+- **Startup sweep:** the daemon records one file per live process group under `<state_dir>/running/`, matching the group leader's `/proc` start tick on Linux so a recycled pid is not killed by mistake, and reaps them at the next start. macOS has no portable equivalent and falls back to existence only. This is change 10.
+- **Tests are `_test.go` files beside the code**, not under a package-top-level `tests/`: Go's test tooling requires it for unexported symbols, and the root `AGENTS.md` rule is shaped for the TypeScript packages. The shared wire fixtures do sit at the package top level, in `testdata/protocol` and `testdata/enroll`, so the server's schemas can be checked against the same bytes.
+- **CI** gets a `trueforge-computer` path filter, matrix id and root `test:trueforge-computer` (vet, `gofmt -l`, `go test ./...`), with `actions/setup-go` conditional on that matrix entry. It stays out of the aggregate `test` script, which the Windows job runs and which has no Go. The package's scripts prefer a local toolchain and fall back to a `golang` container, so one command works in both places.
+
 ## 8. Phases
 
 Process as in the sandbox plan: forge agents in worktrees, an Opus adversarial review per phase with re-reviewed fix rounds, a PROGRESS.md cycle entry before each commit, a changeset for published packages, landing by fast-forward onto `main` (the sandbox plan said cherry-pick; this plan uses fast-forward), and deploying from `main`. Never push `main` to origin. Workers ships first, because the relay pattern is proven there and the owner's live deploy is Workers.
