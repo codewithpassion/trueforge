@@ -230,6 +230,13 @@ server asks for; none of it contains a determined one. Size the account accordin
   holds the credential, the config that decides where the next start connects, and the
   records the next sweep kills by. A command running as the same user can of course still
   read it — which is the argument for that user being the daemon's own.
+- **Do not rely on the server to confine file paths.** TrueForge keeps `file_get` and
+  `file_put` inside the session directory by resolving `.` and `..` and comparing the text of
+  the path. That is lexical: a symlink inside the session directory pointing anywhere else is
+  invisible to it. The checks on this side resolve symlinks before comparing, so the state
+  directory is protected regardless — but for everything else on the machine, **`--workdir-only`
+  is the only thing that catches it.** Turn it on for any computer where the agent should not
+  be able to read outside its session directories.
 - **Uploads are written to a temporary file and moved into place** only after their digest
   agrees, so a failed or abandoned transfer cannot truncate or delete a file that was
   already there, and only regular files are ever read or written. An existing file's
@@ -311,8 +318,8 @@ an agent does with the files the daemon's user can read. Those are yours.
 A reply is written back on the socket the request arrived on. If that socket has closed, the
 reply is dropped rather than sent on the next one, because the server could not match it; the
 drop is recorded in the audit log as `reply_dropped`, which means the work was done and its
-outcome is unknown to the server. The server may reissue the request after a reconnect, so
-**an operation can run twice**. Commands should be written with that in mind.
+outcome is unknown to the server. **The protocol permits a reissue**, so nothing here
+guarantees an operation runs once; what TrueForge itself does is below.
 
 File uploads are safe against this. Chunks may arrive in any order — the relay pipelines a
 window of them and each is handled on its own goroutine — so a chunk ahead of its turn waits
@@ -326,13 +333,25 @@ middle of a ten-minute build should not throw the build away.
 
 ### What the server does about it
 
-TrueForge does not reissue an `exec` after a dropped reply or a disconnect. It reports the
-outcome as unknown, sends a `cancel` for the old request id on the new socket, and retries
-only under a **new** id. So in practice a command runs once; the at-least-once caveat is
-about what this protocol permits, not about what the server does.
+TrueForge never reissues an `exec`. It reports the outcome as unknown, saying the command may
+still be running, and an agent that tries again does so under a **new** id. So in practice a
+command runs once; the at-least-once caveat above is about what the protocol permits, not
+about what the server does.
+
+When the **socket** dies — a drop, a 4408 stale close, a replacement, a revoke, a rotate, or
+the server closing a frozen host's socket — the relay records the orphaned ids and sends a
+`cancel` for each of them on the next socket that connects. So an abandoned command is
+normally cleaned up within seconds of reconnecting.
+
+**The exception is a relay reset**: a deploy against an active relay, or a forced eviction.
+The relay dies together with the ids it was holding, so no `cancel` ever follows and the
+command runs until **its own `timeout_ms` deadline** and exits 124. Nothing else stops it.
+That is the case to keep `--max-exec-seconds` sane for, and the reason a command here should
+be one that is safe to leave running to its deadline.
 
 A request id that names something still running here comes back as `duplicate_id`, which the
-server reads as "still going" rather than as a bad frame.
+server reads as "still going" rather than as a bad frame. It is inert against TrueForge
+itself, whose ids are random UUIDs.
 
 ## Troubleshooting
 
