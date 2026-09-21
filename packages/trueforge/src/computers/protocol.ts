@@ -1,8 +1,9 @@
 /**
- * Frozen v1 wire contract between a remote computer client and the relay.
+ * The v1 wire contract between a remote computer client and the relay.
  * One JSON text frame per message, snake_case fields. Heartbeats are the bare literals below so
  * `setWebSocketAutoResponse` can answer them without waking the Durable Object.
- * Changing anything here breaks deployed clients; add a new `protocol_version` instead.
+ * Treat it as frozen: `hello.workdir` was added while no client had shipped, and the next shape
+ * change needs a new `protocol_version` instead.
  */
 import { z } from 'zod';
 
@@ -21,7 +22,10 @@ export const RELAY_GRACE_MS = 10_000;
 export const MAX_IN_FLIGHT_EXEC = 4;
 export const MAX_QUEUE_DEPTH = 32;
 
-/** Close codes. 4401 is terminal for the client: it stops retrying and exits. */
+// Close codes. 4401 is terminal for the client: it stops retrying and exits.
+
+/** The hello could not be read, so the server knows nothing about this machine it can act on. */
+export const CLOSE_BAD_HELLO = 4400;
 export const CLOSE_REVOKED = 4401;
 export const CLOSE_REPLACED = 4409;
 export const CLOSE_STALE = 4408;
@@ -40,15 +44,36 @@ export const ComputerCapabilitiesSchema = z.object({
 });
 export type ComputerCapabilities = z.infer<typeof ComputerCapabilitiesSchema>;
 
-/**
- * A POSIX user name. Narrow because it becomes part of the session directory, which is a path the
- * server hands to a shell — anything looser is an injection waiting for a hostile or broken client.
- */
+/** A POSIX user name, reported for the UI and the activity log. */
 const RUN_AS_USER_PATTERN = /^[a-z_][a-z0-9_-]{0,31}$/;
 
+const WORKDIR_MAX_LENGTH = 1024;
+
 /**
- * Bounds, not new fields: the wire shape is frozen, but a client is not trusted, and these strings
- * are written to the database, shown in the UI and put in front of the model.
+ * The client's sessions root is the one path the server builds every session directory from, and it
+ * arrives from a machine nobody here controls. It must be absolute, already normalised, and free of
+ * anything that would change meaning in a shell or in the lexical containment check: an unnormalised
+ * root silently stops matching that check and refuses every file transfer.
+ */
+export function isUsableWorkdir(value: string): boolean {
+  if (!value.startsWith('/') || value.length < 2 || value.length > WORKDIR_MAX_LENGTH) {
+    return false;
+  }
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f || `'"\`\\$`.includes(character)) {
+      return false;
+    }
+  }
+  return value
+    .split('/')
+    .slice(1)
+    .every(segment => segment !== '' && segment !== '.' && segment !== '..');
+}
+
+/**
+ * Bounds and one field the machine alone can know: a client is not trusted, and these strings are
+ * written to the database, shown in the UI and put in front of the model.
  */
 export const HelloMessageSchema = z.object({
   type: z.literal('hello'),
@@ -58,6 +83,8 @@ export const HelloMessageSchema = z.object({
   arch: z.string().min(1).max(32),
   version: z.string().min(1).max(64),
   run_as_user: z.string().regex(RUN_AS_USER_PATTERN),
+  /** Absolute path of the root the client keeps its per-session directories under. */
+  workdir: z.string().refine(isUsableWorkdir),
   capabilities: ComputerCapabilitiesSchema,
 });
 export type HelloMessage = z.infer<typeof HelloMessageSchema>;

@@ -14,6 +14,14 @@ import (
 // ErrDenied is returned for anything the local policy refuses.
 var ErrDenied = errors.New("refused by the local policy")
 
+// ErrNoWorkingDirectory means a command named a directory to run in that is not there and is not
+// this client's to create. Go reports a missing cmd.Dir as "fork/exec /bin/sh: no such file or
+// directory", which sends everyone looking at the shell instead of at the path.
+var ErrNoWorkingDirectory = errors.New("working directory does not exist")
+
+// ErrNotADirectory means the path a command would run in is a file.
+var ErrNotADirectory = errors.New("working directory is not a directory")
+
 type Options struct {
 	// ReadOnly refuses exec and every write; the computer can still be read from.
 	ReadOnly bool
@@ -191,6 +199,45 @@ func (p *Policy) CheckExec(command string) error {
 		}
 	}
 	return fmt.Errorf("%w: the command matches no allow pattern", ErrDenied)
+}
+
+// ResolveExecDir settles where one command runs. A request with no cwd gets the working
+// directory, which is the sessions root the server was told about. A directory beneath that root
+// is created on demand, because the server names a session's directory before anything has made
+// it; anywhere else the directory must already exist, or a command would let the server create
+// directories across the machine. Symlinks are resolved before the containment test, so a link
+// inside the root cannot be used to build a tree outside it.
+func (p *Policy) ResolveExecDir(cwd *string) (string, error) {
+	requested := p.workdir
+	if cwd != nil && *cwd != "" {
+		requested = *cwd
+	}
+	if requested == "" {
+		return "", nil
+	}
+	if strings.ContainsRune(requested, 0) {
+		return "", fmt.Errorf("%w: the path contains a NUL byte", ErrNoWorkingDirectory)
+	}
+	absolute, err := filepath.Abs(requested)
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", ErrNoWorkingDirectory, requested)
+	}
+	resolved := resolveExisting(absolute)
+
+	info, statErr := os.Stat(resolved)
+	if statErr == nil {
+		if !info.IsDir() {
+			return "", fmt.Errorf("%w: %s", ErrNotADirectory, requested)
+		}
+		return resolved, nil
+	}
+	if !errors.Is(statErr, os.ErrNotExist) || !within(p.workdir, resolved) {
+		return "", fmt.Errorf("%w: %s", ErrNoWorkingDirectory, requested)
+	}
+	if err := os.MkdirAll(resolved, 0o700); err != nil {
+		return "", fmt.Errorf("%w: %s: %w", ErrNoWorkingDirectory, requested, err)
+	}
+	return resolved, nil
 }
 
 // CheckRead resolves a path for reading and confines it when asked.

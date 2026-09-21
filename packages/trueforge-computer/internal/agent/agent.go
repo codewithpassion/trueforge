@@ -126,8 +126,22 @@ func (a *Agent) exec(head protocol.Envelope, frame []byte) []byte {
 	}
 	request.Env = accepted
 
+	// Settled before the command is handed to the runner: a missing directory reaches Go as
+	// "fork/exec /bin/sh: no such file or directory", which names the wrong thing entirely.
+	resolvedCwd, err := a.policy.ResolveExecDir(request.Cwd)
+	if err != nil {
+		a.runner.Release(head.ID)
+		a.record(audit.Entry{
+			Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeError,
+			Command: request.Command, Cwd: cwd, Error: err.Error(),
+		})
+		return protocol.EncodeError(head.ID, protocol.ErrBadRequest, err.Error())
+	}
+	request.Cwd = &resolvedCwd
+	cwd = resolvedCwd
+
 	startedAt := time.Now()
-	result, err := a.runner.Run(head.ID, request)
+	completion, err := a.runner.Run(head.ID, request)
 	if err != nil {
 		code := protocol.ErrOpFailed
 		switch {
@@ -144,10 +158,17 @@ func (a *Agent) exec(head protocol.Envelope, frame []byte) []byte {
 		return protocol.EncodeError(head.ID, code, err.Error())
 	}
 
+	// "ok" means the command ran, whatever it exited with. A command that never started — the
+	// shell could not be exec'd, or a cancel beat it — is not a success anyone should read as one.
+	result := completion.Result
 	exitCode := result.ExitCode
+	outcome := audit.OutcomeOK
+	if !completion.Started {
+		outcome = audit.OutcomeError
+	}
 	a.record(audit.Entry{
-		Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeOK,
-		Command: request.Command, Cwd: cwd, ExitCode: &exitCode,
+		Op: head.Op, RequestID: head.ID, Outcome: outcome,
+		Command: request.Command, Cwd: cwd, ExitCode: &exitCode, Error: completion.NotStartedReason,
 		Bytes: result.BytesTotal, Truncated: result.Truncated, DurationMS: result.DurationMS,
 	})
 	return a.ok(head, result)

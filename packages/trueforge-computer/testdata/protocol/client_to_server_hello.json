@@ -6,6 +6,7 @@
   "arch": "arm64",
   "version": "0.1.0",
   "run_as_user": "trueforge",
+  "workdir": "/var/lib/trueforge-computer/sessions",
   "capabilities": {
     "python3": true,
     "git": false

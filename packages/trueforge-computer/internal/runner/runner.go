@@ -54,6 +54,16 @@ type Options struct {
 	Logger   *slog.Logger
 }
 
+// Completion is what happened to one request. Result is the wire shape; Started says whether a
+// process ever ran, which is the difference between a command that failed and one that never
+// began — the audit log must not record the second as a success.
+type Completion struct {
+	Result  protocol.ExecResult
+	Started bool
+	// NotStartedReason is why nothing ran, and is empty once Started is true.
+	NotStartedReason string
+}
+
 // execution is one request between its reservation and its result.
 type execution struct {
 	cancel context.CancelFunc
@@ -178,12 +188,12 @@ func (r *Runner) Queued() int {
 // everything that happens to the command itself comes back as a result. It takes no context:
 // a command's life is bounded by the daemon, not by the socket the request arrived on, so a
 // reconnect does not kill work that is already under way.
-func (r *Runner) Run(id string, request protocol.ExecRequest) (protocol.ExecResult, error) {
+func (r *Runner) Run(id string, request protocol.ExecRequest) (Completion, error) {
 	startedAt := time.Now()
 
 	entry, err := r.claim(id)
 	if err != nil {
-		return protocol.ExecResult{}, err
+		return Completion{}, err
 	}
 	defer func() {
 		r.mu.Lock()
@@ -193,10 +203,13 @@ func (r *Runner) Run(id string, request protocol.ExecRequest) (protocol.ExecResu
 	}()
 
 	if cancelled := r.markStarted(entry); cancelled {
-		return protocol.ExecResult{
-			ExitCode:   ExitKilled,
-			Stderr:     "cancelled before the command started",
-			DurationMS: time.Since(startedAt).Milliseconds(),
+		return Completion{
+			Result: protocol.ExecResult{
+				ExitCode:   ExitKilled,
+				Stderr:     "cancelled before the command started",
+				DurationMS: time.Since(startedAt).Milliseconds(),
+			},
+			NotStartedReason: "cancelled before the command started",
 		}, nil
 	}
 
@@ -212,10 +225,13 @@ func (r *Runner) Run(id string, request protocol.ExecRequest) (protocol.ExecResu
 		r.mu.Lock()
 		r.queued--
 		r.mu.Unlock()
-		return protocol.ExecResult{
-			ExitCode:   ExitKilled,
-			Stderr:     "cancelled while queued",
-			DurationMS: time.Since(startedAt).Milliseconds(),
+		return Completion{
+			Result: protocol.ExecResult{
+				ExitCode:   ExitKilled,
+				Stderr:     "cancelled while queued",
+				DurationMS: time.Since(startedAt).Milliseconds(),
+			},
+			NotStartedReason: "cancelled while queued",
 		}, nil
 	}
 
@@ -258,7 +274,7 @@ func (r *Runner) markStarted(entry *execution) bool {
 	return false
 }
 
-func (r *Runner) execute(ctx context.Context, id string, request protocol.ExecRequest, startedAt time.Time) protocol.ExecResult {
+func (r *Runner) execute(ctx context.Context, id string, request protocol.ExecRequest, startedAt time.Time) Completion {
 	timeout := time.Duration(request.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = r.options.DefaultTimeout
@@ -281,10 +297,13 @@ func (r *Runner) execute(ctx context.Context, id string, request protocol.ExecRe
 	command.Stderr = stderr
 
 	if err := command.Start(); err != nil {
-		return protocol.ExecResult{
-			ExitCode:   127,
-			Stderr:     err.Error(),
-			DurationMS: time.Since(startedAt).Milliseconds(),
+		return Completion{
+			Result: protocol.ExecResult{
+				ExitCode:   127,
+				Stderr:     err.Error(),
+				DurationMS: time.Since(startedAt).Milliseconds(),
+			},
+			NotStartedReason: err.Error(),
 		}
 	}
 	pgid := command.Process.Pid
@@ -324,11 +343,11 @@ func (r *Runner) execute(ctx context.Context, id string, request protocol.ExecRe
 	if timedOut {
 		result.ExitCode = ExitTimedOut
 	}
-	return result
+	return Completion{Result: result, Started: true}
 }
 
-// workingDirectory prefers the per-session directory the relay passes and falls back to the
-// configured default, never to the daemon's own directory.
+// workingDirectory prefers the directory the caller settled on and falls back to the configured
+// default, never to the daemon's own directory.
 func (r *Runner) workingDirectory(request protocol.ExecRequest) string {
 	if request.Cwd != nil && *request.Cwd != "" {
 		return *request.Cwd

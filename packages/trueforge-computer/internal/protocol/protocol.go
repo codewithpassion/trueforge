@@ -1,6 +1,7 @@
-// Package protocol is the frozen v1 wire contract between a computer and the TrueForge relay:
-// one JSON text frame per message, snake_case fields. The golden fixtures under
-// testdata/protocol are the shared reference for the server's schemas.
+// Package protocol is the v1 wire contract between a computer and the TrueForge relay: one JSON
+// text frame per message, snake_case fields. The golden fixtures under testdata/protocol are the
+// shared reference for the server's schemas. Treat the shapes as frozen; the next change needs a
+// new Version.
 package protocol
 
 import "encoding/json"
@@ -21,6 +22,9 @@ const HeartbeatIntervalMS = 10_000
 
 // Close codes. Each one means a different thing to the reconnect loop.
 const (
+	// CloseBadHello means the server could not read this client's hello. Reconnecting without
+	// fixing the hello will only be refused again, so the backoff is what keeps it cheap.
+	CloseBadHello = 4400
 	// CloseRevoked is terminal: the credential is gone and retrying only hammers the server.
 	CloseRevoked = 4401
 	// CloseStale means the relay stopped hearing heartbeats; reconnecting is correct.
@@ -78,14 +82,17 @@ type Capabilities struct {
 
 // Hello is the first frame the client sends after the upgrade.
 type Hello struct {
-	Type            string       `json:"type"`
-	ProtocolVersion int          `json:"protocol_version"`
-	Hostname        string       `json:"hostname"`
-	OS              string       `json:"os"`
-	Arch            string       `json:"arch"`
-	Version         string       `json:"version"`
-	RunAsUser       string       `json:"run_as_user"`
-	Capabilities    Capabilities `json:"capabilities"`
+	Type            string `json:"type"`
+	ProtocolVersion int    `json:"protocol_version"`
+	Hostname        string `json:"hostname"`
+	OS              string `json:"os"`
+	Arch            string `json:"arch"`
+	Version         string `json:"version"`
+	RunAsUser       string `json:"run_as_user"`
+	// Workdir is the absolute, resolved root this client keeps its per-session directories
+	// under. The server builds every session path from it, because only this machine knows it.
+	Workdir      string       `json:"workdir"`
+	Capabilities Capabilities `json:"capabilities"`
 }
 
 // Envelope is the common head of every server request; the op-specific fields are decoded

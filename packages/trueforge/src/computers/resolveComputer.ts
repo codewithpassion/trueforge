@@ -6,7 +6,7 @@ import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { SandboxUsability, SandboxUsabilityReason } from '../sandbox/integration';
 import type { ComputerRelayStatus } from './protocol';
 import { RemoteComputerProvider } from './RemoteComputerProvider';
-import { computerHomeDirectory, type ComputersService } from './service';
+import type { ComputersService } from './service';
 
 function refuse(reason: SandboxUsability['reason']): SandboxUsability {
   return { usable: false, status: undefined, reason };
@@ -119,9 +119,8 @@ export async function buildRemoteComputerProvider({
     return undefined;
   }
   const relay = computers.relay(computerId);
-  // The relay holds what the machine said when it connected. The row is a mirror written a minute
-  // behind, so asking the relay is what keeps the very first turn after a connect from building
-  // its paths out of nulls. A relay that cannot answer leaves the row as the best we have.
+  // The relay holds what the machine said when it connected, which is the only source for its
+  // sessions root: nothing in the row can stand in for a path on someone else's filesystem.
   let live: ComputerRelayStatus | undefined;
   try {
     live = await relay.status();
@@ -139,10 +138,7 @@ export async function buildRemoteComputerProvider({
     tenantId,
     sessionId,
     turnId,
-    home: computerHomeDirectory({
-      os: hello?.os ?? computer.os,
-      runAsUser: hello?.run_as_user ?? computer.run_as_user,
-    }),
+    workdir: hello?.workdir ?? null,
     capabilities: hello?.capabilities ?? computer.capabilities,
     defaultExecTimeoutSeconds,
     fileMaxBytesForDownload,

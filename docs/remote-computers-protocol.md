@@ -1,9 +1,9 @@
 # Remote computers: wire contract v1
 
-Frozen. The server half lives in `packages/trueforge/src/computers/protocol.ts`, which is the canonical
-owner of every constant, schema and close code below. The Go client in `packages/trueforge-computer`
-builds against this document. Changing any shape here breaks deployed clients; add a new
-`protocol_version` instead.
+Treat it as frozen. The server half lives in `packages/trueforge/src/computers/protocol.ts`, which is
+the canonical owner of every constant, schema and close code below. The Go client in
+`packages/trueforge-computer` builds against this document. `hello.workdir` was added while no client
+had shipped; the next shape change breaks deployed clients and needs a new `protocol_version`.
 
 ## 1. Enrollment
 
@@ -45,7 +45,8 @@ Every authentication failure — unknown credential, revoked computer, missing h
 identical `401` with the body above. A non-upgrade request to this path is `426`.
 
 The first frame the client sends after the socket opens is `hello`. Until a `hello` arrives the relay
-still dispatches requests, but the server does not know the machine's capabilities, so skills stay off.
+still dispatches requests, but the server knows neither the machine's capabilities — so skills stay off
+— nor where it keeps its sessions, so anything needing a session directory answers offline.
 
 ## 3. Framing
 
@@ -67,11 +68,12 @@ gone and closes it with `4408`.
 
 ### Close codes
 
-| Code | Meaning                           | Client behaviour                                |
-| ---- | --------------------------------- | ----------------------------------------------- |
-| 4401 | Revoked                           | **Terminal.** Log once, exit; do not reconnect. |
-| 4409 | Replaced by a newer connection    | Reconnect with backoff.                         |
-| 4408 | No heartbeat for `STALE_AFTER_MS` | Reconnect with backoff.                         |
+| Code | Meaning                               | Client behaviour                                          |
+| ---- | ------------------------------------- | --------------------------------------------------------- |
+| 4400 | The server could not read the `hello` | Retry in minutes; nothing changes until the `hello` does. |
+| 4401 | Revoked                               | **Terminal.** Log once, exit; do not reconnect.           |
+| 4409 | Replaced by a newer connection        | Reconnect with backoff.                                   |
+| 4408 | No heartbeat for `STALE_AFTER_MS`     | Reconnect with backoff.                                   |
 
 Reset the backoff step only after a connection has been stable, never on every open, or two clients
 sharing one credential evict each other forever.
@@ -89,13 +91,22 @@ sharing one credential evict each other forever.
   "arch": "amd64",
   "version": "0.1.0",
   "run_as_user": "trueforge",
+  "workdir": "/var/lib/trueforge-computer/sessions",
   "capabilities": { "python3": true, "git": true }
 }
 ```
 
 `protocol_version` must be exactly `1`. A hello the server cannot parse — including a version it does not
-speak — is ignored; the socket stays open and no new close code is introduced. Skills are mounted on a
-computer only when `capabilities.python3` and `capabilities.git` are both true.
+speak — is answered with close code `4400`: the machine has not said where it keeps its sessions, and a
+server that filled that in itself would send commands naming directories that are not there.
+
+`workdir` is required: the absolute path of the root the client keeps its per-session directories under
+— its `--workdir`, defaulting to `<state-dir>/sessions`, already resolved. The server builds every
+session directory as `<workdir>/<session_id>` and accepts nothing else: at most 1024 characters, a
+leading `/`, at least one path segment, no `.` or `..` segment, no trailing slash, and none of NUL, a
+control character, `'`, `"`, a backtick, `\` or `$`. `run_as_user` is reported for the UI and the
+activity log; no path is built from it. Skills are mounted on a computer only when
+`capabilities.python3` and `capabilities.git` are both true.
 
 ### Requests (server → client)
 
@@ -109,16 +120,20 @@ The client answers exactly one reply per `id`.
   "id": "…",
   "op": "exec",
   "command": "uname -a",
-  "cwd": "/home/trueforge/.trueforge/sessions/s1",
+  "cwd": "/var/lib/trueforge-computer/sessions/s1",
   "env": {},
   "timeout_ms": 120000
 }
 ```
 
 `cwd` is `null` when the server has no preference; `cwd` and `sha256` are always present as explicit
-`null` rather than omitted. The client runs the command under `sh -c` in its own process group with
-`setsid`. Exit codes: **124** at the deadline, **128 + signal** when signalled (143 for SIGTERM), **137**
-for a cancel, and **127** when the shell could not start.
+`null` rather than omitted. The client settles the directory before it starts anything. A `null` `cwd`
+means the workdir. A directory under the workdir that is not there yet is created, parents included, at
+mode `0700`, with symlinks resolved first so a link inside the workdir cannot be used to build a tree
+outside it. Anywhere else it must already exist and be a directory, or the request is answered
+`bad_request` with `working directory does not exist: <path>`. The client then runs the command under
+`sh -c` in its own process group with `setsid`. Exit codes: **124** at the deadline, **128 + signal**
+when signalled (143 for SIGTERM), **137** for a cancel, and **127** when the shell could not start.
 
 `cancel`:
 

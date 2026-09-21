@@ -27,28 +27,13 @@ export interface ComputersService {
   relayFetch(input: { computerId: string; request: Request }): Promise<Response>;
 }
 
-/** Where a machine's per-session directories live, derived from what `hello` reported. */
-export function computerHomeDirectory(input: { os: string | null; runAsUser: string | null }): string | null {
-  const { os, runAsUser } = input;
-  if (runAsUser === null || runAsUser === '') {
-    return null;
-  }
-  if (runAsUser === 'root') {
-    return os === 'darwin' ? '/var/root' : '/root';
-  }
-  return os === 'darwin' ? `/Users/${runAsUser}` : `/home/${runAsUser}`;
-}
-
 /**
- * The client's state root. Phase 8b derives it from the run-as user because the frozen v1 `hello`
- * carries no home path; a machine with a non-standard `$HOME` needs `home` in protocol v2.
+ * A session's directory on the machine. The root is the client's own `hello.workdir`: only the
+ * machine knows where it keeps sessions, and a server that guesses writes commands for a path that
+ * does not exist there.
  */
-export function computerStateRoot(home: string): string {
-  return `${home}/.trueforge`;
-}
-
-export function computerSessionDirectory(input: { home: string; sessionId: string }): string {
-  return `${computerStateRoot(input.home)}/sessions/${input.sessionId}`;
+export function computerSessionDirectory(input: { workdir: string; sessionId: string }): string {
+  return `${input.workdir}/${input.sessionId}`;
 }
 
 /**

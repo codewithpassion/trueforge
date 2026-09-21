@@ -2,6 +2,7 @@ import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/err
 import { DurableObject } from 'cloudflare:workers';
 import {
   classifyClientFrame,
+  CLOSE_BAD_HELLO,
   CLOSE_REPLACED,
   CLOSE_REVOKED,
   CLOSE_STALE,
@@ -9,6 +10,7 @@ import {
   HEARTBEAT_PING,
   HEARTBEAT_PONG,
   type HelloMessage,
+  HelloMessageSchema,
   MAX_FRAME_BYTES,
   MAX_IN_FLIGHT_EXEC,
   MAX_QUEUE_DEPTH,
@@ -153,7 +155,10 @@ export class RemoteComputerDO extends DurableObject {
     // against a stale generation or a forgotten tenant.
     void ctx.blockConcurrencyWhile(async () => {
       this.#meta = readMeta(await ctx.storage.get<Record<string, unknown>>('meta'));
-      this.#hello = (await ctx.storage.get<HelloMessage>('hello')) ?? null;
+      // Re-checked rather than trusted: a hello stored by an older build has an older shape, and
+      // a half-read one would hand the provider a path it cannot use.
+      const stored = HelloMessageSchema.safeParse(await ctx.storage.get('hello'));
+      this.#hello = stored.success ? stored.data : null;
     });
   }
 
@@ -292,11 +297,16 @@ export class RemoteComputerDO extends DurableObject {
       this.#helloGeneration = this.#meta.generation;
       this.ctx.waitUntil(this.ctx.storage.put('hello', frame.hello));
       // One write per connect, not per heartbeat: without it the row has no run_as_user or
-      // capabilities for up to a minute, and the provider cannot derive the session directory.
+      // capabilities for up to a minute.
       this.ctx.waitUntil(this.#persistPresence({ status: 'online', lastSeenAt: Date.now() }));
       return;
     }
-    // An unreadable hello is ignored rather than closed: the frozen contract has no code for it.
+    // A machine whose hello cannot be read has not told the server where it keeps its sessions, so
+    // every command sent to it would name a path chosen here. It is turned away instead.
+    if (frame.kind === 'unreadable_hello') {
+      socket.close(CLOSE_BAD_HELLO, 'this server cannot read that hello');
+      return;
+    }
     if (frame.kind !== 'reply') {
       return;
     }

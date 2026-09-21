@@ -20,6 +20,7 @@ import type { AppendComputerAuditInput, ComputerAuditOp, IComputerStore } from '
 import { newId } from '../utils/id';
 import {
   FILE_CHUNK_BYTES,
+  offlineMessage,
   parseExecResult,
   parseFileGetResult,
   parseFilePutResult,
@@ -66,10 +67,11 @@ const READY_BUILD: SandboxBuild = { status: 'ready', reason: null, metadata: nul
 const AUDIT_COMMAND_MAX_BYTES = 4096;
 
 /**
- * Where paths point when the machine has never connected, so the getters stay total. Every command
- * fails offline in that state, and the next turn recomputes them from what `hello` reported.
+ * What the path getters say before the machine has reported where it keeps sessions. Nothing is
+ * ever sent while it is in use — every op answers offline — so it names the gap rather than
+ * guessing at a directory on someone else's filesystem.
  */
-const UNKNOWN_HOME = '/nonexistent';
+const UNKNOWN_SESSION_DIR = '/nonexistent/session-directory-unknown';
 
 /** Making the session directory is setup, not the agent's command; it gets its own short deadline. */
 const SETUP_TIMEOUT_MS = 30_000;
@@ -104,8 +106,8 @@ export interface RemoteComputerProviderOptions {
   sessionId: string;
   /** Null outside a turn, for example on the file-download route. */
   turnId: string | null;
-  /** Null until the machine has reported a run-as user. */
-  home: string | null;
+  /** The machine's sessions root, or null until it has said what it is. */
+  workdir: string | null;
   /** Null until the machine has said what it has; skills stay off in that case. */
   capabilities: ComputerCapabilities | null;
   defaultExecTimeoutSeconds: number;
@@ -158,15 +160,29 @@ export class RemoteComputerProvider implements SandboxProvider {
   readonly supportsCodeMode = false;
   readonly #options: RemoteComputerProviderOptions;
   readonly #sandboxId: string;
-  readonly #sessionDir: string;
+  /** Null while the machine has not said where its sessions live; no op is sent in that state. */
+  readonly #sessionDir: string | null;
 
   constructor(options: RemoteComputerProviderOptions) {
     this.#options = options;
     this.#sandboxId = `${options.computerId}/${options.sessionId}`;
-    this.#sessionDir = computerSessionDirectory({
-      home: options.home ?? UNKNOWN_HOME,
-      sessionId: options.sessionId,
-    });
+    this.#sessionDir =
+      options.workdir === null
+        ? null
+        : computerSessionDirectory({ workdir: options.workdir, sessionId: options.sessionId });
+  }
+
+  /** Reads as a path for prompt text; never reaches the machine, because nothing is sent. */
+  #promptSessionDir(): string {
+    return this.#sessionDir ?? UNKNOWN_SESSION_DIR;
+  }
+
+  /**
+   * The machine has not reported its sessions root, so there is no directory to work in. It reads
+   * as offline because that is what it is: the relay has no live hello from this computer.
+   */
+  #noSessionDirMessage(): string {
+    return offlineMessage({ computerName: this.#options.computerName, lastSeenAt: null, now: Date.now() });
   }
 
   /** Skills need the downloader's python3 and git; a machine that has neither cannot mount them. */
@@ -192,8 +208,20 @@ export class RemoteComputerProvider implements SandboxProvider {
    * offline machine must surface at the first command with its own reason, not kill the turn here.
    */
   async createSandbox(): Promise<{ sandboxId: string }> {
+    const sessionDir = this.#sessionDir;
+    if (sessionDir === null) {
+      await this.#audit({
+        op: 'exec',
+        command: 'mkdir -p <session directory>',
+        exitCode: null,
+        durationMs: 0,
+        bytesOut: 0,
+        outcome: 'offline',
+      });
+      return { sandboxId: this.#sandboxId };
+    }
     // The path is built from what the machine reported, so it is quoted rather than interpolated.
-    const command = `mkdir -p ${shellEscape(this.#sessionDir)}`;
+    const command = `mkdir -p ${shellEscape(sessionDir)}`;
     const startedAt = Date.now();
     const outcome = await this.#call({
       op: { op: 'exec', command, cwd: null, env: {}, timeout_ms: SETUP_TIMEOUT_MS },
@@ -214,13 +242,25 @@ export class RemoteComputerProvider implements SandboxProvider {
     if (params.sandboxId !== this.#sandboxId) {
       return { success: false, error: `This computer does not serve sandbox ${params.sandboxId}` };
     }
+    const sessionDir = this.#sessionDir;
+    if (sessionDir === null) {
+      await this.#audit({
+        op: 'exec',
+        command: params.command,
+        exitCode: null,
+        durationMs: 0,
+        bytesOut: 0,
+        outcome: 'offline',
+      });
+      return { success: false, error: this.#noSessionDirMessage() };
+    }
     const timeoutSeconds = params.timeoutSeconds ?? this.#options.defaultExecTimeoutSeconds;
     const startedAt = Date.now();
     const outcome = await this.#call({
       op: {
         op: 'exec',
         command: params.command,
-        cwd: params.cwd ?? this.#sessionDir,
+        cwd: params.cwd ?? sessionDir,
         env: params.env ?? {},
         timeout_ms: timeoutSeconds * 1000,
       },
@@ -266,29 +306,29 @@ export class RemoteComputerProvider implements SandboxProvider {
   getAdditionalInstructions(): string {
     return [
       `Commands run on ${stripControlCharacters(this.#options.computerName)}, a real machine someone owns and keeps.`,
-      `Nothing is thrown away between sessions, and other sessions share the machine, so work inside ${this.#sessionDir} and leave the rest of the filesystem alone unless you are asked to change it.`,
+      `Nothing is thrown away between sessions, and other sessions share the machine, so work inside ${this.#promptSessionDir()} and leave the rest of the filesystem alone unless you are asked to change it.`,
       'Installing software, editing files outside the session directory and stopping services all affect the owner, so prefer the least invasive command that answers the question.',
     ].join(' ');
   }
 
   getToolResultDumpDir(): string {
-    return `${this.#sessionDir}/.trueforge/tool-results`;
+    return `${this.#promptSessionDir()}/.trueforge/tool-results`;
   }
 
   getGitCredentialsPath(): string {
-    return `${this.#sessionDir}/.trueforge/git-credentials`;
+    return `${this.#promptSessionDir()}/.trueforge/git-credentials`;
   }
 
   getFileUploadsDir(): string {
-    return `${this.#sessionDir}/uploads`;
+    return `${this.#promptSessionDir()}/uploads`;
   }
 
   getSkillsDir(): string {
-    return `${this.#sessionDir}/.trueforge/skills`;
+    return `${this.#promptSessionDir()}/.trueforge/skills`;
   }
 
   getSkillDownloaderPath(): string {
-    return `${this.#sessionDir}/.trueforge/bin/skill_downloader.py`;
+    return `${this.#promptSessionDir()}/.trueforge/bin/skill_downloader.py`;
   }
 
   async downloadFile(params: { sandboxId: string; path: string }): Promise<Buffer> {
@@ -496,7 +536,11 @@ export class RemoteComputerProvider implements SandboxProvider {
    * enough to connect as the computer and collect other sessions' commands.
    */
   #assertInsideSession(path: string): void {
-    if (!isInsideDirectory({ directory: this.#sessionDir, path })) {
+    const sessionDir = this.#sessionDir;
+    if (sessionDir === null) {
+      throw new SandboxOfflineError(this.#noSessionDirMessage());
+    }
+    if (!isInsideDirectory({ directory: sessionDir, path })) {
       throw new SandboxPathOutsideSessionError(path);
     }
   }

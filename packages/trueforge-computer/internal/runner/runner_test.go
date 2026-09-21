@@ -33,14 +33,14 @@ func newTestRunner(t *testing.T, options runner.Options) *runner.Runner {
 // goroutine where Fatalf is not allowed.
 func run(t *testing.T, r *runner.Runner, id string, command string, timeout time.Duration) protocol.ExecResult {
 	t.Helper()
-	result, err := r.Run(id, protocol.ExecRequest{
+	completion, err := r.Run(id, protocol.ExecRequest{
 		Command:   command,
 		TimeoutMS: timeout.Milliseconds(),
 	})
 	if err != nil {
 		t.Errorf("run %s: %v", id, err)
 	}
-	return result
+	return completion.Result
 }
 
 func discardLogger() *slog.Logger {
@@ -135,14 +135,14 @@ func TestCancelKillsTheGroup(t *testing.T) {
 	r := newTestRunner(t, runner.Options{})
 	done := make(chan protocol.ExecResult, 1)
 	go func() {
-		result, err := r.Run("slow", protocol.ExecRequest{
+		completion, err := r.Run("slow", protocol.ExecRequest{
 			Command:   "sleep 60",
 			TimeoutMS: 60_000,
 		})
 		if err != nil {
 			t.Errorf("run: %v", err)
 		}
-		done <- result
+		done <- completion.Result
 	}()
 
 	waitFor(t, 3*time.Second, func() bool { return r.InFlight() == 1 })
@@ -276,7 +276,7 @@ func TestRequestCwdAndDefaultCwd(t *testing.T) {
 		t.Fatalf("default cwd = %q, want %q", got, resolved(t, fallback))
 	}
 	elsewhere := t.TempDir()
-	result, err := r.Run("b", protocol.ExecRequest{
+	completion, err := r.Run("b", protocol.ExecRequest{
 		Command:   "pwd",
 		Cwd:       &elsewhere,
 		TimeoutMS: 5000,
@@ -284,7 +284,7 @@ func TestRequestCwdAndDefaultCwd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if got := strings.TrimSpace(result.Stdout); got != resolved(t, elsewhere) {
+	if got := strings.TrimSpace(completion.Result.Stdout); got != resolved(t, elsewhere) {
 		t.Fatalf("request cwd = %q, want %q", got, resolved(t, elsewhere))
 	}
 }
@@ -294,7 +294,7 @@ func TestRequestCwdAndDefaultCwd(t *testing.T) {
 func TestEnvironmentIsScrubbed(t *testing.T) {
 	t.Setenv("TRUEFORGE_MACHINE_CREDENTIAL", "super-secret")
 	r := newTestRunner(t, runner.Options{})
-	result, err := r.Run("a", protocol.ExecRequest{
+	completion, err := r.Run("a", protocol.ExecRequest{
 		Command:   "env",
 		Env:       map[string]string{"FROM_REQUEST": "yes", "BAD=KEY": "dropped"},
 		TimeoutMS: 5000,
@@ -302,6 +302,7 @@ func TestEnvironmentIsScrubbed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
+	result := completion.Result
 	if strings.Contains(result.Stdout, "super-secret") {
 		t.Fatalf("the daemon's environment leaked into the command:\n%s", result.Stdout)
 	}
@@ -479,6 +480,22 @@ func countRecords(t *testing.T, stateDir string) int {
 		return 0
 	}
 	return len(entries)
+}
+
+// A command whose shell could never be started is not a command that ran and failed, and the
+// caller has to be able to tell the two apart before it writes the outcome down.
+func TestAStartFailureIsNotReportedAsStarted(t *testing.T) {
+	r := newTestRunner(t, runner.Options{DefaultCwd: filepath.Join(t.TempDir(), "not-there")})
+	completion, err := r.Run("a", protocol.ExecRequest{Command: "true", TimeoutMS: 5000})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if completion.Started {
+		t.Fatal("a command that never started was reported as started")
+	}
+	if completion.Result.ExitCode != 127 || completion.NotStartedReason == "" {
+		t.Fatalf("completion = %+v", completion)
+	}
 }
 
 // resolved follows symlinks, because macOS puts temp dirs behind /var -> /private/var and pwd

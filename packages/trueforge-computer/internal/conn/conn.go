@@ -194,6 +194,8 @@ func (c *Client) logReconnect(kind closeKind, err error, lasted time.Duration, d
 		c.logger.Error("another connection took this credential over; waiting before trying again so the two do not evict each other", fields...)
 	case kindUnauthorized:
 		c.logger.Error("the server refused the machine credential; retrying slowly", fields...)
+	case kindBadHello:
+		c.logger.Error("the server could not read this computer's hello and closed the connection; check --workdir and this client's version, because retrying will not change it", fields...)
 	case kindRevoked, kindTransient:
 		c.logger.Warn("disconnected; reconnecting", fields...)
 	}

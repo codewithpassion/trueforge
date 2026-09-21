@@ -4,6 +4,33 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 29 — Phase 8b live test: the server stops guessing where a machine keeps its sessions (2026-09-22)
+
+**Goal:** Fix what a live test of remote computers found. Enroll, connect, online status and grants all worked; every `exec` came back `Sandbox initialization failed: (exit code 127): fork/exec /bin/sh: no such file or directory`, on a machine where `/bin/sh` exists.
+
+**What we did:**
+
+- **Found two causes and one lie.** The client ran in its own container image — busybox, uid 1000, read-only rootfs, sessions under `/var/lib/trueforge-computer/sessions`, `HOME=/tmp`. The server had derived the session directory from `run_as_user` and `os`, so it sent `mkdir -p '/home/trueforge/.trueforge/sessions/<id>/uploads'` with `cwd` set to `/home/trueforge/.trueforge/sessions/<id>` — a directory that existed nowhere on that machine. Go reports a missing `cmd.Dir` as `fork/exec /bin/sh: no such file or directory`, which is why everyone read it as a missing shell. And the client's audit log recorded `outcome: ok` for it, because the runner only returned an error when it refused the work, never when the process failed to start.
+- **`hello` gained a required `workdir`.** Still `protocol_version: 1`: no client had shipped, so there was nothing to keep compatible and a compatibility shim would have been a shim for nobody. The canonical owner is `packages/trueforge/src/computers/protocol.ts`; the Go `internal/protocol`, `docs/remote-computers-protocol.md` and the golden fixtures under `packages/trueforge-computer/testdata/protocol/` follow it, and the server test that enumerates that directory still holds both sides to the same bytes. It is a hostile string, so the schema bounds it: at most 1024 characters, leading `/`, at least one segment, no `.`/`..` segment, no trailing slash, and none of NUL, a control character, `'`, `"`, a backtick, `\` or `$`. Un-normalised would have been the quiet failure — `/x/sessions/` stops matching the download jail's normalised comparison and refuses every transfer.
+- **The client settles the working directory before it starts anything.** `Policy.ResolveExecDir` sits where `within` and `resolveExisting` already live: a null `cwd` means the workdir; a directory under the workdir that is missing is created with `MkdirAll` at `0700`, symlinks resolved first so a link inside it cannot build a tree outside; anything else must exist and be a directory, or the exec is refused `bad_request` with `working directory does not exist: <path>`. `hello.workdir` and `runner.DefaultCwd` are now the same resolved value, not the raw flag in one place and the resolved one in the other.
+- **The client's audit tells the truth.** `Runner.Run` returns a `Completion` carrying `Started` and a reason, rather than only the wire `ExecResult`, so the agent records `ok` only for a command that ran. A start failure and both cancelled-before-start paths are `error` with the reason. `ExecResult` is the wire shape and was left alone.
+- **The server reads the path instead of inventing one.** `computerHomeDirectory` and `computerStateRoot` are gone with their tests; `computerSessionDirectory` takes `{ workdir, sessionId }`. The provider holds `workdir: string | null`, and a null one answers offline and sends nothing — the path getters return a named placeholder that no op is ever built from. The init `mkdir -p` is still sent with `cwd: null`, which is now written down as a rule rather than left as an accident.
+- **Two holes a passing test would not have found.** The DO read its stored `hello` as `storage.get<HelloMessage>` with no validation, so a hello written by the previous build would have come back typed and short a `workdir`; it is `safeParse`d now. And an unreadable `hello` used to be ignored with the socket left open — a machine the server cannot understand would have gone on taking commands built from a path chosen here — so it is closed with the new code 4400.
+
+**Lessons learned:**
+
+- A server must not guess paths on a machine it does not own. Every derivation from `run_as_user`, `os` or a home directory is a guess that holds only for the machines that happen to look like the one it was written against; the container image we ship ourselves was not one of them.
+- An init command cannot use as its `cwd` the directory it is about to create.
+- Go reports a missing `cmd.Dir` as `fork/exec <shell>: no such file or directory`. The error names the shell and means the directory.
+- An audit log that records `ok` for work that never happened is worse than no audit log: the live test's own evidence pointed away from the bug.
+- An unnormalised absolute path passes "starts with `/`" and still breaks a lexical containment check. Bound the shape, not just the characters.
+
+**Avoid next time:**
+
+- Don't add a field to a stored-and-typed shape without re-parsing what storage hands back. `storage.get<T>` is an assertion, not a check.
+- Don't leave a frame the server cannot read on an open socket when the unreadable part is what every later message depends on.
+- Don't take "the wire result says exit 127" as the outcome. Ask the layer that started the process whether it started.
+
 ## Cycle 28 — Phase 8b UI: Settings → Computers, and "Run on" in the agent builder (2026-09-21)
 
 **Goal:** The UI half of Phase 8b of `docs/remote-computers-plan.md`. Cycle 26 built the server and Cycle 27 the Go client; Section 5 ended with "UI: Settings → Computers beside `SandboxSettings.tsx`, and a picker in the agent's sandbox section — still to come." This entry is that, plus the runtime-port slot both need and a user guide.

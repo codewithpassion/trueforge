@@ -14,7 +14,7 @@ import { workersComputersService } from '../../src/workers/computersService';
 import { createConsoleLogger } from '../../src/workers/logger';
 import { createWorkersSandboxIntegration } from '../../src/workers/sandbox/workersSandboxIntegration';
 import { d1Persistence, migrateDatabase, TENANT_ID, upsertMockProvider, USER_REF } from './harness';
-import { computersApp, FakeComputerClient, PUBLIC_BASE_URL, settle } from './remoteComputerClient';
+import { computersApp, FAKE_WORKDIR, FakeComputerClient, PUBLIC_BASE_URL, settle } from './remoteComputerClient';
 
 const logger = createConsoleLogger({ level: 'error', bindings: { component: 'computer-turn-test' } });
 
@@ -72,7 +72,7 @@ async function onlineComputer(name: string): Promise<{ computerId: string; clien
           : undefined,
     },
   });
-  // The hello write is what turns the row online and gives the provider a home to build paths from.
+  // The hello write is what turns the row online and tells the provider where sessions live.
   await settle();
   return { computerId: body.data.computer.id, client };
 }
@@ -178,11 +178,24 @@ describe('a turn on a remote computer', () => {
     const finished = await runTurn({ sessionId, stores });
     expect(finished?.state.status).toBe('done');
 
-    // The model's sandbox command reached the machine over the wire, in this session's directory.
+    // The model's sandbox command reached the machine over the wire, in this session's directory,
+    // which hangs off the sessions root the machine itself reported.
     const execFrames = client.received.filter(frame => frame['op'] === 'exec');
-    expect(execFrames.length).toBeGreaterThan(0);
-    const expectedCwd = computerSessionDirectory({ home: '/home/trueforge', sessionId });
-    expect(execFrames.some(frame => frame['cwd'] === expectedCwd)).toBe(true);
+    expect(execFrames.length).toBeGreaterThan(1);
+    const expectedCwd = computerSessionDirectory({ workdir: FAKE_WORKDIR, sessionId });
+    expect(expectedCwd.startsWith(FAKE_WORKDIR)).toBe(true);
+    // The command that makes the session directory cannot run inside it, so it names no cwd.
+    expect(execFrames[0]).toMatchObject({ cwd: null });
+    expect(String(execFrames[0]?.['command'])).toContain(expectedCwd);
+    expect(execFrames.slice(1).some(frame => frame['cwd'] === expectedCwd)).toBe(true);
+    // Every path the turn hands the machine sits under the same root; nothing is derived from
+    // the run-as user or a home directory this server guessed at.
+    for (const frame of client.received) {
+      const path = frame['path'];
+      if (typeof path === 'string') {
+        expect(path.startsWith(`${expectedCwd}/`)).toBe(true);
+      }
+    }
 
     // And the turn carries a reference that names both the machine and the session.
     expect(finished?.snapshot.sandbox_info?.sandbox_id).toBe(`v1:remote-computer:${computerId}/${sessionId}`);

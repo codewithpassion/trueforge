@@ -24,6 +24,12 @@ import { d1Persistence, TENANT_ID, USER_REF } from './harness';
 
 export const PUBLIC_BASE_URL = 'https://trueforge.test';
 
+/**
+ * The sessions root the fake machine reports. Deliberately nowhere near a home directory, so a
+ * path the server derived from `run_as_user` instead of from this would not match.
+ */
+export const FAKE_WORKDIR = '/var/lib/x/sessions';
+
 export function testComputersService(): ComputersService {
   return workersComputersService(env);
 }
@@ -157,6 +163,7 @@ export class FakeComputerClient {
       arch: 'amd64',
       version: '0.1.0-test',
       run_as_user: 'trueforge',
+      workdir: FAKE_WORKDIR,
       capabilities: { python3: true, git: true },
       ...overrides,
     };

@@ -107,6 +107,11 @@ func TestHelloRoundTrip(t *testing.T) {
 	if !hello.Capabilities.Python3 || hello.Capabilities.Git {
 		t.Fatalf("capabilities = %+v", hello.Capabilities)
 	}
+	// The server has nothing else to build a session path from, so an absent workdir would
+	// leave it guessing at a directory on this machine.
+	if hello.Workdir != "/var/lib/trueforge-computer/sessions" {
+		t.Fatalf("workdir = %q", hello.Workdir)
+	}
 }
 
 // An exec envelope and its op-specific body decode from the same frame, which is how the

@@ -11,6 +11,7 @@ import { createConsoleLogger } from '../../src/workers/logger';
 import { migrateDatabase, TENANT_ID } from './harness';
 import {
   computersApp,
+  FAKE_WORKDIR,
   FakeComputerClient,
   PUBLIC_BASE_URL,
   settle,
@@ -90,11 +91,14 @@ function providerFor({
   computerId,
   sessionId,
   tenantId = TENANT_ID,
+  workdir = FAKE_WORKDIR,
 }: {
   computers: ComputersService;
   computerId: string;
   sessionId: string;
   tenantId?: string;
+  /** Null stands for a machine that has never said where it keeps its sessions. */
+  workdir?: string | null;
 }): RemoteComputerProvider {
   return new RemoteComputerProvider({
     relay: computers.relay(computerId),
@@ -103,7 +107,7 @@ function providerFor({
     tenantId,
     sessionId,
     turnId: 'turn-1',
-    home: '/home/trueforge',
+    workdir,
     capabilities: { python3: true, git: true },
     defaultExecTimeoutSeconds: 10,
     fileMaxBytesForDownload: 1024 * 1024,
@@ -303,18 +307,18 @@ describe('a connected machine', () => {
     const { sandboxId } = await provider.createSandbox();
     await provider.uploadFile({
       sandboxId,
-      remotePath: '/home/trueforge/.trueforge/sessions/session-files/uploads/payload.bin',
+      remotePath: `${FAKE_WORKDIR}/session-files/uploads/payload.bin`,
       content: payload,
     });
     const back = await provider.downloadFile({
       sandboxId,
-      path: '/home/trueforge/.trueforge/sessions/session-files/uploads/payload.bin',
+      path: `${FAKE_WORKDIR}/session-files/uploads/payload.bin`,
     });
     expect(back.equals(payload)).toBe(true);
     client.close();
   });
 
-  it('ignores a hello it cannot read rather than settling a request with it', async () => {
+  it('closes the socket on a hello it cannot read, because nothing that machine says is usable', async () => {
     const computers = testComputersService();
     const app = computersApp({ computers });
     const created = await createComputer({ app, name: uniqueName('bad-hello') });
@@ -329,9 +333,34 @@ describe('a connected machine', () => {
     client.sendRaw(JSON.stringify({ type: 'hello', protocol_version: 99 }));
     await settle();
 
-    const provider = providerFor({ computers, computerId: created.computerId, sessionId: 'session-hello' });
-    const result = await provider.exec({ sandboxId: `${created.computerId}/session-hello`, command: 'true' });
-    expect(result.success).toBe(true);
+    const status = await computers.relay(created.computerId).status();
+    expect(status.connected).toBe(false);
+    client.close();
+  });
+
+  it('answers offline rather than guessing where a machine keeps its sessions', async () => {
+    const computers = testComputersService();
+    const app = computersApp({ computers });
+    const created = await createComputer({ app, name: uniqueName('no-workdir') });
+    const { credential } = await enroll({ app, code: created.enrollmentCode });
+    const client = await FakeComputerClient.connect({
+      app,
+      credential: credential ?? '',
+      options: { onRequest: () => OK_EXEC },
+    });
+    await settle();
+
+    const provider = providerFor({
+      computers,
+      computerId: created.computerId,
+      sessionId: 'session-no-workdir',
+      workdir: null,
+    });
+    const { sandboxId } = await provider.createSandbox();
+    const result = await provider.exec({ sandboxId, command: 'true' });
+    expect(result).toMatchObject({ success: false });
+    // Nothing was sent: a command with a path this server invented is worse than no command.
+    expect(client.received.filter(frame => frame['op'] === 'exec')).toHaveLength(0);
     client.close();
   });
 });
@@ -354,8 +383,8 @@ describe('file operations stay in the session directory', () => {
     // The client's own credential is the prize here: reading it would let the holder connect as
     // the computer and collect other sessions' commands.
     for (const path of [
-      '/home/trueforge/.trueforge/credential',
-      '/home/trueforge/.trueforge/sessions/session-jail/../../credential',
+      '/var/lib/x/credential',
+      `${FAKE_WORKDIR}/session-jail/../../credential`,
       '/etc/passwd',
       'relative/path',
     ]) {
@@ -387,6 +416,29 @@ describe('what the machine says about itself', () => {
     // from it. A name that cannot be a POSIX user is not one.
     const record = await computers.store.getComputer({ tenant_id: TENANT_ID, computer_id: created.computerId });
     expect(record?.run_as_user).toBeNull();
+    client.close();
+  });
+
+  it.each([
+    ["a quote, which would break out of the server's quoting", "/var/lib/x'; rm -rf /; #"],
+    ['a newline', '/var/lib/x\nsessions'],
+    ['a relative path', 'var/lib/x/sessions'],
+    ['more than 1024 characters', `/${'a'.repeat(1024)}`],
+  ])('turns away a machine whose sessions root carries %s', async (_why, workdir) => {
+    const computers = testComputersService();
+    const app = computersApp({ computers });
+    const created = await createComputer({ app, name: uniqueName('hostile-workdir') });
+    const { credential } = await enroll({ app, code: created.enrollmentCode });
+    const client = await FakeComputerClient.connect({
+      app,
+      credential: credential ?? '',
+      options: { hello: { workdir }, onRequest: () => OK_EXEC },
+    });
+    await settle();
+
+    const status = await computers.relay(created.computerId).status();
+    expect(status.hello).toBeNull();
+    expect(status.connected).toBe(false);
     client.close();
   });
 

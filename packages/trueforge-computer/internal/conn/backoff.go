@@ -25,6 +25,9 @@ const (
 	// kindUnauthorized is a 401 on the upgrade: the credential may be wrong, or the server may
 	// be misconfigured. Either way, retry in minutes.
 	kindUnauthorized
+	// kindBadHello means the server could not read this client's hello. Nothing about that
+	// changes on its own, so redialling fast would only be a loop nobody is told about.
+	kindBadHello
 )
 
 const (
@@ -70,6 +73,8 @@ func classify(err error) closeKind {
 		return kindRevoked
 	case protocol.CloseReplaced:
 		return kindReplaced
+	case protocol.CloseBadHello:
+		return kindBadHello
 	default:
 		return kindTransient
 	}
@@ -78,7 +83,7 @@ func classify(err error) closeKind {
 // nextDelay decides how long to wait and what the next backoff step is. It is pure so the
 // close-code policy can be tested without a socket.
 func nextDelay(kind closeKind, step int, lasted time.Duration, stableAfter time.Duration, jitter jitterFunc) (time.Duration, int) {
-	if kind == kindReplaced || kind == kindUnauthorized {
+	if kind == kindReplaced || kind == kindUnauthorized || kind == kindBadHello {
 		// The step is deliberately left alone: a slow retry says nothing about whether the
 		// connection would have been healthy.
 		return slowRetryBase + time.Duration(jitter(int64(slowRetrySpread))), step

@@ -73,6 +73,17 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// resolvedPath follows symlinks, because macOS puts temp dirs behind /var -> /private/var and
+// pwd reports the resolved path.
+func resolvedPath(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	return real
+}
+
 func (h *harness) dispatch(t *testing.T, id string, op string, body map[string]any) protocol.Reply {
 	t.Helper()
 	body["id"] = id
@@ -138,6 +149,107 @@ func TestExecRunsAndIsAudited(t *testing.T) {
 	}
 	if entries[0].Op != protocol.OpExec || entries[0].Outcome != audit.OutcomeOK || entries[0].Command != "echo hello" {
 		t.Fatalf("audit entry = %+v", entries[0])
+	}
+}
+
+// The server names a session's directory before anything has made it, so the first command of a
+// session would otherwise die as "fork/exec /bin/sh: no such file or directory".
+func TestExecCreatesAMissingDirectoryInsideTheWorkdir(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	session := filepath.Join(h.workdir, "sess-1", "uploads")
+	reply := h.dispatch(t, "r1", protocol.OpExec, map[string]any{
+		"command": "pwd", "cwd": session, "env": map[string]string{}, "timeout_ms": 5000,
+	})
+	result := execResultOf(t, reply)
+	if result.ExitCode != 0 || strings.TrimSpace(result.Stdout) != resolvedPath(t, session) {
+		t.Fatalf("result = %+v", result)
+	}
+	info, err := os.Stat(session)
+	if err != nil {
+		t.Fatalf("the directory was not created: %v", err)
+	}
+	// A machine can be shared; a session's work is not for every local user to read.
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("mode = %v, want 0700", info.Mode().Perm())
+	}
+}
+
+// Creating one anywhere on the machine would turn every exec into a way for the server to make
+// directories outside the root the operator pointed it at.
+func TestExecRefusesAMissingDirectoryOutsideTheWorkdir(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	outside := filepath.Join(t.TempDir(), "nowhere")
+	reply := h.dispatch(t, "r1", protocol.OpExec, map[string]any{
+		"command": "pwd", "cwd": outside, "env": map[string]string{}, "timeout_ms": 5000,
+	})
+	if reply.Error == nil || reply.Error.Code != protocol.ErrBadRequest {
+		t.Fatalf("reply = %+v", reply)
+	}
+	if reply.Error.Message != "working directory does not exist: "+outside {
+		t.Fatalf("message = %q", reply.Error.Message)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatal("the refused directory was created anyway")
+	}
+	entries := h.auditEntries(t)
+	if len(entries) != 1 || entries[0].Outcome != audit.OutcomeError {
+		t.Fatalf("audit entries = %+v", entries)
+	}
+}
+
+func TestExecRefusesACwdThatIsNotADirectory(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	file := filepath.Join(h.workdir, "a-file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	reply := h.dispatch(t, "r1", protocol.OpExec, map[string]any{
+		"command": "pwd", "cwd": file, "env": map[string]string{}, "timeout_ms": 5000,
+	})
+	if reply.Error == nil || reply.Error.Code != protocol.ErrBadRequest {
+		t.Fatalf("reply = %+v", reply)
+	}
+}
+
+// A link inside the root that points out of it must not become a way to build a tree there.
+func TestExecDoesNotCreateThroughASymlinkOutOfTheWorkdir(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	outside := t.TempDir()
+	link := filepath.Join(h.workdir, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	target := filepath.Join(link, "made-here")
+	reply := h.dispatch(t, "r1", protocol.OpExec, map[string]any{
+		"command": "pwd", "cwd": target, "env": map[string]string{}, "timeout_ms": 5000,
+	})
+	if reply.Error == nil || reply.Error.Code != protocol.ErrBadRequest {
+		t.Fatalf("reply = %+v", reply)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "made-here")); !os.IsNotExist(err) {
+		t.Fatal("a directory was created outside the working directory")
+	}
+}
+
+// A command that never ran is not a success, whatever the reply says about its exit code.
+func TestAnExecThatNeverStartedIsNotAuditedAsOK(t *testing.T) {
+	h := newHarness(t, policy.Options{})
+	head := protocol.Envelope{ID: "r1", Op: protocol.OpExec}
+	if err := h.agent.Prepare(head); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if !h.commands.Cancel("r1") {
+		t.Fatal("the reserved command was not found")
+	}
+	reply := h.dispatch(t, "r1", protocol.OpExec, map[string]any{
+		"command": "echo hi", "cwd": nil, "env": map[string]string{}, "timeout_ms": 5000,
+	})
+	if result := execResultOf(t, reply); result.ExitCode != runner.ExitKilled {
+		t.Fatalf("result = %+v", result)
+	}
+	entries := h.auditEntries(t)
+	if len(entries) != 1 || entries[0].Outcome != audit.OutcomeError || entries[0].Error == "" {
+		t.Fatalf("audit entries = %+v", entries)
 	}
 }
 

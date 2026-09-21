@@ -2,7 +2,7 @@
   "id": "req-01HQ7",
   "op": "exec",
   "command": "uname -a",
-  "cwd": "/home/trueforge/.trueforge/sessions/sess-42",
+  "cwd": "/var/lib/trueforge-computer/sessions/sess-42",
   "env": {
     "TFY_SESSION_ID": "sess-42"
   },

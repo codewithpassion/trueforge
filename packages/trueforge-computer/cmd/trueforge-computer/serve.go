@@ -113,6 +113,9 @@ func runServe(args []string) int {
 	if err != nil {
 		return fail(logger, "the local policy is not usable", err)
 	}
+	// One value from here on: the policy's resolved root is what the server is told about, what
+	// commands default to, and what the containment checks compare against.
+	sessions = rules.Workdir()
 
 	log, err := audit.Open(*stateDir, audit.Options{MaxBytes: *auditMaxBytes, Keep: *auditKeep})
 	if err != nil {
@@ -150,6 +153,7 @@ func runServe(args []string) int {
 		Arch:            state.Arch(),
 		Version:         version,
 		RunAsUser:       state.RunAsUser(),
+		Workdir:         sessions,
 		Capabilities:    state.DetectCapabilities(),
 	}
 

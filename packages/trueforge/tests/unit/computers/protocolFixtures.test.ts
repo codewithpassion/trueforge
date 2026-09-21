@@ -78,7 +78,23 @@ describe('frames the client sends', () => {
     const hello = HelloMessageSchema.safeParse(JSON.parse(raw));
     expect(hello.success).toBe(true);
     expect(hello.data?.protocol_version).toBe(1);
+    // The sessions root is the one thing only the machine can tell the server.
+    expect(hello.data?.workdir).toBe('/var/lib/trueforge-computer/sessions');
     expect(classifyClientFrame(raw)).toMatchObject({ kind: 'hello' });
+  });
+
+  it.each([
+    ["a quote, which would break out of the server's quoting", "/var/lib/x'; rm -rf /; #"],
+    ['a newline', '/var/lib/x\nsessions'],
+    ['a relative path', 'var/lib/x/sessions'],
+    ['a trailing slash, which stops matching the containment check', '/var/lib/x/sessions/'],
+    ['a traversal segment', '/var/lib/x/../../etc'],
+    ['nothing but the filesystem root', '/'],
+    ['more than 1024 characters', `/${'a'.repeat(1024)}`],
+  ])('a hostile workdir — %s — is not a hello this server will read', (_why, workdir) => {
+    const raw = JSON.stringify({ ...JSON.parse(fixture('protocol/client_to_server_hello.json')), workdir });
+    expect(HelloMessageSchema.safeParse(JSON.parse(raw)).success).toBe(false);
+    expect(classifyClientFrame(raw)).toEqual({ kind: 'unreadable_hello' });
   });
 
   it.each(REPLY_FIXTURES)('%s is a reply whose result matches its payload schema', (name, schema) => {
