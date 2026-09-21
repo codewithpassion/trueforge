@@ -1,0 +1,16 @@
+{
+  "name": "trueforge-remote-computer-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Phase 8a throwaway spike: a Go client and a relay Durable Object. Not published, not part of the pnpm workspace.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "check": "bunx wrangler@4.131.2 deploy --dry-run --config wrangler.jsonc --outdir .wrangler/check",
+    "deploy": "bunx wrangler@4.131.2 deploy --config wrangler.jsonc",
+    "tail": "bunx wrangler@4.131.2 tail --config wrangler.jsonc --format json",
+    "destroy": "bunx wrangler@4.131.2 delete --config wrangler.jsonc",
+    "build:client": "bash scripts/build-client.sh",
+    "run:client": "bash scripts/run-client.sh"
+  }
+}

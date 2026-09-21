@@ -1,0 +1,18 @@
+// Phase 8a spike Worker. Throwaway: no D1, no custom domain, no assets. Deleted when the spike ends.
+// Secrets `SPIKE_SECRET` and `SPIKE_CLIENT_TOKEN` are set with `wrangler secret put`, never committed.
+{
+  "name": "trueforge-computer-spike",
+  "account_id": "a12823016aa16d0a8dd2678b258bd751",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      { "name": "REMOTE_COMPUTER_DO", "class_name": "RemoteComputerDO" },
+      { "name": "CALLER_DO", "class_name": "CallerDO" },
+    ],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RemoteComputerDO", "CallerDO"] }],
+  "observability": { "enabled": true },
+}

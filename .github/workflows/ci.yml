@@ -48,6 +48,8 @@ jobs:
               - '.github/workflows/ci.yml'
             trueforge:
               - 'packages/trueforge/**'
+              # Throwaway Phase 8a spike: not in any tsconfig, not built, not published.
+              - '!packages/trueforge/spikes/**'
               - 'package.json'
               - 'pnpm-workspace.yaml'
               - 'tsconfig.base.json'

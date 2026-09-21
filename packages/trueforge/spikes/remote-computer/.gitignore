@@ -1,0 +1,3 @@
+# Compiled Go binaries: built on demand by scripts/build-client.sh, never committed.
+client/bin/
+.wrangler/
