@@ -1,11 +1,11 @@
 export abstract class SandboxError extends Error {
   /**
-   * Every sandbox failure is caused by the request itself — a bad path, a missing
+   * Almost every sandbox failure is caused by the request itself — a bad path, a missing
    * or oversized file — so each subclass carries the status a host should reply with.
    * Listing the codes in use rather than `number` lets a typed route return this directly; adding
    * a subclass with a new code means widening this union and declaring it on the route.
    */
-  abstract readonly statusCode: 400 | 403 | 404 | 410 | 413;
+  abstract readonly statusCode: 400 | 403 | 404 | 410 | 413 | 503;
 }
 
 export class SandboxFileNotFoundError extends SandboxError {
@@ -24,6 +24,20 @@ export class SandboxNotAvailableError extends SandboxError {
   constructor(sandboxId: string, options?: ErrorOptions) {
     super(`Sandbox '${sandboxId}' no longer exists — it may have been auto-deleted`, options);
     this.name = 'SandboxNotAvailableError';
+  }
+}
+
+/**
+ * The machine backing this sandbox is unreachable right now. Distinct from
+ * `SandboxNotAvailableError`, which means the sandbox is gone and callers answer by making a new
+ * one — pointless for a computer someone owns, which comes back when it reconnects.
+ */
+export class SandboxOfflineError extends SandboxError {
+  readonly statusCode = 503;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'SandboxOfflineError';
   }
 }
 

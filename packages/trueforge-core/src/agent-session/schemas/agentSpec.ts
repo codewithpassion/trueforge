@@ -166,6 +166,11 @@ const SandboxConfigSchema = z
       .boolean()
       .default(true)
       .describe('Allow downloading agent-produced files via the turn download endpoint. Default: true.'),
+    computer_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Run this agent on the named remote computer instead of the tenant sandbox provider.'),
   })
   .openapi('SandboxConfig');
 
