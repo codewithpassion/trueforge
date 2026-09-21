@@ -27,6 +27,12 @@ export function toUiIntegration(integration: TrueForgeApi.Integration): Integrat
     defaultAgentName: manifest.defaultAgentName,
     allowedChannelIds: manifest.allowedChannelIds,
     allowDirectMessages: manifest.allowDirectMessages,
+    approverUserIds: manifest.approverSlackUserIds ?? [],
+    notificationRules: (manifest.notificationRules ?? []).map(rule => ({
+      scheduleName: rule.scheduleName,
+      channelId: rule.channelId,
+      outcome: rule.outcome,
+    })),
     ...(manifest.teamId === undefined ? {} : { externalAccountId: manifest.teamId }),
   };
 }
@@ -34,6 +40,7 @@ export function toUiIntegration(integration: TrueForgeApi.Integration): Integrat
 export function toUiSetupManifest(manifest: TrueForgeApi.IntegrationAppManifest): IntegrationSetupManifest {
   return {
     requestUrl: manifest.requestUrl,
+    interactionsRequestUrl: manifest.interactionsRequestUrl,
     manifestJson: manifest.manifestJson,
     createAppUrl: manifest.createAppUrl,
   };
@@ -51,6 +58,12 @@ function toHarnessManifest(req: CreateIntegrationRequest | UpdateIntegrationRequ
     defaultAgentName: req.defaultAgentName,
     allowedChannelIds: req.allowedChannelIds,
     allowDirectMessages: req.allowDirectMessages,
+    approverSlackUserIds: req.approverUserIds,
+    notificationRules: req.notificationRules.map(rule => ({
+      scheduleName: rule.scheduleName,
+      channelId: rule.channelId,
+      outcome: rule.outcome,
+    })),
     replyMode: 'thread',
     ...(auth === undefined ? {} : { auth: { botToken: auth.botToken, signingSecret: auth.signingSecret } }),
   };

@@ -67,6 +67,7 @@ export type {
   IntegrationAuthInput,
   IntegrationBase,
   IntegrationCatalogServer,
+  IntegrationNotificationRule,
   IntegrationSetupManifest,
   IntegrationStatus,
   ListPermissionsRequest,

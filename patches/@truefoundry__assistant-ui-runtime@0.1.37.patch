@@ -1,20 +1,28 @@
 diff --git a/dist/server/index.d.ts b/dist/server/index.d.ts
-index 9da26ff4021a3c6ecd0b5d5aba3c73cf2e1288c0..0241557d47e432aca44eaa6148147a48a37c625b 100644
+index 9da26ff4021a3c6ecd0b5d5aba3c73cf2e1288c0..ceaa276f026c7dcdec77920814e28fffadf0f2ec 100644
 --- a/dist/server/index.d.ts
 +++ b/dist/server/index.d.ts
 @@ -15,3 +15,4 @@ declare function isEventDelta(event: TurnStreamingEvent): event is DeltaEvents;
  declare function mergeEventDelta(base: TurnEvent, delta: DeltaEvents): void;
  
  export { DeltaEvents, TurnEvent, TurnStreamingEvent, isEventDelta, mergeEventDelta };
-+export type { CreateIntegrationRequest, IntegrationAuthInput, IntegrationBase, IntegrationCatalogServer, IntegrationSetupManifest, IntegrationStatus, UpdateIntegrationRequest } from '../types-hS8TQqBP.js';
++export type { CreateIntegrationRequest, IntegrationAuthInput, IntegrationBase, IntegrationCatalogServer, IntegrationNotificationRule, IntegrationSetupManifest, IntegrationStatus, UpdateIntegrationRequest } from '../types-hS8TQqBP.js';
 diff --git a/dist/types-hS8TQqBP.d.ts b/dist/types-hS8TQqBP.d.ts
-index bddf93d1f4ad64c3df464ec48e884fc6f586e816..f0af4b6d5c55a4fae2e60bb937ac5d6241cc7158 100644
+index bddf93d1f4ad64c3df464ec48e884fc6f586e816..2c70cf34de6eb24a51bc730d093b47ebae2223a8 100644
 --- a/dist/types-hS8TQqBP.d.ts
 +++ b/dist/types-hS8TQqBP.d.ts
-@@ -883,18 +883,83 @@ type AgentSkill = SkillSelectorEntry;
+@@ -883,18 +883,105 @@ type AgentSkill = SkillSelectorEntry;
  type ConnectorState = ConnectorSelectorEntry;
  type AgentLibraryEntry = AgentSelectorEntry;
  type SearchAgentsParams = SearchAgentSelectorParams;
++/** A finished schedule run posted to a channel; the outcome filter is always explicit. */
++interface IntegrationNotificationRule {
++    /** Schedule whose runs are posted. */
++    scheduleName: string;
++    /** Channel the result goes to. Separate from `allowedChannelIds`, which is where the bot listens. */
++    channelId: string;
++    outcome: 'any' | 'success' | 'failure';
++}
 +/** Whether a channel integration still needs the credentials its app issues. */
 +type IntegrationStatus = 'pending' | 'connected';
 +/** One channel connection in settings. Credentials are never read back. */
@@ -30,6 +38,10 @@ index bddf93d1f4ad64c3df464ec48e884fc6f586e816..f0af4b6d5c55a4fae2e60bb937ac5d62
 +    /** Allowlist; an empty list allows no channel. */
 +    allowedChannelIds: string[];
 +    allowDirectMessages: boolean;
++    /** Channel users allowed to decide a tool approval. Empty allows nobody. */
++    approverUserIds: string[];
++    /** Schedule results posted to a channel. */
++    notificationRules: IntegrationNotificationRule[];
 +    /** Channel-side workspace, known once the integration is connected. */
 +    externalAccountId?: string;
 +}
@@ -44,6 +56,10 @@ index bddf93d1f4ad64c3df464ec48e884fc6f586e816..f0af4b6d5c55a4fae2e60bb937ac5d62
 +    defaultAgentName: string;
 +    allowedChannelIds: string[];
 +    allowDirectMessages: boolean;
++    /** Channel users allowed to decide a tool approval. Empty allows nobody. */
++    approverUserIds: string[];
++    /** Schedule results posted to a channel. */
++    notificationRules: IntegrationNotificationRule[];
 +}
 +interface UpdateIntegrationRequest {
 +    id: string;
@@ -51,6 +67,10 @@ index bddf93d1f4ad64c3df464ec48e884fc6f586e816..f0af4b6d5c55a4fae2e60bb937ac5d62
 +    defaultAgentName: string;
 +    allowedChannelIds: string[];
 +    allowDirectMessages: boolean;
++    /** Channel users allowed to decide a tool approval. Empty allows nobody. */
++    approverUserIds: string[];
++    /** Schedule results posted to a channel. */
++    notificationRules: IntegrationNotificationRule[];
 +    /** Omit to keep the stored credentials; send both to connect or rotate. */
 +    auth?: IntegrationAuthInput;
 +}
@@ -58,6 +78,8 @@ index bddf93d1f4ad64c3df464ec48e884fc6f586e816..f0af4b6d5c55a4fae2e60bb937ac5d62
 +interface IntegrationSetupManifest {
 +    /** URL the channel posts events to. */
 +    requestUrl: string;
++    /** URL the channel posts button clicks to. */
++    interactionsRequestUrl: string;
 +    /** App manifest document, ready to copy. */
 +    manifestJson: string;
 +    /** Where the channel's app builder accepts the manifest. */
@@ -97,21 +119,22 @@ index bddf93d1f4ad64c3df464ec48e884fc6f586e816..f0af4b6d5c55a4fae2e60bb937ac5d62
  }
  /**
   * Published agent identity + spec for the agent-detail Overview (read-only).
-@@ -1142,3 +1207,4 @@ type AgentUIServerPort<TChat extends AgentChatServer = AgentChatServer, TBuilder
+@@ -1142,3 +1229,4 @@ type AgentUIServerPort<TChat extends AgentChatServer = AgentChatServer, TBuilder
  type AgentUIServer = AgentUIServerPort;
  
  export type { ConnectorConfigBase as $, AgentSpec as A, AgentSessionsServer as B, AgentSkill as C, AgentUIServer as D, AgentUIServerPort as E, ApprovalDecision as F, AuthenticateConnectorRequest as G, CatalogServer as H, CodeSnippet as I, CodeSnippetSampleCode as J, ConnectorAuth as K, ConnectorAuthApiKey as L, McpAuthRequiredEvent as M, ConnectorAuthNone as N, ConnectorAuthOAuth as O, ConnectorAuthPublic as P, ConnectorAuthPublicApiKey as Q, ConnectorAuthPublicNone as R, Session as S, TurnEvent as T, UserToolResponseEvent as U, ConnectorAuthPublicOAuth as V, ConnectorAuthType as W, ConnectorAuthenticationResult as X, ConnectorBase as Y, ConnectorCatalogEntry as Z, ConnectorCatalogServer as _, AgentChatServer as a, SessionEventItem as a$, ConnectorSelectorEntry as a0, ConnectorState as a1, CreateConnectorRequest as a2, CreateModelProviderRequest as a3, CreateSandboxProviderRequest as a4, CreateSandboxRequest as a5, CreateScheduleRequest as a6, CreateScheduleRunRequest as a7, CreateSessionRequest as a8, CreateSkillRequest as a9, PermissionResourceType as aA, PermissionsServer as aB, PreviousTurnIdInput as aC, ProviderEntry as aD, ProviderType as aE, RegistrySkill as aF, ResourcePermission as aG, SandboxBase as aH, SandboxCatalogEntry as aI, SandboxCatalogServer as aJ, SandboxConfig as aK, SandboxCreatedEvent as aL, SandboxProviderBase as aM, SandboxProviderCatalogEntry as aN, SandboxProviderConfig as aO, SandboxProviderListEntry as aP, SandboxSnapshotSyncStatus as aQ, SaveAgentRequest as aR, SaveAgentResult as aS, Schedule as aT, ScheduleRun as aU, ScheduleRunStatus as aV, ScheduleServer as aW, ScheduleStatus as aX, SearchAgentSelectorParams as aY, SearchAgentsParams as aZ, SelectRegistrySkillRequest as a_, CreateSkillRequestBase as aa, CreatedBySubject as ab, DefinedSkill as ac, GithubSkill as ad, ImportGithubSkillRequest as ae, ListPermissionsRequest as af, ListPermissionsResponse as ag, ListResult as ah, ListSchedulesParams as ai, ListSessionEventsParams as aj, ListSessionsOrder as ak, ListSessionsParams as al, McpServerMount as am, McpToolSelection as an, Model as ao, ModelCatalogServer as ap, ModelEntry as aq, ModelMessageEvent as ar, ModelParams as as, ModelProperties as at, ModelProviderBase as au, ModelProviderCatalogEntry as av, ModelProviderConfigBase as aw, ModelSelection as ax, ModelSelectorEntry as ay, PageParams as az, ThreadCreatedEvent as b, SessionListEntry as b0, SessionListMetrics as b1, SkillBase as b2, SkillCatalogEntry as b3, SkillCatalogServer as b4, SkillConfigBase as b5, SkillMount as b6, SkillSelectorEntry as b7, ToolApprovalRequiredEvent as b8, ToolBase as b9, ToolInfo as bA, ToolResponseEvent as bB, TurnCreatedEvent as bC, TurnDoneEvent as bD, TurnStateCancelled as bE, TurnStateError as bF, TurnStateRunning as bG, UserMessageContent as bH, ToolCall as ba, ToolResponseRequiredEvent as bb, TurnDoneMetrics as bc, TurnState as bd, TurnStateDone as be, TurnStreamData as bf, TurnStreamingEvent as bg, UpdateConnectorRequest as bh, UpdateModelProviderRequest as bi, UpdateSandboxProviderRequest as bj, UpdateSandboxRequest as bk, UpdateScheduleRequest as bl, UpdateSessionRequest as bm, UserMessage as bn, DeltaEvents as bo, ActionRequiredEvent as bp, AgentInfo as bq, AgentParent as br, ChunkDeltaToolCall as bs, McpInitializeEvent as bt, McpServerAuthInfo as bu, ModelMessageContentPart as bv, ModelMessageDeltaEvent as bw, ThreadDoneEvent as bx, ToolCallFunction as by, ToolCallRef as bz, UserToolApprovalEvent as c, Turn as d, TurnInputItem as e, AgentBuilderCapabilitiesResponse as f, AgentBuilderServer as g, AgentCapabilityConfig as h, AgentCompactionConfig as i, AgentContextManagementConfig as j, AgentDetail as k, AgentInputTokensCompactionTrigger as l, AgentLibraryEntry as m, AgentMetricChartData as n, AgentMetricChartDataRequest as o, AgentMetricChartDefinition as p, AgentMetricChartType as q, AgentMetricGraph as r, AgentMetricGraphLine as s, AgentMetricMeter as t, AgentMetricPoint as u, AgentMetricRangeRequest as v, AgentMetricsServer as w, AgentRuntimeConfig as x, AgentSandboxConfig as y, AgentSelectorEntry as z };
-+export type { CreateIntegrationRequest, IntegrationAuthInput, IntegrationBase, IntegrationCatalogServer, IntegrationSetupManifest, IntegrationStatus, UpdateIntegrationRequest };
++export type { CreateIntegrationRequest, IntegrationAuthInput, IntegrationBase, IntegrationCatalogServer, IntegrationNotificationRule, IntegrationSetupManifest, IntegrationStatus, UpdateIntegrationRequest };
 diff --git a/src/server/index.ts b/src/server/index.ts
-index 5c7c55ba5dd34d08e9c989cbcf5ec3cf2314f9d5..ccceba7b26a205f08f451eaa3d3e15003ff7c2c8 100644
+index 5c7c55ba5dd34d08e9c989cbcf5ec3cf2314f9d5..560b541396fa6a37b126c974db48b2353ad3dd3d 100644
 --- a/src/server/index.ts
 +++ b/src/server/index.ts
-@@ -100,6 +100,13 @@ export type {
+@@ -100,6 +100,14 @@ export type {
      CreateSandboxProviderRequest,
      UpdateSandboxProviderRequest,
      SandboxCatalogServer,
 +    IntegrationStatus,
 +    IntegrationBase,
++    IntegrationNotificationRule,
 +    IntegrationAuthInput,
 +    CreateIntegrationRequest,
 +    UpdateIntegrationRequest,
@@ -121,13 +144,22 @@ index 5c7c55ba5dd34d08e9c989cbcf5ec3cf2314f9d5..ccceba7b26a205f08f451eaa3d3e1500
      AgentDetail,
      CodeSnippetSampleCode,
 diff --git a/src/server/types.ts b/src/server/types.ts
-index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..9f604f94521bc96586a8d4b689c9fc5d6234b85a 100644
+index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..0f9e47f6e3b9c876d811b74261a143452124c385 100644
 --- a/src/server/types.ts
 +++ b/src/server/types.ts
-@@ -830,9 +830,80 @@ export type ConnectorState = ConnectorSelectorEntry;
+@@ -830,9 +830,103 @@ export type ConnectorState = ConnectorSelectorEntry;
  export type AgentLibraryEntry = AgentSelectorEntry;
  export type SearchAgentsParams = SearchAgentSelectorParams;
  
++/** A finished schedule run posted to a channel; the outcome filter is always explicit. */
++export interface IntegrationNotificationRule {
++  /** Schedule whose runs are posted. */
++  scheduleName: string;
++  /** Channel the result goes to. Separate from `allowedChannelIds`, which is where the bot listens. */
++  channelId: string;
++  outcome: 'any' | 'success' | 'failure';
++}
++
 +/** Whether a channel integration still needs the credentials its app issues. */
 +export type IntegrationStatus = 'pending' | 'connected';
 +
@@ -144,6 +176,10 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..9f604f94521bc96586a8d4b689c9fc5d
 +  /** Allowlist; an empty list allows no channel. */
 +  allowedChannelIds: string[];
 +  allowDirectMessages: boolean;
++  /** Channel users allowed to decide a tool approval. Empty allows nobody. */
++  approverUserIds: string[];
++  /** Schedule results posted to a channel. */
++  notificationRules: IntegrationNotificationRule[];
 +  /** Channel-side workspace, known once the integration is connected. */
 +  externalAccountId?: string;
 +}
@@ -160,6 +196,10 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..9f604f94521bc96586a8d4b689c9fc5d
 +  defaultAgentName: string;
 +  allowedChannelIds: string[];
 +  allowDirectMessages: boolean;
++  /** Channel users allowed to decide a tool approval. Empty allows nobody. */
++  approverUserIds: string[];
++  /** Schedule results posted to a channel. */
++  notificationRules: IntegrationNotificationRule[];
 +}
 +
 +export interface UpdateIntegrationRequest {
@@ -168,6 +208,10 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..9f604f94521bc96586a8d4b689c9fc5d
 +  defaultAgentName: string;
 +  allowedChannelIds: string[];
 +  allowDirectMessages: boolean;
++  /** Channel users allowed to decide a tool approval. Empty allows nobody. */
++  approverUserIds: string[];
++  /** Schedule results posted to a channel. */
++  notificationRules: IntegrationNotificationRule[];
 +  /** Omit to keep the stored credentials; send both to connect or rotate. */
 +  auth?: IntegrationAuthInput;
 +}
@@ -176,6 +220,8 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..9f604f94521bc96586a8d4b689c9fc5d
 +export interface IntegrationSetupManifest {
 +  /** URL the channel posts events to. */
 +  requestUrl: string;
++  /** URL the channel posts button clicks to. */
++  interactionsRequestUrl: string;
 +  /** App manifest document, ready to copy. */
 +  manifestJson: string;
 +  /** Where the channel's app builder accepts the manifest. */
@@ -206,7 +252,7 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..9f604f94521bc96586a8d4b689c9fc5d
   * Hosts may pass the whole object to an app shell, or a focused sub-port to a page.
   */
  export interface CatalogServer<
-@@ -840,6 +911,7 @@ export interface CatalogServer<
+@@ -840,6 +934,7 @@ export interface CatalogServer<
    TConnectorCatalog extends ConnectorCatalogServer = ConnectorCatalogServer,
    TSkillCatalog extends SkillCatalogServer = SkillCatalogServer,
    TSandboxCatalog extends SandboxCatalogServer = SandboxCatalogServer,
@@ -214,7 +260,7 @@ index 68b20cbb0f3506b46ed72f7431c3b483ece82c0c..9f604f94521bc96586a8d4b689c9fc5d
  > {
    modelCatalog: TModelCatalog;
    connectorCatalog: TConnectorCatalog;
-@@ -847,6 +919,8 @@ export interface CatalogServer<
+@@ -847,6 +942,8 @@ export interface CatalogServer<
    skillCatalog?: TSkillCatalog;
    /** Optional — omit when the host has no sandboxes settings surface. */
    sandboxCatalog?: TSandboxCatalog;

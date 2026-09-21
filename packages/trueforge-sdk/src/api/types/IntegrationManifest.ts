@@ -10,11 +10,15 @@ export interface IntegrationManifest {
     allowDirectMessages: boolean;
     /** Channels the bot answers in. An empty list allows no channel. */
     allowedChannelIds: string[];
+    /** Slack users who may approve or deny a tool call. An empty list allows nobody. */
+    approverSlackUserIds?: string[];
     auth?: TrueForge.SlackIntegrationAuth;
     botDisplayName?: TrueForge.SlackBotDisplayName;
     /** User id of the bot, used to ignore its own messages. Filled from `auth.test`. */
     botUserId?: string;
     defaultAgentName: TrueForge.ResourceName;
+    /** Schedule results posted to a channel, independent of the allowed channels. */
+    notificationRules?: TrueForge.IntegrationNotificationRule[];
     replyMode: TrueForge.SlackReplyMode;
     /** Slack workspace (team) id. Filled from `auth.test` when credentials are saved. */
     teamId?: string;

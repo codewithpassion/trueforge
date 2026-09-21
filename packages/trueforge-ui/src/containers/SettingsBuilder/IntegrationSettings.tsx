@@ -8,19 +8,36 @@ import { auiInputClass } from '@/atoms/lib/inputClasses.js';
 import { Button } from '@/atoms/primitives/Button.js';
 import { CenteredModal } from '@/atoms/primitives/CenteredModal.js';
 import { Icon } from '@/icons/Icon.js';
-import { useCatalogServer } from '@/server/ServerContext.js';
-import type { IntegrationBase, IntegrationCatalogServer, IntegrationSetupManifest } from '@/server/types.js';
+import { useCatalogServer, useOptionalScheduleServer } from '@/server/ServerContext.js';
+import type {
+  IntegrationBase,
+  IntegrationCatalogServer,
+  IntegrationNotificationRule,
+  IntegrationSetupManifest,
+} from '@/server/types.js';
 import { getErrorMessage } from '@/utils/getErrorMessage.js';
 import { useToasterOptional } from '../ToasterContainer.js';
 import {
+  completedNotificationRules,
   EMPTY_INTEGRATION_FORM,
+  emptyNotificationRule,
   parseAllowedChannels,
+  parseApproverUserIds,
   toIntegrationForm,
   toUpdateIntegrationRequest,
   validateCredentials,
   validateIntegrationForm,
   type IntegrationFormDraft,
 } from './integrationForm.js';
+
+/** Schedule names offered by the rule picker; one page is plenty for a datalist. */
+const SCHEDULE_PICKER_LIMIT = 25;
+
+const NOTIFICATION_OUTCOMES: { value: IntegrationNotificationRule['outcome']; label: string }[] = [
+  { value: 'any', label: 'Every run' },
+  { value: 'success', label: 'Successful runs' },
+  { value: 'failure', label: 'Failed runs' },
+];
 
 function StatusBadge({ status }: { status: IntegrationBase['status'] }) {
   const connected = status === 'connected';
@@ -68,7 +85,9 @@ const IntegrationSettings = () => {
   const catalog = useCatalogServer();
   // The section only renders when the host supplied this port (see SettingsBuilder/index.tsx).
   const integrationCatalog: IntegrationCatalogServer | undefined = catalog.integrationCatalog;
+  const scheduleServer = useOptionalScheduleServer();
   const toaster = useToasterOptional();
+  const [scheduleNames, setScheduleNames] = useState<string[]>([]);
 
   const [integrations, setIntegrations] = useState<IntegrationBase[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,6 +123,23 @@ const IntegrationSettings = () => {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Only to suggest names in the rule editor: a rule may name a schedule this host cannot list.
+  useEffect(() => {
+    if (scheduleServer === null) return;
+    let cancelled = false;
+    void scheduleServer
+      .listSchedules({ limit: SCHEDULE_PICKER_LIMIT })
+      .then(page => {
+        if (!cancelled) setScheduleNames(page.data.map(schedule => schedule.name));
+      })
+      .catch(() => {
+        // A picker with no suggestions still takes a typed name, so this is not worth reporting.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scheduleServer]);
 
   // The manifest names the integration's own ingress URL, so it is fetched per selection.
   useEffect(() => {
@@ -163,6 +199,8 @@ const IntegrationSettings = () => {
         defaultAgentName: addForm.defaultAgentName.trim(),
         allowedChannelIds: parseAllowedChannels(addForm.allowedChannels),
         allowDirectMessages: addForm.allowDirectMessages,
+        approverUserIds: parseApproverUserIds(addForm.approverUserIds),
+        notificationRules: completedNotificationRules(addForm.notificationRules),
       });
       setAddOpen(false);
       setAddForm(EMPTY_INTEGRATION_FORM);
@@ -215,6 +253,78 @@ const IntegrationSettings = () => {
   };
 
   if (integrationCatalog === undefined) return null;
+
+  const setRule = (index: number, next: IntegrationNotificationRule) => {
+    setDetailForm({
+      ...detailForm,
+      notificationRules: detailForm.notificationRules.map((rule, position) => (position === index ? next : rule)),
+    });
+  };
+
+  const notificationRuleRows = detailForm.notificationRules.map((rule, index) => (
+    // Rows have no id of their own until they are saved, so position is the only stable key.
+    <div key={index} className="grid grid-cols-[1fr_1fr_1fr_2rem] items-end gap-2">
+      <div>
+        <FieldLabel htmlFor={`rule-${String(index)}-schedule`}>Schedule</FieldLabel>
+        <input
+          id={`rule-${String(index)}-schedule`}
+          list="integration-schedule-names"
+          value={rule.scheduleName}
+          onChange={event => {
+            setRule(index, { ...rule, scheduleName: event.target.value });
+          }}
+          placeholder="nightly-report"
+          className={auiInputClass('h-11')}
+        />
+      </div>
+      <div>
+        <FieldLabel htmlFor={`rule-${String(index)}-channel`}>Post to channel</FieldLabel>
+        <input
+          id={`rule-${String(index)}-channel`}
+          value={rule.channelId}
+          onChange={event => {
+            setRule(index, { ...rule, channelId: event.target.value });
+          }}
+          placeholder="C0RELEASES"
+          className={auiInputClass('h-11')}
+        />
+      </div>
+      <div>
+        <FieldLabel htmlFor={`rule-${String(index)}-outcome`}>Post when</FieldLabel>
+        <select
+          id={`rule-${String(index)}-outcome`}
+          value={rule.outcome}
+          onChange={event => {
+            const outcome = NOTIFICATION_OUTCOMES.find(option => option.value === event.target.value);
+            if (outcome !== undefined) {
+              setRule(index, { ...rule, outcome: outcome.value });
+            }
+          }}
+          className={auiInputClass('h-11')}
+        >
+          {NOTIFICATION_OUTCOMES.map(option => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <button
+        type="button"
+        aria-label={`Remove rule ${String(index + 1)}`}
+        disabled={busy}
+        className="mb-0.5 flex size-9 items-center justify-center rounded-md text-text-secondary transition-colors hover:text-text-primary disabled:opacity-40"
+        onClick={() => {
+          setDetailForm({
+            ...detailForm,
+            notificationRules: detailForm.notificationRules.filter((_, position) => position !== index),
+          });
+        }}
+      >
+        <Icon name="trash" className="size-4" />
+      </button>
+    </div>
+  ));
 
   const settingsFields = (
     form: IntegrationFormDraft,
@@ -401,6 +511,69 @@ const IntegrationSettings = () => {
                   Settings
                 </h4>
                 <div className="mt-3 flex flex-col gap-4">{settingsFields(detailForm, setDetailForm, 'detail')}</div>
+              </section>
+
+              <section
+                aria-labelledby="slack-approvals-heading"
+                className="rounded-xl border border-border bg-card-bg p-4"
+              >
+                <h4
+                  id="slack-approvals-heading"
+                  className="text-[0.8125rem] font-semibold uppercase text-text-secondary"
+                >
+                  Approvals and notifications
+                </h4>
+                <div className="mt-3 flex flex-col gap-4">
+                  <div>
+                    <FieldLabel htmlFor="detail-approvers">Who may approve</FieldLabel>
+                    <input
+                      id="detail-approvers"
+                      value={detailForm.approverUserIds}
+                      onChange={event => {
+                        setDetailForm({ ...detailForm, approverUserIds: event.target.value });
+                      }}
+                      placeholder="U0ADMIN, U0LEAD"
+                      className={auiInputClass('h-11')}
+                    />
+                    <p className="mt-1 text-xs text-text-secondary">
+                      Slack user ids, comma separated. An empty list means nobody can approve a tool call. Answering a
+                      question is open to anyone in the thread.
+                    </p>
+                  </div>
+                  <fieldset>
+                    <legend className="mb-2 block text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                      Schedule notifications
+                    </legend>
+                    <p className="mb-3 text-xs text-text-secondary">
+                      Posts a finished schedule run to a channel. The bot must be invited to that channel; it is a
+                      posting target, not one it listens in.
+                    </p>
+                    <datalist id="integration-schedule-names">
+                      {scheduleNames.map(name => (
+                        <option key={name} value={name} />
+                      ))}
+                    </datalist>
+                    {notificationRuleRows.length === 0 ? (
+                      <p className="text-sm text-text-secondary">No notification rules.</p>
+                    ) : (
+                      <div className="flex flex-col gap-3">{notificationRuleRows}</div>
+                    )}
+                    <Button.Secondary
+                      size="small"
+                      type="button"
+                      className="mt-4 w-fit"
+                      onClick={() => {
+                        setDetailForm({
+                          ...detailForm,
+                          notificationRules: [...detailForm.notificationRules, emptyNotificationRule()],
+                        });
+                      }}
+                    >
+                      <Icon name="plus" className="size-3.5" />
+                      Add rule
+                    </Button.Secondary>
+                  </fieldset>
+                </div>
               </section>
 
               <div className="flex justify-between gap-2 pb-2">

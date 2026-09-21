@@ -3,6 +3,8 @@
 export interface IntegrationAppManifest {
     /** Page on the channel that accepts the manifest. */
     createAppUrl: string;
+    /** Interactivity request URL the manifest carries. */
+    interactionsRequestUrl: string;
     /** App manifest as pretty-printed JSON, ready to paste. */
     manifestJson: string;
     /** Events request URL the manifest carries. */

@@ -5,6 +5,7 @@ import typing
 import pydantic
 from ..core.pydantic_utilities import IS_PYDANTIC_V2
 from ..core.unchecked_base_model import UncheckedBaseModel
+from .integration_notification_rule import IntegrationNotificationRule
 from .resource_name import ResourceName
 from .slack_bot_display_name import SlackBotDisplayName
 from .slack_integration_auth import SlackIntegrationAuth
@@ -26,6 +27,11 @@ class IntegrationManifest(UncheckedBaseModel):
     Channels the bot answers in. An empty list allows no channel.
     """
 
+    approver_slack_user_ids: typing.Optional[typing.List[str]] = pydantic.Field(default=None)
+    """
+    Slack users who may approve or deny a tool call. An empty list allows nobody.
+    """
+
     auth: typing.Optional[SlackIntegrationAuth] = None
     bot_display_name: typing.Optional[SlackBotDisplayName] = None
     bot_user_id: typing.Optional[str] = pydantic.Field(default=None)
@@ -34,6 +40,11 @@ class IntegrationManifest(UncheckedBaseModel):
     """
 
     default_agent_name: ResourceName
+    notification_rules: typing.Optional[typing.List[IntegrationNotificationRule]] = pydantic.Field(default=None)
+    """
+    Schedule results posted to a channel, independent of the allowed channels.
+    """
+
     reply_mode: SlackReplyMode = "thread"
     team_id: typing.Optional[str] = pydantic.Field(default=None)
     """

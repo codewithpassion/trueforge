@@ -91,6 +91,8 @@ export * from "./InputTokensCompactionTrigger.js";
 export * from "./Integration.js";
 export * from "./IntegrationAppManifest.js";
 export * from "./IntegrationManifest.js";
+export * from "./IntegrationNotificationOutcome.js";
+export * from "./IntegrationNotificationRule.js";
 export * from "./IntegrationStatus.js";
 export * from "./IntegrationType.js";
 export * from "./LargeToolResponseConfig.js";

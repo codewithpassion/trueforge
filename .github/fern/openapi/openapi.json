@@ -2299,6 +2299,10 @@
             "description": "Page on the channel that accepts the manifest.",
             "type": "string"
           },
+          "interactions_request_url": {
+            "description": "Interactivity request URL the manifest carries.",
+            "type": "string"
+          },
           "manifest_json": {
             "description": "App manifest as pretty-printed JSON, ready to paste.",
             "type": "string"
@@ -2310,6 +2314,7 @@
         },
         "required": [
           "request_url",
+          "interactions_request_url",
           "manifest_json",
           "create_app_url"
         ],
@@ -2331,6 +2336,15 @@
             },
             "type": "array"
           },
+          "approver_slack_user_ids": {
+            "default": [],
+            "description": "Slack users who may approve or deny a tool call. An empty list allows nobody.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
           "auth": {
             "$ref": "#/components/schemas/SlackIntegrationAuth"
           },
@@ -2344,6 +2358,14 @@
           },
           "default_agent_name": {
             "$ref": "#/components/schemas/ResourceName"
+          },
+          "notification_rules": {
+            "default": [],
+            "description": "Schedule results posted to a channel, independent of the allowed channels.",
+            "items": {
+              "$ref": "#/components/schemas/IntegrationNotificationRule"
+            },
+            "type": "array"
           },
           "reply_mode": {
             "$ref": "#/components/schemas/SlackReplyMode"
@@ -2367,6 +2389,38 @@
           "allowed_channel_ids",
           "allow_direct_messages",
           "reply_mode"
+        ],
+        "type": "object"
+      },
+      "IntegrationNotificationOutcome": {
+        "description": "Which schedule outcomes the rule posts: any, only successes, or only failures.",
+        "enum": [
+          "any",
+          "success",
+          "failure"
+        ],
+        "type": "string"
+      },
+      "IntegrationNotificationRule": {
+        "additionalProperties": false,
+        "description": "Posts a finished schedule run to a channel.",
+        "properties": {
+          "channel_id": {
+            "description": "Channel the result is posted to. The bot must be a member of it.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/IntegrationNotificationOutcome"
+          },
+          "schedule_name": {
+            "$ref": "#/components/schemas/ResourceName"
+          }
+        },
+        "required": [
+          "schedule_name",
+          "channel_id",
+          "outcome"
         ],
         "type": "object"
       },
@@ -7273,6 +7327,75 @@
           }
         },
         "summary": "Receive a channel event",
+        "tags": [
+          "Integrations"
+        ],
+        "x-excluded": true,
+        "x-fern-ignore": true
+      }
+    },
+    "/api/v1/integrations/{integration_id}/interactions": {
+      "post": {
+        "description": "Endpoint a channel posts button clicks to. The request is authenticated by the channel signature in its own headers, not by a TrueForge credential.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Interaction accepted, refused for this user, or ignored as already settled."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel signature did not verify."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The integration is still pending: its credentials have not been saved."
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No adapter is registered for this integration type."
+          }
+        },
+        "summary": "Receive a channel interaction",
         "tags": [
           "Integrations"
         ],

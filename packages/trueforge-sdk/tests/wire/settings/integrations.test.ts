@@ -132,10 +132,12 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allow_direct_messages: true,
                     allowed_channel_ids: ["allowed_channel_ids"],
+                    approver_slack_user_ids: ["approver_slack_user_ids"],
                     auth: { bot_token: "bot_token", signing_secret: "signing_secret" },
                     bot_display_name: "bot_display_name",
                     bot_user_id: "bot_user_id",
                     default_agent_name: "default_agent_name",
+                    notification_rules: [{ channel_id: "channel_id", outcome: "any", schedule_name: "schedule_name" }],
                     reply_mode: "thread",
                     team_id: "team_id",
                     type: "slack",
@@ -177,6 +179,7 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allowDirectMessages: true,
                     allowedChannelIds: ["allowed_channel_ids"],
+                    approverSlackUserIds: ["approver_slack_user_ids"],
                     auth: {
                         botToken: "bot_token",
                         signingSecret: "signing_secret",
@@ -184,6 +187,13 @@ describe("IntegrationsClient", () => {
                     botDisplayName: "bot_display_name",
                     botUserId: "bot_user_id",
                     defaultAgentName: "default_agent_name",
+                    notificationRules: [
+                        {
+                            channelId: "channel_id",
+                            outcome: "any",
+                            scheduleName: "schedule_name",
+                        },
+                    ],
                     replyMode: "thread",
                     teamId: "team_id",
                     type: "slack",
@@ -356,10 +366,12 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allow_direct_messages: true,
                     allowed_channel_ids: ["allowed_channel_ids"],
+                    approver_slack_user_ids: ["approver_slack_user_ids"],
                     auth: { bot_token: "bot_token", signing_secret: "signing_secret" },
                     bot_display_name: "bot_display_name",
                     bot_user_id: "bot_user_id",
                     default_agent_name: "default_agent_name",
+                    notification_rules: [{ channel_id: "channel_id", outcome: "any", schedule_name: "schedule_name" }],
                     reply_mode: "thread",
                     team_id: "team_id",
                     type: "slack",
@@ -392,6 +404,7 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allowDirectMessages: true,
                     allowedChannelIds: ["allowed_channel_ids"],
+                    approverSlackUserIds: ["approver_slack_user_ids"],
                     auth: {
                         botToken: "bot_token",
                         signingSecret: "signing_secret",
@@ -399,6 +412,13 @@ describe("IntegrationsClient", () => {
                     botDisplayName: "bot_display_name",
                     botUserId: "bot_user_id",
                     defaultAgentName: "default_agent_name",
+                    notificationRules: [
+                        {
+                            channelId: "channel_id",
+                            outcome: "any",
+                            scheduleName: "schedule_name",
+                        },
+                    ],
                     replyMode: "thread",
                     teamId: "team_id",
                     type: "slack",
@@ -454,10 +474,12 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allow_direct_messages: true,
                     allowed_channel_ids: ["allowed_channel_ids"],
+                    approver_slack_user_ids: ["approver_slack_user_ids"],
                     auth: { bot_token: "bot_token", signing_secret: "signing_secret" },
                     bot_display_name: "bot_display_name",
                     bot_user_id: "bot_user_id",
                     default_agent_name: "default_agent_name",
+                    notification_rules: [{ channel_id: "channel_id", outcome: "any", schedule_name: "schedule_name" }],
                     reply_mode: "thread",
                     team_id: "team_id",
                     type: "slack",
@@ -499,6 +521,7 @@ describe("IntegrationsClient", () => {
                 manifest: {
                     allowDirectMessages: true,
                     allowedChannelIds: ["allowed_channel_ids"],
+                    approverSlackUserIds: ["approver_slack_user_ids"],
                     auth: {
                         botToken: "bot_token",
                         signingSecret: "signing_secret",
@@ -506,6 +529,13 @@ describe("IntegrationsClient", () => {
                     botDisplayName: "bot_display_name",
                     botUserId: "bot_user_id",
                     defaultAgentName: "default_agent_name",
+                    notificationRules: [
+                        {
+                            channelId: "channel_id",
+                            outcome: "any",
+                            scheduleName: "schedule_name",
+                        },
+                    ],
                     replyMode: "thread",
                     teamId: "team_id",
                     type: "slack",
@@ -720,7 +750,12 @@ describe("IntegrationsClient", () => {
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
 
         const rawResponseBody = {
-            data: { create_app_url: "create_app_url", manifest_json: "manifest_json", request_url: "request_url" },
+            data: {
+                create_app_url: "create_app_url",
+                interactions_request_url: "interactions_request_url",
+                manifest_json: "manifest_json",
+                request_url: "request_url",
+            },
         };
 
         server
@@ -735,6 +770,7 @@ describe("IntegrationsClient", () => {
         expect(response).toEqual({
             data: {
                 createAppUrl: "create_app_url",
+                interactionsRequestUrl: "interactions_request_url",
                 manifestJson: "manifest_json",
                 requestUrl: "request_url",
             },

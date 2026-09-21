@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  completedNotificationRules,
   EMPTY_INTEGRATION_FORM,
+  emptyNotificationRule,
   parseAllowedChannels,
+  parseApproverUserIds,
   toIntegrationForm,
   toUpdateIntegrationRequest,
   validateCredentials,
@@ -17,6 +20,8 @@ function form(overrides: Partial<IntegrationFormDraft> = {}): IntegrationFormDra
     defaultAgentName: 'support-bot',
     allowedChannels: 'C0GENERAL, C0RELEASES',
     allowDirectMessages: true,
+    approverUserIds: 'U0ADMIN',
+    notificationRules: [],
     ...overrides,
   };
 }
@@ -41,6 +46,8 @@ describe('toIntegrationForm', () => {
       defaultAgentName: 'support-bot',
       allowedChannelIds: ['C0GENERAL', 'C0RELEASES'],
       allowDirectMessages: false,
+      approverUserIds: ['U0ADMIN', 'U0LEAD'],
+      notificationRules: [{ scheduleName: 'nightly-report', channelId: 'C0RELEASES', outcome: 'failure' }],
       externalAccountId: 'T0TEAM',
     };
 
@@ -49,6 +56,8 @@ describe('toIntegrationForm', () => {
       defaultAgentName: 'support-bot',
       allowedChannels: 'C0GENERAL, C0RELEASES',
       allowDirectMessages: false,
+      approverUserIds: 'U0ADMIN, U0LEAD',
+      notificationRules: [{ scheduleName: 'nightly-report', channelId: 'C0RELEASES', outcome: 'failure' }],
     });
   });
 });
@@ -88,6 +97,38 @@ describe('validateIntegrationForm', () => {
       'can never answer',
     );
   });
+
+  it('accepts an empty approver list, which simply allows nobody to approve', () => {
+    expect(validateIntegrationForm(form({ approverUserIds: '' }))).toBeUndefined();
+  });
+
+  it.each([
+    { scheduleName: 'nightly-report', channelId: '', outcome: 'any' as const },
+    { scheduleName: '', channelId: 'C0RELEASES', outcome: 'any' as const },
+  ])('refuses a half-filled rule (%o)', rule => {
+    expect(validateIntegrationForm(form({ notificationRules: [rule] }))).toContain('both a schedule and a channel');
+  });
+
+  it('ignores a rule row nobody has typed into yet', () => {
+    expect(validateIntegrationForm(form({ notificationRules: [emptyNotificationRule()] }))).toBeUndefined();
+  });
+});
+
+describe('parseApproverUserIds', () => {
+  it('splits on commas and whitespace and drops the blanks', () => {
+    expect(parseApproverUserIds(' U0ONE,U0TWO \n ')).toEqual(['U0ONE', 'U0TWO']);
+  });
+});
+
+describe('completedNotificationRules', () => {
+  it('drops a row nobody typed into and trims the rest', () => {
+    expect(
+      completedNotificationRules([
+        emptyNotificationRule(),
+        { scheduleName: ' nightly-report ', channelId: ' C0RELEASES ', outcome: 'success' },
+      ]),
+    ).toEqual([{ scheduleName: 'nightly-report', channelId: 'C0RELEASES', outcome: 'success' }]);
+  });
 });
 
 describe('validateCredentials', () => {
@@ -117,6 +158,8 @@ describe('toUpdateIntegrationRequest', () => {
       defaultAgentName: 'support-bot',
       allowedChannelIds: ['C0GENERAL', 'C0RELEASES'],
       allowDirectMessages: true,
+      approverUserIds: ['U0ADMIN'],
+      notificationRules: [],
     });
     expect('auth' in request).toBe(false);
   });
@@ -143,10 +186,30 @@ describe('toUpdateIntegrationRequest', () => {
     expect(Object.keys(request).sort()).toEqual([
       'allowDirectMessages',
       'allowedChannelIds',
+      'approverUserIds',
       'auth',
       'botDisplayName',
       'defaultAgentName',
       'id',
+      'notificationRules',
+    ]);
+  });
+
+  it('sends the rules a person completed and leaves the blank row behind', () => {
+    const request = toUpdateIntegrationRequest({
+      id: 'int-1',
+      form: form({
+        notificationRules: [
+          { scheduleName: 'nightly-report', channelId: 'C0RELEASES', outcome: 'failure' },
+          emptyNotificationRule(),
+        ],
+      }),
+      botToken: '',
+      signingSecret: '',
+    });
+
+    expect(request.notificationRules).toEqual([
+      { scheduleName: 'nightly-report', channelId: 'C0RELEASES', outcome: 'failure' },
     ]);
   });
 });

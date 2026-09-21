@@ -13,6 +13,11 @@ class IntegrationAppManifest(UncheckedBaseModel):
     Page on the channel that accepts the manifest.
     """
 
+    interactions_request_url: str = pydantic.Field()
+    """
+    Interactivity request URL the manifest carries.
+    """
+
     manifest_json: str = pydantic.Field()
     """
     App manifest as pretty-printed JSON, ready to paste.

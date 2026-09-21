@@ -71,10 +71,10 @@ function scalarSummary(value: unknown): string {
   if (typeof value === 'string') {
     return truncate(value, ARGUMENT_VALUE_MAX);
   }
-  if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) {
     return String(value);
   }
-  return truncate(JSON.stringify(value) ?? '', ARGUMENT_VALUE_MAX);
+  return truncate(JSON.stringify(value), ARGUMENT_VALUE_MAX);
 }
 
 /**

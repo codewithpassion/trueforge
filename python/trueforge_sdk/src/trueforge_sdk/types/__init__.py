@@ -99,6 +99,8 @@ if typing.TYPE_CHECKING:
     from .integration import Integration
     from .integration_app_manifest import IntegrationAppManifest
     from .integration_manifest import IntegrationManifest
+    from .integration_notification_outcome import IntegrationNotificationOutcome
+    from .integration_notification_rule import IntegrationNotificationRule
     from .integration_status import IntegrationStatus
     from .integration_type import IntegrationType
     from .large_tool_response_config import LargeToolResponseConfig
@@ -346,6 +348,8 @@ _dynamic_imports: typing.Dict[str, str] = {
     "Integration": ".integration",
     "IntegrationAppManifest": ".integration_app_manifest",
     "IntegrationManifest": ".integration_manifest",
+    "IntegrationNotificationOutcome": ".integration_notification_outcome",
+    "IntegrationNotificationRule": ".integration_notification_rule",
     "IntegrationStatus": ".integration_status",
     "IntegrationType": ".integration_type",
     "LargeToolResponseConfig": ".large_tool_response_config",
@@ -617,6 +621,8 @@ __all__ = [
     "Integration",
     "IntegrationAppManifest",
     "IntegrationManifest",
+    "IntegrationNotificationOutcome",
+    "IntegrationNotificationRule",
     "IntegrationStatus",
     "IntegrationType",
     "LargeToolResponseConfig",

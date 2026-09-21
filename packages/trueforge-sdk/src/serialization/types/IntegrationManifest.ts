@@ -3,6 +3,7 @@
 import type * as TrueForge from "../../api/index.js";
 import * as core from "../../core/index.js";
 import type * as serializers from "../index.js";
+import { IntegrationNotificationRule } from "./IntegrationNotificationRule.js";
 import { ResourceName } from "./ResourceName.js";
 import { SlackBotDisplayName } from "./SlackBotDisplayName.js";
 import { SlackIntegrationAuth } from "./SlackIntegrationAuth.js";
@@ -17,10 +18,18 @@ export const IntegrationManifest: core.serialization.ObjectSchema<
         "allowed_channel_ids",
         core.serialization.list(core.serialization.string()),
     ),
+    approverSlackUserIds: core.serialization.property(
+        "approver_slack_user_ids",
+        core.serialization.list(core.serialization.string()).optional(),
+    ),
     auth: SlackIntegrationAuth.optional(),
     botDisplayName: core.serialization.property("bot_display_name", SlackBotDisplayName.optional()),
     botUserId: core.serialization.property("bot_user_id", core.serialization.string().optional()),
     defaultAgentName: core.serialization.property("default_agent_name", ResourceName),
+    notificationRules: core.serialization.property(
+        "notification_rules",
+        core.serialization.list(IntegrationNotificationRule).optional(),
+    ),
     replyMode: core.serialization.property("reply_mode", SlackReplyMode),
     teamId: core.serialization.property("team_id", core.serialization.string().optional()),
     type: core.serialization.stringLiteral("slack"),
@@ -30,10 +39,12 @@ export declare namespace IntegrationManifest {
     export interface Raw {
         allow_direct_messages: boolean;
         allowed_channel_ids: string[];
+        approver_slack_user_ids?: string[] | null;
         auth?: SlackIntegrationAuth.Raw | null;
         bot_display_name?: SlackBotDisplayName.Raw | null;
         bot_user_id?: string | null;
         default_agent_name: ResourceName.Raw;
+        notification_rules?: IntegrationNotificationRule.Raw[] | null;
         reply_mode: SlackReplyMode.Raw;
         team_id?: string | null;
         type: "slack";

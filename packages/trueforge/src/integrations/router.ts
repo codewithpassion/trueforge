@@ -238,17 +238,25 @@ export class IntegrationRouter<TTransaction> {
       return { type: 'not_pending', reason: 'That conversation no longer has a session' };
     }
 
+    const stale = {
+      type: 'not_pending',
+      reason: 'That decision is no longer the one this thread is waiting on',
+    } as const;
     const tip = await tipTurn(session);
     // Resuming anything but the tip would fork the session and leave the real tip hanging.
-    if (tip === undefined || tip.id !== interaction.turn_id || tip.state.status === 'running') {
+    if (tip === undefined) {
       await release();
-      return { type: 'not_pending', reason: 'That decision is no longer the one this thread is waiting on' };
+      return stale;
+    }
+    if (tip.id !== interaction.turn_id || tip.state.status === 'running') {
+      await release();
+      return stale;
     }
     const pending = await readPendingAction({ turn: tip, state: tip.state });
     const turnInput = resumeInput({ interaction, pending });
     if (turnInput === undefined) {
       await release();
-      return { type: 'not_pending', reason: 'That decision is no longer the one this thread is waiting on' };
+      return stale;
     }
 
     const agentName = integration.manifest.default_agent_name;

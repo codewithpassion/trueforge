@@ -9,6 +9,7 @@ export const IntegrationAppManifest: core.serialization.ObjectSchema<
     TrueForge.IntegrationAppManifest
 > = core.serialization.object({
     createAppUrl: core.serialization.property("create_app_url", core.serialization.string()),
+    interactionsRequestUrl: core.serialization.property("interactions_request_url", core.serialization.string()),
     manifestJson: core.serialization.property("manifest_json", core.serialization.string()),
     requestUrl: core.serialization.property("request_url", core.serialization.string()),
 });
@@ -16,6 +17,7 @@ export const IntegrationAppManifest: core.serialization.ObjectSchema<
 export declare namespace IntegrationAppManifest {
     export interface Raw {
         create_app_url: string;
+        interactions_request_url: string;
         manifest_json: string;
         request_url: string;
     }

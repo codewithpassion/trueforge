@@ -4,8 +4,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import IntegrationSettings from '@/containers/SettingsBuilder/IntegrationSettings.js';
 import { ServerProvider } from '@/server/ServerContext.js';
-import type { IntegrationBase, IntegrationCatalogServer } from '@/server/types.js';
-import { createMockAgentUIServer, createMockCatalog } from '../../server/mockServer.js';
+import type { AgentUIServer, IntegrationBase, IntegrationCatalogServer, Schedule } from '@/server/types.js';
+import { createMockAgentUIServer, createMockCatalog, createMockScheduleServer } from '../../server/mockServer.js';
 
 async function unavailable(): Promise<never> {
   throw new Error('Unexpected integration catalog call');
@@ -19,6 +19,8 @@ const PENDING: IntegrationBase = {
   defaultAgentName: 'support-bot',
   allowedChannelIds: ['C0GENERAL'],
   allowDirectMessages: true,
+  approverUserIds: [],
+  notificationRules: [],
 };
 
 const CONNECTED: IntegrationBase = { ...PENDING, status: 'connected', externalAccountId: 'T0TEAM' };
@@ -29,8 +31,25 @@ const MANIFEST_JSON = JSON.stringify(
   2,
 );
 
+/** Only the fields the rule picker reads; the real DTO carries cron, task and the rest. */
+function schedule(name: string): Schedule {
+  return {
+    id: `sched-${name}`,
+    name,
+    agentId: 'agent-1',
+    agentName: 'support-bot',
+    task: 'report',
+    cron: '0 0 * * *',
+    timezone: 'UTC',
+    status: 'active',
+    lastRunAt: null,
+    createdBySubject: { subjectId: 'admin-1', subjectType: 'user', subjectDisplayName: 'Admin One' },
+  };
+}
+
 function renderSection(
   catalog: Partial<IntegrationCatalogServer> & { listIntegrations: () => Promise<IntegrationBase[]> },
+  serverOverrides: Partial<AgentUIServer> = {},
 ) {
   const integrationCatalog: IntegrationCatalogServer = {
     createIntegration: unavailable,
@@ -38,12 +57,16 @@ function renderSection(
     deleteIntegration: unavailable,
     getIntegrationSetupManifest: async () => ({
       requestUrl: 'https://trueforge.test/api/v1/integrations/int-1/events',
+      interactionsRequestUrl: 'https://trueforge.test/api/v1/integrations/int-1/interactions',
       manifestJson: MANIFEST_JSON,
       createAppUrl: 'https://api.slack.com/apps?new_app=1',
     }),
     ...catalog,
   };
-  const server = createMockAgentUIServer({ catalog: createMockCatalog({ integrationCatalog }) });
+  const server = createMockAgentUIServer({
+    catalog: createMockCatalog({ integrationCatalog }),
+    ...serverOverrides,
+  });
   return render(
     <ServerProvider server={server}>
       <IntegrationSettings />
@@ -97,6 +120,8 @@ describe('IntegrationSettings', () => {
         defaultAgentName: 'support-bot',
         allowedChannelIds: ['C0GENERAL'],
         allowDirectMessages: true,
+        approverUserIds: [],
+        notificationRules: [],
       });
     });
   });
@@ -192,6 +217,8 @@ describe('IntegrationSettings', () => {
         defaultAgentName: 'support-bot',
         allowedChannelIds: ['C0GENERAL'],
         allowDirectMessages: true,
+        approverUserIds: [],
+        notificationRules: [],
         auth: { botToken: 'xoxb-1', signingSecret: 'secret' },
       });
     });
@@ -224,6 +251,8 @@ describe('IntegrationSettings', () => {
         defaultAgentName: 'support-bot',
         allowedChannelIds: ['C0GENERAL', 'C0RELEASES'],
         allowDirectMessages: true,
+        approverUserIds: [],
+        notificationRules: [],
       });
     });
   });
@@ -255,5 +284,112 @@ describe('IntegrationSettings', () => {
       expect(deleteIntegration).toHaveBeenCalledWith({ id: 'int-1' });
     });
     expect(await screen.findByRole('heading', { name: 'Integrations' })).toBeInTheDocument();
+  });
+});
+
+describe('IntegrationSettings approvals and notifications', () => {
+  const WITH_RULE: IntegrationBase = {
+    ...CONNECTED,
+    approverUserIds: ['U0ADMIN'],
+    notificationRules: [{ scheduleName: 'nightly-report', channelId: 'C0RELEASES', outcome: 'failure' }],
+  };
+
+  it('shows the approver list and the rules that are stored', async () => {
+    renderSection({ listIntegrations: async () => [WITH_RULE] });
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+
+    expect(await screen.findByLabelText('Who may approve')).toHaveValue('U0ADMIN');
+    expect(screen.getByLabelText('Schedule')).toHaveValue('nightly-report');
+    expect(screen.getByLabelText('Post to channel')).toHaveValue('C0RELEASES');
+    expect(screen.getByLabelText('Post when')).toHaveValue('failure');
+  });
+
+  it('says so when nothing is set up yet', async () => {
+    renderSection({ listIntegrations: async () => [CONNECTED] });
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+
+    expect(await screen.findByText('No notification rules.')).toBeInTheDocument();
+  });
+
+  it('sends an edited approver list', async () => {
+    const updateIntegration = vi.fn(async () => WITH_RULE);
+    renderSection({ listIntegrations: async () => [CONNECTED], updateIntegration });
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+    fireEvent.change(await screen.findByLabelText('Who may approve'), { target: { value: 'U0ADMIN, U0LEAD' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateIntegration).toHaveBeenCalledWith(
+        expect.objectContaining({ approverUserIds: ['U0ADMIN', 'U0LEAD'] }),
+      );
+    });
+  });
+
+  it('adds a rule and sends it', async () => {
+    const updateIntegration = vi.fn(async () => WITH_RULE);
+    renderSection({ listIntegrations: async () => [CONNECTED], updateIntegration });
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add rule' }));
+    fireEvent.change(screen.getByLabelText('Schedule'), { target: { value: 'nightly-report' } });
+    fireEvent.change(screen.getByLabelText('Post to channel'), { target: { value: 'C0RELEASES' } });
+    fireEvent.change(screen.getByLabelText('Post when'), { target: { value: 'failure' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateIntegration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          notificationRules: [{ scheduleName: 'nightly-report', channelId: 'C0RELEASES', outcome: 'failure' }],
+        }),
+      );
+    });
+  });
+
+  it('removes a rule', async () => {
+    const updateIntegration = vi.fn(async () => CONNECTED);
+    renderSection({ listIntegrations: async () => [WITH_RULE], updateIntegration });
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove rule 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateIntegration).toHaveBeenCalledWith(expect.objectContaining({ notificationRules: [] }));
+    });
+  });
+
+  it('refuses to save a rule with only half of it filled in', async () => {
+    const updateIntegration = vi.fn(async () => CONNECTED);
+    renderSection({ listIntegrations: async () => [CONNECTED], updateIntegration });
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add rule' }));
+    fireEvent.change(screen.getByLabelText('Schedule'), { target: { value: 'nightly-report' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText(/both a schedule and a channel/)).toBeInTheDocument();
+    expect(updateIntegration).not.toHaveBeenCalled();
+  });
+
+  it('offers the schedules the host can list, without demanding one of them', async () => {
+    renderSection(
+      { listIntegrations: async () => [CONNECTED] },
+      {
+        schedules: createMockScheduleServer({
+          listSchedules: async () => ({ data: [schedule('nightly-report'), schedule('weekly-digest')] }),
+        }),
+      },
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add rule' }));
+
+    const options = await screen.findAllByRole('option', { hidden: true });
+    expect(options.map(option => option.getAttribute('value'))).toContain('nightly-report');
+    // Still a text box, so a schedule the host cannot list can be named by hand.
+    expect(screen.getByLabelText('Schedule')).toHaveAttribute('list', 'integration-schedule-names');
   });
 });

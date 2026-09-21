@@ -4,7 +4,7 @@
  * Kept apart from the section so the decisions — what is required when, which change the
  * server will refuse — are testable without a DOM.
  */
-import type { IntegrationBase, UpdateIntegrationRequest } from '@/server/types.js';
+import type { IntegrationBase, IntegrationNotificationRule, UpdateIntegrationRequest } from '@/server/types.js';
 
 export interface IntegrationFormDraft {
   /** Name the bot takes in the channel; also the name of the app the manifest creates. */
@@ -13,6 +13,10 @@ export interface IntegrationFormDraft {
   /** Comma or newline separated; an empty list allows no channel. */
   allowedChannels: string;
   allowDirectMessages: boolean;
+  /** Comma or newline separated channel user ids; an empty list allows nobody to approve. */
+  approverUserIds: string;
+  /** Edited as rows, because each one is three fields that only mean anything together. */
+  notificationRules: IntegrationNotificationRule[];
 }
 
 export const EMPTY_INTEGRATION_FORM: IntegrationFormDraft = {
@@ -20,7 +24,14 @@ export const EMPTY_INTEGRATION_FORM: IntegrationFormDraft = {
   defaultAgentName: '',
   allowedChannels: '',
   allowDirectMessages: true,
+  approverUserIds: '',
+  notificationRules: [],
 };
+
+/** A blank rule row; the outcome starts at the widest filter so the row is valid as soon as it is filled. */
+export function emptyNotificationRule(): IntegrationNotificationRule {
+  return { scheduleName: '', channelId: '', outcome: 'any' };
+}
 
 /** Slack's cap on the app name the bot takes; the character rules are the server's alone. */
 const BOT_NAME_MAX = 35;
@@ -38,7 +49,23 @@ export function toIntegrationForm(integration: IntegrationBase): IntegrationForm
     defaultAgentName: integration.defaultAgentName,
     allowedChannels: integration.allowedChannelIds.join(', '),
     allowDirectMessages: integration.allowDirectMessages,
+    approverUserIds: integration.approverUserIds.join(', '),
+    notificationRules: integration.notificationRules.map(rule => ({ ...rule })),
   };
+}
+
+/** Ids a person typed, whatever they separated them with. */
+export function parseApproverUserIds(value: string): string[] {
+  return parseAllowedChannels(value);
+}
+
+/** Rows that are still blank are dropped; a half-filled one is a mistake worth naming. */
+export function completedNotificationRules(
+  rules: readonly IntegrationNotificationRule[],
+): IntegrationNotificationRule[] {
+  return rules
+    .filter(rule => rule.scheduleName.trim().length > 0 || rule.channelId.trim().length > 0)
+    .map(rule => ({ ...rule, scheduleName: rule.scheduleName.trim(), channelId: rule.channelId.trim() }));
 }
 
 /**
@@ -58,6 +85,12 @@ export function validateIntegrationForm(form: IntegrationFormDraft): string | un
   }
   if (parseAllowedChannels(form.allowedChannels).length === 0 && !form.allowDirectMessages) {
     return 'Allow direct messages, or list at least one channel, or the bot can never answer.';
+  }
+  const halfFilled = completedNotificationRules(form.notificationRules).find(
+    rule => rule.scheduleName.length === 0 || rule.channelId.length === 0,
+  );
+  if (halfFilled !== undefined) {
+    return 'Every notification rule needs both a schedule and a channel id.';
   }
   return undefined;
 }
@@ -89,6 +122,8 @@ export function toUpdateIntegrationRequest(input: {
     defaultAgentName: input.form.defaultAgentName.trim(),
     allowedChannelIds: parseAllowedChannels(input.form.allowedChannels),
     allowDirectMessages: input.form.allowDirectMessages,
+    approverUserIds: parseApproverUserIds(input.form.approverUserIds),
+    notificationRules: completedNotificationRules(input.form.notificationRules),
   };
   if (botToken.length === 0 || signingSecret.length === 0) {
     return base;
