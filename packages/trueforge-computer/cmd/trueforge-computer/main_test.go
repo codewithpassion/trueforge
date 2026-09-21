@@ -7,7 +7,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/coder/websocket"
+
+	"trueforge.dev/computer/internal/protocol"
 	"trueforge.dev/computer/internal/state"
 )
 
@@ -94,6 +98,45 @@ func TestRunEnrollsOnceThenIgnoresTheCode(t *testing.T) {
 	}
 	if credential != "mc_from_server" || config.ComputerID != "cmp_1" {
 		t.Fatalf("second start returned %+v, %q", config, credential)
+	}
+}
+
+// The whole of `run` end to end, for the one outcome an operator has to be able to act on:
+// a revoked credential leaves exit 3 and exactly one dial, not a reconnect loop.
+func TestRunExitsThreeOnRevocationWithoutRetrying(t *testing.T) {
+	dials := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		dials++
+		socket, err := websocket.Accept(writer, request, nil)
+		if err != nil {
+			return
+		}
+		// Read hello, then revoke.
+		_, _, _ = socket.Read(request.Context())
+		_ = socket.Close(protocol.CloseRevoked, "revoked")
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	if err := state.WriteCredential(dir, "mc_secret"); err != nil {
+		t.Fatalf("write credential: %v", err)
+	}
+	if err := state.SaveConfig(dir, state.Config{URL: server.URL, ComputerID: "cmp_1", Name: "box"}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	done := make(chan int, 1)
+	go func() { done <- run([]string{"run", "--state-dir", dir, "--allow-root", "--log-format", "text"}) }()
+	select {
+	case code := <-done:
+		if code != exitRevoked {
+			t.Fatalf("run exited %d, want %d", code, exitRevoked)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("run did not exit after the credential was revoked")
+	}
+	if dials != 1 {
+		t.Fatalf("dialled %d times after a revocation, want 1", dials)
 	}
 }
 
