@@ -8,6 +8,7 @@ import { RequestErrorResponseSchema } from '../schemas/errors';
 import {
   CreateIntegrationRequestSchema,
   DeleteIntegrationResponseSchema,
+  GetIntegrationAppManifestResponseSchema,
   GetIntegrationResponseSchema,
   ListIntegrationsResponseSchema,
   UpdateIntegrationRequestSchema,
@@ -46,10 +47,10 @@ export const createIntegrationRoute = createRoute({
   method: 'post',
   path: '/',
   tags: [OpenApiTag.INTEGRATIONS],
-  summary: 'Connect an integration',
+  summary: 'Create an integration',
   description:
-    'Connects a channel account. Fails if that account is already connected. ' +
-    'Credentials: a real value is required; a redacted value returns 400.',
+    'Creates a channel integration. Without credentials it stays pending until the channel app ' +
+    'is installed; with them the workspace and bot ids are read from the channel.',
   'x-fern-sdk-group-name': ['settings', 'integrations'],
   'x-fern-sdk-method-name': 'create',
   request: {
@@ -61,7 +62,7 @@ export const createIntegrationRoute = createRoute({
   responses: {
     201: {
       content: { 'application/json': { schema: GetIntegrationResponseSchema } },
-      description: 'The connected integration.',
+      description: 'The new integration.',
     },
     400: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
@@ -70,6 +71,10 @@ export const createIntegrationRoute = createRoute({
     409: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'That channel account is already connected.',
+    },
+    502: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'The channel refused the credentials or did not answer.',
     },
   },
 });
@@ -101,8 +106,9 @@ export const putIntegrationRoute = createRoute({
   tags: [OpenApiTag.INTEGRATIONS],
   summary: 'Replace a connected integration',
   description:
-    'Replaces the whole manifest of an existing integration. ' +
-    'Credentials: a real value sets or rotates; a redacted value keeps the stored secret.',
+    'Replaces the whole manifest of an existing integration. Credentials: a real value sets or ' +
+    'rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps ' +
+    'the stored secret.',
   'x-fern-sdk-group-name': ['settings', 'integrations'],
   'x-fern-sdk-method-name': 'update',
   request: {
@@ -127,7 +133,38 @@ export const putIntegrationRoute = createRoute({
     },
     409: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
-      description: 'That channel account is already connected to another integration.',
+      description: 'That channel account is already connected, or belongs to a different workspace.',
+    },
+    502: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'The channel refused the credentials or did not answer.',
+    },
+  },
+});
+
+export const getIntegrationAppManifestRoute = createRoute({
+  method: 'get',
+  path: '/{integration_id}/app-manifest',
+  tags: [OpenApiTag.INTEGRATIONS],
+  summary: 'Get the channel app manifest',
+  description:
+    'App manifest to paste into the channel, built from the bot name and this integration id. ' +
+    'Create the app from it, then save the credentials it issues.',
+  'x-fern-sdk-group-name': ['settings', 'integrations'],
+  'x-fern-sdk-method-name': 'get_app_manifest',
+  request: { params: IntegrationIdParamsSchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: GetIntegrationAppManifestResponseSchema } },
+      description: 'The app manifest and where to paste it.',
+    },
+    404: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Integration not found.',
+    },
+    500: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Server misconfiguration (e.g. PUBLIC_BASE_URL unset).',
     },
   },
 });
@@ -170,6 +207,10 @@ export const postIntegrationEventsRoute = createRoute({
     404: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'Integration not found.',
+    },
+    409: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'The integration is still pending: its credentials have not been saved.',
     },
     422: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },

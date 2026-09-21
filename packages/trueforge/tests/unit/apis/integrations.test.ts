@@ -19,6 +19,7 @@ import { SqliteSessionStore } from '../../../src/db/sqlite/session-store/SqliteS
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
+import type { SlackAuthTest } from '../../../src/integrations/slack/api';
 import { createIntegrationAdapters, type IntegrationAdapterRegistry } from '../../../src/integrations/registry';
 import type { ChannelAdapter, InboundResult } from '../../../src/integrations/types';
 import type { Integration, IntegrationManifest } from '../../../src/schemas/integration';
@@ -41,6 +42,7 @@ const CREATED_BY: CreatedBySubject = {
 function manifest(overrides: Partial<IntegrationManifest> = {}): IntegrationManifest {
   return {
     type: 'slack',
+    bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
     default_agent_name: AGENT_NAME,
@@ -48,6 +50,19 @@ function manifest(overrides: Partial<IntegrationManifest> = {}): IntegrationMani
     allow_direct_messages: true,
     reply_mode: 'thread',
     auth: { bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET },
+    ...overrides,
+  };
+}
+
+/** What the Settings form posts: a bot name and an agent, nothing Slack has issued yet. */
+function pendingManifest(overrides: Partial<IntegrationManifest> = {}): IntegrationManifest {
+  return {
+    type: 'slack',
+    bot_display_name: 'release-bot',
+    default_agent_name: AGENT_NAME,
+    allowed_channel_ids: ['C0GENERAL'],
+    allow_direct_messages: true,
+    reply_mode: 'thread',
     ...overrides,
   };
 }
@@ -60,21 +75,36 @@ interface Harness {
   db: Kysely<Database>;
   integrationStore: IIntegrationStore<Kysely<Database>>;
   settings: ReturnType<typeof createIntegrationsRouter>;
+  authTestCalls: string[];
 }
 
-async function createHarness(): Promise<Harness> {
+const PUBLIC_BASE_URL = 'https://trueforge.test';
+
+async function createHarness(
+  options: { slackAuthTest?: SlackAuthTest; publicBaseUrl?: () => string } = {},
+): Promise<Harness> {
   const db = createSqliteDb(':memory:');
   await migrateSqliteToLatest(db);
   const integrationStore = new SqliteIntegrationStore(db, new BetterSqliteAtomicRunner(db));
+  const authTestCalls: string[] = [];
+  // Never the real client: a unit test that reached slack.com would be asserting on Slack.
+  const slackAuthTest: SlackAuthTest =
+    options.slackAuthTest ??
+    (async input => {
+      authTestCalls.push(input.botToken);
+      return { ok: true, team_id: 'T0TEAM', bot_user_id: 'U0BOT' };
+    });
   const settings = createIntegrationsRouter({
     resolveIntegrationStore: () => integrationStore,
     withTransaction: callback => db.transaction().execute(callback),
     resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+    publicBaseUrl: options.publicBaseUrl ?? (() => PUBLIC_BASE_URL),
+    slackAuthTest,
   });
-  return { db, integrationStore, settings };
+  return { db, integrationStore, settings, authTestCalls };
 }
 
-async function createIngress(options: { adapters: IntegrationAdapterRegistry }) {
+async function createIngress(options: { adapters: IntegrationAdapterRegistry; pending?: boolean }) {
   const db = createSqliteDb(':memory:');
   await migrateSqliteToLatest(db);
   const atomic = new BetterSqliteAtomicRunner(db);
@@ -89,12 +119,13 @@ async function createIngress(options: { adapters: IntegrationAdapterRegistry }) 
     external_id: null,
     created_by_subject: CREATED_BY,
   });
+  const integrationId = newId();
   const integration = await integrationStore.createIntegration({
-    id: newId(),
+    id: integrationId,
     tenant_id: TENANT,
     type: 'slack',
-    external_account_id: 'T0TEAM',
-    manifest: manifest(),
+    external_account_id: options.pending === true ? `pending:${integrationId}` : 'T0TEAM',
+    manifest: options.pending === true ? pendingManifest() : manifest(),
     created_by_subject: CREATED_BY,
   });
   const executor = new RecordingTurnExecutor(sessionStore);
@@ -249,24 +280,122 @@ describe('settings integrations router', () => {
     expect(stored?.manifest.auth).toEqual({ bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET });
   });
 
-  it('allows moving to another channel account with real credentials', async () => {
+  it('creates a pending integration from a bot name alone, and asks Slack nothing', async () => {
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    expect(created.status).toBe(201);
+    const { data } = (await created.json()) as { data: Integration };
+    expect(data.status).toBe('pending');
+    expect(data.manifest.team_id).toBeUndefined();
+    expect(data.manifest.bot_user_id).toBeUndefined();
+    expect(data.manifest.auth).toBeUndefined();
+    // No channel account yet, so the row stands on its own id rather than colliding.
+    expect(data.external_account_id).toBe(`pending:${data.id}`);
+    expect(harness.authTestCalls).toEqual([]);
+  });
+
+  it('lets two pending integrations coexist', async () => {
+    harness = await createHarness();
+    expect((await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }))).status).toBe(201);
+    expect((await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }))).status).toBe(201);
+  });
+
+  it('fills the workspace and bot ids from auth.test when credentials are saved', async () => {
+    harness = await createHarness();
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const { data } = (await created.json()) as { data: Integration };
+
+    const connected = await harness.settings.request(
+      `/${data.id}`,
+      jsonInit('PUT', {
+        manifest: pendingManifest({ auth: { bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET } }),
+      }),
+    );
+    expect(connected.status).toBe(200);
+    const body = (await connected.json()) as { data: Integration };
+    expect(body.data.status).toBe('connected');
+    expect(body.data.manifest.team_id).toBe('T0TEAM');
+    expect(body.data.manifest.bot_user_id).toBe('U0BOT');
+    expect(body.data.external_account_id).toBe('T0TEAM');
+    expect(harness.authTestCalls).toEqual([BOT_TOKEN]);
+  });
+
+  it('answers 502 when Slack refuses the bot token, and stays pending', async () => {
+    harness = await createHarness({
+      slackAuthTest: async () => ({ ok: false, error: 'Slack rejected the bot token: invalid_auth' }),
+    });
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
     const { data } = (await created.json()) as { data: Integration };
 
     const response = await harness.settings.request(
       `/${data.id}`,
       jsonInit('PUT', {
-        manifest: manifest({
-          team_id: 'T0OTHER',
-          auth: { bot_token: 'xoxb-other', signing_secret: 'other-secret' },
-        }),
+        manifest: pendingManifest({ auth: { bot_token: 'xoxb-wrong', signing_secret: SIGNING_SECRET } }),
       }),
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining('invalid_auth') } });
 
     const stored = await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: data.id });
-    expect(stored?.external_account_id).toBe('T0OTHER');
+    expect(stored?.manifest.auth).toBeUndefined();
+  });
+
+  it('answers 409 when the credentials name a workspace other than the one claimed', async () => {
+    harness = await createHarness({
+      slackAuthTest: async () => ({ ok: true, team_id: 'T0OTHER', bot_user_id: 'U0OTHERBOT' }),
+    });
+    const response = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining('T0OTHER') } });
+  });
+
+  it('answers 409 when a rotated token would move a connected integration to another workspace', async () => {
+    let teamId = 'T0TEAM';
+    harness = await createHarness({
+      slackAuthTest: async () => ({ ok: true, team_id: teamId, bot_user_id: 'U0BOT' }),
+    });
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const { data } = (await created.json()) as { data: Integration };
+
+    teamId = 'T0OTHER';
+    const rotated = await harness.settings.request(
+      `/${data.id}`,
+      jsonInit('PUT', {
+        manifest: pendingManifest({ auth: { bot_token: 'xoxb-other', signing_secret: 'other-secret' } }),
+      }),
+    );
+    expect(rotated.status).toBe(409);
+
+    const stored = await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: data.id });
+    expect(stored?.external_account_id).toBe('T0TEAM');
+    expect(stored?.manifest.auth).toEqual({ bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET });
+  });
+
+  it('serves an app manifest carrying the bot name and this integration ingress URL', async () => {
+    harness = await createHarness();
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const { data } = (await created.json()) as { data: Integration };
+
+    const response = await harness.settings.request(`/${data.id}/app-manifest`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: { request_url: string; manifest_json: string } };
+    expect(body.data.request_url).toBe(`${PUBLIC_BASE_URL}/api/v1/integrations/${data.id}/events`);
+    const parsed: unknown = JSON.parse(body.data.manifest_json);
+    expect(parsed).toMatchObject({
+      display_information: { name: 'release-bot' },
+      settings: { event_subscriptions: { request_url: body.data.request_url } },
+    });
+  });
+
+  it('answers 500 for the app manifest when no public base URL is configured', async () => {
+    harness = await createHarness({
+      publicBaseUrl: () => {
+        throw new Error('PUBLIC_BASE_URL is required for OIDC callbacks but was empty');
+      },
+    });
+    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const { data } = (await created.json()) as { data: Integration };
+    expect((await harness.settings.request(`/${data.id}/app-manifest`)).status).toBe(500);
   });
 
   it('returns 404 for an unknown integration on GET and PUT', async () => {
@@ -422,6 +551,59 @@ describe('integration events ingress', () => {
       expect(response.status).toBe(401);
       expect(executor.starts).toHaveLength(0);
       expect(await db.selectFrom('integration_delivery').selectAll().execute()).toEqual([]);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('answers the unsigned request-URL challenge for a pending integration', async () => {
+    // Slack sends this while it creates the app from the manifest, before any secret exists.
+    const { db, app, integration } = await createIngress({ adapters: createIntegrationAdapters(), pending: true });
+    try {
+      const response = await app.request(`/${integration.id}/events`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'url_verification', challenge: 'chal-123' }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('chal-123');
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('refuses a real event for a pending integration with 409', async () => {
+    const { db, app, integration, executor } = await createIngress({
+      adapters: createIntegrationAdapters(),
+      pending: true,
+    });
+    try {
+      const response = await app.request(`/${integration.id}/events`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'event_callback',
+          team_id: 'T0TEAM',
+          event_id: 'Ev0009',
+          event: { type: 'app_mention', user: 'U0HUMAN', text: 'hi', ts: '1.1', channel: 'C0GENERAL' },
+        }),
+      });
+      expect(response.status).toBe(409);
+      expect(executor.starts).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it('still requires a signature on the challenge once credentials are stored', async () => {
+    const { db, app, integration } = await createIngress({ adapters: createIntegrationAdapters() });
+    try {
+      const response = await app.request(`/${integration.id}/events`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'url_verification', challenge: 'chal-123' }),
+      });
+      expect(response.status).toBe(401);
     } finally {
       await db.destroy();
     }

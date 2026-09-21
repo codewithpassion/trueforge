@@ -108,6 +108,9 @@ export function createIntegrationEventsRouter<TTransaction>(deps: IntegrationEve
     if (received.type === 'rejected') {
       return c.json({ error: { message: received.reason } }, 401);
     }
+    if (received.type === 'not_connected') {
+      return c.json({ error: { message: received.reason } }, 409);
+    }
     if (received.type === 'ignore') {
       return c.body(null, 200);
     }

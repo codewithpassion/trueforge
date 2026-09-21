@@ -2,6 +2,7 @@
 import { z } from 'zod';
 
 const CHAT_POST_MESSAGE_URL = 'https://slack.com/api/chat.postMessage';
+const AUTH_TEST_URL = 'https://slack.com/api/auth.test';
 
 /**
  * A 429 is waited out in place while the pause stays short, because a message that arrives a
@@ -78,6 +79,56 @@ async function readResult(response: Response): Promise<SlackPostResult> {
   }
   return { ok: false, error: `Slack rejected the message: ${parsed.data.error ?? 'unknown_error'}` };
 }
+
+/** `auth.test` answers with the workspace and the bot's own user id for a valid bot token. */
+const SlackAuthTestResponseSchema = z.object({
+  ok: z.literal(true),
+  team_id: z.string().min(1),
+  user_id: z.string().min(1),
+});
+
+export type SlackAuthTestResult =
+  | { ok: true; team_id: string; bot_user_id: string }
+  | { ok: false; error: string };
+
+/** Injected wherever credentials are saved, so tests never reach slack.com. */
+export type SlackAuthTest = (input: { botToken: string; fetchImpl?: SlackFetch }) => Promise<SlackAuthTestResult>;
+
+/**
+ * Identifies the workspace and bot behind a bot token, so nobody has to copy those ids by
+ * hand. The token travels only in the Authorization header and is never part of a result.
+ */
+export const slackAuthTest: SlackAuthTest = async input => {
+  const send = input.fetchImpl ?? fetch;
+  let response: Response;
+  try {
+    response = await send(AUTH_TEST_URL, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${input.botToken}`,
+        'content-type': 'application/x-www-form-urlencoded; charset=utf-8',
+      },
+      signal: AbortSignal.timeout(SLACK_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const name = error instanceof DOMException ? error.name : '';
+    if (name !== 'TimeoutError' && name !== 'AbortError') {
+      throw error;
+    }
+    return { ok: false, error: 'Slack did not answer auth.test in time' };
+  }
+  if (!response.ok) {
+    return { ok: false, error: `Slack auth.test returned HTTP ${String(response.status)}` };
+  }
+  const body: unknown = await response.json();
+  const parsed = SlackAuthTestResponseSchema.safeParse(body);
+  if (parsed.success) {
+    return { ok: true, team_id: parsed.data.team_id, bot_user_id: parsed.data.user_id };
+  }
+  const failure = SlackApiResponseSchema.safeParse(body);
+  const reason = failure.success ? (failure.data.error ?? 'unknown_error') : 'unreadable_response';
+  return { ok: false, error: `Slack rejected the bot token: ${reason}` };
+};
 
 /**
  * Posts one message into a thread. The bot token only ever travels in the Authorization header —

@@ -108,6 +108,7 @@ async function createRouters(): Promise<{
       resolveSkillStore: () => new SqliteSkillStore(db),
       resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
       resolveIntegrationStore: () => new SqliteIntegrationStore(db, new BetterSqliteAtomicRunner(db)),
+      publicBaseUrl: () => 'https://trueforge.test',
       sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
       withTransaction: callback => db.transaction().execute(callback),
       logger: winston.createLogger({ silent: true }),

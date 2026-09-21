@@ -46,6 +46,7 @@ const CHANNEL_ID = 'C0GENERAL';
 function manifest(teamId: string): IntegrationManifest {
   return {
     type: 'slack',
+    bot_display_name: 'trueforge',
     team_id: teamId,
     bot_user_id: 'U0BOT',
     default_agent_name: AGENT_NAME,

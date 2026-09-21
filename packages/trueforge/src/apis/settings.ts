@@ -25,6 +25,8 @@ export interface SettingsRouterDeps<TTransaction> {
   resolveSkillStore: ResolveSkillStore<TTransaction>;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
   resolveIntegrationStore: (c: Context) => IIntegrationStore<TTransaction>;
+  /** Public origin channels post back to; read lazily so an unset value only fails its own route. */
+  publicBaseUrl: () => string;
   sandboxIntegration: SandboxIntegration | undefined;
   withTransaction: WithTransaction<TTransaction>;
   logger: Logger;
@@ -64,6 +66,7 @@ export function createSettingsRouter<TTransaction>(deps: SettingsRouterDeps<TTra
       resolveIntegrationStore: deps.resolveIntegrationStore,
       withTransaction: deps.withTransaction,
       resolveRequestContext: deps.resolveRequestContext,
+      publicBaseUrl: deps.publicBaseUrl,
     }),
   );
   router.route(

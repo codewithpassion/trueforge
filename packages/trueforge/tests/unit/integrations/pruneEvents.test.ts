@@ -25,6 +25,7 @@ const CREATED_BY: CreatedBySubject = {
 function manifest(): IntegrationManifest {
   return {
     type: 'slack',
+    bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
     default_agent_name: 'support-bot',

@@ -1,4 +1,4 @@
-import { postSlackMessage } from '../../../../src/integrations/slack/api';
+import { postSlackMessage, slackAuthTest } from '../../../../src/integrations/slack/api';
 
 interface Call {
   url: string;
@@ -149,5 +149,70 @@ describe('postSlackMessage deadlines', () => {
     const broken: typeof fetch = () => Promise.reject(new TypeError('network is unreachable'));
 
     await expect(postSlackMessage({ ...INPUT, fetchImpl: broken })).rejects.toThrow('network is unreachable');
+  });
+});
+
+describe('slackAuthTest', () => {
+  /** `auth.test` sends no JSON body, so the shared recorder's body parse cannot be reused. */
+  function authFetch(response: Response | (() => never)): { fetchImpl: typeof fetch; calls: Call[] } {
+    const calls: Call[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      calls.push({ url: String(input), authorization: headers.get('authorization'), body: init?.body ?? null });
+      if (typeof response === 'function') {
+        response();
+      }
+      return response;
+    };
+    return { fetchImpl, calls };
+  }
+
+  it('reads the workspace and the bot user id, with the token only in the header', async () => {
+    const { fetchImpl, calls } = authFetch(Response.json({ ok: true, team_id: 'T0TEAM', user_id: 'U0BOT' }));
+
+    expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toEqual({
+      ok: true,
+      team_id: 'T0TEAM',
+      bot_user_id: 'U0BOT',
+    });
+    expect(calls[0]?.url).toBe('https://slack.com/api/auth.test');
+    expect(calls[0]?.authorization).toBe('Bearer xoxb-secret-token');
+    expect(calls[0]?.body).toBeNull();
+  });
+
+  it("reports Slack's own reason for refusing the token, without echoing the token", async () => {
+    const { fetchImpl } = authFetch(Response.json({ ok: false, error: 'invalid_auth' }));
+
+    const result = await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl });
+    expect(result).toEqual({ ok: false, error: 'Slack rejected the bot token: invalid_auth' });
+    expect(JSON.stringify(result)).not.toContain('xoxb-secret-token');
+  });
+
+  it('reports an HTTP failure', async () => {
+    const { fetchImpl } = authFetch(new Response('', { status: 503 }));
+
+    expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toEqual({
+      ok: false,
+      error: 'Slack auth.test returned HTTP 503',
+    });
+  });
+
+  it('reports a timeout rather than throwing', async () => {
+    const { fetchImpl } = authFetch(() => {
+      throw new DOMException('timed out', 'TimeoutError');
+    });
+
+    expect(await slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl })).toEqual({
+      ok: false,
+      error: 'Slack did not answer auth.test in time',
+    });
+  });
+
+  it('still throws a failure that is not an abort', async () => {
+    const broken: typeof fetch = () => Promise.reject(new TypeError('network is unreachable'));
+
+    await expect(slackAuthTest({ botToken: 'xoxb-secret-token', fetchImpl: broken })).rejects.toThrow(
+      'network is unreachable',
+    );
   });
 });

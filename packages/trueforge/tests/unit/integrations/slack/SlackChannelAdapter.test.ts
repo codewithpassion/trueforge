@@ -11,6 +11,7 @@ const INTEGRATION_ID = 'int-1';
 function manifest(overrides: Partial<SlackIntegrationManifest> = {}): SlackIntegrationManifest {
   return {
     type: 'slack',
+    bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: BOT,
     default_agent_name: 'support-bot',
@@ -61,6 +62,34 @@ function receive(request: Request, overrides: Partial<SlackIntegrationManifest> 
   });
 }
 
+/** Before the Slack app exists there is no workspace, no bot user and no credential. */
+function pendingManifest(): SlackIntegrationManifest {
+  return {
+    type: 'slack',
+    bot_display_name: 'release-bot',
+    default_agent_name: 'support-bot',
+    allowed_channel_ids: ['C0GENERAL'],
+    allow_direct_messages: true,
+    reply_mode: 'thread',
+  };
+}
+
+function receivePending(request: Request) {
+  return new SlackChannelAdapter({ now: () => NOW_MS }).receive({
+    request,
+    manifest: pendingManifest(),
+    integration_id: INTEGRATION_ID,
+  });
+}
+
+function unsignedRequest(payload: unknown): Request {
+  return new Request('https://trueforge.test/events', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
 function delivery(content: Delivery['content']): Delivery {
   return {
     id: 'del-1',
@@ -83,6 +112,39 @@ describe('SlackChannelAdapter.receive', () => {
       content_type: 'text/plain; charset=utf-8',
       body: 'chal-123',
     });
+  });
+
+  it('answers the challenge unsigned while the integration is pending', async () => {
+    // Slack sends this as it creates the app from the manifest; the signing secret it uses
+    // does not exist on this side yet, so there is nothing to verify against.
+    expect(await receivePending(unsignedRequest({ type: 'url_verification', challenge: 'chal-abc' }))).toEqual({
+      type: 'respond',
+      status: 200,
+      content_type: 'text/plain; charset=utf-8',
+      body: 'chal-abc',
+    });
+  });
+
+  it('refuses a real event while the integration is pending', async () => {
+    expect(await receivePending(unsignedRequest(mentionPayload()))).toEqual({
+      type: 'not_connected',
+      reason: 'Slack credentials are not saved for this integration yet',
+    });
+  });
+
+  it('refuses an unsigned challenge once the signing secret is stored', async () => {
+    const result = await receive(unsignedRequest({ type: 'url_verification', challenge: 'chal-abc' }));
+    expect(result).toMatchObject({ type: 'rejected' });
+  });
+
+  it('cannot post while the integration is pending', async () => {
+    const adapter = new SlackChannelAdapter({ now: () => NOW_MS });
+    expect(
+      await adapter.deliver({
+        manifest: pendingManifest(),
+        delivery: delivery({ type: 'message', text: 'hello' }),
+      }),
+    ).toEqual({ ok: false, error: 'Slack credentials are not saved for this integration yet' });
   });
 
   it('parses a verified mention into an inbound event bound to this integration', async () => {

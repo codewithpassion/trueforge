@@ -20,6 +20,7 @@ const CREATED_BY: CreatedBySubject = {
 function manifest(overrides: Partial<IntegrationManifest> = {}): IntegrationManifest {
   return {
     type: 'slack',
+    bot_display_name: 'trueforge',
     team_id: TEAM_ID,
     bot_user_id: 'U0BOT',
     default_agent_name: 'support-bot',
@@ -90,6 +91,43 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     expect(await store.listIntegrations({ tenant_id: 'other-tenant' })).toEqual([]);
     // Ingress has no tenant to scope by; the row carries it.
     expect((await store.getIntegrationById({ id: mine.id }))?.tenant_id).toBe(TENANT);
+  });
+
+  it('a pending manifest round-trips with no workspace, bot user or credentials', async () => {
+    const store = getStore();
+    const pending: IntegrationManifest = {
+      type: 'slack',
+      bot_display_name: 'release-bot',
+      default_agent_name: 'support-bot',
+      allowed_channel_ids: ['C0GENERAL'],
+      allow_direct_messages: true,
+      reply_mode: 'thread',
+    };
+    const input = createInput({ external_account_id: `pending:${ulid().toLowerCase()}`, manifest: pending });
+    const created = await store.createIntegration(input);
+
+    expect(created.manifest).toEqual(pending);
+    expect(await store.getIntegrationById({ id: input.id })).toEqual(created);
+
+    // Connecting it later replaces both the manifest and the account the row is keyed by.
+    const connected = await store.updateIntegration({
+      tenant_id: TENANT,
+      id: created.id,
+      external_account_id: TEAM_ID,
+      manifest: manifest(),
+    });
+    expect(connected.external_account_id).toBe(TEAM_ID);
+    expect(connected.manifest).toEqual(manifest());
+  });
+
+  it('two pending integrations coexist because each is keyed by its own id', async () => {
+    const store = getStore();
+    const first = createInput({ external_account_id: 'pending:one' });
+    const second = createInput({ external_account_id: 'pending:two' });
+    await store.createIntegration(first);
+    await store.createIntegration(second);
+
+    expect(await store.listIntegrations({ tenant_id: TENANT })).toHaveLength(2);
   });
 
   it('create rejects a second integration for the same channel account', async () => {

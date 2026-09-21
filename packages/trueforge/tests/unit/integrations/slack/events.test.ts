@@ -5,14 +5,15 @@ import {
   type SlackEventCallback,
   type SlackMessageEvent,
 } from '../../../../src/integrations/slack/events';
-import type { SlackIntegrationManifest } from '../../../../src/schemas/integration';
+import type { ConnectedSlackIntegrationManifest } from '../../../../src/schemas/integration';
 
 const INTEGRATION_ID = 'int-1';
 const BOT = 'U0BOT';
 
-function manifest(overrides: Partial<SlackIntegrationManifest> = {}): SlackIntegrationManifest {
+function manifest(overrides: Partial<ConnectedSlackIntegrationManifest> = {}): ConnectedSlackIntegrationManifest {
   return {
     type: 'slack',
+    bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: BOT,
     default_agent_name: 'support-bot',
@@ -41,7 +42,7 @@ function callback(event: Partial<SlackMessageEvent> = {}, teamId = 'T0TEAM'): Sl
   };
 }
 
-function decide(event: Partial<SlackMessageEvent> = {}, overrides: Partial<SlackIntegrationManifest> = {}) {
+function decide(event: Partial<SlackMessageEvent> = {}, overrides: Partial<ConnectedSlackIntegrationManifest> = {}) {
   return decideSlackEvent({
     integrationId: INTEGRATION_ID,
     manifest: manifest(overrides),

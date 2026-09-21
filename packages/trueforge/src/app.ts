@@ -37,7 +37,12 @@ import type { McpCatalog } from './catalog/McpCatalog';
 import type { ModelCatalog } from './catalog/ModelCatalog';
 import type { SandboxCatalog } from './catalog/SandboxCatalog';
 import type { SkillCatalog } from './catalog/SkillCatalog';
-import configuration, { getPublicUiBasePath, getTrueForgeAuthMode, TrueForgeAuthMode } from './config';
+import configuration, {
+  getPublicBaseUrl,
+  getPublicUiBasePath,
+  getTrueForgeAuthMode,
+  TrueForgeAuthMode,
+} from './config';
 import type { AgentRecord, IAgentStore } from './db/agentStore';
 import type { IIntegrationStore } from './db/integrationStore';
 import type { IMcpServerWithAuthStore } from './db/mcpServerStore';
@@ -394,6 +399,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         resolveSkillStore: deps.resolveSkillStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
         resolveIntegrationStore: () => deps.integrationStore,
+        publicBaseUrl: () => getPublicBaseUrl(),
         sandboxIntegration: deps.sandboxIntegration,
         withTransaction: deps.withTransaction,
         logger: deps.logger,

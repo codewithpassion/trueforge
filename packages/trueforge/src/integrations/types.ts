@@ -36,7 +36,9 @@ export type InboundResult =
   | { type: 'event'; event: InboundEvent }
   | InboundRespond
   | { type: 'ignore'; reason: string }
-  | { type: 'rejected'; reason: string };
+  | { type: 'rejected'; reason: string }
+  /** The channel app exists but its credentials have not been saved, so nothing can be verified. */
+  | { type: 'not_connected'; reason: string };
 
 /** What the channel should post for a finished turn. */
 export type DeliveryContent =

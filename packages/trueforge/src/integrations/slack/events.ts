@@ -3,8 +3,9 @@
  * Only the fields the adapter reads are modelled; Slack adds others freely.
  */
 import { z } from 'zod';
-import type { SlackIntegrationManifest } from '../../schemas/integration';
+import type { ConnectedSlackIntegrationManifest } from '../../schemas/integration';
 import type { InboundEvent, InboundSender } from '../types';
+import { SLACK_BOT_EVENT_SUBSCRIPTIONS } from './appCapabilities';
 
 /** Slack sends this once when the request URL is saved, before any event is delivered. */
 const SlackUrlVerificationSchema = z.object({
@@ -19,7 +20,8 @@ const SlackUserProfileSchema = z.object({
 });
 
 const SlackMessageEventSchema = z.object({
-  type: z.enum(['app_mention', 'message']),
+  /** Exactly the payload types the subscriptions in the generated app manifest deliver. */
+  type: z.enum(SLACK_BOT_EVENT_SUBSCRIPTIONS),
   /** Absent on message subtypes that carry no author, such as `message_deleted`. */
   user: z.string().optional(),
   /** Set on anything an app posted, including this bot's own replies. */
@@ -45,6 +47,7 @@ const SlackEventCallbackSchema = z.object({
 /** Both arms carry a `type` literal, so the payload is a discriminated union. */
 export const SlackPayloadSchema = z.discriminatedUnion('type', [SlackUrlVerificationSchema, SlackEventCallbackSchema]);
 
+export type SlackPayload = z.infer<typeof SlackPayloadSchema>;
 export type SlackEventCallback = z.infer<typeof SlackEventCallbackSchema>;
 export type SlackMessageEvent = z.infer<typeof SlackMessageEventSchema>;
 
@@ -94,7 +97,7 @@ export type SlackEventDecision =
  */
 export function decideSlackEvent(input: {
   integrationId: string;
-  manifest: SlackIntegrationManifest;
+  manifest: ConnectedSlackIntegrationManifest;
   payload: SlackEventCallback;
 }): SlackEventDecision {
   const { integrationId, manifest, payload } = input;
