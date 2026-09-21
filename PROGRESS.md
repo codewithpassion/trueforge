@@ -45,6 +45,7 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 - A stub in a test that re-implements an integration's rules will pass whatever the integration does. The Workers agreement test copied the rules by hand, so it could not have caught the Node drift; it now drives `createWorkersSandboxIntegration` and `createNodeSandboxIntegration` directly. Where a real integration would reach the network (a `pending` Daytona build calls `getImageBuildStatus`), pick a record type that short-circuits — `failed` for Daytona, any status for the prebuilt TrueFoundry provider.
 - Deleting a provider does not delete what it started. Removing a Daytona record drops the credentials TrueForge needed to clean up its sandboxes, so they run on until the provider's own auto-delete. Say so in the confirmation and the docs rather than implying a tidy teardown.
 - A switch that changes meaning needs an upgrade note. `TRUEFORGE_SANDBOX_BACKEND` went from "sandbox on" to "sandbox offered"; an existing deploy silently loses its sandbox until an admin clicks Enable, and saved agents answer 422 in between.
+
 ## Cycle 22 — Integrations as a Settings section, and a generated Slack app manifest (2026-09-21)
 
 **Goal:** Close Phase I2.5 of `docs/integrations-slack-plan.md`: fold connecting a Slack workspace into the Settings drawer, and have TrueForge generate the Slack app instead of asking people to build it by hand.
