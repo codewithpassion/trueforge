@@ -331,3 +331,4 @@ Deferred on purpose. None of it blocks Phases 0 to 5; each phase's verification 
 - Schema equivalence job: run `d1:schema:dump` from the Kysely SQLite migrations and diff against a fresh local D1 after `wrangler d1 migrations apply --local`. Fails when a SQLite migration lands without its paired `.sql`.
 - Path filters and matrix ids for any new root `test:*` scripts added by the port (`AGENTS.md` sync rule).
 - Preview deploy on PRs (`wrangler versions upload`) once secrets handling for CI is decided.
+- `pnpm --filter @truefoundry/trueforge test:sandbox-image` runs the Code Mode client's Python tests inside the built sandbox image. It needs Docker, so it belongs with the image builds on a runner that has Docker, not in the current `ci.yml` jobs.

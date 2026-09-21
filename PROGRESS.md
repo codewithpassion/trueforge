@@ -119,6 +119,7 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
   - Code Mode request bodies are capped at 1 MiB.
   - `CodeModeDispatcher` in core refuses destructive tools itself.
   - A timed-out tool call still runs to completion, because `IToolSet.callTool` takes no signal. It is documented as a known limit.
+  - Nits applied: the client ignores sandbox proxies, so the token cannot leak to one; the gateway passes on only W3C trace headers; the per-request egress line is now debug; the token-exposure and no-credentials constraints are written down; the image test is on the CI backlog.
 - Section 13 of `docs/cloudflare-workers-sandbox-plan.md` records the design, a claim-by-claim verification table, the live list in two passes and the fallback. One changeset. The deploy guide still lists Code Mode as unsupported on Workers and stays that way until the live run says otherwise.
 
 **Lessons learned:**
