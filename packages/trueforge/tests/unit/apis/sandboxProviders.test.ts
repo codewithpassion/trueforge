@@ -14,6 +14,7 @@ import { createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
 import type { SandboxIntegration } from '../../../src/sandbox/integration';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
+import { SANDBOX_READY_STATUS } from '../../../src/schemas/sandboxProvider';
 import { toRedactedSecretValue } from '../../../src/utils/secretRedaction';
 
 // Stub the Daytona-touching port methods so the router never talks to Daytona: the PUT path builds via
@@ -88,10 +89,9 @@ function workersIntegration(backendAvailable: boolean): SandboxIntegration {
     ...sandboxIntegration,
     isDaytonaSettingsSupported: () => false,
     isCloudflareComputerSettingsSupported: () => backendAvailable,
-    isSandboxUsableWithoutStoredRecord: () => false,
-    isSandboxConfigured: isEnabled,
-    checkSnapshotStatus: async input =>
-      (await isEnabled(input)) ? { status: 'ready', status_reason: null, build_metadata: null } : undefined,
+    resolveSandboxUsability: async input =>
+      (await isEnabled(input)) ? { usable: true, status: 'ready' } : { usable: false, status: undefined },
+    checkSnapshotStatus: async input => ((await isEnabled(input)) ? SANDBOX_READY_STATUS : undefined),
   };
 }
 
@@ -162,6 +162,23 @@ describe('sandboxProviders router', () => {
     const response = await catalogRouter.request('/sandbox-providers');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ data: [...SandboxCatalog.load().list()] });
+  });
+
+  // Reporting a row this runtime cannot attach to as Ready would be a lie; DELETE still clears it.
+  it('GET returns 404 for a stored cloudflare-computer row, and DELETE removes it', async () => {
+    const { settingsRouter: router, sandboxProviderStore: store } = await createRouters();
+    await store.upsertSandboxProvider({
+      tenant_id: 'default',
+      manifest: { type: 'cloudflare-computer' },
+      ...SANDBOX_READY_STATUS,
+    });
+
+    const get = await router.request('/');
+    expect(get.status).toBe(404);
+    expect(await get.json()).toEqual({ error: { message: 'No sandbox provider configured' } });
+
+    expect((await router.request('/', { method: 'DELETE' })).status).toBe(200);
+    expect(await store.getSandboxProvider('default')).toBeUndefined();
   });
 
   it('PUT rejects the built-in provider, which this runtime cannot run', async () => {

@@ -51,6 +51,7 @@ describe('public CRUD after session deletion', () => {
         turnExecutor: testNodeTurnExecutor({ sessionStore }),
         resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
         authorizer: new TrueForgeAuthorizer(),
+        logger: createLogger({ silent: true }),
       }),
     );
     app.route(

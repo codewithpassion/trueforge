@@ -13,13 +13,13 @@ import type { OIDCConfig } from '../../../src/config';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
-import type { SandboxIntegration } from '../../../src/sandbox/integration';
+import type { SandboxIntegration, SandboxUsability } from '../../../src/sandbox/integration';
 import type { LocalSandboxSupportResult } from '../../../src/sandbox/local/provider/LocalSandboxProvider';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
-import type { SandboxBuildStatus, SandboxStatus } from '../../../src/schemas/sandboxProvider';
+import type { SandboxBuildStatus } from '../../../src/schemas/sandboxProvider';
 
 // Sandbox capability is driven by the refreshed image status; stub it so tests never touch Daytona.
-const mockStatus = jest.fn();
+const mockUsability = jest.fn();
 const silentLogger = createLogger({ silent: true });
 
 const LOCAL_SUPPORTED: LocalSandboxSupportResult = {
@@ -30,14 +30,13 @@ const LOCAL_SUPPORTED: LocalSandboxSupportResult = {
 };
 
 function stubIntegration(localSupport?: LocalSandboxSupportResult): SandboxIntegration {
-  return { ...createNodeSandboxIntegration({ localSupport }), checkSnapshotStatus: mockStatus };
+  return { ...createNodeSandboxIntegration({ localSupport }), resolveSandboxUsability: mockUsability };
 }
 
-const buildWithStatus = (status: SandboxBuildStatus): SandboxStatus => ({
-  status,
-  status_reason: status === 'failed' ? 'Sandbox image build failed (build_failed).' : null,
-  build_metadata: { build_ref: 'trueforge-build-029ea5ff', image_uri: 'tfy.jfrog.io/tfy-images/sandbox:029ea5ff' },
-});
+const NOT_USABLE: SandboxUsability = { usable: false, status: undefined };
+
+/** A stored provider whose build reached `status`; only `ready` can run a turn. */
+const usabilityFor = (status: SandboxBuildStatus): SandboxUsability => ({ usable: status === 'ready', status });
 
 const ISSUER = 'https://issuer.example.com';
 const AUDIENCE = 'harness-client';
@@ -70,8 +69,8 @@ function withAuth(router: OpenAPIHono, authenticator: Authenticator): OpenAPIHon
 
 describe('capabilities routers', () => {
   beforeEach(() => {
-    mockStatus.mockReset();
-    mockStatus.mockResolvedValue(undefined);
+    mockUsability.mockReset();
+    mockUsability.mockResolvedValue(NOT_USABLE);
   });
 
   // Options object so an explicit `sandboxIntegration: undefined` is not replaced by the default.
@@ -94,7 +93,7 @@ describe('capabilities routers', () => {
 
   it('reports sandbox + skill disabled when no image status is available', async () => {
     disableOidcAuth();
-    mockStatus.mockResolvedValue(undefined);
+    mockUsability.mockResolvedValue(NOT_USABLE);
     const router = makeRouter();
 
     const response = await router.request('/');
@@ -127,12 +126,12 @@ describe('capabilities routers', () => {
         settings: { enabled: true },
       },
     });
-    expect(mockStatus).not.toHaveBeenCalled();
+    expect(mockUsability).not.toHaveBeenCalled();
   });
 
   it('reports sandbox + skill enabled when local fallback is supported and no image status exists', async () => {
     disableOidcAuth();
-    mockStatus.mockResolvedValue(undefined);
+    mockUsability.mockResolvedValue({ usable: true, status: undefined });
     const router = makeRouter({ sandboxIntegration: stubIntegration(LOCAL_SUPPORTED) });
 
     const response = await router.request('/');
@@ -148,7 +147,7 @@ describe('capabilities routers', () => {
 
   it('reports sandbox + skill enabled only when the image is ready', async () => {
     disableOidcAuth();
-    mockStatus.mockResolvedValue(buildWithStatus('ready'));
+    mockUsability.mockResolvedValue(usabilityFor('ready'));
     const router = makeRouter();
 
     const response = await router.request('/');
@@ -164,7 +163,7 @@ describe('capabilities routers', () => {
 
   it('reports skill disabled on a runtime that runs sandboxes but cannot mount skills', async () => {
     disableOidcAuth();
-    mockStatus.mockResolvedValue(buildWithStatus('ready'));
+    mockUsability.mockResolvedValue(usabilityFor('ready'));
     const router = makeRouter({
       sandboxIntegration: { ...stubIntegration(), isSkillMountingSupported: () => false },
     });
@@ -182,7 +181,7 @@ describe('capabilities routers', () => {
 
   it('reports sandbox disabled with a "being prepared" skill reason while the image is still pending', async () => {
     disableOidcAuth();
-    mockStatus.mockResolvedValue(buildWithStatus('pending'));
+    mockUsability.mockResolvedValue(usabilityFor('pending'));
     const router = makeRouter();
 
     const response = await router.request('/');
@@ -200,7 +199,7 @@ describe('capabilities routers', () => {
 
   it('reports "not configured" skill reason when the image build failed', async () => {
     disableOidcAuth();
-    mockStatus.mockResolvedValue(buildWithStatus('failed'));
+    mockUsability.mockResolvedValue(usabilityFor('failed'));
     const router = makeRouter();
 
     const response = await router.request('/');
@@ -215,7 +214,7 @@ describe('capabilities routers', () => {
 
   it('fails closed (sandbox disabled) when the status check throws', async () => {
     disableOidcAuth();
-    mockStatus.mockRejectedValue(new Error('daytona unreachable'));
+    mockUsability.mockRejectedValue(new Error('daytona unreachable'));
     const router = makeRouter();
 
     const response = await router.request('/');

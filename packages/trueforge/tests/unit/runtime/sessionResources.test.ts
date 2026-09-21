@@ -14,7 +14,6 @@ import { createAuthMiddleware } from '../../../src/auth/middleware';
 import { StandaloneAuthenticator } from '../../../src/auth/standaloneAuthenticator';
 import { validateGitAgentSkills } from '../../../src/db/gitSkillMounts';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
-import type { ISandboxProviderStore } from '../../../src/db/sandboxProviderStore';
 import type { ISkillStore } from '../../../src/db/skillStore';
 import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
@@ -31,11 +30,26 @@ import {
   withGatewayMetadataHeaders,
   X_TFY_METADATA,
 } from '../../../src/runtime/sessionResources';
-import type { SandboxIntegration } from '../../../src/sandbox/integration';
 import type { LocalSandboxSupportResult } from '../../../src/sandbox/local/provider/LocalSandboxProvider';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import type { ReasoningEffort } from '../../../src/schemas/modelProvider';
-import { SANDBOX_READY_STATUS } from '../../../src/schemas/sandboxProvider';
+import { SANDBOX_READY_STATUS, type StoredSandboxProviderManifest } from '../../../src/schemas/sandboxProvider';
+
+const DAYTONA_MANIFEST: StoredSandboxProviderManifest = {
+  type: 'daytona',
+  auth: { api_key: 'dtn-test' },
+  exec_timeout_ms: 60_000,
+  auto_stop_interval_in_minutes: 5,
+  auto_archive_interval_in_minutes: 60,
+  auto_delete_interval_in_minutes: 7200,
+};
+
+const PREBUILT_MANIFEST: StoredSandboxProviderManifest = {
+  type: 'truefoundry',
+  server_url: 'http://sandbox-server',
+  nats_bridge_url: 'ws://nats-bridge',
+  exec_timeout_ms: 60_000,
+};
 
 const LOCAL_SUPPORTED: LocalSandboxSupportResult = {
   supported: true,
@@ -140,6 +154,7 @@ describe('validateAgentSpec', () => {
       skillStore: new SqliteSkillStore(db),
       sandboxProviderStore: new SqliteSandboxProviderStore(db),
       sandboxIntegration: createNodeSandboxIntegration({ localSupport: options?.localSupport }),
+      logger: createLogger({ silent: true }),
     };
   }
 
@@ -315,24 +330,16 @@ describe('validateAgentSpec', () => {
     } satisfies Partial<HTTPException>);
   });
 
+  // A fresh `ready` row short-circuits the status refresh, so this never reaches Daytona.
   async function storeDaytonaProvider(store: SqliteSandboxProviderStore): Promise<void> {
     await store.upsertSandboxProvider({
       tenant_id: 'default',
-      manifest: {
-        type: 'daytona',
-        auth: { api_key: 'dtn-test' },
-        exec_timeout_ms: 60_000,
-        auto_stop_interval_in_minutes: 5,
-        auto_archive_interval_in_minutes: 60,
-        auto_delete_interval_in_minutes: 7200,
-      },
-      status: 'pending',
-      status_reason: 'Sandbox image build started.',
-      build_metadata: { build_ref: 'trueforge-build-029ea5ff', image_uri: 'tfy.jfrog.io/tfy-images/sandbox:029ea5ff' },
+      manifest: DAYTONA_MANIFEST,
+      ...SANDBOX_READY_STATUS,
     });
   }
 
-  it('admits sandbox.enabled when a sandbox provider row exists', async () => {
+  it('admits sandbox.enabled when a sandbox provider row is ready', async () => {
     const stores = await setup();
     await storeDaytonaProvider(stores.sandboxProviderStore);
 
@@ -492,29 +499,10 @@ describe('validateAgentSpec', () => {
    * "is a sandbox configured" from different places. Both now go through the integration, so
    * this pins them together on the runtime where they drifted.
    */
-  describe('agreement with GET /capabilities on the built-in Workers sandbox', () => {
-    function workersIntegration(backendAvailable: boolean): SandboxIntegration {
-      const isEnabled = async ({ store, tenant_id }: { store: ISandboxProviderStore; tenant_id: string }) =>
-        backendAvailable && (await store.getSandboxProvider(tenant_id))?.manifest.type === 'cloudflare-computer';
-      return {
-        ...createNodeSandboxIntegration({ localSupport: undefined }),
-        isDaytonaSettingsSupported: () => false,
-        isCloudflareComputerSettingsSupported: () => backendAvailable,
-        isSandboxUsableWithoutStoredRecord: () => false,
-        isSandboxConfigured: isEnabled,
-        checkSnapshotStatus: async input => ((await isEnabled(input)) ? SANDBOX_READY_STATUS : undefined),
-      };
-    }
-
-    async function bothAnswers({
-      sandboxIntegration,
-      sandboxProviderStore,
-      stores,
-    }: {
-      sandboxIntegration: SandboxIntegration;
-      sandboxProviderStore: SqliteSandboxProviderStore;
-      stores: Awaited<ReturnType<typeof setup>>;
-    }): Promise<{ capability: boolean; validator: boolean }> {
+  describe('agreement with GET /capabilities on the real Node integration', () => {
+    async function bothAnswers(
+      stores: Awaited<ReturnType<typeof setup>>,
+    ): Promise<{ capability: boolean; validator: boolean }> {
       // The capability handler is read-only; it never opens the transaction it is handed.
       const withTransaction: WithTransaction<never> = () => Promise.reject(new Error('unused'));
       const router = new OpenAPIHono();
@@ -522,11 +510,11 @@ describe('validateAgentSpec', () => {
       router.route(
         '/',
         createCapabilitiesRouter({
-          resolveSandboxProviderStore: () => sandboxProviderStore,
+          resolveSandboxProviderStore: () => stores.sandboxProviderStore,
           withTransaction,
-          logger: createLogger({ silent: true }),
+          logger: stores.logger,
           resolveRequestContext,
-          sandboxIntegration,
+          sandboxIntegration: stores.sandboxIntegration,
         }),
       );
       const body: unknown = await (await router.request('/')).json();
@@ -539,7 +527,6 @@ describe('validateAgentSpec', () => {
         }),
         tenant_id: 'default',
         ...stores,
-        sandboxIntegration,
       }).then(
         () => true,
         () => false,
@@ -547,30 +534,53 @@ describe('validateAgentSpec', () => {
       return { capability, validator };
     }
 
-    it.each([
-      ['before enabling', false, false],
-      ['after enabling', true, true],
-    ])('agrees %s', async (_label, enable, expected) => {
-      const stores = await setup();
-      const sandboxIntegration = workersIntegration(true);
-      if (enable) {
-        await stores.sandboxProviderStore.upsertSandboxProvider({
-          tenant_id: 'default',
-          manifest: { type: 'cloudflare-computer' },
-          ...SANDBOX_READY_STATUS,
-        });
-      }
-
-      const answers = await bothAnswers({
-        sandboxIntegration,
-        sandboxProviderStore: stores.sandboxProviderStore,
-        stores,
-      });
-      expect(answers).toEqual({ capability: expected, validator: expected });
+    it('agrees that nothing is configured', async () => {
+      await expect(bothAnswers(await setup())).resolves.toEqual({ capability: false, validator: false });
     });
 
-    // The deploy var was removed while a record stayed behind: both must read "off".
-    it('agrees when the record outlives the deploy var', async () => {
+    it('agrees on the local fallback', async () => {
+      await expect(bothAnswers(await setup({ localSupport: LOCAL_SUPPORTED }))).resolves.toEqual({
+        capability: true,
+        validator: true,
+      });
+    });
+
+    // A fresh `ready` row short-circuits the refresh, so this never reaches Daytona.
+    it('agrees on a Daytona provider whose image is ready', async () => {
+      const stores = await setup();
+      await stores.sandboxProviderStore.upsertSandboxProvider({
+        tenant_id: 'default',
+        manifest: DAYTONA_MANIFEST,
+        ...SANDBOX_READY_STATUS,
+      });
+
+      await expect(bothAnswers(stores)).resolves.toEqual({ capability: true, validator: true });
+    });
+
+    /**
+     * This pair used to disagree: the capability endpoint refused a build that was not ready
+     * while the validator admitted any row, so a spec was accepted that the turn then rejected.
+     */
+    // `failed` short-circuits the Daytona refresh; `pending` would call it, so that case uses the
+    // prebuilt TrueFoundry provider, whose persisted status passes straight through.
+    it.each([
+      ['a failed Daytona build', DAYTONA_MANIFEST, 'failed' as const],
+      ['a pending prebuilt image', PREBUILT_MANIFEST, 'pending' as const],
+    ])('agrees that %s is not usable', async (_label, manifest, status) => {
+      const stores = await setup();
+      await stores.sandboxProviderStore.upsertSandboxProvider({
+        tenant_id: 'default',
+        manifest,
+        status,
+        status_reason: null,
+        build_metadata: null,
+      });
+
+      await expect(bothAnswers(stores)).resolves.toEqual({ capability: false, validator: false });
+    });
+
+    // A row this runtime cannot attach to, with no fallback behind it.
+    it('agrees that a cloudflare-computer row is not usable here', async () => {
       const stores = await setup();
       await stores.sandboxProviderStore.upsertSandboxProvider({
         tenant_id: 'default',
@@ -578,12 +588,7 @@ describe('validateAgentSpec', () => {
         ...SANDBOX_READY_STATUS,
       });
 
-      const answers = await bothAnswers({
-        sandboxIntegration: workersIntegration(false),
-        sandboxProviderStore: stores.sandboxProviderStore,
-        stores,
-      });
-      expect(answers).toEqual({ capability: false, validator: false });
+      await expect(bothAnswers(stores)).resolves.toEqual({ capability: false, validator: false });
     });
   });
 });

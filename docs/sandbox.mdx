@@ -27,9 +27,9 @@ That means:
 
 ## Configuring a provider
 
-**Daytona is the only sandbox provider supported today.** Support for additional providers is planned.
+**[Daytona](https://www.daytona.io) is the provider on a Node deployment.** A Cloudflare Workers deployment instead offers its own built-in sandbox, which takes no credentials — see [Deploying on Cloudflare](/deploy/cloudflare#code-execution-and-skills). Settings only lists providers the deployment can actually run.
 
-Open **Settings → Sandbox providers**, pick the [Daytona](https://www.daytona.io) preset from the catalog, and paste your API key.
+Open **Settings → Sandbox providers**, pick the Daytona preset from the catalog, and paste your API key.
 
 <Note>
   The Daytona API key needs permission to create **snapshots**, not only sandboxes. The first time you configure the
@@ -66,6 +66,19 @@ Optional controls:
 - Provisioned on demand when the agent needs code, files, skills, or Code Mode.
 - Reused across turns in the same session (files persist).
 - Stopped after idle time, then archived and eventually deleted per the provider settings.
+
+## Removing a provider
+
+**Settings → Sandbox providers → Remove** deletes the stored API key and the provider record, and asks for confirmation first. Agents lose the sandbox until another provider is configured, and a sandbox-enabled agent answers `422` until then.
+
+<Warning>
+  Removing a provider does not touch anything already running in your provider account. Sandboxes that exist at that
+  moment are left for the provider to stop, archive and delete on its own schedule, using the intervals in force when
+  they were created — TrueForge no longer holds the credentials to remove them. Delete them in the provider's dashboard
+  if you need them gone sooner.
+</Warning>
+
+On a Node deployment that also has the standalone local sandbox available, removing the provider does not disable the sandbox: agents silently fall back to the local one, which starts from an empty workspace.
 
 ## Credential safety
 

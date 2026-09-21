@@ -16,6 +16,7 @@ import {
   toSandboxStatus,
   type DaytonaSandboxProvider,
   type SandboxProviderManifest,
+  type StoredSandboxProviderManifest,
   type UpdateSandboxProviderRequest,
 } from '../schemas/sandboxProvider';
 import { MissingStoredSecretError, resolveStoredSecretValue, toRedactedSecretValue } from '../utils/secretRedaction';
@@ -43,19 +44,21 @@ function settingsIntegration(integration: SandboxIntegration | undefined): Sandb
     : undefined;
 }
 
-/** Whether this runtime serves the provider the caller asked for. */
-function supportsManifest({
-  integration,
-  manifest,
-}: {
-  integration: SandboxIntegration;
-  manifest: SandboxProviderManifest;
-}): boolean {
+/**
+ * Whether this runtime serves the provider in question. `truefoundry` rows are env-synthesized,
+ * never settings-managed, so they are not served either.
+ */
+function supportsManifest(
+  integration: SandboxIntegration,
+  manifest: StoredSandboxProviderManifest,
+): manifest is SandboxProviderManifest {
   switch (manifest.type) {
     case 'daytona':
       return integration.isDaytonaSettingsSupported();
     case 'cloudflare-computer':
       return integration.isCloudflareComputerSettingsSupported();
+    case 'truefoundry':
+      return false;
   }
 }
 
@@ -79,8 +82,9 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
     const requestContext = deps.resolveRequestContext(c);
     const store = deps.resolveSandboxProviderStore(c);
     const record = await store.getSandboxProvider(requestContext.tenant_id);
-    // `truefoundry` rows are env-synthesized, not settings-managed.
-    if (record === undefined || record.manifest.type === 'truefoundry') {
+    // A row this runtime cannot run is not this tenant's provider — reporting it Ready would lie.
+    // DELETE still removes it, which is how such a row gets cleaned up.
+    if (record === undefined || !supportsManifest(integration, record.manifest)) {
       return c.json({ error: { message: 'No sandbox provider configured' } }, 404);
     }
     const manifest = record.manifest;
@@ -106,7 +110,7 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
     const integration = settingsIntegration(deps.sandboxIntegration);
     const body: UpdateSandboxProviderRequest = c.req.valid('json');
     const incoming = body.manifest;
-    if (integration === undefined || !supportsManifest({ integration, manifest: incoming })) {
+    if (integration === undefined || !supportsManifest(integration, incoming)) {
       return c.json({ error: { message: SANDBOX_UNSUPPORTED_MESSAGE } }, 422);
     }
     const requestContext = deps.resolveRequestContext(c);

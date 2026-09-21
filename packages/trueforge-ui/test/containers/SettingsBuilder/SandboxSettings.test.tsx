@@ -414,6 +414,43 @@ describe('SandboxSettings', () => {
     expect(host.updated[0]).not.toHaveProperty('apiKey');
   });
 
+  it('warns that a removed Daytona provider leaves its sandboxes behind', async () => {
+    const existing: SandboxProviderBase = {
+      id: 'sb-1',
+      name: 'Daytona',
+      catalogId: 'cat-daytona',
+      isConnected: true,
+      execTimeoutMs: 60000,
+      autoStopIntervalInMinutes: 30,
+      autoArchiveIntervalInMinutes: 1440,
+      autoDeleteIntervalInMinutes: 10080,
+    };
+    const host = createFakeHost([sandboxEntry({ provider: existing })], { withDelete: true });
+    const { wrapper: Wrapper } = host;
+    render(
+      <Wrapper>
+        <SandboxSettings />
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/The stored API key is deleted/)).toBeTruthy();
+    });
+    expect(screen.getByText(/left for the provider to auto-stop and auto-delete/)).toBeTruthy();
+    expect(host.deleted).toEqual([]);
+
+    const [, confirm] = screen.getAllByRole('button', { name: 'Remove' });
+    fireEvent.click(confirm ?? screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => {
+      expect(host.deleted).toEqual(['sb-1']);
+    });
+  });
+
   describe('the built-in provider', () => {
     it('enables straight from the list, with no form and no credentials', async () => {
       const host = createFakeHost([], { catalog: [builtInCatalogEntry], withDelete: true });
@@ -442,7 +479,9 @@ describe('SandboxSettings', () => {
         type: 'cloudflare-computer',
         apiKey: '',
       });
-      expect(screen.getByRole('dialog', { hidden: true }).hasAttribute('open')).toBe(false);
+      for (const dialog of screen.getAllByRole('dialog', { hidden: true })) {
+        expect(dialog.hasAttribute('open')).toBe(false);
+      }
     });
 
     it('shows a status line and disables again, with nothing to update', async () => {
@@ -463,7 +502,20 @@ describe('SandboxSettings', () => {
       expect(screen.queryByRole('button', { name: 'Update' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
 
+      // Disabling asks first, and cancelling leaves the provider alone.
       fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
+      await waitFor(() => {
+        expect(screen.getByText(/Agents lose the sandbox/)).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(host.deleted).toEqual([]);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
+      await waitFor(() => {
+        expect(screen.getByText(/Agents lose the sandbox/)).toBeTruthy();
+      });
+      const [, confirm] = screen.getAllByRole('button', { name: 'Disable' });
+      fireEvent.click(confirm ?? screen.getByRole('button', { name: 'Disable' }));
 
       await waitFor(() => {
         expect(host.deleted).toEqual(['cloudflare-computer']);

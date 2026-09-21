@@ -9,7 +9,6 @@ import {
   checkSnapshotStatus,
   isDaytonaAuthError,
   isDaytonaPermissionError,
-  isNodeRunnableManifest,
   toDaytonaSandboxProvider,
   toSandboxProviderFromRecord,
 } from './providerUtils';
@@ -53,13 +52,13 @@ export function createNodeSandboxIntegration({
         logger,
       });
     },
-    isSandboxUsableWithoutStoredRecord: isLocalFallbackUsable,
-    isSandboxConfigured: async ({ store, tenant_id }) => {
-      const record = await store.getSandboxProvider(tenant_id);
-      if (record !== undefined && isNodeRunnableManifest(record.manifest)) {
-        return true;
+    resolveSandboxUsability: async ({ store, tenant_id, logger }) => {
+      // A build that is pending or failed is not usable yet, and the turn would reject it anyway.
+      const refreshed = await checkSnapshotStatus({ store, tenant_id, logger });
+      if (refreshed !== undefined) {
+        return { usable: refreshed.status === 'ready', status: refreshed.status };
       }
-      return isLocalFallbackUsable();
+      return { usable: isLocalFallbackUsable(), status: undefined };
     },
     isSkillMountingSupported: () => true,
     isDaytonaSettingsSupported: () => true,

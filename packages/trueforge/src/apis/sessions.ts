@@ -9,6 +9,7 @@ import {
   SessionStoreInvariantError,
   SessionStoreNotFoundError,
 } from '@truefoundry/trueforge-core/agent-session';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { Authorizer } from '../auth/authorizer';
@@ -63,6 +64,7 @@ export interface SessionsRouterDeps {
   turnExecutor: TurnExecutor;
   resolveRequestContext: ResolveRequestContext;
   authorizer: Authorizer;
+  logger: Logger;
 }
 
 const FORBIDDEN_SESSION_ACCESS = 'Only the session creator can access this session';
@@ -88,6 +90,7 @@ type InternalSessionsRouterDeps = Pick<
   | 'sandboxIntegration'
   | 'resolveRequestContext'
   | 'authorizer'
+  | 'logger'
 >;
 
 function createGetOrCreateSessionByExternalIdHandler(
@@ -140,6 +143,7 @@ function createGetOrCreateSessionByExternalIdHandler(
         skillStore: deps.resolveSkillStore(c),
         sandboxProviderStore: deps.resolveSandboxProviderStore(c),
         sandboxIntegration: deps.sandboxIntegration,
+        logger: deps.logger,
       });
       agent = { type: 'inline', spec: body.agent.spec };
     }
@@ -213,6 +217,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
       skillStore: deps.resolveSkillStore(c),
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
       sandboxIntegration: deps.sandboxIntegration,
+      logger: deps.logger,
     });
     const session = await deps.sessions.create({
       tenant_id: requestContext.tenant_id,
@@ -305,6 +310,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
         skillStore: deps.resolveSkillStore(c),
         sandboxProviderStore: deps.resolveSandboxProviderStore(c),
         sandboxIntegration: deps.sandboxIntegration,
+        logger: deps.logger,
       });
     }
     try {

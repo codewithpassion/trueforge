@@ -1,15 +1,4 @@
-/**
- * Maps trueforge-ui sandbox-settings calls onto Harness
- * `/api/v1/settings/sandbox-providers` (singleton upsert).
- *
- * UI: multi-row providers with `id` / `catalogId` / `name` / flat `apiKey`.
- * Harness: one provider per tenant; the wire rows have no name — synthetic
- * identity uses `type` as id/catalogId and a display name per type.
- *
- * The built-in Cloudflare provider carries no credentials and nothing to tune.
- * `SandboxProviderConfig` still requires the four Daytona numbers, so they are
- * zero for it and the settings UI never shows them.
- */
+/** The wire rows carry no name, so `type` doubles as id, catalogId and display name. */
 import type { TrueForge } from '@truefoundry/trueforge-sdk';
 import { TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import type {
@@ -32,6 +21,7 @@ const DISPLAY_NAMES: Record<string, string> = {
   [CLOUDFLARE_COMPUTER_SANDBOX_TYPE]: 'Cloudflare Computer',
 };
 
+/** The built-in provider has nothing to tune; the shared config type still demands the numbers. */
 const NO_CONFIG: SandboxProviderConfig = {
   execTimeoutMs: 0,
   autoStopIntervalInMinutes: 0,

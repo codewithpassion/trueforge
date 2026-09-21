@@ -3,6 +3,7 @@
  */
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
 import { InvalidPageTokenError, type AgentSpec } from '@truefoundry/trueforge-core/agent-session';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import type { Authorizer } from '../auth/authorizer';
 import { createdBySubjectFromRequestContext, type ResolveRequestContext } from '../auth/identity';
@@ -43,6 +44,7 @@ export interface AgentsRouterDeps<TTransaction> {
   withTransaction: WithTransaction<TTransaction>;
   resolveRequestContext: ResolveRequestContext;
   authorizer: Authorizer;
+  logger: Logger;
 }
 
 /** Wire view: identity columns plus nested manifest. */
@@ -64,6 +66,7 @@ async function validateManifest<TTransaction>({
   sandboxProviderStore,
   sandboxIntegration,
   tenant_id,
+  logger,
 }: {
   spec: AgentSpec;
   modelProviderStore: IModelProviderStore<TTransaction>;
@@ -72,6 +75,7 @@ async function validateManifest<TTransaction>({
   sandboxProviderStore: ISandboxProviderStore<TTransaction>;
   sandboxIntegration: SandboxIntegration | undefined;
   tenant_id: string;
+  logger: Logger;
 }): Promise<AgentSpec> {
   await validateAgentSpec({
     spec,
@@ -81,6 +85,7 @@ async function validateManifest<TTransaction>({
     skillStore,
     sandboxProviderStore,
     sandboxIntegration,
+    logger,
   });
   return spec;
 }
@@ -119,6 +124,7 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
       sandboxIntegration: deps.sandboxIntegration,
       tenant_id: requestContext.tenant_id,
+      logger: deps.logger,
     });
     try {
       const record = await deps.resolveAgentStore(c).createAgent({
@@ -224,6 +230,7 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
       sandboxIntegration: deps.sandboxIntegration,
       tenant_id: requestContext.tenant_id,
+      logger: deps.logger,
     });
     const record = await deps.resolveAgentStore(c).updateAgent({
       tenant_id: requestContext.tenant_id,

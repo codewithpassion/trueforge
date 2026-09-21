@@ -1,3 +1,4 @@
+import { createLogger } from 'winston';
 import { createAgentsRouter } from '../../../src/apis/agents';
 import { TrueForgeAuthorizer, type AgentListAccess, type Authorizer } from '../../../src/auth/authorizer';
 import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
@@ -106,6 +107,7 @@ describe('agents router', () => {
       withTransaction: callback => db.transaction().execute(callback),
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
       authorizer: new TrueForgeAuthorizer(),
+      logger: createLogger({ silent: true }),
     });
     deniedRouter = createAgentsRouter({
       resolveAgentStore: () => agentStore,
@@ -117,6 +119,7 @@ describe('agents router', () => {
       withTransaction: callback => db.transaction().execute(callback),
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
       authorizer: denyAllAuthorizer,
+      logger: createLogger({ silent: true }),
     });
   });
 

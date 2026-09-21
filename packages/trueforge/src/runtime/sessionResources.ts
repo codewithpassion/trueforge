@@ -2,6 +2,7 @@ import type { AgentSpec, SessionHandle } from '@truefoundry/trueforge-core/agent
 import type { VercelAIProviderConfig } from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
 import type { RemoteMcpHeaders } from '@truefoundry/trueforge-core/core/mcp/RemoteMCP';
 import type { AgentDefinition, ModelParams } from '@truefoundry/trueforge-core/core/runtime/AgentDefinition';
+import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
@@ -9,6 +10,7 @@ import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { ISkillStore } from '../db/skillStore';
 import type { SandboxIntegration } from '../sandbox/integration';
 import type { ReasoningEffort } from '../schemas/modelProvider';
+import type { SandboxBuildStatus } from '../schemas/sandboxProvider';
 
 export interface McpConnection {
   url: string;
@@ -165,6 +167,27 @@ export async function getMcpConnection({
   };
 }
 
+/** Keeps the old wording for "nothing configured" and names the build state otherwise. */
+function sandboxNotUsableMessage({
+  hasSkills,
+  status,
+}: {
+  hasSkills: boolean;
+  status: SandboxBuildStatus | undefined;
+}): string {
+  const subject = hasSkills ? 'skills require a sandbox' : 'sandbox is enabled';
+  switch (status) {
+    case 'pending':
+      return `${subject}, but the sandbox image is still being prepared — retry shortly`;
+    case 'failed':
+      return `${subject}, but the sandbox image build failed — re-save the provider at PUT /settings/sandbox-providers`;
+    default:
+      return hasSkills
+        ? 'skills require a sandbox provider — configure via PUT /settings/sandbox-providers'
+        : 'sandbox is enabled but no sandbox provider is configured — PUT /settings/sandbox-providers';
+  }
+}
+
 /**
  * Cross-checks an AgentSpec against configured models / MCP / skills and
  * sandbox capability. Throws HTTPException(422) for semantic failures.
@@ -178,6 +201,7 @@ export async function validateAgentSpec({
   skillStore,
   sandboxProviderStore,
   sandboxIntegration,
+  logger,
 }: {
   spec: AgentSpec;
   tenant_id: string;
@@ -186,6 +210,7 @@ export async function validateAgentSpec({
   skillStore: ISkillStore;
   sandboxProviderStore: ISandboxProviderStore;
   sandboxIntegration: SandboxIntegration | undefined;
+  logger: Logger;
 }): Promise<void> {
   const resolved = await getModelDetails({
     tenant_id,
@@ -232,14 +257,14 @@ export async function validateAgentSpec({
   const hasSkills = requestedSkills.length > 0;
   if (wantsSandbox || hasSkills) {
     // Without an integration a stored record is unusable, so it does not count as configured.
-    const configured =
-      sandboxIntegration !== undefined &&
-      (await sandboxIntegration.isSandboxConfigured({ store: sandboxProviderStore, tenant_id }));
-    if (!configured) {
+    // Same question GET /capabilities asks, so a spec is never admitted that a turn then rejects.
+    const usability =
+      sandboxIntegration === undefined
+        ? undefined
+        : await sandboxIntegration.resolveSandboxUsability({ store: sandboxProviderStore, tenant_id, logger });
+    if (usability?.usable !== true) {
       throw new HTTPException(422, {
-        message: hasSkills
-          ? 'skills require a sandbox provider — configure via PUT /settings/sandbox-providers'
-          : 'sandbox is enabled but no sandbox provider is configured — PUT /settings/sandbox-providers',
+        message: sandboxNotUsableMessage({ hasSkills, status: usability?.status }),
       });
     }
   }

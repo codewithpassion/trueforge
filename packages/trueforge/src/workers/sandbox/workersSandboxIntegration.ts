@@ -62,8 +62,9 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
         fileMaxBytesForDownload: options.fileMaxBytesForDownload,
       });
     },
-    isSandboxUsableWithoutStoredRecord: () => false,
-    isSandboxConfigured: isEnabledForTenant,
+    // The container image ships with the deploy, so an enabled workspace is never mid-build.
+    resolveSandboxUsability: async input =>
+      (await isEnabledForTenant(input)) ? { usable: true, status: 'ready' } : { usable: false, status: undefined },
     // The container image is the release sandbox image, so the skill downloader has the python3,
     // pydantic and git it needs; skills follow the workspace.
     isSkillMountingSupported: () => options.backend !== undefined,

@@ -1,2 +1,5 @@
-/** Wire `type` of the sandbox built into the Cloudflare Workers deploy; it takes no credentials. */
-export const CLOUDFLARE_COMPUTER_SANDBOX_TYPE = 'cloudflare-computer';
+import type { TrueForgeApi } from '@truefoundry/trueforge-sdk';
+
+/** The deploy's built-in sandbox: no credentials, nothing to tune. Tied to the generated wire type. */
+export const CLOUDFLARE_COMPUTER_SANDBOX_TYPE: TrueForgeApi.CloudflareComputerSandboxProvider['type'] =
+  'cloudflare-computer';

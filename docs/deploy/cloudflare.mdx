@@ -148,7 +148,11 @@ Set `TRUEFORGE_SANDBOX_BACKEND` in `vars` to offer the built-in sandbox on this 
 },
 ```
 
-Deploy, then turn it on per tenant: **Settings → Sandbox providers → Cloudflare Computer → Enable**. There is no form and no API key. **Disable** on the same row turns it back off. Enabling is what switches on the `exec` tool, skills, non-inline file uploads, and turn file downloads; `GET /api/v1/capabilities` reports sandbox and skills as enabled from that point, and the UI shows them.
+Deploy, then turn it on per tenant: **Settings → Sandbox providers → Cloudflare Computer → Enable**. There is no form and no API key. **Disable** on the same row turns it back off, after a confirmation; workspaces already running are discarded with their sessions. Enabling is what switches on the `exec` tool, skills, non-inline file uploads, and turn file downloads; `GET /api/v1/capabilities` reports sandbox and skills as enabled from that point, and the UI shows them.
+
+<Warning>
+  **Upgrading a deploy that already sets `TRUEFORGE_SANDBOX_BACKEND`.** The variable used to be the whole switch; it now only offers the provider. After upgrading, the sandbox is off until an admin clicks Enable, and until then a saved sandbox-enabled agent answers `422` with "no sandbox provider is configured". One click per tenant restores it; nothing else needs changing.
+</Warning>
 
 Each session gets its own container-backed `/workspace`, which persists for the life of the session and survives an idle container, because the Durable Object's SQLite storage is the authoritative copy. Skills are downloaded into `/workspace/.trueforge/skills` on the first sandbox use of each turn, and a skill the agent no longer asks for is removed there on the next turn.
 

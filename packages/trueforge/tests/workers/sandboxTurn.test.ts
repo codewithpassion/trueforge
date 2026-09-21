@@ -87,6 +87,7 @@ describe('a turn with the sandbox enabled and an MCP server', () => {
         skillStore: stores.skillStore,
         sandboxProviderStore: stores.sandboxProviderStore,
         sandboxIntegration: sandboxIntegration(),
+        logger,
       });
 
     await expect(validate()).rejects.toThrow(/no sandbox provider is configured/);

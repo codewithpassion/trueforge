@@ -1,5 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { AgentSpecSchema, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import { createLogger } from 'winston';
 import { createInternalMetricsRouter } from '../../../src/apis/sessionMetrics';
 import {
   createInternalSessionsRouter,
@@ -94,6 +95,7 @@ describe('sessions HTTP agent binding', () => {
       turnExecutor: testNodeTurnExecutor({ sessionStore }),
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
       authorizer: new TrueForgeAuthorizer(),
+      logger: createLogger({ silent: true }),
     };
     sessionDeps = deps;
     app = new OpenAPIHono();

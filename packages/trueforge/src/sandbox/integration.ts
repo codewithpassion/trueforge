@@ -4,7 +4,19 @@ import type { Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/Skil
 import type { AgentTracing } from '@truefoundry/trueforge-core/core/tracing/AgentTracing';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
-import type { DaytonaSandboxProvider, SandboxBuildMetadata, SandboxStatus } from '../schemas/sandboxProvider';
+import type {
+  DaytonaSandboxProvider,
+  SandboxBuildMetadata,
+  SandboxBuildStatus,
+  SandboxStatus,
+} from '../schemas/sandboxProvider';
+
+/** Whether a sandbox can run for a tenant now, and the build status behind that answer. */
+export interface SandboxUsability {
+  usable: boolean;
+  /** Undefined when no record this runtime can run is stored. */
+  status: SandboxBuildStatus | undefined;
+}
 
 /**
  * Runtime-specific sandbox support. Routes receive `undefined` when the runtime cannot run
@@ -18,14 +30,17 @@ export interface SandboxIntegration {
     logger: Logger;
     sessionId: string;
   }): Promise<SandboxProvider | undefined>;
-  /** Whether a sandbox is usable without a stored provider record. */
-  isSandboxUsableWithoutStoredRecord(): boolean;
   /**
-   * Whether this tenant has a sandbox this runtime can actually run — a stored record of a
-   * supported type, or a runtime fallback. The single source for every "is a sandbox
-   * configured" answer, so the capability endpoint and the spec validator cannot disagree.
+   * Whether a sandbox can run for this tenant right now: a stored record this runtime can attach
+   * to whose image build is ready, or a runtime fallback that needs no record. The single source
+   * for the capability endpoint and the spec validator, so neither can admit what the other
+   * refuses. Refreshes the persisted build status, so it may do provider network I/O.
    */
-  isSandboxConfigured(input: { store: ISandboxProviderStore; tenant_id: string }): Promise<boolean>;
+  resolveSandboxUsability(input: {
+    store: ISandboxProviderStore;
+    tenant_id: string;
+    logger: Logger;
+  }): Promise<SandboxUsability>;
   /** Whether skills can be mounted into a sandbox on this runtime. */
   isSkillMountingSupported(): boolean;
   /** Whether the settings-managed Daytona provider exists on this runtime. */

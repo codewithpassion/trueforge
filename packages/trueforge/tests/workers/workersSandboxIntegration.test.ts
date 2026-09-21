@@ -1,10 +1,17 @@
+import { OpenAPIHono } from '@hono/zod-openapi';
 import { AgentSpecSchema } from '@truefoundry/trueforge-core/agent-session';
 import { InstructionBuilder } from '@truefoundry/trueforge-core/core/InstructionBuilder';
 import type { IToolSet } from '@truefoundry/trueforge-core/core/mcp/IMCPServer';
 import type { Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { NOOP_AGENT_TRACING } from '@truefoundry/trueforge-core/core/tracing/NoopAgentTracing';
 import { env } from 'cloudflare:workers';
+import { createCapabilitiesRouter } from '../../src/apis/capabilities';
+import { resolveRequestContext } from '../../src/auth/identity';
+import { createAuthMiddleware } from '../../src/auth/middleware';
+import { StandaloneAuthenticator } from '../../src/auth/standaloneAuthenticator';
 import configuration from '../../src/config';
+import type { WithTransaction } from '../../src/db/transaction';
+import { GetCapabilitiesResponseSchema } from '../../src/routes/capabilityRoutes';
 import { validateAgentSpec } from '../../src/runtime/sessionResources';
 import type { SandboxIntegration } from '../../src/sandbox/integration';
 import { SANDBOX_READY_STATUS, type DaytonaSandboxProvider } from '../../src/schemas/sandboxProvider';
@@ -94,6 +101,7 @@ async function validateSandboxSpec(sandboxIntegration: SandboxIntegration): Prom
     skillStore: stores.skillStore,
     sandboxProviderStore: stores.sandboxProviderStore,
     sandboxIntegration,
+    logger,
   });
 }
 
@@ -121,7 +129,10 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND unset',
   });
 
   it('offers no sandbox without a stored record, so a sandbox-enabled spec is rejected', async () => {
-    expect(build(undefined).isSandboxUsableWithoutStoredRecord()).toBe(false);
+    await expect(build(undefined).resolveSandboxUsability(storeInput())).resolves.toEqual({
+      usable: false,
+      status: undefined,
+    });
     await expect(validateSandboxSpec(build(undefined))).rejects.toThrow(/no sandbox provider is configured/);
   });
 
@@ -146,7 +157,10 @@ describe('createWorkersRuntimeDeps', () => {
     const { sandboxIntegration } = createWorkersRuntimeDeps(env);
     await expect(sandboxIntegration.resolveProvider(storeInput())).resolves.toBeUndefined();
     await expect(sandboxIntegration.checkSnapshotStatus(storeInput())).resolves.toBeUndefined();
-    expect(sandboxIntegration.isSandboxUsableWithoutStoredRecord()).toBe(false);
+    await expect(sandboxIntegration.resolveSandboxUsability(storeInput())).resolves.toEqual({
+      usable: false,
+      status: undefined,
+    });
   });
 });
 
@@ -170,7 +184,10 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
     const integration = build('cloudflare-computer');
     await disableBuiltInSandbox();
     try {
-      expect(integration.isSandboxUsableWithoutStoredRecord()).toBe(false);
+      await expect(integration.resolveSandboxUsability(storeInput())).resolves.toEqual({
+        usable: false,
+        status: undefined,
+      });
       await expect(integration.checkSnapshotStatus(storeInput())).resolves.toBeUndefined();
       await expect(integration.resolveProvider(storeInput())).resolves.toBeUndefined();
       await expect(validateSandboxSpec(integration)).rejects.toThrow(/no sandbox provider is configured/);
@@ -246,6 +263,65 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
   it('accepts a sandbox-enabled spec once the tenant has enabled the built-in provider', async () => {
     await enableBuiltInSandbox();
     await expect(validateSandboxSpec(build('cloudflare-computer'))).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * Cycle 18: the capability endpoint said yes while the spec validator said no, because they
+ * read "is a sandbox configured" from different places. Both go through the real integration
+ * now, so this drives the real factory rather than a hand-copied stub.
+ */
+describe('GET /capabilities agrees with the spec validator on the real Workers integration', () => {
+  async function capabilitySaysEnabled(sandboxIntegration: SandboxIntegration): Promise<boolean> {
+    // The capability handler is read-only; it never opens the transaction it is handed.
+    const withTransaction: WithTransaction<never> = () => Promise.reject(new Error('unused'));
+    const router = new OpenAPIHono();
+    router.use('*', createAuthMiddleware(new StandaloneAuthenticator()));
+    router.route(
+      '/',
+      createCapabilitiesRouter({
+        resolveSandboxProviderStore: () => d1Persistence().sandboxProviderStore,
+        withTransaction,
+        logger,
+        resolveRequestContext,
+        sandboxIntegration,
+      }),
+    );
+    const body: unknown = await (await router.request('/')).json();
+    return GetCapabilitiesResponseSchema.parse(body).data.sandbox.enabled;
+  }
+
+  async function bothAnswers(
+    sandboxIntegration: SandboxIntegration,
+  ): Promise<{ capability: boolean; validator: boolean }> {
+    const capability = await capabilitySaysEnabled(sandboxIntegration);
+    const validator = await validateSandboxSpec(sandboxIntegration).then(
+      () => true,
+      () => false,
+    );
+    return { capability, validator };
+  }
+
+  beforeAll(async () => {
+    await migrateDatabase();
+  });
+
+  it('agrees before the tenant enables the built-in provider', async () => {
+    await disableBuiltInSandbox();
+    await expect(bothAnswers(build('cloudflare-computer'))).resolves.toEqual({
+      capability: false,
+      validator: false,
+    });
+  });
+
+  it('agrees after the tenant enables it', async () => {
+    await enableBuiltInSandbox();
+    await expect(bothAnswers(build('cloudflare-computer'))).resolves.toEqual({ capability: true, validator: true });
+  });
+
+  it('agrees when the record outlives the deploy var', async () => {
+    await enableBuiltInSandbox();
+    await expect(bothAnswers(build(undefined))).resolves.toEqual({ capability: false, validator: false });
   });
 });
 

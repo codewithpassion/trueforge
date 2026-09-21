@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Spinner } from '@/atoms/primitives/Spinner.js';
 import { Button } from '../../atoms/primitives/Button.js';
+import { CenteredModal } from '../../atoms/primitives/CenteredModal.js';
 import { Tooltip } from '../../atoms/primitives/Tooltip.js';
 import { Icon } from '../../icons/Icon.js';
 import { useCatalogServer } from '../../server/ServerContext.js';
@@ -75,6 +76,7 @@ const SandboxSettings = () => {
 
   const [createEntry, setCreateEntry] = useState<SandboxProviderCatalogEntry | null>(null);
   const [updateProvider, setUpdateProvider] = useState<SandboxProviderBase | null>(null);
+  const [removeProvider, setRemoveProvider] = useState<SandboxProviderBase | null>(null);
 
   const refresh = useCallback(
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
@@ -220,7 +222,11 @@ const SandboxSettings = () => {
     if (!deleteSandboxProvider) return;
     void runMutation(async () => {
       await deleteSandboxProvider({ id: provider.id });
-    }).catch(() => {});
+    })
+      .then(() => {
+        setRemoveProvider(null);
+      })
+      .catch(() => {});
   };
 
   const handleEnable = (entry: SandboxProviderCatalogEntry) => {
@@ -351,7 +357,7 @@ const SandboxSettings = () => {
                               type="button"
                               disabled={busy}
                               onClick={() => {
-                                handleRemove(provider);
+                                setRemoveProvider(provider);
                               }}
                             >
                               {isBuiltIn(provider) ? 'Disable' : 'Remove'}
@@ -419,6 +425,53 @@ const SandboxSettings = () => {
           </div>
         )}
       </div>
+
+      <CenteredModal
+        open={removeProvider != null}
+        onOpenChange={open => {
+          if (!open) setRemoveProvider(null);
+        }}
+        title={
+          removeProvider && isBuiltIn(removeProvider)
+            ? `Disable ${removeProvider.name}`
+            : `Remove ${removeProvider?.name ?? 'sandbox provider'}`
+        }
+        description={
+          removeProvider && isBuiltIn(removeProvider)
+            ? 'Agents lose the sandbox, and skills with it, until you enable it again. Workspaces already running are discarded with their sessions.'
+            : 'The stored API key is deleted, and agents lose the sandbox until another provider is configured. Sandboxes already running are left for the provider to auto-stop and auto-delete on its own schedule — TrueForge does not remove them.'
+        }
+        contentSized
+        headerIcon={
+          <span
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary-bg text-text-primary"
+            aria-hidden
+          >
+            <Icon name="triangle-exclamation" className="size-6" />
+          </span>
+        }
+      >
+        <div className="flex flex-col gap-3 p-5 sm:flex-row sm:justify-end md:p-6">
+          <Button.Secondary
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setRemoveProvider(null);
+            }}
+          >
+            Cancel
+          </Button.Secondary>
+          <Button.Primary
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (removeProvider) handleRemove(removeProvider);
+            }}
+          >
+            {removeProvider && isBuiltIn(removeProvider) ? 'Disable' : 'Remove'}
+          </Button.Primary>
+        </div>
+      </CenteredModal>
 
       <ConfigureSandboxForm
         open={formOpen}
