@@ -4,7 +4,6 @@
  */
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { env } from 'cloudflare:workers';
-import type { Context } from 'hono';
 import {
   createComputerMachineRouter,
   createComputersRouter,
@@ -59,7 +58,7 @@ export function computersApp({
     '/api/v1/computers',
     createComputersRouter({
       computers,
-      resolveRequestContext: (_c: Context) => requestContextFor(tenantId),
+      resolveRequestContext: () => requestContextFor(tenantId),
       publicBaseUrl: () => PUBLIC_BASE_URL,
       releaseBaseUrl: 'https://releases.test/trueforge-computer',
       dockerImage,

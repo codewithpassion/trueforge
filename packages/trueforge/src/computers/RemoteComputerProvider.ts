@@ -44,9 +44,15 @@ export function computerIdFromSandboxRef(sandboxId: string): string | undefined 
 /** A reset relay rejects the RPC instead of answering; the caller must still read it as offline. */
 const INTERRUPTED_MESSAGE = 'The connection to the computer was interrupted';
 
-/** Client error codes the sandbox contract has its own classes for. Kept apart on purpose. */
+/**
+ * Client error codes the sandbox contract has its own class for. The code is an open string — the
+ * client adds to it — so anything not listed here keeps its own wording rather than being forced
+ * into a class that would misdescribe it.
+ */
 const CLIENT_ERROR_NOT_FOUND = 'not_found';
 const CLIENT_ERROR_IS_A_DIRECTORY = 'is_a_directory';
+const CLIENT_ERROR_NOT_A_REGULAR_FILE = 'not_a_regular_file';
+const CLIENT_ERROR_TOO_LARGE = 'too_large';
 
 /** A user's machine is not built from an image, so there is nothing to wait for. */
 const READY_BUILD: SandboxBuild = { status: 'ready', reason: null, metadata: null };
@@ -386,19 +392,30 @@ export class RemoteComputerProvider implements SandboxProvider {
   /**
    * Maps a failed file op onto the error classes the download route already answers. The relay
    * reports a client's `{code, message}` as `bad_request` with the code in front of the message.
-   * A file that is too large never gets here: its size comes back with the first chunk.
+   * A code with no matching class keeps its own text: calling a refused path or a denied read
+   * "offline" would send the caller looking at the network instead of at what it asked for.
    */
   #fileFailure({ outcome, path }: { outcome: Extract<RequestOutcome, { ok: false }>; path: string }): Error {
+    // Offline, timed out, revoked, replaced, forbidden: the machine never answered.
     if (outcome.reason !== 'bad_request') {
       return new SandboxOfflineError(outcome.message);
     }
-    if (outcome.message.startsWith(`${CLIENT_ERROR_NOT_FOUND}:`)) {
-      return new SandboxFileNotFoundError(path);
+    const code = outcome.message.slice(0, Math.max(0, outcome.message.indexOf(':')));
+    switch (code) {
+      case CLIENT_ERROR_NOT_FOUND:
+        return new SandboxFileNotFoundError(path);
+      case CLIENT_ERROR_IS_A_DIRECTORY:
+      case CLIENT_ERROR_NOT_A_REGULAR_FILE:
+        return new SandboxPathIsDirectoryError(path);
+      case CLIENT_ERROR_TOO_LARGE:
+        return new SandboxFileTooLargeError(
+          path,
+          this.#options.fileMaxBytesForDownload,
+          this.#options.fileMaxBytesForDownload,
+        );
+      default:
+        return new Error(`Computer ${this.#options.computerName} refused ${path}: ${outcome.message}`);
     }
-    if (outcome.message.startsWith(`${CLIENT_ERROR_IS_A_DIRECTORY}:`)) {
-      return new SandboxPathIsDirectoryError(path);
-    }
-    return new SandboxOfflineError(outcome.message);
   }
 
   #assertOwnSandbox(sandboxId: string): void {

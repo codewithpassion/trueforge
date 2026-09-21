@@ -121,7 +121,7 @@ export interface RelayRequestInput {
  * machine and answers callers over RPC, failing fast with a reason rather than throwing, because the
  * caller is a turn that must keep going.
  */
-export class RemoteComputerDO extends DurableObject<Env> {
+export class RemoteComputerDO extends DurableObject {
   readonly #pending = new Map<string, PendingEntry>();
   readonly #queue: QueuedEntry[] = [];
   #inFlightExec = 0;
