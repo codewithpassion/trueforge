@@ -301,8 +301,15 @@ describe('a connected machine', () => {
 
     const provider = providerFor({ computers, computerId: created.computerId, sessionId: 'session-files' });
     const { sandboxId } = await provider.createSandbox();
-    await provider.uploadFile({ sandboxId, remotePath: '/tmp/payload.bin', content: payload });
-    const back = await provider.downloadFile({ sandboxId, path: '/tmp/payload.bin' });
+    await provider.uploadFile({
+      sandboxId,
+      remotePath: '/home/trueforge/.trueforge/sessions/session-files/uploads/payload.bin',
+      content: payload,
+    });
+    const back = await provider.downloadFile({
+      sandboxId,
+      path: '/home/trueforge/.trueforge/sessions/session-files/uploads/payload.bin',
+    });
     expect(back.equals(payload)).toBe(true);
     client.close();
   });
@@ -325,6 +332,81 @@ describe('a connected machine', () => {
     const provider = providerFor({ computers, computerId: created.computerId, sessionId: 'session-hello' });
     const result = await provider.exec({ sandboxId: `${created.computerId}/session-hello`, command: 'true' });
     expect(result.success).toBe(true);
+    client.close();
+  });
+});
+
+describe('file operations stay in the session directory', () => {
+  it('refuses a path outside it, however it is written, and records the attempt', async () => {
+    const computers = testComputersService();
+    const app = computersApp({ computers });
+    const created = await createComputer({ app, name: uniqueName('jail') });
+    const { credential } = await enroll({ app, code: created.enrollmentCode });
+    const client = await FakeComputerClient.connect({
+      app,
+      credential: credential ?? '',
+      options: { onRequest: () => OK_EXEC },
+    });
+    await settle();
+
+    const provider = providerFor({ computers, computerId: created.computerId, sessionId: 'session-jail' });
+    const sandboxId = `${created.computerId}/session-jail`;
+    // The client's own credential is the prize here: reading it would let the holder connect as
+    // the computer and collect other sessions' commands.
+    for (const path of [
+      '/home/trueforge/.trueforge/credential',
+      '/home/trueforge/.trueforge/sessions/session-jail/../../credential',
+      '/etc/passwd',
+      'relative/path',
+    ]) {
+      await expect(provider.downloadFile({ sandboxId, path })).rejects.toThrow(/outside this session/);
+      await expect(provider.uploadFile({ sandboxId, remotePath: path, content: Buffer.from('x') })).rejects.toThrow(
+        /outside this session/,
+      );
+    }
+    // Nothing was asked of the machine; the server refused before the wire.
+    expect(client.received.filter(frame => frame['op'] === 'file_get' || frame['op'] === 'file_put')).toHaveLength(0);
+    client.close();
+  });
+});
+
+describe('what the machine says about itself', () => {
+  it('ignores a hello whose run-as user could break out of a shell command', async () => {
+    const computers = testComputersService();
+    const app = computersApp({ computers });
+    const created = await createComputer({ app, name: uniqueName('hostile-hello') });
+    const { credential } = await enroll({ app, code: created.enrollmentCode });
+    const client = await FakeComputerClient.connect({
+      app,
+      credential: credential ?? '',
+      options: { hello: { run_as_user: "trueforge'; rm -rf /; #" }, onRequest: () => OK_EXEC },
+    });
+    await settle();
+
+    // The hello never landed, so the row keeps what enrollment recorded and no path is built
+    // from it. A name that cannot be a POSIX user is not one.
+    const record = await computers.store.getComputer({ tenant_id: TENANT_ID, computer_id: created.computerId });
+    expect(record?.run_as_user).toBeNull();
+    client.close();
+  });
+
+  it('accepts one hello per connection and closes a socket that repeats it', async () => {
+    const computers = testComputersService();
+    const app = computersApp({ computers });
+    const created = await createComputer({ app, name: uniqueName('one-hello') });
+    const { credential } = await enroll({ app, code: created.enrollmentCode });
+    const client = await FakeComputerClient.connect({
+      app,
+      credential: credential ?? '',
+      options: { onRequest: () => OK_EXEC },
+    });
+    await settle();
+    expect((await computers.relay(created.computerId).status()).connected).toBe(true);
+
+    // A second hello on the same connection is a flood of storage and D1 writes waiting to happen.
+    client.sendHello({});
+    await settle();
+    expect((await computers.relay(created.computerId).status()).connected).toBe(false);
     client.close();
   });
 });
@@ -399,6 +481,7 @@ describe('offline', () => {
     // Exactly what a deploy or a forced eviction does to a caller: the RPC rejects.
     const rejecting: ComputersService = {
       store: computers.store,
+      rateLimiter: undefined,
       relayFetch: computers.relayFetch.bind(computers),
       relay: () => ({
         request: () => Promise.reject(new Error('Durable Object reset because its code was updated')),
@@ -426,6 +509,53 @@ describe('offline', () => {
     });
     // The command may still be running with nobody to collect it, so the outcome is recorded unknown.
     expect(audit[0]?.exit_code).toBeNull();
+  });
+});
+
+describe('a command whose caller was lost', () => {
+  it('is never re-run, and is cancelled on the machine when it comes back', async () => {
+    const computers = testComputersService();
+    const app = computersApp({ computers });
+    const created = await createComputer({ app, name: uniqueName('orphan') });
+    const { credential } = await enroll({ app, code: created.enrollmentCode });
+
+    // The machine takes the command and says nothing; then the connection drops under it.
+    const first = await FakeComputerClient.connect({
+      app,
+      credential: credential ?? '',
+      options: { onRequest: () => undefined },
+    });
+    await settle();
+    const provider = providerFor({ computers, computerId: created.computerId, sessionId: 'session-orphan' });
+    const running = provider.exec({
+      sandboxId: `${created.computerId}/session-orphan`,
+      command: 'sleep 600',
+      timeoutSeconds: 60,
+    });
+    await waitFor(() => first.held.length === 1);
+    const orphanedId = first.held[0];
+    first.close();
+
+    // The caller is told, in words that say the command may still be running, and nothing retries.
+    const result = await running;
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/may still be running/);
+    }
+
+    // The client keeps that command alive across a reconnect, so the cancel has something to kill.
+    const second = await FakeComputerClient.connect({
+      app,
+      credential: credential ?? '',
+      options: { onRequest: () => OK_EXEC },
+    });
+    await waitFor(() => second.received.some(frame => frame['op'] === 'cancel'));
+    expect(second.received.filter(frame => frame['op'] === 'cancel').map(frame => frame['target_id'])).toEqual([
+      orphanedId,
+    ]);
+    // And it was cancelled, not re-sent: no second `sleep 600` reached the machine.
+    expect(second.received.filter(frame => frame['op'] === 'exec')).toHaveLength(0);
+    second.close();
   });
 });
 
@@ -575,7 +705,7 @@ describe('delete', () => {
     await computers.store.putAgentAccess({
       tenant_id: TENANT_ID,
       computer_id: created.computerId,
-      agent_names: ['some-agent'],
+      agents: [{ agent_id: 'agt_some', agent_name: 'some-agent' }],
     });
     const refused = await app.fetch(
       new Request(`${PUBLIC_BASE_URL}/api/v1/computers/${created.computerId}`, { method: 'DELETE' }),
@@ -583,7 +713,7 @@ describe('delete', () => {
     );
     expect(refused.status).toBe(409);
 
-    await computers.store.putAgentAccess({ tenant_id: TENANT_ID, computer_id: created.computerId, agent_names: [] });
+    await computers.store.putAgentAccess({ tenant_id: TENANT_ID, computer_id: created.computerId, agents: [] });
     const deleted = await app.fetch(
       new Request(`${PUBLIC_BASE_URL}/api/v1/computers/${created.computerId}`, { method: 'DELETE' }),
       env,

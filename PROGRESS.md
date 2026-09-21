@@ -73,6 +73,15 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 - **A turn-time refusal surfaces as an HTTP status, not a turn event.** The sandbox factory throws inside `SessionHandle.createTurn`, so `POST /api/v1/sessions/{id}/turns` answers 422 and no turn is created. `tests/unit/apis/turnHarnessErrorStatus.test.ts` already proved that path for the sandbox errors; the computer refusals ride it unchanged.
 - **The frozen contract has no home path.** The session directory is derived from `run_as_user` and `os`. A machine whose `$HOME` is somewhere else needs a `home` field in protocol v2 — recorded in the plan rather than worked around.
 
+**What the security review changed:**
+
+- **A grant named an agent, and a name is not an identity.** Creating an agent is not an admin action, so an admin who granted "deployer" before it existed — or typoed it, or whose agent was later deleted — was handing the machine to whoever next created an agent with that name. The allowlist now keys on the agent's immutable id. The API still takes names, because that is what a person types, and resolves them server-side; a name nothing answers to is a 422 rather than a grant left waiting.
+- **The enrollment race was real and the reviewer proved it.** The redeem batch's second statement guarded on the timestamp the first had written, so two redeems of one code in the same millisecond both matched and the loser overwrote the winner's credential — both dead, code burnt. Statement 1 now stamps the credential hash onto the enrollment row and statement 2 guards on that. The same rule went through every other chained write that was re-checking a timestamp.
+- **A download could read anything on the machine.** The route checked the tenant but not the allowlist, and the path was unbounded — including the client's own credential file, which is enough to connect as the computer and collect other sessions' commands and git credentials. File transfers are now confined to the session directory and the route re-checks the allowlist.
+- **`hello` was unbounded, and `run_as_user` becomes a path that reaches a shell.** A quote in it broke out of `mkdir -p '…'`. Bounds on every field, a POSIX-user pattern on that one, the path quoted rather than interpolated, and control characters stripped before anything reaches a log or the model.
+- **Deleting a computer erased what ran on it.** The audit rows cascaded. They now outlive the machine — no foreign key, a denormalised name — until the 30-day sweep takes them, and an admin can read the whole tenant's.
+- Also: one hello per connection rather than per frame, every operation audited from a `finally` with an outcome rather than only the successes, a checksum-verifying installer that refuses root and takes the code from the environment, and a per-address rate limit on the only two unauthenticated routes.
+
 **Lessons learned:**
 
 - **Freezing the wire before either half exists is what let two agents work at once.** The contract was written as a document with the constants, the close codes and the exact failure wording, and neither side had to guess. The only mismatch that surfaced was an error code spelling (`is_a_directory`, not `is_directory`), and it cost one line because the document listed the codes.
@@ -80,6 +89,9 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 - **Don't let a concurrency test wait out a deadline.** Holding four requests and letting them time out cost eleven seconds each and made the file forty seconds slower than the work in it. Letting the fake client answer on demand, and waiting on a condition rather than a fixed number of ticks, took the file from 180 s to 49 s and removed the flake with it.
 - **Mutation-checking a security comparison finds the test that does not test it.** Breaking the credential lookup left the connect test green, because no computer existed in that test's database — the query had nothing to wrongly return. Enrolling one first made the test real.
 - **A field on a hibernating Durable Object is a bug waiting for an idle minute.** The spike said so; porting the code without porting that rule would have reintroduced it, because the storage write looks like overhead until you have seen it fail.
+- **"Keyed by name" is a design smell wherever names can be reused and anyone can mint one.** The allowlist read correctly in every test because every test used the happy path: grant, use, done. The hole only appears when you ask who else can create that name, and the answer was "any user", because creating an agent was never admin-gated. The fix was small; finding it was not.
+- **A guard that ties two statements together by a timestamp is not a guard.** `updated_at = ?now` and `used_at = ?now` read like identity and are not: two callers in the same millisecond compute the same value. Every chained write now depends on something only this call could have written.
+- **An audit log that records only successes is worse than none.** It says what happened and implies nothing else did. The refused read, the offline exec and the setup command were all invisible, which is exactly the set someone reviewing a machine would want.
 
 **Avoid next time:**
 
@@ -87,6 +99,7 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 - Don't mount an admin shell before the unauthenticated routes that live under the same prefix. `use('*')` swallows them, and the failure is a 403 on a machine that has no session to show.
 - Don't put a new server path behind the static-asset handler. `/install.sh` needs `SERVER_PATH_PREFIXES` and `run_worker_first` changed together, and a unit test already asserts they match — which is the only reason it was caught before a deploy.
 - Don't add a field to `ServerPersistence` for something only one runtime uses. Threading it through `createServerRuntime` as `ComputersService | undefined` made the type say "this runtime cannot" and saved roughly thirty test literals.
+- Don't put a server-side jail only on the path the agent uses. `exec` sees the whole machine by design, and it is tempting to conclude the file operations may too — but they are reachable from an HTTP route by a different caller under different rules.
 - Don't assume a store method's doc comment survived the design it was written for. `countAgentAccess` said "any computer in this tenant" while taking a `computer_id`; the implementer flagged it rather than guessing, which is the right instinct.
 
 ---

@@ -994,6 +994,7 @@
             "items": {
               "$ref": "#/components/schemas/ResourceName"
             },
+            "maxItems": 200,
             "type": "array"
           }
         },
@@ -1009,7 +1010,15 @@
             "type": "integer"
           },
           "command": {
-            "description": "The command, or the path for a file operation. Truncated at 4 KiB.",
+            "description": "The command, or the path for a file operation. Truncated at 4 KiB. Kept for 30 days.",
+            "type": "string"
+          },
+          "computer_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "computer_name": {
+            "description": "The name the computer had when this ran; it may since have gone.",
             "type": "string"
           },
           "created_at": {
@@ -1032,6 +1041,10 @@
           "op": {
             "$ref": "#/components/schemas/ComputerAuditOp"
           },
+          "outcome": {
+            "description": "`ok`, or why it did not finish — offline, revoked, too_large, denied.",
+            "type": "string"
+          },
           "session_id": {
             "type": [
               "string",
@@ -1047,11 +1060,14 @@
         },
         "required": [
           "id",
+          "computer_id",
+          "computer_name",
           "session_id",
           "turn_id",
           "op",
           "command",
           "exit_code",
+          "outcome",
           "duration_ms",
           "bytes_out",
           "created_at"
@@ -1103,15 +1119,12 @@
         "type": "string"
       },
       "ComputerTools": {
-        "additionalProperties": false,
         "description": "What the machine reported it has; null before it connects.",
         "properties": {
           "git": {
-            "description": "The machine reported git.",
             "type": "boolean"
           },
           "python3": {
-            "description": "The machine reported a python3 interpreter.",
             "type": "boolean"
           }
         },
@@ -7890,6 +7903,103 @@
         "x-fern-sdk-method-name": "create"
       }
     },
+    "/api/v1/computers/audit": {
+      "get": {
+        "description": "Commands and file transfers across the tenant, newest first, including deleted machines.",
+        "parameters": [
+          {
+            "description": "Page size. Max 100.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Page size. Max 100.",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque cursor from a previous response.",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "description": "Opaque cursor from a previous response.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListComputerAuditResponse"
+                }
+              }
+            },
+            "description": "Paginated activity."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid query parameters."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "List what ran on every computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-pagination": {
+          "cursor": "$request.page_token",
+          "next_cursor": "$response.pagination.next_page_token",
+          "results": "$response.data"
+        },
+        "x-fern-sdk-group-name": [
+          "computers",
+          "audit"
+        ],
+        "x-fern-sdk-method-name": "list_all"
+      }
+    },
     "/api/v1/computers/enroll": {
       "post": {
         "description": "Called once by the client on the machine. Any code that is unknown, expired or used answers 401.",
@@ -7943,6 +8053,16 @@
               }
             },
             "description": "No such computer, or this server does not serve remote computers."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Too many attempts from this address; retry after the time in `Retry-After`."
           }
         },
         "summary": "Exchange an enrollment code for a machine credential",
@@ -8336,6 +8456,16 @@
               }
             },
             "description": "No such computer, or this server does not serve remote computers."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "One of the named agents does not exist in this tenant."
           }
         },
         "summary": "Replace the agents allowed on a computer",

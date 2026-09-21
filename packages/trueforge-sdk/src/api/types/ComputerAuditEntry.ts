@@ -4,14 +4,19 @@ import type * as TrueForge from "../index.js";
 
 export interface ComputerAuditEntry {
     bytesOut: number;
-    /** The command, or the path for a file operation. Truncated at 4 KiB. */
+    /** The command, or the path for a file operation. Truncated at 4 KiB. Kept for 30 days. */
     command: string;
+    computerId: string;
+    /** The name the computer had when this ran; it may since have gone. */
+    computerName: string;
     createdAt: string;
     durationMs: number;
     /** Null when the outcome never came back. */
     exitCode: number | null;
     id: string;
     op: TrueForge.ComputerAuditOp;
+    /** `ok`, or why it did not finish — offline, revoked, too_large, denied. */
+    outcome: string;
     sessionId: string | null;
     turnId: string | null;
 }

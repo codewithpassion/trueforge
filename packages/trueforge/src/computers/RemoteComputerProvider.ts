@@ -45,7 +45,9 @@ export function computerIdFromSandboxRef(sandboxId: string): string | undefined 
 }
 
 /** A reset relay rejects the RPC instead of answering; the caller must still read it as offline. */
-const INTERRUPTED_MESSAGE = 'The connection to the computer was interrupted';
+const INTERRUPTED_MESSAGE =
+  'The connection to the computer was interrupted. The command may still be running there; it is not retried, ' +
+  'and a cancel is sent for it when the machine reconnects. Ask again if you need the result.';
 
 /**
  * Client error codes the sandbox contract has its own class for. The code is an open string — the
@@ -118,7 +120,7 @@ function truncateCommand(command: string): string {
   if (encoded.byteLength <= AUDIT_COMMAND_MAX_BYTES) {
     return command;
   }
-  const head = new TextDecoder('utf-8', { fatal: false }).decode(encoded.subarray(0, AUDIT_COMMAND_MAX_BYTES));
+  const head = new TextDecoder().decode(encoded.subarray(0, AUDIT_COMMAND_MAX_BYTES));
   // A split code point decodes to U+FFFD; dropping it keeps the text honest.
   return `${head.replace(/\uFFFD$/, '')}…`;
 }

@@ -12,15 +12,8 @@ class ComputerTools(UncheckedBaseModel):
     What the machine reported it has; null before it connects.
     """
 
-    git: bool = pydantic.Field()
-    """
-    The machine reported git.
-    """
-
-    python3: bool = pydantic.Field()
-    """
-    The machine reported a python3 interpreter.
-    """
+    git: bool
+    python3: bool
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow")  # type: ignore # Pydantic v2

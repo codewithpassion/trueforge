@@ -175,7 +175,7 @@ describe('a turn with the sandbox enabled and an MCP server', () => {
       validateAgentSpec({
         spec: sandboxSpec(providerName),
         tenant_id: TENANT_ID,
-        agent_name: undefined,
+        agent_id: undefined,
         modelProviderStore: stores.modelProviderStore,
         mcpServerStore: stores.mcpServerStore,
         skillStore: stores.skillStore,

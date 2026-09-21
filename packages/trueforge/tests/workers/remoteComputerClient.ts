@@ -20,7 +20,7 @@ import {
 import type { ComputersService } from '../../src/computers/service';
 import { workersComputersService } from '../../src/workers/computersService';
 import { createConsoleLogger } from '../../src/workers/logger';
-import { TENANT_ID, USER_REF } from './harness';
+import { d1Persistence, TENANT_ID, USER_REF } from './harness';
 
 export const PUBLIC_BASE_URL = 'https://trueforge.test';
 
@@ -59,6 +59,7 @@ export function computersApp({
     createComputersRouter({
       computers,
       resolveRequestContext: () => requestContextFor(tenantId),
+      resolveAgentStore: () => d1Persistence().agentStore,
       publicBaseUrl: () => PUBLIC_BASE_URL,
       releaseBaseUrl: 'https://releases.test/trueforge-computer',
       dockerImage,

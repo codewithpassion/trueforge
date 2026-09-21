@@ -12,7 +12,7 @@ export const ComputerStatusSchema = z.enum(COMPUTER_STATUSES).openapi('ComputerS
 export const ComputerAuditOpSchema = z.enum(COMPUTER_AUDIT_OPS).openapi('ComputerAuditOp');
 
 /** The wire name for the capabilities the protocol already owns; the shape is not redeclared. */
-export const ComputerToolsSchema = ComputerCapabilitiesSchema.openapi('ComputerTools');
+export const ComputerToolsSchema = z.object(ComputerCapabilitiesSchema.shape).openapi('ComputerTools');
 
 export const ComputerSchema = z
   .object({

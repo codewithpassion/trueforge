@@ -76,7 +76,7 @@ function storeInput() {
     logger,
     computer_id: undefined,
     turn_id: null,
-    agent_name: undefined,
+    agent_id: undefined,
   };
 }
 
@@ -105,7 +105,7 @@ async function validateSandboxSpec(sandboxIntegration: SandboxIntegration): Prom
       config: { sandbox: { enabled: true, file_downloads: false } },
     }),
     tenant_id: TENANT_ID,
-    agent_name: undefined,
+    agent_id: undefined,
     modelProviderStore: stores.modelProviderStore,
     mcpServerStore: stores.mcpServerStore,
     skillStore: stores.skillStore,

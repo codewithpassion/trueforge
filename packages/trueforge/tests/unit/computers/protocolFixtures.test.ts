@@ -77,6 +77,27 @@ describe('frames the client sends', () => {
   });
 });
 
+describe('the error codes the client can send', () => {
+  it('are all either mapped to a sandbox error or passed through with their message', () => {
+    const fixture = JSON.parse(readFileSync(path.join(FIXTURES, 'protocol/error_codes.json'), 'utf8')) as {
+      codes: string[];
+    };
+    // The set grows on the client's side, so the server treats it as an open string. These four
+    // are the ones it narrows; everything else must keep its own wording rather than be forced
+    // into a class that would misdescribe it.
+    const mapped = new Set(['not_found', 'is_a_directory', 'not_a_regular_file', 'too_large']);
+    expect(fixture.codes.length).toBeGreaterThan(0);
+    for (const code of fixture.codes) {
+      const frame = classifyClientFrame(JSON.stringify({ id: 'req-1', error: { code, message: 'why' } }));
+      expect(frame).toMatchObject({ kind: 'reply', reply: { ok: false, error: { code, message: 'why' } } });
+    }
+    // Every code the server narrows must still be one the client actually sends.
+    for (const code of mapped) {
+      expect(fixture.codes).toContain(code);
+    }
+  });
+});
+
 describe('enrollment', () => {
   it('the request and the response match the wire schemas', () => {
     expect(EnrollComputerRequestSchema.safeParse(parsed('enroll/request.json')).success).toBe(true);

@@ -5,6 +5,145 @@ import { TrueForge } from "../../../src/Client";
 import { mockServerPool } from "../../mock-server/MockServerPool";
 
 describe("AuditClient", () => {
+    test("list_all (1)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = {
+            data: [
+                {
+                    bytes_out: 1,
+                    command: "command",
+                    computer_id: "computer_id",
+                    computer_name: "computer_name",
+                    created_at: "created_at",
+                    duration_ms: 1,
+                    exit_code: 1,
+                    id: "id",
+                    op: "exec",
+                    outcome: "outcome",
+                    session_id: "session_id",
+                    turn_id: "turn_id",
+                },
+            ],
+            pagination: { limit: 1, next_page_token: "next_page_token", previous_page_token: "previous_page_token" },
+        };
+
+        server
+            .mockEndpoint({ once: false })
+            .get("/api/v1/computers/audit")
+            .respondWith()
+            .statusCode(200)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        const expected = {
+            data: [
+                {
+                    bytesOut: 1,
+                    command: "command",
+                    computerId: "computer_id",
+                    computerName: "computer_name",
+                    createdAt: "created_at",
+                    durationMs: 1,
+                    exitCode: 1,
+                    id: "id",
+                    op: "exec",
+                    outcome: "outcome",
+                    sessionId: "session_id",
+                    turnId: "turn_id",
+                },
+            ],
+            pagination: {
+                limit: 1,
+                nextPageToken: "next_page_token",
+                previousPageToken: "previous_page_token",
+            },
+        };
+        const page = await client.computers.audit.listAll();
+
+        expect(expected.data).toEqual(page.data);
+        expect(page.hasNextPage()).toBe(true);
+        const nextPage = await page.getNextPage();
+        expect(expected.data).toEqual(nextPage.data);
+    });
+
+    test("list_all (2)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .get("/api/v1/computers/audit")
+            .respondWith()
+            .statusCode(400)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.computers.audit.listAll();
+        }).rejects.toThrow(TrueForgeTypes.BadRequestError);
+    });
+
+    test("list_all (3)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .get("/api/v1/computers/audit")
+            .respondWith()
+            .statusCode(401)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.computers.audit.listAll();
+        }).rejects.toThrow(TrueForgeTypes.UnauthorizedError);
+    });
+
+    test("list_all (4)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .get("/api/v1/computers/audit")
+            .respondWith()
+            .statusCode(403)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.computers.audit.listAll();
+        }).rejects.toThrow(TrueForgeTypes.ForbiddenError);
+    });
+
+    test("list_all (5)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .get("/api/v1/computers/audit")
+            .respondWith()
+            .statusCode(404)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.computers.audit.listAll();
+        }).rejects.toThrow(TrueForgeTypes.NotFoundError);
+    });
+
     test("list (1)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
@@ -14,11 +153,14 @@ describe("AuditClient", () => {
                 {
                     bytes_out: 1,
                     command: "command",
+                    computer_id: "computer_id",
+                    computer_name: "computer_name",
                     created_at: "created_at",
                     duration_ms: 1,
                     exit_code: 1,
                     id: "id",
                     op: "exec",
+                    outcome: "outcome",
                     session_id: "session_id",
                     turn_id: "turn_id",
                 },
@@ -39,11 +181,14 @@ describe("AuditClient", () => {
                 {
                     bytesOut: 1,
                     command: "command",
+                    computerId: "computer_id",
+                    computerName: "computer_name",
                     createdAt: "created_at",
                     durationMs: 1,
                     exitCode: 1,
                     id: "id",
                     op: "exec",
+                    outcome: "outcome",
                     sessionId: "session_id",
                     turnId: "turn_id",
                 },

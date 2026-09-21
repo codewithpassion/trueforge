@@ -196,4 +196,26 @@ describe("AgentsClient", () => {
             });
         }).rejects.toThrow(TrueForgeTypes.NotFoundError);
     });
+
+    test("create_or_update (6)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+        const rawRequestBody = { agent_names: ["xy", "xy"] };
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .put("/api/v1/computers/computer_id/agents")
+            .jsonBody(rawRequestBody)
+            .respondWith()
+            .statusCode(422)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.computers.agents.createOrUpdate("computer_id", {
+                agentNames: ["xy", "xy"],
+            });
+        }).rejects.toThrow(TrueForgeTypes.UnprocessableEntityError);
+    });
 });

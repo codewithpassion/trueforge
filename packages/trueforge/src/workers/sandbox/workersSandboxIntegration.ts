@@ -34,7 +34,7 @@ export interface WorkersSandboxIntegrationOptions {
 
 /** The deploy-configured integration, shared by the HTTP app and the session Durable Object. */
 export function workersSandboxIntegrationFromEnv(params: {
-  env: Pick<Env, 'COMPUTER_DO' | 'DB' | 'REMOTE_COMPUTER_DO'>;
+  env: Pick<Env, 'COMPUTER_DO' | 'DB' | 'REMOTE_COMPUTER_DO' | 'RATE_LIMIT_DO'>;
   codeModeRegistry?: CodeModeBridgeRegistry | undefined;
 }): SandboxIntegration {
   return createWorkersSandboxIntegration({

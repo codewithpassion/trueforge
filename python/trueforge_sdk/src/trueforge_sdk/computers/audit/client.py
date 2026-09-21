@@ -25,6 +25,49 @@ class AuditClient:
         """
         return self._raw_client
 
+    def list_all(
+        self,
+        *,
+        limit: typing.Optional[int] = 50,
+        page_token: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> SyncPager[ComputerAuditEntry, ListComputerAuditResponse]:
+        """
+        Commands and file transfers across the tenant, newest first, including deleted machines.
+
+        Parameters
+        ----------
+        limit : typing.Optional[int]
+            Page size. Max 100.
+
+        page_token : typing.Optional[str]
+            Opaque cursor from a previous response.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        SyncPager[ComputerAuditEntry, ListComputerAuditResponse]
+            Paginated activity.
+
+        Examples
+        --------
+        from trueforge_sdk import TrueForge
+
+        client = TrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+        response = client.computers.audit.list_all()
+        for item in response:
+            yield item
+        # alternatively, you can paginate page-by-page
+        for page in response.iter_pages():
+            yield page
+        """
+        return self._raw_client.list_all(limit=limit, page_token=page_token, request_options=request_options)
+
     def list(
         self,
         *,
@@ -91,6 +134,58 @@ class AsyncAuditClient:
         AsyncRawAuditClient
         """
         return self._raw_client
+
+    async def list_all(
+        self,
+        *,
+        limit: typing.Optional[int] = 50,
+        page_token: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncPager[ComputerAuditEntry, ListComputerAuditResponse]:
+        """
+        Commands and file transfers across the tenant, newest first, including deleted machines.
+
+        Parameters
+        ----------
+        limit : typing.Optional[int]
+            Page size. Max 100.
+
+        page_token : typing.Optional[str]
+            Opaque cursor from a previous response.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncPager[ComputerAuditEntry, ListComputerAuditResponse]
+            Paginated activity.
+
+        Examples
+        --------
+        import asyncio
+
+        from trueforge_sdk import AsyncTrueForge
+
+        client = AsyncTrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+
+
+        async def main() -> None:
+            response = await client.computers.audit.list_all()
+            async for item in response:
+                yield item
+
+            # alternatively, you can paginate page-by-page
+            async for page in response.iter_pages():
+                yield page
+
+
+        asyncio.run(main())
+        """
+        return await self._raw_client.list_all(limit=limit, page_token=page_token, request_options=request_options)
 
     async def list(
         self,

@@ -52,7 +52,7 @@ describe('createNodeSandboxIntegration', () => {
         tenant_id: TENANT,
         logger,
         computer_id: undefined,
-        agent_name: undefined,
+        agent_id: undefined,
       });
 
     await expect(usability(undefined)).resolves.toEqual({ usable: false, status: undefined });
@@ -79,7 +79,7 @@ describe('createNodeSandboxIntegration', () => {
           tenant_id: TENANT,
           logger,
           computer_id: undefined,
-          agent_name: undefined,
+          agent_id: undefined,
         }),
       ).resolves.toEqual({
         usable: false,
@@ -99,7 +99,7 @@ describe('createNodeSandboxIntegration', () => {
           tenant_id: TENANT,
           logger,
           computer_id: undefined,
-          agent_name: undefined,
+          agent_id: undefined,
         }),
       ).resolves.toEqual({
         usable: true,
@@ -124,7 +124,7 @@ describe('createNodeSandboxIntegration', () => {
         tenant_id: TENANT,
         logger,
         computer_id: undefined,
-        agent_name: undefined,
+        agent_id: undefined,
       }),
     ).resolves.toEqual({
       usable: true,
@@ -143,7 +143,7 @@ describe('createNodeSandboxIntegration', () => {
         tenant_id: TENANT,
         logger,
         computer_id: undefined,
-        agent_name: undefined,
+        agent_id: undefined,
       }),
     ).resolves.toEqual({
       usable: false,

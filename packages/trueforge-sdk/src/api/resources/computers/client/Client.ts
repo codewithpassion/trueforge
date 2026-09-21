@@ -20,19 +20,19 @@ export declare namespace ComputersClient {
 
 export class ComputersClient {
     protected readonly _options: NormalizedClientOptionsWithAuth<ComputersClient.Options>;
-    protected _agents: AgentsClient | undefined;
     protected _audit: AuditClient | undefined;
+    protected _agents: AgentsClient | undefined;
 
     constructor(options: ComputersClient.Options) {
         this._options = normalizeClientOptionsWithAuth(options);
     }
 
-    public get agents(): AgentsClient {
-        return (this._agents ??= new AgentsClient(this._options));
-    }
-
     public get audit(): AuditClient {
         return (this._audit ??= new AuditClient(this._options));
+    }
+
+    public get agents(): AgentsClient {
+        return (this._agents ??= new AgentsClient(this._options));
     }
 
     /**

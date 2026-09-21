@@ -3241,6 +3241,165 @@ await client.catalogs.skills.list();
 </dl>
 </details>
 
+## Computers Audit
+<details><summary><code>client.computers.audit.<a href="/src/api/resources/computers/resources/audit/client/Client.ts">listAll</a>({ ...params }) -> core.Page&lt;TrueForge.ComputerAuditEntry, TrueForge.ListComputerAuditResponse&gt;</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+Commands and file transfers across the tenant, newest first, including deleted machines.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+const pageableResponse = await client.computers.audit.listAll();
+for await (const item of pageableResponse) {
+    console.log(item);
+}
+
+// Or you can manually iterate page-by-page
+let page = await client.computers.audit.listAll();
+while (page.hasNextPage()) {
+    page = page.getNextPage();
+}
+
+// You can also access the underlying response
+const response = page.response;
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**request:** `TrueForge.computers.ListAllAuditRequest` 
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**requestOptions:** `AuditClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.computers.audit.<a href="/src/api/resources/computers/resources/audit/client/Client.ts">list</a>(computer_id, { ...params }) -> core.Page&lt;TrueForge.ComputerAuditEntry, TrueForge.ListComputerAuditResponse&gt;</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+Commands and file transfers this machine has served, newest first.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```typescript
+const pageableResponse = await client.computers.audit.list("computer_id");
+for await (const item of pageableResponse) {
+    console.log(item);
+}
+
+// Or you can manually iterate page-by-page
+let page = await client.computers.audit.list("computer_id");
+while (page.hasNextPage()) {
+    page = page.getNextPage();
+}
+
+// You can also access the underlying response
+const response = page.response;
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**computer_id:** `string` — Computer id.
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**request:** `TrueForge.computers.ListAuditRequest` 
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**requestOptions:** `AuditClient.RequestOptions` 
+    
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
 ## Computers Agents
 <details><summary><code>client.computers.agents.<a href="/src/api/resources/computers/resources/agents/client/Client.ts">list</a>(computer_id) -> TrueForge.GetComputerAgentAccessResponse</code></summary>
 <dl>
@@ -3367,90 +3526,6 @@ await client.computers.agents.createOrUpdate("computer_id", {
 <dd>
 
 **requestOptions:** `AgentsClient.RequestOptions` 
-    
-</dd>
-</dl>
-</dd>
-</dl>
-
-
-</dd>
-</dl>
-</details>
-
-## Computers Audit
-<details><summary><code>client.computers.audit.<a href="/src/api/resources/computers/resources/audit/client/Client.ts">list</a>(computer_id, { ...params }) -> core.Page&lt;TrueForge.ComputerAuditEntry, TrueForge.ListComputerAuditResponse&gt;</code></summary>
-<dl>
-<dd>
-
-#### 📝 Description
-
-<dl>
-<dd>
-
-<dl>
-<dd>
-
-Commands and file transfers this machine has served, newest first.
-</dd>
-</dl>
-</dd>
-</dl>
-
-#### 🔌 Usage
-
-<dl>
-<dd>
-
-<dl>
-<dd>
-
-```typescript
-const pageableResponse = await client.computers.audit.list("computer_id");
-for await (const item of pageableResponse) {
-    console.log(item);
-}
-
-// Or you can manually iterate page-by-page
-let page = await client.computers.audit.list("computer_id");
-while (page.hasNextPage()) {
-    page = page.getNextPage();
-}
-
-// You can also access the underlying response
-const response = page.response;
-
-```
-</dd>
-</dl>
-</dd>
-</dl>
-
-#### ⚙️ Parameters
-
-<dl>
-<dd>
-
-<dl>
-<dd>
-
-**computer_id:** `string` — Computer id.
-    
-</dd>
-</dl>
-
-<dl>
-<dd>
-
-**request:** `TrueForge.computers.ListAuditRequest` 
-    
-</dd>
-</dl>
-
-<dl>
-<dd>
-
-**requestOptions:** `AuditClient.RequestOptions` 
     
 </dd>
 </dl>

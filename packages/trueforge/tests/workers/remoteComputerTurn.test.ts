@@ -142,7 +142,7 @@ async function agentOnComputer({
   await computers.store.putAgentAccess({
     tenant_id: TENANT_ID,
     computer_id: computerId,
-    agent_names: allowed ? [agentName] : [],
+    agents: allowed ? [{ agent_id: agent.id, agent_name: agent.name }] : [],
   });
   await stores.sessionStore.createSession({
     tenant_id: TENANT_ID,
@@ -238,7 +238,7 @@ describe('a turn on a remote computer', () => {
     await computers.store.putAgentAccess({
       tenant_id: OTHER_TENANT,
       computer_id: computerId,
-      agent_names: [agentName],
+      agents: [{ agent_id: 'agt_foreign', agent_name: agentName }],
     });
 
     // This tenant's agent names it anyway. A tenant-scoped read is all that stands between them,
@@ -250,7 +250,7 @@ describe('a turn on a remote computer', () => {
       validateAgentSpec({
         spec: computerSpec({ providerName, computerId }),
         tenant_id: TENANT_ID,
-        agent_name: agentName,
+        agent_id: 'agt_not_in_this_tenant',
         modelProviderStore: stores.modelProviderStore,
         mcpServerStore: stores.mcpServerStore,
         skillStore: stores.skillStore,
@@ -276,24 +276,155 @@ describe('a turn on a remote computer', () => {
   });
 });
 
+describe('a grant belongs to an agent, not to a name', () => {
+  it("does not pass to a new agent that takes the deleted one's name", async () => {
+    const { computerId, client } = await onlineComputer(unique('reuse-box'));
+    const stores = d1Persistence();
+    const computers = workersComputersService(env);
+    const providerName = await upsertMockProvider({ stores, scenario: 'sandbox' });
+    const name = unique('reused-name');
+
+    const granted = await stores.agentStore.createAgent({
+      tenant_id: TENANT_ID,
+      name,
+      description: 'the one an admin meant',
+      manifest: computerSpec({ providerName, computerId }),
+      external_id: null,
+      created_by_subject: { subject_id: USER_REF, subject_type: 'user', subject_display_name: USER_REF },
+    });
+    await computers.store.putAgentAccess({
+      tenant_id: TENANT_ID,
+      computer_id: computerId,
+      agents: [{ agent_id: granted.id, agent_name: granted.name }],
+    });
+    expect(
+      await computers.store.isAgentAllowed({ tenant_id: TENANT_ID, computer_id: computerId, agent_id: granted.id }),
+    ).toBe(true);
+
+    // The owner deletes it. Anyone in the tenant may now create an agent, and nothing stops them
+    // choosing the same name — which is exactly what a name-keyed grant would have handed over.
+    await stores.agentStore.deleteAgent({ tenant_id: TENANT_ID, id: granted.id });
+    await computers.store.deleteAgentAccessForAgent({ tenant_id: TENANT_ID, agent_id: granted.id });
+
+    const impostor = await stores.agentStore.createAgent({
+      tenant_id: TENANT_ID,
+      name,
+      description: 'somebody else, same name',
+      manifest: computerSpec({ providerName, computerId }),
+      external_id: null,
+      created_by_subject: { subject_id: 'someone-else', subject_type: 'user', subject_display_name: 'someone else' },
+    });
+    expect(impostor.id).not.toBe(granted.id);
+    expect(
+      await computers.store.isAgentAllowed({ tenant_id: TENANT_ID, computer_id: computerId, agent_id: impostor.id }),
+    ).toBe(false);
+
+    // Refused when the spec is validated...
+    await expect(
+      validateAgentSpec({
+        spec: computerSpec({ providerName, computerId }),
+        tenant_id: TENANT_ID,
+        agent_id: impostor.id,
+        modelProviderStore: stores.modelProviderStore,
+        mcpServerStore: stores.mcpServerStore,
+        skillStore: stores.skillStore,
+        sandboxProviderStore: stores.sandboxProviderStore,
+        sandboxIntegration: computerIntegration(),
+        logger,
+      }),
+    ).rejects.toThrow(/not allowed/);
+
+    // ...and again when a session bound to it tries to run.
+    const sessionId = `computer-turn-reuse-${newId()}`;
+    await stores.sessionStore.createSession({
+      tenant_id: TENANT_ID,
+      session_id: sessionId,
+      created_by_subject: { subject_id: 'someone-else', subject_type: 'user', subject_display_name: 'someone else' },
+      agent: { type: 'reference', id: impostor.id, name: impostor.name },
+      custom: null,
+      metadata: {},
+      external_id: null,
+      source: null,
+    });
+    await expect(runTurn({ sessionId, stores })).rejects.toThrow(/not allowed/);
+    expect(client.received.filter(frame => frame['op'] === 'exec')).toHaveLength(0);
+    client.close();
+  });
+
+  it('refuses to grant a name no agent answers to', async () => {
+    const computers = workersComputersService(env);
+    const app = computersApp({ computers });
+    const created = await app.fetch(
+      new Request(`${PUBLIC_BASE_URL}/api/v1/computers`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: unique('grant-box') }),
+      }),
+      env,
+    );
+    const computerId = (await created.json<{ data: { computer: { id: string } } }>()).data.computer.id;
+
+    const response = await app.fetch(
+      new Request(`${PUBLIC_BASE_URL}/api/v1/computers/${computerId}/agents`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agent_names: ['nobody-by-that-name'] }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({ error: { message: 'No such agent: nobody-by-that-name' } });
+    expect(await computers.store.listAgentAccess({ tenant_id: TENANT_ID, computer_id: computerId })).toEqual([]);
+  });
+
+  it('cannot be given to an agent while that agent is being created', async () => {
+    const { computerId, client } = await onlineComputer(unique('create-box'));
+    const stores = d1Persistence();
+    const providerName = await upsertMockProvider({ stores, scenario: 'text' });
+    // A new agent has no id, so nothing can already have granted it this machine. Naming one at
+    // create time is refused; the agent is saved first and granted afterwards.
+    await expect(
+      validateAgentSpec({
+        spec: computerSpec({ providerName, computerId }),
+        tenant_id: TENANT_ID,
+        agent_id: undefined,
+        modelProviderStore: stores.modelProviderStore,
+        mcpServerStore: stores.mcpServerStore,
+        skillStore: stores.skillStore,
+        sandboxProviderStore: stores.sandboxProviderStore,
+        sandboxIntegration: computerIntegration(),
+        logger,
+      }),
+    ).rejects.toThrow(/save the agent first/);
+    client.close();
+  });
+});
+
 describe('spec validation', () => {
   it('refuses an inline agent, an unknown computer, and an agent with no grant', async () => {
     const { computerId, client } = await onlineComputer(unique('validate-box'));
     const stores = d1Persistence();
     const computers = workersComputersService(env);
     const providerName = await upsertMockProvider({ stores, scenario: 'text' });
-    const allowedAgent = unique('validate-allowed');
+    const allowedAgent = await stores.agentStore.createAgent({
+      tenant_id: TENANT_ID,
+      name: unique('validate-allowed'),
+      description: 'granted',
+      manifest: computerSpec({ providerName, computerId }),
+      external_id: null,
+      created_by_subject: { subject_id: USER_REF, subject_type: 'user', subject_display_name: USER_REF },
+    });
     await computers.store.putAgentAccess({
       tenant_id: TENANT_ID,
       computer_id: computerId,
-      agent_names: [allowedAgent],
+      agents: [{ agent_id: allowedAgent.id, agent_name: allowedAgent.name }],
     });
 
-    const validate = (input: { agent_name: string | undefined; computer: string }) =>
+    const validate = (input: { agent_id: string | undefined; computer: string }) =>
       validateAgentSpec({
         spec: computerSpec({ providerName, computerId: input.computer }),
         tenant_id: TENANT_ID,
-        agent_name: input.agent_name,
+        agent_id: input.agent_id,
         modelProviderStore: stores.modelProviderStore,
         mcpServerStore: stores.mcpServerStore,
         skillStore: stores.skillStore,
@@ -302,12 +433,12 @@ describe('spec validation', () => {
         logger,
       });
 
-    await expect(validate({ agent_name: undefined, computer: computerId })).rejects.toThrow(/Only a saved agent/);
-    await expect(validate({ agent_name: 'not-granted', computer: computerId })).rejects.toThrow(/not allowed/);
-    await expect(validate({ agent_name: allowedAgent, computer: 'no-such-computer' })).rejects.toThrow(
+    await expect(validate({ agent_id: undefined, computer: computerId })).rejects.toThrow(/save the agent first/);
+    await expect(validate({ agent_id: 'agt_not_granted', computer: computerId })).rejects.toThrow(/not allowed/);
+    await expect(validate({ agent_id: allowedAgent.id, computer: 'no-such-computer' })).rejects.toThrow(
       /Unknown computer/,
     );
-    await expect(validate({ agent_name: allowedAgent, computer: computerId })).resolves.toBeUndefined();
+    await expect(validate({ agent_id: allowedAgent.id, computer: computerId })).resolves.toBeUndefined();
     client.close();
   });
 });

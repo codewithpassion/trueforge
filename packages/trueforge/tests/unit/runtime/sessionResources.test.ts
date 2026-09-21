@@ -188,7 +188,7 @@ describe('validateAgentSpec', () => {
           instructions: 'test',
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -206,7 +206,7 @@ describe('validateAgentSpec', () => {
           instructions: 'test',
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -224,7 +224,7 @@ describe('validateAgentSpec', () => {
           instructions: 'test',
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -242,7 +242,7 @@ describe('validateAgentSpec', () => {
           instructions: 'test',
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -261,7 +261,7 @@ describe('validateAgentSpec', () => {
           mcp_servers: [{ name: 'missing-mcp' }],
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -280,7 +280,7 @@ describe('validateAgentSpec', () => {
           skills: [{ name: 'missing-skill' }],
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -299,7 +299,7 @@ describe('validateAgentSpec', () => {
           config: { sandbox: { enabled: true } },
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -330,7 +330,7 @@ describe('validateAgentSpec', () => {
           skills: [{ name: 'demo' }],
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -360,7 +360,7 @@ describe('validateAgentSpec', () => {
           config: { sandbox: { enabled: true } },
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).resolves.toBeUndefined();
@@ -378,7 +378,7 @@ describe('validateAgentSpec', () => {
           config: { sandbox: { enabled: true } },
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
         sandboxIntegration: undefined,
       }),
@@ -398,7 +398,7 @@ describe('validateAgentSpec', () => {
           config: { sandbox: { enabled: true } },
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).resolves.toBeUndefined();
@@ -448,7 +448,7 @@ describe('validateAgentSpec', () => {
           skills: [{ name: fqn }],
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
         skillStore,
       }),
@@ -469,7 +469,7 @@ describe('validateAgentSpec', () => {
           skills: [{ name: 'agent-skill:acme/team-a/echo:3', preload: false }],
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).resolves.toBeUndefined();
@@ -500,7 +500,7 @@ describe('validateAgentSpec', () => {
           skills: [{ name: 'echo', preload: true }],
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -533,7 +533,7 @@ describe('validateAgentSpec', () => {
         config: { sandbox: { enabled: true } },
       }),
       tenant_id: 'default',
-      agent_name: undefined,
+      agent_id: undefined,
       ...stores,
       sandboxIntegration,
     }).catch((error: unknown) => error);
@@ -574,7 +574,7 @@ describe('validateAgentSpec', () => {
           config: { sandbox: { enabled: true } },
         }),
         tenant_id: 'default',
-        agent_name: undefined,
+        agent_id: undefined,
         ...stores,
       }).then(
         () => true,

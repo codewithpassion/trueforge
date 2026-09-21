@@ -96,14 +96,11 @@ async function refuseWhenRateLimited({
   limit: number;
 }): Promise<{ retryAfterSeconds: string } | undefined> {
   const limiter = computers.rateLimiter;
-  if (limiter === undefined) {
+  const key = rateLimitKey({ request, route });
+  if (limiter === undefined || key === undefined) {
     return undefined;
   }
-  const outcome = await limiter.take({
-    key: rateLimitKey({ request, route }),
-    limit,
-    windowMs: RATE_LIMIT_WINDOW_MS,
-  });
+  const outcome = await limiter.take({ key, limit, windowMs: RATE_LIMIT_WINDOW_MS });
   return outcome.allowed ? undefined : { retryAfterSeconds: String(Math.ceil(outcome.retry_after_ms / 1000)) };
 }
 

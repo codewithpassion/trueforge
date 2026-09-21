@@ -4,9 +4,12 @@
  * because it serves no computers at all.
  */
 
-/** Enrollment codes live fifteen minutes; a handful of tries per minute is generous for a machine. */
-export const ENROLL_ATTEMPTS_PER_WINDOW = 10;
-export const CONNECT_ATTEMPTS_PER_WINDOW = 30;
+/**
+ * A 32-byte code is not guessable at any rate, so these are about what a flood costs us, not about
+ * secrecy — and they have to leave room for a fleet of machines behind one address.
+ */
+export const ENROLL_ATTEMPTS_PER_WINDOW = 60;
+export const CONNECT_ATTEMPTS_PER_WINDOW = 120;
 export const RATE_LIMIT_WINDOW_MS = 60_000;
 
 export interface RateLimiter {
@@ -14,10 +17,11 @@ export interface RateLimiter {
 }
 
 /**
- * Cloudflare puts the caller's address in `CF-Connecting-IP`. Behind no proxy at all there is
- * nothing to key on, and one shared bucket is still better than none.
+ * Cloudflare's edge always sets `CF-Connecting-IP`. Without it there is nothing to key on, and one
+ * shared bucket would throttle every machine behind a proxy as though they were one attacker, so
+ * the limit is skipped instead — which is also what makes it absent off Cloudflare entirely.
  */
-export function rateLimitKey({ request, route }: { request: Request; route: string }): string {
-  const address = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-  return `${route}:${address}`;
+export function rateLimitKey({ request, route }: { request: Request; route: string }): string | undefined {
+  const address = request.headers.get('CF-Connecting-IP');
+  return address === null ? undefined : `${route}:${address}`;
 }

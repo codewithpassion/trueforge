@@ -11,11 +11,14 @@ export const ComputerAuditEntry: core.serialization.ObjectSchema<
 > = core.serialization.object({
     bytesOut: core.serialization.property("bytes_out", core.serialization.number()),
     command: core.serialization.string(),
+    computerId: core.serialization.property("computer_id", core.serialization.string()),
+    computerName: core.serialization.property("computer_name", core.serialization.string()),
     createdAt: core.serialization.property("created_at", core.serialization.string()),
     durationMs: core.serialization.property("duration_ms", core.serialization.number()),
     exitCode: core.serialization.property("exit_code", core.serialization.number().nullable()),
     id: core.serialization.string(),
     op: ComputerAuditOp,
+    outcome: core.serialization.string(),
     sessionId: core.serialization.property("session_id", core.serialization.string().nullable()),
     turnId: core.serialization.property("turn_id", core.serialization.string().nullable()),
 });
@@ -24,11 +27,14 @@ export declare namespace ComputerAuditEntry {
     export interface Raw {
         bytes_out: number;
         command: string;
+        computer_id: string;
+        computer_name: string;
         created_at: string;
         duration_ms: number;
         exit_code?: number | null;
         id: string;
         op: ComputerAuditOp.Raw;
+        outcome: string;
         session_id?: string | null;
         turn_id?: string | null;
     }

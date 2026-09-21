@@ -403,9 +403,10 @@ export class PostgresComputerStore implements IComputerStore<Transaction<Databas
     const result = await db
       .deleteFrom('computer_agent_access')
       .where('agent_id', '=', input.agent_id)
-      .where(({ exists, selectFrom }) =>
-        exists(
-          selectFrom('computer')
+      .where(eb =>
+        eb.exists(
+          eb
+            .selectFrom('computer')
             .select('computer.id')
             .whereRef('computer.id', '=', 'computer_agent_access.computer_id')
             .where('computer.tenant_id', '=', input.tenant_id),

@@ -4,8 +4,6 @@
  * What the machine reported it has; null before it connects.
  */
 export interface ComputerTools {
-    /** The machine reported git. */
     git: boolean;
-    /** The machine reported a python3 interpreter. */
     python3: boolean;
 }

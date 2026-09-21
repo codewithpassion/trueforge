@@ -41,11 +41,13 @@ export function buildDockerCommand({
   if (image === '') {
     return null;
   }
+  // The image's entrypoint is `trueforge-computer run`, which enrolls itself when it holds no
+  // credential, so both values arrive in the environment rather than as arguments.
   return [
     'docker run -d --restart unless-stopped',
     '-v trueforge-computer:/var/lib/trueforge-computer',
+    `-e TRUEFORGE_URL=${baseUrl}`,
     `-e TRUEFORGE_ENROLL_CODE=${code}`,
     image,
-    `--url ${baseUrl}`,
   ].join(' ');
 }

@@ -25,8 +25,8 @@ class ComputersClient:
     def __init__(self, *, client_wrapper: SyncClientWrapper):
         self._raw_client = RawComputersClient(client_wrapper=client_wrapper)
         self._client_wrapper = client_wrapper
-        self._agents: typing.Optional[AgentsClient] = None
         self._audit: typing.Optional[AuditClient] = None
+        self._agents: typing.Optional[AgentsClient] = None
 
     @property
     def with_raw_response(self) -> RawComputersClient:
@@ -288,14 +288,6 @@ class ComputersClient:
         return _response.data
 
     @property
-    def agents(self):
-        if self._agents is None:
-            from .agents.client import AgentsClient  # noqa: E402
-
-            self._agents = AgentsClient(client_wrapper=self._client_wrapper)
-        return self._agents
-
-    @property
     def audit(self):
         if self._audit is None:
             from .audit.client import AuditClient  # noqa: E402
@@ -303,13 +295,21 @@ class ComputersClient:
             self._audit = AuditClient(client_wrapper=self._client_wrapper)
         return self._audit
 
+    @property
+    def agents(self):
+        if self._agents is None:
+            from .agents.client import AgentsClient  # noqa: E402
+
+            self._agents = AgentsClient(client_wrapper=self._client_wrapper)
+        return self._agents
+
 
 class AsyncComputersClient:
     def __init__(self, *, client_wrapper: AsyncClientWrapper):
         self._raw_client = AsyncRawComputersClient(client_wrapper=client_wrapper)
         self._client_wrapper = client_wrapper
-        self._agents: typing.Optional[AsyncAgentsClient] = None
         self._audit: typing.Optional[AsyncAuditClient] = None
+        self._agents: typing.Optional[AsyncAgentsClient] = None
 
     @property
     def with_raw_response(self) -> AsyncRawComputersClient:
@@ -629,17 +629,17 @@ class AsyncComputersClient:
         return _response.data
 
     @property
-    def agents(self):
-        if self._agents is None:
-            from .agents.client import AsyncAgentsClient  # noqa: E402
-
-            self._agents = AsyncAgentsClient(client_wrapper=self._client_wrapper)
-        return self._agents
-
-    @property
     def audit(self):
         if self._audit is None:
             from .audit.client import AsyncAuditClient  # noqa: E402
 
             self._audit = AsyncAuditClient(client_wrapper=self._client_wrapper)
         return self._audit
+
+    @property
+    def agents(self):
+        if self._agents is None:
+            from .agents.client import AsyncAgentsClient  # noqa: E402
+
+            self._agents = AsyncAgentsClient(client_wrapper=self._client_wrapper)
+        return self._agents

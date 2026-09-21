@@ -28,6 +28,10 @@ import { createConsoleLogger } from './logger';
 /** Written by the alarm rather than per heartbeat, so a connected computer costs no D1 churn. */
 const LAST_SEEN_ALARM_MS = 60_000;
 
+const ORPHANS_KEY = 'orphaned_request_ids';
+/** A machine that has been away for a long time has nothing left worth cancelling. */
+const MAX_ORPHANS = 64;
+
 interface SocketAttachment {
   readonly generation: number;
   readonly connected_at: number;
@@ -158,6 +162,37 @@ export class RemoteComputerDO extends DurableObject {
     await this.ctx.storage.put('meta', { ...this.#meta });
   }
 
+  /**
+   * Ids whose caller is gone. Kept in storage rather than a field because the machine may not
+   * reconnect for minutes, and the object hibernates long before that.
+   */
+  async #rememberOrphans(ids: readonly string[]): Promise<void> {
+    const stored = (await this.ctx.storage.get<string[]>(ORPHANS_KEY)) ?? [];
+    // Bounded: past this many, the oldest are beyond caring about and the newest matter more.
+    const next = [...stored, ...ids].slice(-MAX_ORPHANS);
+    await this.ctx.storage.put(ORPHANS_KEY, next);
+  }
+
+  /**
+   * Cancels the commands whose caller was lost, on the socket that just arrived. The client's exec
+   * registry outlives its connection, so a cancel by the original id still reaches them.
+   */
+  async #cancelOrphans(socket: WebSocket): Promise<void> {
+    const orphaned = (await this.ctx.storage.get<string[]>(ORPHANS_KEY)) ?? [];
+    if (orphaned.length === 0) {
+      return;
+    }
+    await this.ctx.storage.delete(ORPHANS_KEY);
+    for (const targetId of orphaned) {
+      try {
+        socket.send(JSON.stringify({ id: crypto.randomUUID(), op: 'cancel', target_id: targetId }));
+      } catch {
+        // The new socket went too; the next one gets nothing, which is the bounded loss.
+        return;
+      }
+    }
+  }
+
   #name(): string {
     return this.#meta.computer_name ?? this.ctx.id.name ?? this.ctx.id.toString();
   }
@@ -207,6 +242,7 @@ export class RemoteComputerDO extends DurableObject {
     // Answered by the platform without waking this object, so heartbeats cost nothing.
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(HEARTBEAT_PING, HEARTBEAT_PONG));
     await this.ctx.storage.setAlarm(Date.now() + LAST_SEEN_ALARM_MS);
+    this.ctx.waitUntil(this.#cancelOrphans(server));
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -313,16 +349,23 @@ export class RemoteComputerDO extends DurableObject {
 
   #failPending({ reason, message }: { reason: 'offline' | 'revoked' | 'replaced'; message: string }): void {
     const now = Date.now();
+    const orphaned: string[] = [];
     for (const [id, entry] of [...this.#pending]) {
       this.#pending.delete(id);
       this.#release(entry);
+      // The command was already on its way to the machine, and the client keeps it running across
+      // a reconnect. Nobody will collect its reply, so it is cancelled when the machine comes back.
+      orphaned.push(id);
       entry.settle({
         ok: false,
         reason,
-        message,
+        message: `${message}. The command may still be running on the computer; it is not retried.`,
         last_seen_at: this.#meta.last_seen_at,
         waited_ms: now - entry.startedAt,
       });
+    }
+    if (orphaned.length > 0) {
+      this.ctx.waitUntil(this.#rememberOrphans(orphaned));
     }
     for (const queued of this.#queue.splice(0)) {
       queued.reject({ ok: false, reason, message, last_seen_at: this.#meta.last_seen_at, waited_ms: 0 });

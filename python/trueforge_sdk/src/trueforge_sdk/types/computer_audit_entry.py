@@ -12,7 +12,13 @@ class ComputerAuditEntry(UncheckedBaseModel):
     bytes_out: int
     command: str = pydantic.Field()
     """
-    The command, or the path for a file operation. Truncated at 4 KiB.
+    The command, or the path for a file operation. Truncated at 4 KiB. Kept for 30 days.
+    """
+
+    computer_id: str
+    computer_name: str = pydantic.Field()
+    """
+    The name the computer had when this ran; it may since have gone.
     """
 
     created_at: str
@@ -24,6 +30,11 @@ class ComputerAuditEntry(UncheckedBaseModel):
 
     id: str
     op: ComputerAuditOp
+    outcome: str = pydantic.Field()
+    """
+    `ok`, or why it did not finish — offline, revoked, too_large, denied.
+    """
+
     session_id: typing.Optional[str] = None
     turn_id: typing.Optional[str] = None
 
