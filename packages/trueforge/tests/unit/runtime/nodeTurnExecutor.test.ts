@@ -4,7 +4,7 @@ import { NoResponderError, redisRequest, RequestTimeoutError } from '@truefoundr
 import type { RedisClientType } from 'redis';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { cancelSessionTurn, type CancelTurnDeps } from '../../../src/runtime/nodeTurnExecutor';
-import { mintPeeredTurnId } from '../../../src/runtime/peeringIds';
+import { newId } from '../../../src/utils/id';
 
 const EXECUTOR_ID = 'local';
 
@@ -35,7 +35,7 @@ function turnRecord(input: { turnId: string; state: TurnState; activeExecutorId?
     first_turn_id: input.turnId,
     ancestor_ids: [],
     previous_turn_id: null,
-    active_executor_id: input.activeExecutorId ?? configuration.EXECUTOR_ID,
+    active_executor_id: input.activeExecutorId ?? EXECUTOR_ID,
     state: input.state,
     input: [],
     snapshot: { threads: {}, mcp_servers: null, sandbox_info: null },
@@ -96,7 +96,7 @@ describe('cancelSessionTurn', () => {
 
   it('aborts a turn running in this process without freezing', async () => {
     const activeTurns = new ActiveTurnRegistry();
-    const turnId = mintPeeredTurnId(EXECUTOR_ID);
+    const turnId = newId();
     const abortController = trackRun(activeTurns, turnId);
     const session = sessionHandle();
 
@@ -114,7 +114,7 @@ describe('cancelSessionTurn', () => {
 
   it('freezes when this executor owns the turn but the run is gone', async () => {
     const activeTurns = new ActiveTurnRegistry();
-    const turnId = mintPeeredTurnId(EXECUTOR_ID);
+    const turnId = newId();
     const session = sessionHandle();
 
     await cancelSessionTurn(
@@ -278,7 +278,7 @@ describe('cancelSessionTurn', () => {
 
   it('treats a missing turn as a successful cancel', async () => {
     const activeTurns = new ActiveTurnRegistry();
-    const turnId = mintPeeredTurnId(EXECUTOR_ID);
+    const turnId = newId();
     const session = sessionHandle();
     session.freezeTurn = jest.fn().mockRejectedValue(new TurnNotFoundError(turnId));
 

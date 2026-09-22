@@ -49,6 +49,7 @@ async function startInput(sessionId: string, content = 'hi'): Promise<TurnStartI
     input: [{ type: 'user.message', content }],
     previous_turn_id: undefined,
     userRef: USER_REF,
+    request_metadata: undefined,
     stores: {
       agentStore: stores.agentStore,
       modelProviderStore: stores.modelProviderStore,

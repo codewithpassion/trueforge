@@ -28,7 +28,9 @@ async function measureTurn(toolCalls: number) {
     turn_id: turnId,
     input: [{ type: 'user.message', content: 'Call the datetime tool until told to stop.' }],
     previous_turn_id: undefined,
+    active_executor_id: 'test',
     userRef: USER_REF,
+    request_metadata: undefined,
     deps: {
       agentStore: persistence.agentStore,
       modelProviderStore: persistence.modelProviderStore,

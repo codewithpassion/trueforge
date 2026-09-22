@@ -140,7 +140,9 @@ async function runSandboxTurn(params: {
     turn_id: newId(),
     input: [{ type: 'user.message', content: 'hello' }],
     previous_turn_id: undefined,
+    active_executor_id: 'test',
     userRef: USER_REF,
+    request_metadata: undefined,
     deps: {
       agentStore: stores.agentStore,
       modelProviderStore: stores.modelProviderStore,

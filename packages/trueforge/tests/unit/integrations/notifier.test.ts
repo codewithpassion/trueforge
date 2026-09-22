@@ -160,7 +160,9 @@ async function runTurn(input: { harness: Harness; notifier: TurnCompletionNotifi
     turn_id: TURN_ID,
     input: [{ type: 'user.message', content: 'hi' }],
     previous_turn_id: undefined,
+    active_executor_id: 'test',
     userRef: CREATED_BY.subject_id,
+    request_metadata: undefined,
     deps: {
       ...input.harness.turnStores,
       activeTurns: new ActiveTurnRegistry(),

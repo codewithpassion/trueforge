@@ -252,6 +252,7 @@ describe('a Slack decision through the real turn executor', () => {
       input: [{ type: 'user.tool_response', thread_id: 'main', tool_call_id: held[0] ?? '', content: 'staging' }],
       previous_turn_id: 'auto',
       userRef: USER_REF,
+      request_metadata: undefined,
       stores: {
         agentStore: stores.agentStore,
         modelProviderStore: stores.modelProviderStore,
