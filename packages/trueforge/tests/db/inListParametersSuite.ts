@@ -132,8 +132,8 @@ export function runInListParametersSuite(getHarness: () => { db: Kysely<Database
       requestContext: CONTEXT,
       store: agentStore,
     });
-    expect(Object.keys(agents)).toHaveLength(100);
-    expect(agents[owned.id]).toEqual(['USE', 'MANAGE', 'DELETE']);
+    expect(Object.keys(agents.permissions)).toHaveLength(100);
+    expect(agents.permissions[owned.id]).toEqual(['USE', 'MANAGE', 'DELETE']);
 
     const schedules = await authorizer.getPermissions({
       resourceType: 'schedule',
@@ -141,7 +141,7 @@ export function runInListParametersSuite(getHarness: () => { db: Kysely<Database
       requestContext: CONTEXT,
       store: new SqliteScheduleStore(db, atomic),
     });
-    expect(Object.keys(schedules)).toHaveLength(100);
+    expect(Object.keys(schedules.permissions)).toHaveLength(100);
 
     const sessions = await authorizer.getPermissions({
       resourceType: 'session',
@@ -149,7 +149,7 @@ export function runInListParametersSuite(getHarness: () => { db: Kysely<Database
       requestContext: CONTEXT,
       store: new SqliteSessionStore(db, atomic),
     });
-    expect(Object.keys(sessions)).toHaveLength(100);
+    expect(Object.keys(sessions.permissions)).toHaveLength(100);
     expectBoundedParameters();
   });
 }
