@@ -13,6 +13,7 @@
  * `SERVER_URL` (mutual TLS when `MTLS_ENABLED`), so no Redis peering is wired here.
  */
 import { Sessions } from '@truefoundry/trueforge-core/agent-session';
+import { configureOutboundUrlGuard } from '@truefoundry/trueforge-core/core/util/ssrfGuard';
 import configuration from './config';
 import { runController } from './controller';
 import { createDb } from './db/postgres/client';
@@ -40,6 +41,11 @@ try {
   if (configuration.RUNTIME === 'workers') {
     throw new Error('TRUEFORGE_RUNTIME=workers has no dedicated controller process.');
   }
+  configureOutboundUrlGuard({
+    enabled: configuration.NETWORK_POLICY_ENABLED,
+    allowedHosts: configuration.OUTBOUND_URL_ALLOWED_HOSTS,
+    blockedHosts: configuration.OUTBOUND_URL_BLOCKED_HOSTS,
+  });
 
   logger.info('Connecting to Postgres');
   const db = createDb({
