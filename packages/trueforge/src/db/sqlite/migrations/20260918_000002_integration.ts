@@ -2,7 +2,7 @@ import { sql, type Kysely } from 'kysely';
 
 /**
  * Integrations for SQLite — mirrors
- * db/postgres/migrations/20260916_000001_integration.ts and
+ * db/postgres/migrations/20260918_000002_integration.ts and
  * migrations/d1/0002_integration.sql.
  *
  * SQLite differences: JSON documents are BLOB JSONB, timestamps are ISO TEXT,

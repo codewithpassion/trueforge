@@ -1,4 +1,4 @@
--- Delta for src/db/sqlite/migrations/20260916_000001_integration.ts. Statements copied
+-- Delta for src/db/sqlite/migrations/20260918_000002_integration.ts. Statements copied
 -- from `pnpm d1:schema:dump` so D1 and better-sqlite3 hold the same schema.
 -- No table is rebuilt, so no `PRAGMA defer_foreign_keys` is needed.
 

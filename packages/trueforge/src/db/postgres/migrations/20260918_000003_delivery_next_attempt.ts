@@ -2,7 +2,7 @@ import { sql, type Kysely } from 'kysely';
 
 /**
  * Gives the outbox an explicit due time — mirrors
- * db/sqlite/migrations/20260917_000001_delivery_next_attempt.ts and
+ * db/sqlite/migrations/20260918_000003_delivery_next_attempt.ts and
  * migrations/d1/0003_delivery_next_attempt.sql.
  *
  * `updated_at` was standing in for two different waits: a `pending` row's backoff and the

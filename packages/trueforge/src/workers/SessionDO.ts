@@ -25,14 +25,13 @@ import { newId } from '../utils/id';
 import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { DurableObjectEventSubscriptions } from './durableObjectEventSubscriptions';
 import type { Env } from './env';
+import { WORKERS_EXECUTOR_ID } from './executorId';
 import { createConsoleLogger } from './logger';
 import { CodeModeBridgeRegistry, type CodeModeDispatchOutcome } from './sandbox/codeModeBridge';
 import { workersSandboxIntegrationFromEnv } from './sandbox/workersSandboxIntegration';
 import { encodeTurnEvents, isSequencedTurnStreamingEvent } from './turnEventWire';
 import { turnInputTooLarge } from './turnInputLimit';
 
-/** Every Workers turn runs in its session's object, and cancel is routed by session, so the owner is fixed. */
-const WORKERS_EXECUTOR_ID = 'session-do';
 /** The watchdog runs again this long after a pass that left orphans or was lost mid-turn. */
 const WATCHDOG_DELAY_MS = 60_000;
 /** D1 allows 1000 queries per invocation; a turn past this many statements is close to failing. */
