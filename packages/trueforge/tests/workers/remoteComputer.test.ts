@@ -5,7 +5,7 @@
  */
 import { env } from 'cloudflare:workers';
 import { RemoteComputerProvider } from '../../src/computers/RemoteComputerProvider';
-import { MAX_IN_FLIGHT_EXEC, MAX_QUEUE_DEPTH } from '../../src/computers/protocol';
+import { MAX_IN_FLIGHT_EXEC, MAX_QUEUE_DEPTH, STALE_AFTER_MS } from '../../src/computers/protocol';
 import type { ComputersService } from '../../src/computers/service';
 import { createConsoleLogger } from '../../src/workers/logger';
 import { migrateDatabase, TENANT_ID } from './harness';
@@ -526,6 +526,73 @@ describe('offline', () => {
       expect(result.error).toContain('never connected');
     }
   });
+
+  it('waits out a command that runs longer than the staleness threshold', async () => {
+    const computers = testComputersService();
+    const app = computersApp({ computers });
+    const created = await createComputer({ app, name: uniqueName('slow') });
+    const { credential } = await enroll({ app, code: created.enrollmentCode });
+    // Held, not answered: the relay must read the heartbeats as a live machine working, not as one
+    // that stopped answering. Nothing else in the relay can end a command that is simply slow.
+    const client = await FakeComputerClient.connect({ app, credential: credential ?? '', options: {} });
+    await settle();
+    const provider = providerFor({ computers, computerId: created.computerId, sessionId: 'session-slow' });
+    const answered = provider.exec({
+      sandboxId: `${created.computerId}/session-slow`,
+      command: 'sleep 28',
+      timeoutSeconds: 120,
+    });
+    await waitFor(() => client.held.length > 0);
+    await new Promise(resolve => setTimeout(resolve, STALE_AFTER_MS + 3_000));
+    client.releaseHeld({
+      exit_code: 0,
+      stdout: 'SLEPT\n',
+      stderr: '',
+      bytes_total: 6,
+      truncated: false,
+      duration_ms: 1,
+    });
+
+    const result = await answered;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.response.result).toContain('SLEPT');
+    }
+    client.close();
+  }, 60_000);
+
+  it('brings back a megabyte-sized reply and caps it before the model sees it', async () => {
+    const computers = testComputersService();
+    const app = computersApp({ computers });
+    const created = await createComputer({ app, name: uniqueName('big') });
+    const { credential } = await enroll({ app, code: created.enrollmentCode });
+    // Two megabytes: the size the live test failed on, and twice what a turn may keep.
+    const huge = 'x'.repeat(2 * 1024 * 1024);
+    const client = await FakeComputerClient.connect({
+      app,
+      credential: credential ?? '',
+      options: {
+        onRequest: frame =>
+          frame['op'] === 'exec'
+            ? { exit_code: 0, stdout: huge, stderr: '', bytes_total: huge.length, truncated: false, duration_ms: 1 }
+            : undefined,
+      },
+    });
+    await settle();
+    const provider = providerFor({ computers, computerId: created.computerId, sessionId: 'session-big' });
+
+    const result = await provider.exec({ sandboxId: `${created.computerId}/session-big`, command: 'cat big.txt' });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Well under the 32 MiB the platform allows a frame or an RPC message, and under the ceiling
+      // the built-in sandbox uses, so nothing downstream has to cope with two megabytes.
+      expect(result.response.result).toContain('output truncated by the server');
+      expect(new TextEncoder().encode(result.response.result).byteLength).toBeLessThanOrEqual(1024 * 1024);
+    }
+    client.close();
+  }, 30_000);
 
   it('reads a relay that rejects the call as offline rather than letting it escape', async () => {
     const computers = testComputersService();

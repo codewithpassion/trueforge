@@ -4,7 +4,8 @@
  */
 import { AgentSpecSchema, Sessions, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
 import { env } from 'cloudflare:workers';
-import { computerSessionDirectory } from '../../src/computers/service';
+import { computerSessionDirectory, type ComputersService } from '../../src/computers/service';
+import { D1_MAX_VALUE_BYTES } from '../../src/db/d1/client';
 import { ActiveTurnRegistry } from '../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../src/runtime/event-subscription';
 import { validateAgentSpec } from '../../src/runtime/sessionResources';
@@ -23,10 +24,10 @@ const OTHER_TENANT = 'someone-else';
 /** Distinctive enough that finding it in the turn proves it came off the machine. */
 const UNAME_OUTPUT = 'Linux office-box 6.1.0 #1 SMP x86_64 GNU/Linux\n';
 
-function computerIntegration() {
+function computerIntegration(computers: ComputersService = workersComputersService(env)) {
   return createWorkersSandboxIntegration({
     backend: undefined,
-    computers: workersComputersService(env),
+    computers,
     namespace: env.COMPUTER_DO,
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024 * 1024,
@@ -101,7 +102,15 @@ function computerSpec({
   });
 }
 
-async function runTurn({ sessionId, stores }: { sessionId: string; stores: ReturnType<typeof d1Persistence> }) {
+async function runTurn({
+  sessionId,
+  stores,
+  computers,
+}: {
+  sessionId: string;
+  stores: ReturnType<typeof d1Persistence>;
+  computers?: ComputersService;
+}) {
   const session = await new Sessions({ sessionStore: stores.sessionStore }).get({
     tenant_id: TENANT_ID,
     session_id: sessionId,
@@ -126,7 +135,7 @@ async function runTurn({ sessionId, stores }: { sessionId: string; stores: Retur
       activeTurns: new ActiveTurnRegistry(),
       eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
       logger,
-      sandboxIntegration: computerIntegration(),
+      sandboxIntegration: computerIntegration(computers),
       onTurnDrained: undefined,
     },
   });
@@ -155,7 +164,7 @@ async function agentOnComputer({
     tenant_id: TENANT_ID,
     name: agentName,
     description: 'runs on a machine',
-    manifest: computerSpec({ providerName, computerId, skillName }),
+    manifest: computerSpec({ providerName, computerId, ...(skillName === undefined ? {} : { skillName }) }),
     external_id: null,
     created_by_subject: { subject_id: USER_REF, subject_type: 'user', subject_display_name: USER_REF },
   });
@@ -306,6 +315,57 @@ describe('a turn on a remote computer', () => {
     // Offline is a turn-time reason, not a refusal: the turn runs and the command reports it.
     const finished = await runTurn({ sessionId, stores });
     expect(finished?.state.status).toBe('done');
+  });
+
+  it('carries a command whose output is megabytes, capped on the way into the turn', async () => {
+    const name = unique('big-output-box');
+    const { computerId, client } = await onlineComputer(name);
+    // Two megabytes: the size the live test failed on, and twice what the turn may keep.
+    const huge = 'x'.repeat(2 * 1024 * 1024);
+    client.answerWith(frame =>
+      frame['op'] === 'exec' ? { ...OK_EXEC, stdout: huge, bytes_total: huge.length } : undefined,
+    );
+    const agentName = unique('big-output-agent');
+    const sessionId = `computer-turn-big-${newId()}`;
+    const { stores } = await agentOnComputer({ computerId, agentName, sessionId, allowed: true });
+
+    const finished = await runTurn({ sessionId, stores });
+
+    // The frame crosses the socket and the relay RPC whole; what the turn keeps is far smaller,
+    // which is what keeps the snapshot inside what D1 accepts for one value.
+    expect(finished?.state.status).toBe('done');
+    expect(JSON.stringify(finished?.snapshot.threads ?? {}).length).toBeLessThan(D1_MAX_VALUE_BYTES);
+    client.close();
+  }, 180_000);
+
+  it('keeps the turn going when the relay is reset mid-command, and never re-runs it', async () => {
+    const { computerId, client } = await onlineComputer(unique('reset-box'));
+    const agentName = unique('reset-agent');
+    const sessionId = `computer-turn-reset-${newId()}`;
+    const { stores } = await agentOnComputer({ computerId, agentName, sessionId, allowed: true });
+    const computers = workersComputersService(env);
+    // Reset after the turn read the machine's hello, so the failure is a rejected command rather
+    // than a computer that never said where its sessions live: a deploy against a live relay.
+    const reset: ComputersService = {
+      store: computers.store,
+      rateLimiter: undefined,
+      relayFetch: computers.relayFetch.bind(computers),
+      relay: id => ({
+        request: () => Promise.reject(new Error('Durable Object reset because its code was updated')),
+        revoke: () => Promise.resolve({ closed: 0 }),
+        disconnect: () => Promise.resolve({ closed: 0 }),
+        destroy: () => Promise.resolve(),
+        status: () => computers.relay(id).status(),
+      }),
+    };
+
+    const finished = await runTurn({ sessionId, stores, computers: reset });
+
+    // The turn keeps going and the model is told; nothing was sent twice, because nothing was retried.
+    expect(finished?.state.status).toBe('done');
+    expect(JSON.stringify(finished?.snapshot.threads ?? {})).toContain('connection to the computer was interrupted');
+    expect(client.received.filter(frame => frame['op'] === 'exec')).toHaveLength(0);
+    client.close();
   });
 });
 
