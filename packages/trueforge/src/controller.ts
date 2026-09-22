@@ -56,7 +56,7 @@ function toUndiciInit({
 function createTlsFetch(options: TlsOptions): typeof fetch | undefined {
   const dispatcher = createTlsDispatcher({
     ...options,
-    enabledEnvKey: 'TRUEFORGE_MTLS_ENABLED',
+    enabledEnvKey: 'MTLS_ENABLED',
   });
   if (dispatcher === undefined) {
     return undefined;
@@ -70,7 +70,7 @@ export interface ControllerServerTarget {
   serverUrl: string;
   /** `TRUEFORGE_API_KEY` presented to the internal execution endpoint. */
   apiKey: string;
-  /** `TRUEFORGE_MTLS_*`: present a client certificate and upgrade the URL to https. */
+  /** `MTLS_*`: present a client certificate and upgrade the URL to https. */
   tls: { enabled: boolean; dir: string };
 }
 

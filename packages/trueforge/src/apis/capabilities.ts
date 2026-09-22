@@ -36,6 +36,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
     const requestContext = deps.resolveRequestContext(c);
     const settingsEnabled = hasAdminRole(requestContext);
     const computersEnabled = deps.computers !== undefined;
+    const webSearchEnabled = resolveWebSearchProvider() !== undefined;
     const integration = deps.sandboxIntegration;
     if (integration === undefined) {
       return c.json(
@@ -45,6 +46,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
             skill: { enabled: false, reason: 'Skills run in a sandbox, which this server does not support.' },
             settings: { enabled: settingsEnabled },
             computers: { enabled: computersEnabled },
+            web_search: { enabled: webSearchEnabled },
           },
         },
         200,
@@ -68,9 +70,6 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
     }
     const sandboxEnabled = usability.usable;
     const skillEnabled = sandboxEnabled && integration.isSkillMountingSupported();
-    const sandboxEnabled = status === 'ready' || (status === undefined && isLocalSandboxFallbackEnabled());
-    const settingsEnabled = hasAdminRole(requestContext);
-    const webSearchEnabled = resolveWebSearchProvider() !== undefined;
     return c.json(
       {
         data: {

@@ -5,11 +5,9 @@ import type { AgentDefinition, ModelParams } from '@truefoundry/trueforge-core/c
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
-import { join } from 'node:path';
-import type { Logger } from 'winston';
 import { z } from 'zod';
-import configuration, { isTrueFoundryModeEnabled } from '../config';
 import { computerNotUsableMessage } from '../computers/resolveComputer';
+import { isTrueFoundryModeEnabled } from '../config';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';

@@ -6,7 +6,10 @@ import {
   type SessionAgent,
   type SessionHandle,
 } from '@truefoundry/trueforge-core/agent-session';
-import { WebSearchProviders, type IWebSearchProvider } from '@truefoundry/trueforge-core/core';
+import {
+  WebSearchProviders,
+  type IWebSearchProvider,
+} from '@truefoundry/trueforge-core/core/web-search/WebSearchProvider';
 import { HTTPException } from 'hono/http-exception';
 import { createLogger } from 'winston';
 import { createCapabilitiesRouter } from '../../../src/apis/capabilities';
@@ -26,7 +29,6 @@ import { GetCapabilitiesResponseSchema } from '../../../src/routes/capabilityRou
 import {
   buildGatewayMetadata,
   getModelDetails,
-  localSandboxSessionSegment,
   mergeGatewayMetadata,
   parseGatewayMetadataHeader,
   TFG_METADATA_PREFIX,
@@ -39,6 +41,7 @@ import type { LocalSandboxSupportResult } from '../../../src/sandbox/local/provi
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
 import type { ReasoningEffort } from '../../../src/schemas/modelProvider';
 import { SANDBOX_READY_STATUS, type StoredSandboxProviderManifest } from '../../../src/schemas/sandboxProvider';
+import { resolveWebSearchProvider } from '../../../src/websearch/providers';
 
 const DAYTONA_MANIFEST: StoredSandboxProviderManifest = {
   type: 'daytona',
@@ -61,7 +64,7 @@ const LOCAL_SUPPORTED: LocalSandboxSupportResult = {
   platform: 'darwin',
   shell: '/bin/bash',
   python: '/usr/bin/python3',
-import { resolveWebSearchProvider } from '../../../src/websearch/providers';
+};
 
 jest.mock('../../../src/websearch/providers', () => ({
   resolveWebSearchProvider: jest.fn(() => undefined),

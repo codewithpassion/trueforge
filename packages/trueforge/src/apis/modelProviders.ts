@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import { assertSafeOutboundUrl } from '@truefoundry/trueforge-core/core';
+import { assertSafeOutboundUrl } from '@truefoundry/trueforge-core/core/util/ssrfGuard';
 import type { Context } from 'hono';
 import type { ResolveRequestContext } from '../auth/identity';
 import {

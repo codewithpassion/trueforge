@@ -16,7 +16,11 @@
  * This module must stay free of Node-only module-load work; filesystem defaults
  * live in `nodeConfig.ts`.
  */
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { z } from 'zod';
+
 import { ALARM_PASS_BUDGET_MS } from './workers/alarmBudget';
 
 const DEFAULT_PORT = 8790;
@@ -56,6 +60,17 @@ const DEFAULT_OIDC_SCOPES = 'openid,profile,email';
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+const POSTGRES_SSL_MODES = ['disable', 'prefer', 'require', 'verify-ca', 'verify-full', 'no-verify'] as const;
+type PostgresSslMode = (typeof POSTGRES_SSL_MODES)[number];
+
+/** pg Pool `ssl` object fields (client certs / CA / no-verify). */
+export interface PostgresSslConfig {
+  cert?: string;
+  key?: string;
+  ca?: string;
+  rejectUnauthorized?: boolean;
+}
 
 export interface GetEnvOptions {
   defaultValue?: string;
@@ -625,6 +640,12 @@ export interface SharedServerConfiguration {
    * construction fail if empty outside standalone development. Env: `PUBLIC_BASE_URL`.
    */
   PUBLIC_BASE_URL: string;
+  /** Env: `NETWORK_POLICY_ENABLED`. Default true. `false` skips the outbound URL guard. */
+  NETWORK_POLICY_ENABLED: boolean;
+  /** Hosts always allowed. Env: `OUTBOUND_URL_ALLOWED_HOSTS` (JSON string array). Empty = none. */
+  OUTBOUND_URL_ALLOWED_HOSTS: string[];
+  /** Hosts always blocked. Env: `OUTBOUND_URL_BLOCKED_HOSTS` (JSON string array). Empty = none. */
+  OUTBOUND_URL_BLOCKED_HOSTS: string[];
 }
 
 /** Settings only the Node server and controller processes read. */
@@ -658,7 +679,7 @@ export interface NodeSharedServerConfiguration {
    * Directory holding the TLS cert triple (`tls.crt` / `tls.key` / `ca.crt`) when
    * `MTLS_ENABLED` is true. Env: `MTLS_CERTS_DIR`. Default `/etc/tls`.
    */
-  TRUEFORGE_MTLS_CERTS_DIR: string;
+  MTLS_CERTS_DIR: string;
   /** Peering identity embedded in the turn ids this process mints; `local` outside distributed mode. */
   EXECUTOR_ID: string;
   /**
@@ -711,11 +732,16 @@ export type DistributedServerConfiguration = SharedServerConfiguration &
      */
     STANDALONE: false;
     /**
-     * Postgres connection string. Env: `DATABASE_URL` when set; otherwise built from `POSTGRES_*`
-     * (including optional `POSTGRES_SSL_MODE` as `sslmode`).
+     * Postgres connection string. Env: `DATABASE_URL` when set; otherwise built from `POSTGRES_*`.
      * Form: `postgres://USER:PASSWORD@HOST:PORT/DB` (or `postgresql://…`) with user/password URL-encoded.
+     * TLS is not encoded here — see `DATABASE_SSL`.
      */
     DATABASE_URL: string;
+    /**
+     * Postgres TLS for the pg Pool (servicefoundry-style).
+     * Env: `POSTGRES_SSL_MODE`, `POSTGRES_SSL_CERT_PATH`, `POSTGRES_SSL_KEY_PATH`, `POSTGRES_SSL_CA_PATH`.
+     */
+    DATABASE_SSL: boolean | PostgresSslConfig;
     /** Max connections in the `pg` Pool. Env: `DATABASE_POOL_MAX`. Default 10. */
     DATABASE_POOL_MAX: number;
     /**
@@ -728,6 +754,11 @@ export type DistributedServerConfiguration = SharedServerConfiguration &
      * Env: `POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`. Default 60000.
      */
     POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: number;
+    /**
+     * Postgres schema for app tables and Kysely migration bookkeeping (`search_path`, Migrator).
+     * Env: `POSTGRES_SCHEMA`. Default `trueforge`.
+     */
+    POSTGRES_SCHEMA: string;
     /** Peering URL shared by all replicas. Env: `REDIS_URL`. Default `redis://localhost:6379`. */
     REDIS_URL: string;
     /**
@@ -735,6 +766,11 @@ export type DistributedServerConfiguration = SharedServerConfiguration &
      * Undefined means browser login is disabled.
      */
     OIDC: OIDCConfig | undefined;
+    /**
+     * When set, automatically move public TrueForge tables into `POSTGRES_SCHEMA` on first bootstrap.
+     * Env: `AUTOMATICALLY_MOVE_TRUEFORGE_TABLES_FROM_PUBLIC_TO_TRUEFORGE_SCHEMA`. Default true.
+     */
+    AUTOMATICALLY_MOVE_TRUEFORGE_TABLES_FROM_PUBLIC_TO_TRUEFORGE_SCHEMA: boolean;
     /**
      * When set, models/MCP/agents are backed by the TrueFoundry ServiceFoundry server with the
      * caller's token. Unset = local Postgres stores. Mutually exclusive with OIDC.
@@ -788,6 +824,19 @@ export type DistributedServerConfiguration = SharedServerConfiguration &
      * Env: `TRUEFOUNDRY_SANDBOX_SETTINGS`.
      */
     TRUEFOUNDRY_SANDBOX_SETTINGS: string | undefined;
+    /**
+     * Optional per-tenant allowlist of model provider account names. JSON object
+     * `Record<tenant_id, account_name[]>`. Empty / unset → no filtering. Tenants omitted from the
+     * map are unaffected; tenants present are limited to the listed provider accounts.
+     * Env: `TRUEFOUNDRY_TENANT_ID_TO_ALLOWED_MODEL_PROVIDER_ACCOUNTS`.
+     */
+    TRUEFOUNDRY_TENANT_ID_TO_ALLOWED_MODEL_PROVIDER_ACCOUNTS: Record<string, string[]>;
+    /**
+     * Optional built-in web search provider (TrueFoundry mode only). JSON object
+     * `Record<string, string>` with `name` (`parallel`) and `api_key`.
+     * Unset / empty → web search tools are not registered. Env: `TRUEFOUNDRY_WEB_SEARCH_PROVIDER`.
+     */
+    TRUEFOUNDRY_WEB_SEARCH_PROVIDER: TrueFoundryWebSearchProviderEnv | undefined;
   };
 
 /**
@@ -839,6 +888,11 @@ export function parseServerConfiguration(): ServerConfiguration {
       raw: getEnv('MCP_CONNECT_TIMEOUT_MS'),
       defaultValue: 30 * 1000,
     }),
+    MCP_TOOL_CALL_MAX_RESPONSE_BYTES: parsePositiveInt({
+      envKey: 'MCP_TOOL_CALL_MAX_RESPONSE_BYTES',
+      raw: getEnv('MCP_TOOL_CALL_MAX_RESPONSE_BYTES'),
+      defaultValue: 50 * 1024 * 1024,
+    }),
     MCP_DCR_OAUTH_CLIENT_NAME:
       getEnv('MCP_DCR_OAUTH_CLIENT_NAME', { defaultValue: 'truefoundry-harness' }) ?? 'truefoundry-harness',
     SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD: parsePositiveInt({
@@ -879,6 +933,19 @@ export function parseServerConfiguration(): ServerConfiguration {
       defaultValue: 600_000,
     }),
     PUBLIC_BASE_URL: parsePublicBaseUrl(getEnv('PUBLIC_BASE_URL', { defaultValue: '' })),
+    NETWORK_POLICY_ENABLED: parseBoolean({
+      envKey: 'NETWORK_POLICY_ENABLED',
+      raw: getEnv('NETWORK_POLICY_ENABLED'),
+      defaultValue: true,
+    }),
+    OUTBOUND_URL_ALLOWED_HOSTS: parseJsonStringArrayEnv({
+      envKey: 'OUTBOUND_URL_ALLOWED_HOSTS',
+      raw: getEnv('OUTBOUND_URL_ALLOWED_HOSTS'),
+    }),
+    OUTBOUND_URL_BLOCKED_HOSTS: parseJsonStringArrayEnv({
+      envKey: 'OUTBOUND_URL_BLOCKED_HOSTS',
+      raw: getEnv('OUTBOUND_URL_BLOCKED_HOSTS'),
+    }),
   };
 
   if (runtime === 'workers') {
@@ -918,12 +985,12 @@ export function parseServerConfiguration(): ServerConfiguration {
       runtime === 'standalone'
         ? (getEnv('TRUEFORGE_API_KEY', { defaultValue: STANDALONE_TRUEFORGE_API_KEY }) ?? STANDALONE_TRUEFORGE_API_KEY)
         : (getEnv('TRUEFORGE_API_KEY', { required: true }) ?? ''),
-    TRUEFORGE_MTLS_ENABLED: parseBoolean({
-      envKey: 'TRUEFORGE_MTLS_ENABLED',
-      raw: getEnv('TRUEFORGE_MTLS_ENABLED'),
+    MTLS_ENABLED: parseBoolean({
+      envKey: 'MTLS_ENABLED',
+      raw: getEnv('MTLS_ENABLED'),
       defaultValue: false,
     }),
-    TRUEFORGE_MTLS_CERTS_DIR: getEnv('TRUEFORGE_MTLS_CERTS_DIR', { defaultValue: '/etc/tls' }) ?? '/etc/tls',
+    MTLS_CERTS_DIR: getEnv('MTLS_CERTS_DIR', { defaultValue: '/etc/tls' }) ?? '/etc/tls',
     EXECUTOR_ID: runtime === 'distributed' ? randomAlphanumeric(6) : LOCAL_EXECUTOR_ID,
     GRACEFUL_TIMEOUT_SECONDS: parsePositiveInt({
       envKey: 'GRACEFUL_TIMEOUT_SECONDS',
@@ -962,6 +1029,7 @@ export function parseServerConfiguration(): ServerConfiguration {
     RUNTIME: 'distributed',
     STANDALONE: false,
     DATABASE_URL: resolvePostgresDatabaseUrl(),
+    DATABASE_SSL: resolvePostgresSsl(),
     DATABASE_POOL_MAX: parsePositiveInt({
       envKey: 'DATABASE_POOL_MAX',
       raw: getEnv('DATABASE_POOL_MAX'),
@@ -977,8 +1045,14 @@ export function parseServerConfiguration(): ServerConfiguration {
       raw: getEnv('POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS'),
       defaultValue: 60_000,
     }),
+    POSTGRES_SCHEMA: parsePostgresSchema(getEnv('POSTGRES_SCHEMA')),
     REDIS_URL: resolveRedisUrl(),
     OIDC: resolveOIDCConfig(),
+    AUTOMATICALLY_MOVE_TRUEFORGE_TABLES_FROM_PUBLIC_TO_TRUEFORGE_SCHEMA: parseBoolean({
+      envKey: 'AUTOMATICALLY_MOVE_TRUEFORGE_TABLES_FROM_PUBLIC_TO_TRUEFORGE_SCHEMA',
+      raw: getEnv('AUTOMATICALLY_MOVE_TRUEFORGE_TABLES_FROM_PUBLIC_TO_TRUEFORGE_SCHEMA'),
+      defaultValue: true,
+    }),
     TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL: getEnv('TRUEFOUNDRY_SERVICEFOUNDRY_SERVER_URL', { required: false }),
     TRUEFOUNDRY_API_KEY: getEnv('TRUEFOUNDRY_API_KEY', { required: false }),
     TRUEFOUNDRY_SERVICEFOUNDRY_HTTP_TIMEOUT_MS: parsePositiveInt({
@@ -1009,6 +1083,12 @@ export function parseServerConfiguration(): ServerConfiguration {
     TRUEFOUNDRY_SANDBOX_API_KEY: getEnv('TRUEFOUNDRY_SANDBOX_API_KEY', { required: false }),
     TRUEFOUNDRY_SANDBOX_SERVER_URL: getEnv('TRUEFOUNDRY_SANDBOX_SERVER_URL', { required: false }),
     TRUEFOUNDRY_SANDBOX_SETTINGS: getEnv('TRUEFOUNDRY_SANDBOX_SETTINGS', { required: false }),
+    TRUEFOUNDRY_TENANT_ID_TO_ALLOWED_MODEL_PROVIDER_ACCOUNTS: parseTenantIdToAllowedModelProviderAccounts(
+      getEnv('TRUEFOUNDRY_TENANT_ID_TO_ALLOWED_MODEL_PROVIDER_ACCOUNTS', { required: false }),
+    ),
+    TRUEFOUNDRY_WEB_SEARCH_PROVIDER: parseTrueFoundryWebSearchProvider(
+      getEnv('TRUEFOUNDRY_WEB_SEARCH_PROVIDER', { required: false }),
+    ),
   };
 
   if (isTrueFoundryModeEnabled(configuration)) {

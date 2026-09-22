@@ -4,7 +4,7 @@ import configuration from '../../config';
 import type { Database } from './types';
 
 export function getTrueForgePostgresSchema(): string {
-  if (configuration.STANDALONE) {
+  if (configuration.RUNTIME !== 'distributed') {
     throw new Error('unreachable');
   }
   return configuration.POSTGRES_SCHEMA;
@@ -49,7 +49,7 @@ export async function ensureTrueforgeSchema(db: Kysely<Database>): Promise<void>
 
     await sql`CREATE SCHEMA IF NOT EXISTS ${sql.id(schema)}`.execute(txn);
     if (
-      !configuration.STANDALONE &&
+      configuration.RUNTIME === 'distributed' &&
       configuration.AUTOMATICALLY_MOVE_TRUEFORGE_TABLES_FROM_PUBLIC_TO_TRUEFORGE_SCHEMA
     ) {
       for (const tableName of TABLES_TO_MOVE) {

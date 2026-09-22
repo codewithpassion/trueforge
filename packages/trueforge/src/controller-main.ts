@@ -64,7 +64,7 @@ try {
     logger,
     serverUrl: configuration.SERVER_URL,
     apiKey: configuration.TRUEFORGE_API_KEY,
-    tls: { enabled: configuration.TRUEFORGE_MTLS_ENABLED, dir: configuration.TRUEFORGE_MTLS_CERTS_DIR },
+    tls: { enabled: configuration.MTLS_ENABLED, dir: configuration.MTLS_CERTS_DIR },
     gracefulTimeoutSeconds: configuration.GRACEFUL_TIMEOUT_SECONDS,
     onStopped: () => db.destroy(),
   });

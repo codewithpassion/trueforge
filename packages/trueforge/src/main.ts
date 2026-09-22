@@ -505,7 +505,7 @@ async function createNodeServerRuntime<TTransaction>(options: {
         logger,
         serverUrl: configuration.SERVER_URL,
         apiKey: configuration.TRUEFORGE_API_KEY,
-        tls: { enabled: configuration.TRUEFORGE_MTLS_ENABLED, dir: configuration.TRUEFORGE_MTLS_CERTS_DIR },
+        tls: { enabled: configuration.MTLS_ENABLED, dir: configuration.MTLS_CERTS_DIR },
       })
     : undefined;
 
@@ -517,9 +517,7 @@ async function createNodeServerRuntime<TTransaction>(options: {
     // so the routes answer 404 and `GET /capabilities` reports them off until phase 8c.
     computers: undefined,
     clientCertificateMiddleware:
-      !configuration.STANDALONE && configuration.TRUEFORGE_MTLS_ENABLED
-        ? createClientCertificateMiddleware(logger)
-        : undefined,
+      !configuration.STANDALONE && configuration.MTLS_ENABLED ? createClientCertificateMiddleware(logger) : undefined,
     authenticator,
     authorizer,
     turnExecutor,

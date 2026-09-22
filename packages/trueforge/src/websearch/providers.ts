@@ -1,4 +1,5 @@
-import { ParallelWebSearchProvider, type IWebSearchProvider } from '@truefoundry/trueforge-core/core';
+import { ParallelWebSearchProvider } from '@truefoundry/trueforge-core/core/web-search/ParallelWebSearchProvider';
+import type { IWebSearchProvider } from '@truefoundry/trueforge-core/core/web-search/WebSearchProvider';
 import configuration, { isTrueFoundryModeEnabled } from '../config';
 
 /** Build the host web-search backend (TrueFoundry mode only), or `undefined` when unset. */
