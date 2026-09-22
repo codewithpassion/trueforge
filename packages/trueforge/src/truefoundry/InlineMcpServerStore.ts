@@ -1,4 +1,4 @@
-import type { RemoteMcpHeaders } from '@truefoundry/trueforge-core/core';
+import type { RemoteMcpHeaders } from '@truefoundry/trueforge-core/core/mcp/RemoteMCP';
 import type {
   AuthorizeMcpServerInput,
   CreateMcpServerInput,

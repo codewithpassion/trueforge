@@ -11,7 +11,7 @@ import { ModelCatalog } from '../catalog/ModelCatalog';
 import { SandboxCatalog } from '../catalog/SandboxCatalog';
 import { SkillCatalog } from '../catalog/SkillCatalog';
 import type { ComputersService } from '../computers/service';
-import configuration, { isOidcConfigured } from '../config';
+import configuration, { isOidcConfigured, isTrueFoundryModeEnabled } from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IIntegrationStore } from '../db/integrationStore';
 import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
@@ -24,6 +24,9 @@ import type { ISkillStore } from '../db/skillStore';
 import type { WithTransaction } from '../db/transaction';
 import type { IOAuthTokenStore } from '../mcp/auth/types';
 import type { SandboxIntegration } from '../sandbox/integration';
+import { InlineMcpServerStore } from '../truefoundry/InlineMcpServerStore';
+import { parseInlineMcpServers, parseInlineSkills, X_TFG_MCP, X_TFG_SKILLS } from '../truefoundry/inlineResources';
+import { InlineSkillStore } from '../truefoundry/InlineSkillStore';
 import {
   parsePerServerMcpHeaders,
   X_TFG_MCP_HEADERS,
@@ -106,15 +109,33 @@ export async function createServerRuntime<TTransaction>(options: {
       return mcpOAuthStore;
     }
     const rawPerServerHeaders = c.req.header(X_TFG_MCP_HEADERS);
-    return persistence.resolveMcpServerStore(
+    const store = persistence.resolveMcpServerStore(
       resolveRequestContext(c),
       runAsAgent,
       rawPerServerHeaders === undefined ? undefined : parsePerServerMcpHeaders(rawPerServerHeaders),
     );
+    if (!isTrueFoundryModeEnabled(configuration)) {
+      return store;
+    }
+    const rawInline = c.req.header(X_TFG_MCP);
+    if (rawInline === undefined) {
+      return store;
+    }
+    return new InlineMcpServerStore({ inner: store, inline: parseInlineMcpServers(rawInline) });
   };
   const resolveAgentStore = (c: Context) => persistence.resolveAgentStore(resolveRequestContext(c));
   const resolveSandboxProviderStore = (c: Context) => persistence.resolveSandboxProviderStore(resolveRequestContext(c));
-  const resolveSkillStore = (c: Context) => persistence.resolveSkillStore(resolveRequestContext(c));
+  const resolveSkillStore = (c: Context) => {
+    const store = persistence.resolveSkillStore(resolveRequestContext(c));
+    if (!isTrueFoundryModeEnabled(configuration)) {
+      return store;
+    }
+    const rawInline = c.req.header(X_TFG_SKILLS);
+    if (rawInline === undefined) {
+      return store;
+    }
+    return new InlineSkillStore({ inner: store, inline: parseInlineSkills(rawInline) });
+  };
   return createServerApp({
     modelCatalog: ModelCatalog.load(),
     mcpCatalog: McpCatalog.load(),
