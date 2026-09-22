@@ -12,14 +12,13 @@ import {
   type RouteHandler as RequestReplyRouteHandler,
   type RequestReplyRouter,
 } from '@truefoundry/trueforge-core/request-reply';
-import { HTTPException } from 'hono/http-exception';
 import type { RedisClientType } from 'redis';
 import { z } from 'zod';
 import type { SandboxIntegration } from '../sandbox/integration';
+import { newId } from '../utils/id';
 import type { ActiveTurnRegistry } from './activeTurns';
 import { StreamGoneError, type EventSubscriptionRegistry, type SequencedEvent } from './event-subscription';
 import { eventRendezvous } from './eventRendezvous';
-import { executorFromTurnId, mintPeeredTurnId } from './peeringIds';
 import {
   freezeTurnIgnoringMissing,
   turnStartFailure,
@@ -129,9 +128,9 @@ export async function cancelSessionTurn(
     return;
   }
 
-  const owner = executorFromTurnId(turnId);
-  // Without a Redis client there is no peer to ask, so an id naming another
-  // replica falls through to the local lookup and freezes if the run is gone.
+  const owner = turn.active_executor_id;
+  // Without a Redis client there is no peer to ask, so a different owner falls
+  // through to the local lookup and freezes if the run is gone.
   if (owner !== deps.executorId && deps.redis) {
     try {
       const reply = await redisRequest<CancelPeerBody>({
@@ -259,33 +258,26 @@ export class NodeTurnExecutor implements TurnExecutor {
     turn_id: string;
     reason: CancellationReason;
   }): Promise<TurnCancelResult> {
-    try {
-      await cancelSessionTurn(
-        {
-          activeTurns: this.#deps.activeTurns,
-          session: input.session,
-          sessionStore: this.#deps.sessionStore,
-          redis: this.#deps.redis,
-          logger: this.#deps.logger,
-          executorId: this.#deps.executorId,
-          requestReply: this.#deps.requestReply,
-        },
-        { turnId: input.turn_id, reason: input.reason },
-      );
-      return { ok: true };
-    } catch (error) {
-      // Turn ids outside the peered grammar cannot name an owner.
-      if (error instanceof HTTPException && error.status === 400) {
-        return { ok: false, status: 400, code: 'bad_request', message: error.message };
-      }
-      throw error;
-    }
+    await cancelSessionTurn(
+      {
+        activeTurns: this.#deps.activeTurns,
+        session: input.session,
+        sessionStore: this.#deps.sessionStore,
+        redis: this.#deps.redis,
+        logger: this.#deps.logger,
+        executorId: this.#deps.executorId,
+        requestReply: this.#deps.requestReply,
+      },
+      { turnId: input.turn_id, reason: input.reason },
+    );
+    return { ok: true };
   }
 
   #executionParams(input: TurnStartInput) {
     return {
       session: input.session,
-      turn_id: mintPeeredTurnId(this.#deps.executorId),
+      turn_id: newId(),
+      active_executor_id: this.#deps.executorId,
       input: input.input,
       previous_turn_id: input.previous_turn_id,
       userRef: input.userRef,

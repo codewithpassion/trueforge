@@ -31,6 +31,8 @@ import { workersSandboxIntegrationFromEnv } from './sandbox/workersSandboxIntegr
 import { encodeTurnEvents, isSequencedTurnStreamingEvent } from './turnEventWire';
 import { turnInputTooLarge } from './turnInputLimit';
 
+/** Every Workers turn runs in its session's object, and cancel is routed by session, so the owner is fixed. */
+const WORKERS_EXECUTOR_ID = 'session-do';
 /** The watchdog runs again this long after a pass that left orphans or was lost mid-turn. */
 const WATCHDOG_DELAY_MS = 60_000;
 /** D1 allows 1000 queries per invocation; a turn past this many statements is close to failing. */
@@ -161,6 +163,7 @@ export class SessionDO extends DurableObject {
       started = await startTurnInProcess({
         session,
         turn_id: turnId,
+        active_executor_id: WORKERS_EXECUTOR_ID,
         input: request.input,
         previous_turn_id: request.previous_turn_id,
         userRef: request.user_ref,

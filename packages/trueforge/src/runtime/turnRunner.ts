@@ -340,12 +340,22 @@ export interface TurnEventDrainInput {
 export async function beginTurnExecution(params: {
   session: SessionHandle;
   turn_id: string;
+  /** Executor that owns the run; cancel routes to it. */
+  active_executor_id: string;
   input: TurnInputItem[] | undefined;
   previous_turn_id: string | undefined;
   userRef: string;
   deps: BeginTurnExecutionDeps;
 }): Promise<{ turn: TurnHandle; drainInput: TurnEventDrainInput }> {
-  const { session, turn_id: turnId, input, previous_turn_id: previousTurnId, userRef, deps } = params;
+  const {
+    session,
+    turn_id: turnId,
+    active_executor_id: activeExecutorId,
+    input,
+    previous_turn_id: previousTurnId,
+    userRef,
+    deps,
+  } = params;
   const sessionId = session.session_id;
 
   const abortController = new AbortController();
@@ -370,6 +380,7 @@ export async function beginTurnExecution(params: {
 
   const turn = await session.createTurn({
     turn_id: turnId,
+    active_executor_id: activeExecutorId,
     input,
     previous_turn_id: previousTurnId,
     signal: abortController.signal,
@@ -415,6 +426,7 @@ export async function beginTurnExecution(params: {
 export async function startTurnInProcess(params: {
   session: SessionHandle;
   turn_id: string;
+  active_executor_id: string;
   input: TurnInputItem[] | undefined;
   previous_turn_id: string | undefined;
   userRef: string;
