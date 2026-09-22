@@ -40,9 +40,9 @@ function renderMenu(agentSpec: AgentSpec) {
 
 async function clone() {
   fireEvent.click(await screen.findByRole('button', { name: 'Actions for release-bot' }));
-  fireEvent.click(await screen.findByText('Clone'));
-  const dialog = await screen.findByRole('dialog');
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Clone' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Clone' }));
+  const drawer = await screen.findByRole('dialog', { name: 'Clone Agent' });
+  fireEvent.click(within(drawer).getByRole('button', { name: 'Save changes' }));
 }
 
 describe('AgentOverflowMenu clone', () => {
@@ -59,7 +59,7 @@ describe('AgentOverflowMenu clone', () => {
     });
     const request = saved[0];
     expect(request?.intent).toBe('create');
-    expect(request?.agentName).toBe('release-bot-copy');
+    expect(request?.agentName).toBe('release-bot-clone');
     // A computer is granted against the source agent's id; the clone has none yet, and the
     // server refuses a computer at create.
     expect(request?.agentSpec.config).toEqual({
