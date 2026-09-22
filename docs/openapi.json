@@ -506,6 +506,9 @@
       },
       "CapabilitiesData": {
         "properties": {
+          "computers": {
+            "$ref": "#/components/schemas/ComputersCapability"
+          },
           "sandbox": {
             "$ref": "#/components/schemas/SandboxCapability"
           },
@@ -523,6 +526,7 @@
           "sandbox",
           "skill",
           "settings",
+          "computers",
           "web_search"
         ],
         "type": "object"
@@ -547,6 +551,46 @@
         "required": [
           "type",
           "supported_reasoning_efforts"
+        ],
+        "type": "object"
+      },
+      "CatalogDaytonaSandboxProvider": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_archive_interval_in_minutes": {
+            "description": "Minutes before Daytona auto-archives the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_delete_interval_in_minutes": {
+            "description": "Minutes before Daytona auto-deletes the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_stop_interval_in_minutes": {
+            "description": "Minutes of idle time before Daytona auto-stops the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exec_timeout_ms": {
+            "description": "Default sandbox command exec timeout in milliseconds.",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "description": "Daytona sandbox provider.",
+            "enum": [
+              "daytona"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "exec_timeout_ms",
+          "auto_stop_interval_in_minutes",
+          "auto_archive_interval_in_minutes",
+          "auto_delete_interval_in_minutes"
         ],
         "type": "object"
       },
@@ -625,44 +669,21 @@
         ]
       },
       "CatalogSandboxProvider": {
-        "additionalProperties": false,
-        "properties": {
-          "auto_archive_interval_in_minutes": {
-            "description": "Minutes before Daytona auto-archives the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
+        "discriminator": {
+          "mapping": {
+            "cloudflare-computer": "#/components/schemas/CloudflareComputerSandboxProvider",
+            "daytona": "#/components/schemas/CatalogDaytonaSandboxProvider"
           },
-          "auto_delete_interval_in_minutes": {
-            "description": "Minutes before Daytona auto-deletes the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "auto_stop_interval_in_minutes": {
-            "description": "Minutes of idle time before Daytona auto-stops the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "exec_timeout_ms": {
-            "description": "Default sandbox command exec timeout in milliseconds.",
-            "exclusiveMinimum": 0,
-            "type": "integer"
-          },
-          "type": {
-            "description": "Daytona sandbox provider.",
-            "enum": [
-              "daytona"
-            ],
-            "type": "string"
-          }
+          "propertyName": "type"
         },
-        "required": [
-          "type",
-          "exec_timeout_ms",
-          "auto_stop_interval_in_minutes",
-          "auto_archive_interval_in_minutes",
-          "auto_delete_interval_in_minutes"
-        ],
-        "type": "object"
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/CatalogDaytonaSandboxProvider"
+          },
+          {
+            "$ref": "#/components/schemas/CloudflareComputerSandboxProvider"
+          }
+        ]
       },
       "CatalogSkill": {
         "additionalProperties": false,
@@ -865,6 +886,22 @@
         ],
         "type": "object"
       },
+      "CloudflareComputerSandboxProvider": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "description": "Built-in Cloudflare Computer sandbox.",
+            "enum": [
+              "cloudflare-computer"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
       "CompactionConfig": {
         "additionalProperties": false,
         "default": {
@@ -881,6 +918,267 @@
             "$ref": "#/components/schemas/InputTokensCompactionTrigger"
           }
         },
+        "type": "object"
+      },
+      "Computer": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "arch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "hostname": {
+            "description": "Reported by the machine; null before it first connects.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "last_seen_at": {
+            "description": "ISO-8601 instant of the last heartbeat, or null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
+          "os": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "require_approval": {
+            "description": "Ask a person before each command. Stored now; the gate itself arrives in a later release.",
+            "type": "boolean"
+          },
+          "run_as_user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ComputerStatus"
+          },
+          "tools": {
+            "$ref": "#/components/schemas/ComputerTools"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "hostname",
+          "os",
+          "arch",
+          "agent_version",
+          "tools",
+          "run_as_user",
+          "require_approval",
+          "last_seen_at",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ComputerAgentAccess": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_names": {
+            "description": "Saved agents allowed to run on this computer.",
+            "items": {
+              "$ref": "#/components/schemas/ResourceName"
+            },
+            "maxItems": 200,
+            "type": "array"
+          }
+        },
+        "required": [
+          "agent_names"
+        ],
+        "type": "object"
+      },
+      "ComputerAuditEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes_out": {
+            "type": "integer"
+          },
+          "command": {
+            "description": "The command, or the path for a file operation. Truncated at 4 KiB. Kept for 30 days.",
+            "type": "string"
+          },
+          "computer_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "computer_name": {
+            "description": "The name the computer had when this ran; it may since have gone.",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "exit_code": {
+            "description": "Null when the outcome never came back.",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "op": {
+            "$ref": "#/components/schemas/ComputerAuditOp"
+          },
+          "outcome": {
+            "description": "`ok`, or why it did not finish — offline, revoked, too_large, denied.",
+            "type": "string"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "computer_id",
+          "computer_name",
+          "session_id",
+          "turn_id",
+          "op",
+          "command",
+          "exit_code",
+          "outcome",
+          "duration_ms",
+          "bytes_out",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ComputerAuditOp": {
+        "enum": [
+          "exec",
+          "file_put",
+          "file_get"
+        ],
+        "type": "string"
+      },
+      "ComputerEnrollment": {
+        "additionalProperties": false,
+        "properties": {
+          "docker_command": {
+            "description": "Ready to paste, or null when this server has no client image configured.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enrollment_code": {
+            "description": "Single-use, valid for 15 minutes. Shown once.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "install_command": {
+            "description": "Ready to paste on the machine.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_code",
+          "install_command",
+          "docker_command"
+        ],
+        "type": "object"
+      },
+      "ComputerStatus": {
+        "enum": [
+          "pending",
+          "online",
+          "offline",
+          "revoked"
+        ],
+        "type": "string"
+      },
+      "ComputerTools": {
+        "description": "What the machine reported it has; null before it connects.",
+        "properties": {
+          "git": {
+            "type": "boolean"
+          },
+          "python3": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "python3",
+          "git"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "ComputerWithEnrollment": {
+        "additionalProperties": false,
+        "properties": {
+          "computer": {
+            "$ref": "#/components/schemas/Computer"
+          },
+          "enrollment": {
+            "$ref": "#/components/schemas/ComputerEnrollment"
+          }
+        },
+        "required": [
+          "computer",
+          "enrollment"
+        ],
+        "type": "object"
+      },
+      "ComputersCapability": {
+        "properties": {
+          "enabled": {
+            "description": "Whether agents can be run on machines this tenant has enrolled.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
         "type": "object"
       },
       "ConfiguredMCPServer": {
@@ -1019,6 +1317,57 @@
         "required": [
           "name",
           "description",
+          "manifest"
+        ],
+        "type": "object"
+      },
+      "CreateComputerEnrollmentResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerEnrollment"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "CreateComputerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
+          "require_approval": {
+            "default": true,
+            "description": "Default: true.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "CreateComputerResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerWithEnrollment"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "CreateIntegrationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/IntegrationManifest"
+          }
+        },
+        "required": [
           "manifest"
         ],
         "type": "object"
@@ -1220,6 +1569,50 @@
         ],
         "type": "object"
       },
+      "DaytonaSandboxProvider": {
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "$ref": "#/components/schemas/DaytonaSandboxProviderAuth"
+          },
+          "auto_archive_interval_in_minutes": {
+            "description": "Minutes before Daytona auto-archives the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_delete_interval_in_minutes": {
+            "description": "Minutes before Daytona auto-deletes the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_stop_interval_in_minutes": {
+            "description": "Minutes of idle time before Daytona auto-stops the sandbox (0 disables).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exec_timeout_ms": {
+            "description": "Default sandbox command exec timeout in milliseconds.",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "description": "Daytona sandbox provider.",
+            "enum": [
+              "daytona"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "exec_timeout_ms",
+          "auto_stop_interval_in_minutes",
+          "auto_archive_interval_in_minutes",
+          "auto_delete_interval_in_minutes",
+          "auth"
+        ],
+        "type": "object"
+      },
       "DaytonaSandboxProviderAuth": {
         "additionalProperties": false,
         "description": "Daytona authentication credentials.",
@@ -1239,6 +1632,18 @@
         "properties": {},
         "type": "object"
       },
+      "DeleteComputerResponse": {
+        "properties": {},
+        "type": "object"
+      },
+      "DeleteIntegrationResponse": {
+        "properties": {},
+        "type": "object"
+      },
+      "DeleteSandboxProviderResponse": {
+        "properties": {},
+        "type": "object"
+      },
       "DeleteScheduleResponse": {
         "properties": {},
         "type": "object"
@@ -1254,6 +1659,73 @@
             "type": "boolean"
           }
         },
+        "type": "object"
+      },
+      "EnrollComputerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "arch": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "enrollment_code": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "hostname": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "os": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_code",
+          "hostname",
+          "os",
+          "arch",
+          "version"
+        ],
+        "type": "object"
+      },
+      "EnrollComputerResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EnrolledComputer"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "EnrolledComputer": {
+        "additionalProperties": false,
+        "properties": {
+          "computer_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "machine_credential": {
+            "description": "Presented as a bearer token on every connect. Shown once.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "computer_id",
+          "machine_credential"
+        ],
         "type": "object"
       },
       "ExecuteScheduleRunRequest": {
@@ -1410,6 +1882,50 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/CapabilitiesData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "GetComputerAgentAccessResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerAgentAccess"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "GetComputerResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Computer"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "GetIntegrationAppManifestResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/IntegrationAppManifest"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "GetIntegrationResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Integration"
           }
         },
         "required": [
@@ -2145,6 +2661,247 @@
         ],
         "type": "object"
       },
+      "Integration": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "description": "ISO 8601 creation timestamp.",
+            "type": "string"
+          },
+          "created_by_subject": {
+            "$ref": "#/components/schemas/CreatedBySubject"
+          },
+          "external_account_id": {
+            "description": "Channel-side account this integration is bound to.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Immutable integration id.",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/IntegrationManifest"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IntegrationStatus"
+          },
+          "type": {
+            "$ref": "#/components/schemas/IntegrationType"
+          },
+          "updated_at": {
+            "description": "ISO 8601 last-update timestamp.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "status",
+          "external_account_id",
+          "manifest",
+          "created_by_subject",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "IntegrationAppManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "create_app_url": {
+            "description": "Page on the channel that accepts the manifest.",
+            "type": "string"
+          },
+          "interactions_request_url": {
+            "description": "Interactivity request URL the manifest carries.",
+            "type": "string"
+          },
+          "manifest_json": {
+            "description": "App manifest as pretty-printed JSON, ready to paste.",
+            "type": "string"
+          },
+          "request_url": {
+            "description": "Events request URL the manifest carries.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_url",
+          "interactions_request_url",
+          "manifest_json",
+          "create_app_url"
+        ],
+        "type": "object"
+      },
+      "IntegrationDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "decided_at": {
+            "description": "ISO 8601 time the decision was recorded.",
+            "type": "string"
+          },
+          "decided_by_display_name": {
+            "description": "Channel-side display name at the time.",
+            "type": "string"
+          },
+          "decided_by_id": {
+            "description": "Channel-side user id of whoever decided.",
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/IntegrationDecisionOutcome"
+          },
+          "id": {
+            "description": "Immutable decision id.",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "Session that held the turn.",
+            "type": "string"
+          },
+          "turn_id": {
+            "description": "Turn the decision settled.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "turn_id",
+          "session_id",
+          "decided_by_id",
+          "decided_by_display_name",
+          "decision",
+          "decided_at"
+        ],
+        "type": "object"
+      },
+      "IntegrationDecisionOutcome": {
+        "description": "Whether the tool call was allowed or denied.",
+        "enum": [
+          "allow",
+          "deny"
+        ],
+        "type": "string"
+      },
+      "IntegrationManifest": {
+        "additionalProperties": false,
+        "description": "Channel connection document. Credentials are redacted on read.",
+        "properties": {
+          "allow_direct_messages": {
+            "description": "Whether direct messages to the bot are answered.",
+            "type": "boolean"
+          },
+          "allowed_channel_ids": {
+            "description": "Channels the bot answers in. An empty list allows no channel.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "approver_slack_user_ids": {
+            "default": [],
+            "description": "Slack users who may approve or deny a tool call. An empty list allows nobody.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "auth": {
+            "$ref": "#/components/schemas/SlackIntegrationAuth"
+          },
+          "bot_display_name": {
+            "$ref": "#/components/schemas/SlackBotDisplayName"
+          },
+          "bot_user_id": {
+            "description": "User id of the bot, used to ignore its own messages. Filled from `auth.test`.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "default_agent_name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
+          "notification_rules": {
+            "default": [],
+            "description": "Schedule results posted to a channel, independent of the allowed channels.",
+            "items": {
+              "$ref": "#/components/schemas/IntegrationNotificationRule"
+            },
+            "type": "array"
+          },
+          "reply_mode": {
+            "$ref": "#/components/schemas/SlackReplyMode"
+          },
+          "team_id": {
+            "description": "Slack workspace (team) id. Filled from `auth.test` when credentials are saved.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "description": "Slack workspace connection.",
+            "enum": [
+              "slack"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "default_agent_name",
+          "allowed_channel_ids",
+          "allow_direct_messages",
+          "reply_mode"
+        ],
+        "type": "object"
+      },
+      "IntegrationNotificationOutcome": {
+        "description": "Which schedule outcomes the rule posts: any, only successes, or only failures.",
+        "enum": [
+          "any",
+          "success",
+          "failure"
+        ],
+        "type": "string"
+      },
+      "IntegrationNotificationRule": {
+        "additionalProperties": false,
+        "description": "Posts a finished schedule run to a channel.",
+        "properties": {
+          "channel_id": {
+            "description": "Channel the result is posted to. The bot must be a member of it.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/IntegrationNotificationOutcome"
+          },
+          "schedule_name": {
+            "$ref": "#/components/schemas/ResourceName"
+          }
+        },
+        "required": [
+          "schedule_name",
+          "channel_id",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "IntegrationStatus": {
+        "description": "`pending` until the channel app is installed and its credentials are saved.",
+        "enum": [
+          "pending",
+          "connected"
+        ],
+        "type": "string"
+      },
+      "IntegrationType": {
+        "description": "Channel type.",
+        "enum": [
+          "slack"
+        ],
+        "type": "string"
+      },
       "LargeToolResponseConfig": {
         "default": {
           "enabled": true
@@ -2209,6 +2966,66 @@
           "data": {
             "items": {
               "$ref": "#/components/schemas/AvailableSkill"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ListComputerAuditResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ComputerAuditEntry"
+            },
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/TokenPagination"
+          }
+        },
+        "required": [
+          "data",
+          "pagination"
+        ],
+        "type": "object"
+      },
+      "ListComputersResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Computer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ListIntegrationDecisionsResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationDecision"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ListIntegrationsResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Integration"
             },
             "type": "array"
           }
@@ -3648,6 +4465,11 @@
           "file_downloads": true
         },
         "properties": {
+          "computer_id": {
+            "description": "Run this agent on the named remote computer instead of the tenant sandbox provider.",
+            "minLength": 1,
+            "type": "string"
+          },
           "enabled": {
             "description": "Give the agent a sandbox. Required for skills and Code Mode.",
             "type": "boolean"
@@ -3702,48 +4524,21 @@
         "type": "object"
       },
       "SandboxProviderManifest": {
-        "additionalProperties": false,
-        "properties": {
-          "auth": {
-            "$ref": "#/components/schemas/DaytonaSandboxProviderAuth"
+        "discriminator": {
+          "mapping": {
+            "cloudflare-computer": "#/components/schemas/CloudflareComputerSandboxProvider",
+            "daytona": "#/components/schemas/DaytonaSandboxProvider"
           },
-          "auto_archive_interval_in_minutes": {
-            "description": "Minutes before Daytona auto-archives the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "auto_delete_interval_in_minutes": {
-            "description": "Minutes before Daytona auto-deletes the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "auto_stop_interval_in_minutes": {
-            "description": "Minutes of idle time before Daytona auto-stops the sandbox (0 disables).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "exec_timeout_ms": {
-            "description": "Default sandbox command exec timeout in milliseconds.",
-            "exclusiveMinimum": 0,
-            "type": "integer"
-          },
-          "type": {
-            "description": "Daytona sandbox provider.",
-            "enum": [
-              "daytona"
-            ],
-            "type": "string"
-          }
+          "propertyName": "type"
         },
-        "required": [
-          "type",
-          "auth",
-          "exec_timeout_ms",
-          "auto_stop_interval_in_minutes",
-          "auto_archive_interval_in_minutes",
-          "auto_delete_interval_in_minutes"
-        ],
-        "type": "object"
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DaytonaSandboxProvider"
+          },
+          {
+            "$ref": "#/components/schemas/CloudflareComputerSandboxProvider"
+          }
+        ]
       },
       "Schedule": {
         "additionalProperties": false,
@@ -4327,23 +5122,36 @@
         "type": "object"
       },
       "SessionSource": {
+        "description": "How this session was created (a schedule run or an integration). Null for interactive sessions.",
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SessionSourceSchedule"
+          },
+          {
+            "$ref": "#/components/schemas/SessionSourceIntegration"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "SessionSourceIntegration": {
         "additionalProperties": false,
-        "description": "How this session was created (e.g. a schedule run). Null for interactive sessions.",
         "properties": {
-          "id": {
-            "description": "Schedule id.",
+          "conversation_key": {
+            "description": "Stable key of the channel conversation this session mirrors.",
             "minLength": 1,
             "type": "string"
           },
-          "run_id": {
-            "description": "Schedule run id.",
+          "id": {
+            "description": "Integration id.",
             "minLength": 1,
             "type": "string"
           },
           "type": {
-            "description": "Session was created by a schedule run.",
+            "description": "Session was created by an integration.",
             "enum": [
-              "schedule"
+              "integration"
             ],
             "type": "string"
           }
@@ -4351,12 +5159,9 @@
         "required": [
           "type",
           "id",
-          "run_id"
+          "conversation_key"
         ],
-        "type": [
-          "object",
-          "null"
-        ]
+        "type": "object"
       },
       "SessionSourceSchedule": {
         "additionalProperties": false,
@@ -4389,7 +5194,8 @@
       "SessionSourceType": {
         "description": "When set, returns only sessions created by this source type.",
         "enum": [
-          "schedule"
+          "schedule",
+          "integration"
         ],
         "type": "string"
       },
@@ -4486,6 +5292,41 @@
           "version"
         ],
         "type": "object"
+      },
+      "SlackBotDisplayName": {
+        "default": "TrueForge",
+        "description": "Bot name in Slack, up to 35 characters. The bot user display name is derived from it.",
+        "maxLength": 35,
+        "minLength": 1,
+        "type": "string"
+      },
+      "SlackIntegrationAuth": {
+        "additionalProperties": false,
+        "description": "Slack app credentials.",
+        "properties": {
+          "bot_token": {
+            "description": "Slack bot user OAuth token. Responses are redacted; on PUT, a real value sets/rotates and a redacted value keeps the stored token.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "signing_secret": {
+            "description": "Slack app signing secret used to verify request signatures. Responses are redacted; on PUT, a real value sets/rotates and a redacted value keeps the stored secret.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot_token",
+          "signing_secret"
+        ],
+        "type": "object"
+      },
+      "SlackReplyMode": {
+        "description": "Where replies are posted.",
+        "enum": [
+          "thread"
+        ],
+        "type": "string"
       },
       "TextContent": {
         "properties": {
@@ -5544,6 +6385,30 @@
           },
           "manifest": {
             "$ref": "#/components/schemas/AgentSpec"
+          }
+        },
+        "required": [
+          "manifest"
+        ],
+        "type": "object"
+      },
+      "UpdateComputerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
+          "require_approval": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateIntegrationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/IntegrationManifest"
           }
         },
         "required": [
@@ -7077,6 +7942,1112 @@
           "skills"
         ],
         "x-fern-sdk-method-name": "list"
+      }
+    },
+    "/api/v1/computers": {
+      "get": {
+        "description": "Machines this tenant has enrolled, newest first.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListComputersResponse"
+                }
+              }
+            },
+            "description": "The computers."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "List computers",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "list"
+      },
+      "post": {
+        "description": "Registers a machine and returns its single-use enrollment code with commands to run there.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateComputerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateComputerResponse"
+                }
+              }
+            },
+            "description": "The computer and its one-time enrollment code."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "A computer with this name already exists."
+          }
+        },
+        "summary": "Create a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "create"
+      }
+    },
+    "/api/v1/computers/audit": {
+      "get": {
+        "description": "Commands and file transfers across the tenant, newest first, including deleted machines.",
+        "parameters": [
+          {
+            "description": "Page size. Max 100.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Page size. Max 100.",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque cursor from a previous response.",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "description": "Opaque cursor from a previous response.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListComputerAuditResponse"
+                }
+              }
+            },
+            "description": "Paginated activity."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid query parameters."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "List what ran on every computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-pagination": {
+          "cursor": "$request.page_token",
+          "next_cursor": "$response.pagination.next_page_token",
+          "results": "$response.data"
+        },
+        "x-fern-sdk-group-name": [
+          "computers",
+          "audit"
+        ],
+        "x-fern-sdk-method-name": "list_all"
+      }
+    },
+    "/api/v1/computers/enroll": {
+      "post": {
+        "description": "Called once by the client on the machine. Any code that is unknown, expired or used answers 401.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollComputerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollComputerResponse"
+                }
+              }
+            },
+            "description": "The computer id and its lasting credential."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Too many attempts from this address; retry after the time in `Retry-After`."
+          }
+        },
+        "summary": "Exchange an enrollment code for a machine credential",
+        "tags": [
+          "Computers"
+        ],
+        "x-excluded": true,
+        "x-fern-ignore": true
+      }
+    },
+    "/api/v1/computers/{computer_id}": {
+      "delete": {
+        "description": "Removes the machine, its access list and its activity. Refused while any agent may use it.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteComputerResponse"
+                }
+              }
+            },
+            "description": "Deleted."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "An agent is still allowed to use this computer."
+          }
+        },
+        "summary": "Delete a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "delete"
+      },
+      "get": {
+        "description": "One machine, with what it last reported about itself.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerResponse"
+                }
+              }
+            },
+            "description": "The computer."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "Get a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "get"
+      },
+      "patch": {
+        "description": "Renames the machine or changes whether its commands need approval.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateComputerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerResponse"
+                }
+              }
+            },
+            "description": "The computer."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "A computer with this name already exists."
+          }
+        },
+        "summary": "Update a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "update"
+      }
+    },
+    "/api/v1/computers/{computer_id}/agents": {
+      "get": {
+        "description": "Saved agents that may run on this machine.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerAgentAccessResponse"
+                }
+              }
+            },
+            "description": "The allowed agents."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "List the agents allowed on a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers",
+          "agents"
+        ],
+        "x-fern-sdk-method-name": "list"
+      },
+      "put": {
+        "description": "Sets the whole list. Granting an agent trusts everyone who can edit it: its owner can point it at this machine and change what it is told to do.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputerAgentAccess"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerAgentAccessResponse"
+                }
+              }
+            },
+            "description": "The allowed agents."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "One of the named agents does not exist in this tenant."
+          }
+        },
+        "summary": "Replace the agents allowed on a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers",
+          "agents"
+        ],
+        "x-fern-sdk-method-name": "create_or_update"
+      }
+    },
+    "/api/v1/computers/{computer_id}/audit": {
+      "get": {
+        "description": "Commands and file transfers this machine has served, newest first.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page size. Max 100.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Page size. Max 100.",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque cursor from a previous response.",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "description": "Opaque cursor from a previous response.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListComputerAuditResponse"
+                }
+              }
+            },
+            "description": "Paginated activity."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid query parameters."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "List what ran on a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-pagination": {
+          "cursor": "$request.page_token",
+          "next_cursor": "$response.pagination.next_page_token",
+          "results": "$response.data"
+        },
+        "x-fern-sdk-group-name": [
+          "computers",
+          "audit"
+        ],
+        "x-fern-sdk-method-name": "list"
+      }
+    },
+    "/api/v1/computers/{computer_id}/enrollment": {
+      "post": {
+        "description": "Invalidates the current credential, disconnects the machine, and returns a fresh single-use code.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateComputerEnrollmentResponse"
+                }
+              }
+            },
+            "description": "The new one-time enrollment code."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "Issue a new enrollment code",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "rotate_enrollment"
+      }
+    },
+    "/api/v1/computers/{computer_id}/revoke": {
+      "post": {
+        "description": "Drops the credential and closes the live connection. The machine cannot come back without a new code.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetComputerResponse"
+                }
+              }
+            },
+            "description": "The computer."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer, or this server does not serve remote computers."
+          }
+        },
+        "summary": "Revoke a computer",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computers"
+        ],
+        "x-fern-sdk-method-name": "revoke"
+      }
+    },
+    "/api/v1/integrations/{integration_id}/events": {
+      "post": {
+        "description": "Endpoint a channel posts events to. The request is authenticated by the channel signature in its own headers, not by a TrueForge credential.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event accepted, ignored as a duplicate, or answered by the channel adapter."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel signature did not verify."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The integration is still pending: its credentials have not been saved."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The event cannot run: the bound agent is missing, or the turn could not start."
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No adapter is registered for this integration type."
+          }
+        },
+        "summary": "Receive a channel event",
+        "tags": [
+          "Integrations"
+        ],
+        "x-excluded": true,
+        "x-fern-ignore": true
+      }
+    },
+    "/api/v1/integrations/{integration_id}/interactions": {
+      "post": {
+        "description": "Endpoint a channel posts button clicks to. The request is authenticated by the channel signature in its own headers, not by a TrueForge credential.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Interaction accepted, refused for this user, or ignored as already settled."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel signature did not verify."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The integration is still pending: its credentials have not been saved."
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No adapter is registered for this integration type."
+          }
+        },
+        "summary": "Receive a channel interaction",
+        "tags": [
+          "Integrations"
+        ],
+        "x-excluded": true,
+        "x-fern-ignore": true
       }
     },
     "/api/v1/mcp-servers": {
@@ -9078,6 +11049,16 @@
               }
             },
             "description": "Sandbox infrastructure error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The machine backing this sandbox is offline; retry when it reconnects."
           }
         },
         "summary": "Download a file from the turn sandbox",
@@ -9313,6 +11294,417 @@
           "format": "sse",
           "resumable": true
         }
+      }
+    },
+    "/api/v1/settings/integrations": {
+      "get": {
+        "description": "All channel integrations for this tenant. Manifest credentials are redacted.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListIntegrationsResponse"
+                }
+              }
+            },
+            "description": "All connected integrations."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "OIDC is configured and the request has no valid session cookie."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "OIDC is configured and the caller is authenticated but not an admin."
+          }
+        },
+        "summary": "List connected integrations",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "list"
+      },
+      "post": {
+        "description": "Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationResponse"
+                }
+              }
+            },
+            "description": "The new integration."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body, or a redacted credential with no stored secret to keep."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "That channel account is already connected."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel refused the credentials; they are wrong or not a bot token."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel could not be reached to confirm the credentials."
+          }
+        },
+        "summary": "Create an integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "create"
+      }
+    },
+    "/api/v1/settings/integrations/{integration_id}": {
+      "delete": {
+        "description": "Deletes the integration by immutable id and stops its ingress. Existing sessions stay.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteIntegrationResponse"
+                }
+              }
+            },
+            "description": "Integration disconnected."
+          }
+        },
+        "summary": "Disconnect an integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "delete"
+      },
+      "get": {
+        "description": "One integration by immutable id. Manifest credentials are redacted.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationResponse"
+                }
+              }
+            },
+            "description": "The integration."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          }
+        },
+        "summary": "Get a connected integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "get"
+      },
+      "put": {
+        "description": "Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationResponse"
+                }
+              }
+            },
+            "description": "The saved integration."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body, or a redacted credential with no stored secret to keep."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "That channel account is already connected, or belongs to a different workspace."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel refused the credentials; they are wrong or not a bot token."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel could not be reached to confirm the credentials."
+          }
+        },
+        "summary": "Replace a connected integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "update"
+      }
+    },
+    "/api/v1/settings/integrations/{integration_id}/app-manifest": {
+      "get": {
+        "description": "App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationAppManifestResponse"
+                }
+              }
+            },
+            "description": "The app manifest and where to paste it."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Server misconfiguration (e.g. PUBLIC_BASE_URL unset)."
+          }
+        },
+        "summary": "Get the channel app manifest",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "get_app_manifest"
+      }
+    },
+    "/api/v1/settings/integrations/{integration_id}/decisions": {
+      "get": {
+        "description": "Recent tool approvals settled from the channel, newest first, with who decided and when. Read-only. Answering a question is not recorded, because anyone in the conversation may.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListIntegrationDecisionsResponse"
+                }
+              }
+            },
+            "description": "Recent decisions for this integration."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          }
+        },
+        "summary": "List tool approvals decided from the channel",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "list_decisions"
       }
     },
     "/api/v1/settings/mcp-servers": {
@@ -9713,6 +12105,40 @@
       }
     },
     "/api/v1/settings/sandbox-providers": {
+      "delete": {
+        "description": "Removes the configured sandbox provider for this tenant. Sandbox features then report unavailable.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteSandboxProviderResponse"
+                }
+              }
+            },
+            "description": "The sandbox provider was removed."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No sandbox provider configured."
+          }
+        },
+        "summary": "Remove the sandbox provider",
+        "tags": [
+          "Sandboxes"
+        ],
+        "x-fern-sdk-group-name": [
+          "settings",
+          "sandboxProviders"
+        ],
+        "x-fern-sdk-method-name": "delete"
+      },
       "get": {
         "description": "The single configured sandbox provider for this tenant. `auth.api_key` is redacted.",
         "responses": {
@@ -9748,7 +12174,7 @@
         "x-fern-sdk-method-name": "get"
       },
       "put": {
-        "description": "Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none).",
+        "description": "Upserts the single sandbox provider for this tenant: creates it or replaces its entire configuration. For Daytona, `auth.api_key`: real value sets/rotates; redacted keeps existing (400 if none). The built-in provider takes no credentials and is ready at once.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -9788,7 +12214,7 @@
                 }
               }
             },
-            "description": "Daytona rejected the provided API key."
+            "description": "The provider type is unavailable on this server, or Daytona rejected the provided API key."
           }
         },
         "summary": "Create or replace the sandbox provider",
@@ -10078,10 +12504,16 @@
       "name": "Sandboxes"
     },
     {
+      "name": "Computers"
+    },
+    {
       "name": "Agents"
     },
     {
       "name": "Schedules"
+    },
+    {
+      "name": "Integrations"
     },
     {
       "name": "Agent Sessions"
