@@ -50,6 +50,7 @@ export {
   SessionEventSchema,
   TurnCreatedEventSchema,
   TurnDoneEventSchema,
+  TurnUpdateEventSchema,
 } from './schemas/events';
 export type {
   PersistedTurnEvent,
@@ -57,6 +58,7 @@ export type {
   SessionEventItem,
   TurnCreatedEvent,
   TurnDoneEvent,
+  TurnUpdateEvent,
 } from './schemas/events';
 
 export { TokenPaginationSchema } from './schemas/pagination';

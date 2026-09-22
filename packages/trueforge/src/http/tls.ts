@@ -77,6 +77,30 @@ export function createTlsDispatcher(options: TlsOptions & { enabledEnvKey: strin
   });
 }
 
+/** Resolves `fetch`'s first argument (`string | URL | Request`) to a URL string. */
+function requestUrlFromFetchInput(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === 'string') {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
+  return input.url;
+}
+
+/** `fetch` for the schedule controller SDK client. Undefined when mTLS is off. */
+export function createTlsFetch(options: TlsOptions): typeof fetch | undefined {
+  const dispatcher = createTlsDispatcher({
+    ...options,
+    enabledEnvKey: 'MTLS_ENABLED',
+  });
+  if (dispatcher === undefined) {
+    return undefined;
+  }
+  // Casts bridge undici ↔ DOM fetch types (Fern only needs string URL + init + dispatcher).
+  return (input, init) => undiciFetch(requestUrlFromFetchInput(input), { ...(init as object), dispatcher });
+}
+
 /** HTTPS `serve` options when mTLS is on; undefined → plain HTTP. */
 export function serverTlsServeOptions(
   options: TlsOptions,
@@ -84,8 +108,7 @@ export function serverTlsServeOptions(
   if (!options.enabled) {
     return undefined;
   }
-  const read = (fileName: string) =>
-    readTlsFile({ dir: options.dir, fileName, enabledEnvKey: 'TRUEFORGE_MTLS_ENABLED' });
+  const read = (fileName: string) => readTlsFile({ dir: options.dir, fileName, enabledEnvKey: 'MTLS_ENABLED' });
   return {
     createServer: createHttpsServer,
     serverOptions: {

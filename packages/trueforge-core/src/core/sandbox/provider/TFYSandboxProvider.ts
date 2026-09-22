@@ -3,7 +3,7 @@ import { suppressTracing } from '@opentelemetry/core';
 import dedent from 'dedent';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path/posix';
-import { extractErrorLogFields } from '../../util/errorLogFields';
+import { describeUnknownError, extractErrorLogFields } from '../../util/errorLogFields';
 import type { Logger } from '../../util/logger';
 import type { CodeModeTransport } from '../codeMode/CodeModeTransport';
 import { CodeModeNatsTransport } from '../codeMode/nats/CodeModeNatsTransport';
@@ -16,7 +16,6 @@ import {
 } from '../SandboxErrors';
 import { absolutizeRelativeExecEnv } from './execEnv';
 import {
-  ensureExecSuccess,
   shellEscape,
   type ExecResult,
   type SandboxBuild,
@@ -28,6 +27,9 @@ import {
 const DEFAULT_TIMEOUT_SECONDS = 60;
 // Buffer for network latency + response processing on top of the server-side timeout.
 const CLIENT_TIMEOUT_BUFFER_SECONDS = 5;
+
+// TFY sandbox file upload timeout (same as Daytona SDK uploadFile default timeout).
+const FILE_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 
 const TFY_MCP_CLIENT_BIN = 'mcp-client/bin';
 
@@ -151,6 +153,7 @@ export class TFYSandboxProvider implements SandboxProvider {
         timeout: timeoutSeconds,
       };
 
+      const execUrl = `${this.serverUrl}/exec`;
       const controller = new AbortController();
       const clientTimeoutMs = (timeoutSeconds + CLIENT_TIMEOUT_BUFFER_SECONDS) * 1000;
       const timer = setTimeout(() => {
@@ -158,7 +161,7 @@ export class TFYSandboxProvider implements SandboxProvider {
       }, clientTimeoutMs);
 
       try {
-        const response = await fetch(`${this.serverUrl}/exec`, {
+        const response = await fetch(execUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -167,20 +170,31 @@ export class TFYSandboxProvider implements SandboxProvider {
 
         if (!response.ok) {
           const text = await response.text();
-          this.logger.error(`Sandbox server returned ${String(response.status)}: ${text}`);
-          return { success: false, error: `Sandbox server returned ${String(response.status)}: ${text}` };
+          this.logger.error(`Sandbox server returned ${String(response.status)}: ${text}`, { url: execUrl });
+          return {
+            success: false,
+            error: `Sandbox server returned ${String(response.status)} from ${execUrl}: ${text}`,
+          };
         }
 
         const result = (await response.json()) as ExecResult;
         return result;
       } catch (e: unknown) {
         if (e instanceof Error && e.name === 'AbortError') {
-          this.logger.error(`Sandbox exec timed out after ${String(timeoutSeconds)}s`, extractErrorLogFields(e));
-          return { success: false, error: `Sandbox exec timed out after ${String(timeoutSeconds)}s` };
+          this.logger.error(`Sandbox exec timed out after ${String(timeoutSeconds)}s`, {
+            url: execUrl,
+            ...extractErrorLogFields(e),
+          });
+          return {
+            success: false,
+            error: `Sandbox exec to ${execUrl} timed out after ${String(timeoutSeconds)}s`,
+          };
         }
-        this.logger.error('Sandbox exec failed', extractErrorLogFields(e));
-        const message = e instanceof Error ? e.message : 'Unknown error';
-        return { success: false, error: message };
+        this.logger.error('Sandbox exec failed', { url: execUrl, ...extractErrorLogFields(e) });
+        return {
+          success: false,
+          error: `Sandbox exec to ${execUrl} failed: ${describeUnknownError(e)}`,
+        };
       } finally {
         clearTimeout(timer);
       }
@@ -229,14 +243,44 @@ export class TFYSandboxProvider implements SandboxProvider {
   }
 
   async uploadFile(params: { sandboxId: string; remotePath: string; content: Buffer }): Promise<void> {
-    const encoded = params.content.toString('base64');
-    const escapedPath = shellEscape(params.remotePath);
+    validateSandboxOwnedByTenant({ sandboxId: params.sandboxId, tenantName: this.tenantName });
 
-    const result = await this.exec({
-      sandboxId: params.sandboxId,
-      command: `echo ${shellEscape(encoded)} | base64 -d > ${escapedPath}`,
+    return context.with(suppressTracing(context.active()), async () => {
+      const query = new URLSearchParams({ sandbox_id: params.sandboxId, path: params.remotePath });
+      const uploadUrl = `${this.serverUrl}/files/upload?${query.toString()}`;
+      const bytes = params.content.byteLength;
+      this.logger.info('Uploading file to sandbox', {
+        sandboxId: params.sandboxId,
+        remotePath: params.remotePath,
+        bytes,
+      });
+      let response: Response;
+      try {
+        response = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: params.content,
+          signal: AbortSignal.timeout(FILE_UPLOAD_TIMEOUT_MS),
+        });
+      } catch (e: unknown) {
+        throw new Error(`File upload to ${uploadUrl} failed: ${describeUnknownError(e)}`, { cause: e });
+      }
+      if (!response.ok) {
+        throw new Error(
+          `File upload to sandbox failed: Sandbox server returned ${String(response.status)} from ${uploadUrl}: ${await response.text()}`,
+        );
+      }
+
+      const result = (await response.json()) as { success: true } | { success: false; error: string };
+      if (!result.success) {
+        throw new Error(`File upload to sandbox failed: ${result.error}`);
+      }
+      this.logger.info('Uploaded file to sandbox', {
+        sandboxId: params.sandboxId,
+        remotePath: params.remotePath,
+        bytes,
+      });
     });
-    ensureExecSuccess(result);
   }
 
   // The TFY sandbox exposes a static, cluster-internal NATS WebSocket URL (no signed URLs).

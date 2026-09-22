@@ -5,6 +5,10 @@ import type { AgentDefinition, ModelParams } from '@truefoundry/trueforge-core/c
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { HTTPException } from 'hono/http-exception';
+import { join } from 'node:path';
+import type { Logger } from 'winston';
+import { z } from 'zod';
+import configuration, { isTrueFoundryModeEnabled } from '../config';
 import { computerNotUsableMessage } from '../computers/resolveComputer';
 import type { IMcpServerStore, IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
@@ -13,6 +17,7 @@ import type { ISkillStore } from '../db/skillStore';
 import type { SandboxIntegration, SandboxUsability } from '../sandbox/integration';
 import type { ReasoningEffort } from '../schemas/modelProvider';
 import type { SandboxBuildStatus } from '../schemas/sandboxProvider';
+import { resolveWebSearchProvider } from '../websearch/providers';
 
 export interface McpConnection {
   url: string;
@@ -24,6 +29,27 @@ export const X_TFY_METADATA = 'x-tfy-metadata';
 
 /** Prefix for harness-owned keys */
 export const TFG_METADATA_PREFIX = 'tfg';
+
+const GatewayMetadataSchema = z.record(z.string().min(1), z.string());
+
+/**
+ * Parse inbound `x-tfy-metadata`. Rejects malformed values rather than dropping them.
+ */
+export function parseGatewayMetadataHeader(raw: string): Record<string, string> {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch (error) {
+    throw new HTTPException(400, { message: `${X_TFY_METADATA} must be a JSON object`, cause: error });
+  }
+  const parsed = GatewayMetadataSchema.safeParse(decoded);
+  if (!parsed.success) {
+    throw new HTTPException(400, {
+      message: `${X_TFY_METADATA} must be a JSON object of string values`,
+    });
+  }
+  return parsed.data;
+}
 
 export function buildGatewayMetadata(input: { session: SessionHandle; turnId: string }): Record<string, string> {
   // Session.metadata is intentionally omitted for now (Unicode-in-header risk); re-add later.
@@ -41,11 +67,38 @@ export function buildGatewayMetadata(input: { session: SessionHandle; turnId: st
   return metadata;
 }
 
+/** Caller requestMetadata first; harness tfg.* always win */
+export function mergeGatewayMetadata(input: {
+  session: SessionHandle;
+  turnId: string;
+  requestMetadata?: Record<string, string> | undefined;
+}): Record<string, string> {
+  return {
+    ...input.requestMetadata,
+    ...buildGatewayMetadata({ session: input.session, turnId: input.turnId }),
+  };
+}
+
 export function gatewayMetadataHeaders(metadata: Record<string, string>): Record<string, string> {
   if (Object.keys(metadata).length === 0) {
     return {};
   }
   return { [X_TFY_METADATA]: JSON.stringify(metadata) };
+}
+
+/**
+ * Per-turn gateway headers for LLM/MCP calls: harness tfg.* stamps over caller
+ * metadata. Empty outside TrueFoundry mode. Every turn start must wire this in.
+ */
+export function gatewayTurnHeaders(input: {
+  session: SessionHandle;
+  turnId: string;
+  requestMetadata?: Record<string, string> | undefined;
+}): Record<string, string> {
+  if (!isTrueFoundryModeEnabled()) {
+    return {};
+  }
+  return gatewayMetadataHeaders(mergeGatewayMetadata(input));
 }
 
 /**
@@ -327,5 +380,11 @@ export async function validateAgentSpec({
             : computerNotUsableMessage({ computerId, reason: usability?.reason }),
       });
     }
+  }
+
+  if (spec.config.web_search.enabled && resolveWebSearchProvider() === undefined) {
+    throw new HTTPException(422, {
+      message: 'web_search is enabled but no web-search provider is configured',
+    });
   }
 }

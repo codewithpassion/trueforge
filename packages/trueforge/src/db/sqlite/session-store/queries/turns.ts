@@ -75,6 +75,7 @@ export interface CreateTurnTurnFields {
   first_turn_id: string;
   previous_turn_id: string | null;
   ancestor_ids: string[];
+  active_executor_id: string;
   input: TurnInputItem[];
   state: TurnState;
   custom: Record<string, unknown> | null;
@@ -261,6 +262,7 @@ async function assembleTurnRecord(
       'turn_id',
       'first_turn_id',
       'previous_turn_id',
+      'active_executor_id',
       jsonText<string[]>(sql.ref('ancestor_ids')).as('ancestor_ids'),
       jsonText<TurnInputItem[]>(sql.ref('input')).as('input'),
       jsonText<TurnState>(sql.ref('state')).as('state'),
@@ -382,6 +384,7 @@ async function assembleTurnRecord(
     first_turn_id: turn.first_turn_id,
     ancestor_ids: turn.ancestor_ids,
     previous_turn_id: turn.previous_turn_id,
+    active_executor_id: turn.active_executor_id,
     state: turn.state,
     input: turn.input,
     snapshot,
@@ -442,8 +445,301 @@ export async function createTurn(
       }
       prevCheckpoint = first.turn_checkpoint;
 
-      for (const row of prevRows) {
-        if (row.thread_id === null) {
+      // Step 2: bump session tip + optional title coalesce.
+      let sessionUpdate = trx
+        .updateTable('session')
+        .set({
+          last_turn_id: input.turn.turn_id,
+          updated_at: nowIso(),
+          last_activity_timestamp_ms: input.last_activity_timestamp_ms,
+          // total_turns rides the same tip UPDATE so a later failure in this tx rolls it back.
+          metrics: sql`jsonb_set(metrics, '$.total_turns', jsonb((metrics->>'total_turns') + 1))`,
+        })
+        .where('session_id', '=', input.session_id);
+
+      if (input.update_session_title_if_not_exist !== null) {
+        const titleValue = input.update_session_title_if_not_exist;
+        sessionUpdate = sessionUpdate.set({
+          title: sql<string>`COALESCE(title, ${titleValue})`,
+        });
+      }
+
+      await sessionUpdate.execute();
+
+      const prevTurnId = input.turn.previous_turn_id;
+
+      let prevCheckpoint: TurnCheckpoint | null = null;
+      const prevThreadRows: {
+        thread_id: string;
+        checkpoint: TurnThreadCheckpoint;
+        agent_info: AgentInfo | null;
+        current_context_usage: CurrentContextUsage;
+        context_pos_max: number;
+      }[] = [];
+
+      if (prevTurnId != null) {
+        // Read previous turn + its turn_thread rows in one join.
+        const prevRows = await trx
+          .selectFrom('turn as t')
+          .leftJoin('turn_thread as tt', join =>
+            join.onRef('tt.session_id', '=', 't.session_id').onRef('tt.turn_id', '=', 't.turn_id'),
+          )
+          .leftJoin(
+            db
+              .selectFrom('turn_thread_context')
+              .select(['thread_id', 'turn_id', sql<number>`MAX(pos)`.as('max_pos')])
+              .where('session_id', '=', input.session_id)
+              .where('turn_id', '=', prevTurnId)
+              .groupBy(['thread_id', 'turn_id'])
+              .as('tc_agg'),
+            join => join.onRef('tc_agg.thread_id', '=', 'tt.thread_id').onRef('tc_agg.turn_id', '=', 'tt.turn_id'),
+          )
+          .select([
+            jsonText<TurnCheckpoint>(sql.ref('t.checkpoint')).as('turn_checkpoint'),
+            jsonText<TurnState>(sql.ref('t.state')).as('turn_state'),
+            'tt.thread_id',
+            jsonText<TurnThreadCheckpoint | null>(sql.ref('tt.checkpoint')).as('thread_checkpoint'),
+            jsonText<AgentInfo | null>(sql.ref('tt.agent_info')).as('agent_info'),
+            jsonText<CurrentContextUsage | null>(sql.ref('tt.current_context_usage')).as('current_context_usage'),
+            'tc_agg.max_pos',
+          ])
+          .where('t.session_id', '=', input.session_id)
+          .where('t.turn_id', '=', prevTurnId)
+          .execute();
+
+        const first = prevRows[0];
+        if (first !== undefined) {
+          if (first.turn_state.status === 'running') {
+            throw new PreviousTurnRunningError(prevTurnId);
+          }
+          prevCheckpoint = first.turn_checkpoint;
+
+          for (const row of prevRows) {
+            if (row.thread_id === null) {
+              continue;
+            }
+            if (row.thread_checkpoint === null || row.current_context_usage === null) {
+              throw new SessionStoreInvariantError(`previous turn_thread row for ${row.thread_id} is incomplete`);
+            }
+            prevThreadRows.push({
+              thread_id: row.thread_id,
+              checkpoint: row.thread_checkpoint,
+              agent_info: row.agent_info,
+              current_context_usage: row.current_context_usage,
+              context_pos_max: row.max_pos ?? 0,
+            });
+          }
+        }
+      }
+
+      assertCreateTurnThreadDelta({
+        previousThreadIds: new Set(prevThreadRows.map(r => r.thread_id)),
+        new_threads: input.new_threads,
+        new_context_appends: input.new_context_appends,
+        capability_states: input.capability_states,
+      });
+
+      const checkpoint: TurnCheckpoint = {
+        mcp_servers: input.mcp_servers ?? prevCheckpoint?.mcp_servers ?? null,
+        sandbox_info: input.sandbox_info ?? prevCheckpoint?.sandbox_info ?? null,
+      };
+
+      const now = nowIso();
+
+      const turnCustom = input.turn.custom ?? null;
+
+      // Step 3: insert turn row.
+      await trx
+        .insertInto('turn')
+        .values({
+          session_id: input.session_id,
+          turn_id: input.turn.turn_id,
+          first_turn_id: input.turn.first_turn_id,
+          previous_turn_id: input.turn.previous_turn_id ?? null,
+          ancestor_ids: jsonbBind(input.turn.ancestor_ids),
+          active_executor_id: input.turn.active_executor_id,
+          input: jsonbBind(input.turn.input),
+          state: jsonbBind(input.turn.state),
+          checkpoint: jsonbBind(checkpoint),
+          custom: turnCustom !== null ? jsonbBind(turnCustom) : null,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute();
+
+      // Step 4: insert new context log rows.
+      const logRows: {
+        session_id: string;
+        thread_id: string;
+        turn_id: string;
+        body: RawBuilder<string>;
+        created_at: string;
+      }[] = [];
+
+      for (const append of input.new_context_appends) {
+        for (const body of append.context) {
+          logRows.push({
+            session_id: input.session_id,
+            thread_id: append.thread_id,
+            turn_id: input.turn.turn_id,
+            body: jsonbBind(body),
+            created_at: now,
+          });
+        }
+      }
+
+      const newIdsByThread = new Map<string, number[]>();
+      if (logRows.length > 0) {
+        const inserted = await trx
+          .insertInto('thread_context_log')
+          .values(logRows)
+          .returning(['thread_id', 'append_id'])
+          .execute();
+        for (const row of sortedByAppendId(inserted)) {
+          const list = newIdsByThread.get(row.thread_id);
+          if (list === undefined) {
+            newIdsByThread.set(row.thread_id, [row.append_id]);
+          } else {
+            list.push(row.append_id);
+          }
+        }
+      }
+
+      const appendUsageByThread = new Map<string, CurrentContextUsage>();
+      for (const append of input.new_context_appends) {
+        if (append.current_context_usage !== null) {
+          appendUsageByThread.set(append.thread_id, append.current_context_usage);
+        }
+      }
+
+      // Step 5: insert turn_thread rows for carried-forward and new threads.
+      const turnThreadRows: {
+        session_id: string;
+        turn_id: string;
+        thread_id: string;
+        checkpoint: RawBuilder<string>;
+        agent_info: RawBuilder<string> | null;
+        current_context_usage: RawBuilder<string>;
+        updated_at: string;
+      }[] = [];
+
+      const turnThreadContextRows: {
+        session_id: string;
+        turn_id: string;
+        thread_id: string;
+        pos: number;
+        append_id: number;
+      }[] = [];
+
+      for (const parent of prevThreadRows) {
+        const usage = appendUsageByThread.get(parent.thread_id) ?? parent.current_context_usage;
+        turnThreadRows.push({
+          session_id: input.session_id,
+          turn_id: input.turn.turn_id,
+          thread_id: parent.thread_id,
+          checkpoint: jsonbBind(parent.checkpoint),
+          agent_info: parent.agent_info !== null ? jsonbBind(parent.agent_info) : null,
+          current_context_usage: jsonbBind(usage),
+          updated_at: now,
+        });
+      }
+
+      // One SELECT for all parent context mappings (not N+1 per thread).
+      if (prevTurnId != null && prevThreadRows.length > 0) {
+        const parentContextRows = await trx
+          .selectFrom('turn_thread_context')
+          .select(['thread_id', 'pos', 'append_id'])
+          .where('session_id', '=', input.session_id)
+          .where('turn_id', '=', prevTurnId)
+          .where(
+            'thread_id',
+            'in',
+            prevThreadRows.map(r => r.thread_id),
+          )
+          .orderBy('thread_id')
+          .orderBy('pos')
+          .execute();
+
+        for (const cr of parentContextRows) {
+          turnThreadContextRows.push({
+            session_id: input.session_id,
+            turn_id: input.turn.turn_id,
+            thread_id: cr.thread_id,
+            pos: cr.pos,
+            append_id: cr.append_id,
+          });
+        }
+      }
+
+      for (const parent of prevThreadRows) {
+        const newIds = newIdsByThread.get(parent.thread_id) ?? [];
+        const basePos = parent.context_pos_max;
+        for (let i = 0; i < newIds.length; i++) {
+          const appendId = newIds[i];
+          if (appendId !== undefined) {
+            turnThreadContextRows.push({
+              session_id: input.session_id,
+              turn_id: input.turn.turn_id,
+              thread_id: parent.thread_id,
+              pos: basePos + i + 1,
+              append_id: appendId,
+            });
+          }
+        }
+      }
+
+      // Step 5b: new threads — fresh turn_thread + mapping rows.
+      for (const nt of input.new_threads) {
+        const newIds = newIdsByThread.get(nt.thread_id) ?? [];
+        const usage = appendUsageByThread.get(nt.thread_id) ?? getEmptyCurrentContextUsage();
+        const threadCheckpoint: TurnThreadCheckpoint = {
+          parent: nt.parent,
+          completion: null,
+        };
+        turnThreadRows.push({
+          session_id: input.session_id,
+          turn_id: input.turn.turn_id,
+          thread_id: nt.thread_id,
+          checkpoint: jsonbBind(threadCheckpoint),
+          agent_info: nt.agent_info !== null ? jsonbBind(nt.agent_info) : null,
+          current_context_usage: jsonbBind(usage),
+          updated_at: now,
+        });
+
+        for (let i = 0; i < newIds.length; i++) {
+          const appendId = newIds[i];
+          if (appendId !== undefined) {
+            turnThreadContextRows.push({
+              session_id: input.session_id,
+              turn_id: input.turn.turn_id,
+              thread_id: nt.thread_id,
+              pos: i + 1,
+              append_id: appendId,
+            });
+          }
+        }
+      }
+
+      if (turnThreadRows.length > 0) {
+        await trx.insertInto('turn_thread').values(turnThreadRows).execute();
+      }
+
+      if (turnThreadContextRows.length > 0) {
+        await trx.insertInto('turn_thread_context').values(turnThreadContextRows).execute();
+      }
+
+      // Step 6: insert capability state rows (thread coverage asserted above).
+      const capabilityStateRows: {
+        session_id: string;
+        turn_id: string;
+        thread_id: string;
+        key: string;
+        state: RawBuilder<string> | null;
+        updated_at: string;
+      }[] = [];
+
+      for (const capability of input.capability_states) {
+        if (capability.capability_state === null) {
           continue;
         }
         if (row.thread_checkpoint === null || row.current_context_usage === null) {
@@ -675,6 +971,7 @@ export async function listTurns(db: Kysely<Database>, input: ListTurnsInput): Pr
       'turn_id',
       'first_turn_id',
       'previous_turn_id',
+      'active_executor_id',
       jsonText<string[]>(sql.ref('ancestor_ids')).as('ancestor_ids'),
       jsonText<TurnInputItem[]>(sql.ref('input')).as('input'),
       jsonText<TurnState>(sql.ref('state')).as('state'),
@@ -698,6 +995,7 @@ export async function listTurns(db: Kysely<Database>, input: ListTurnsInput): Pr
     first_turn_id: row.first_turn_id,
     ancestor_ids: row.ancestor_ids,
     previous_turn_id: row.previous_turn_id,
+    active_executor_id: row.active_executor_id,
     state: row.state,
     input: row.input,
     created_at: new Date(row.created_at),

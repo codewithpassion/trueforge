@@ -118,7 +118,7 @@ export function toHarnessManifest(
   };
 }
 
-/** Settings sandbox-catalog port for `createTrueFoundryServer`. */
+/** Settings sandbox-catalog port for `createTrueForgeServer`. Delete omitted (no BE route). */
 export function createSandboxProviderCatalog(client: TrueForge): SandboxCatalogServer {
   async function resolveApiKey(apiKey: string | undefined): Promise<string> {
     const trimmed = apiKey?.trim();

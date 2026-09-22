@@ -112,6 +112,7 @@ describe('capabilities routers', () => {
         },
         settings: { enabled: true },
         computers: { enabled: false },
+        web_search: { enabled: false },
       },
     });
   });
@@ -149,6 +150,7 @@ describe('capabilities routers', () => {
         skill: { enabled: true },
         settings: { enabled: true },
         computers: { enabled: false },
+        web_search: { enabled: false },
       },
     });
   });
@@ -185,6 +187,7 @@ describe('capabilities routers', () => {
         skill: { enabled: false, reason: 'Skills are not available on this server.' },
         settings: { enabled: true },
         computers: { enabled: false },
+        web_search: { enabled: false },
       },
     });
   });
@@ -319,6 +322,7 @@ describe('capabilities routers', () => {
           },
           settings: { enabled: true },
           computers: { enabled: false },
+          web_search: { enabled: false },
         },
       });
 
@@ -335,6 +339,7 @@ describe('capabilities routers', () => {
           },
           settings: { enabled: false },
           computers: { enabled: false },
+          web_search: { enabled: false },
         },
       });
     });

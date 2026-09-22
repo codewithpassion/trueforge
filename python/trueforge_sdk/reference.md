@@ -12,7 +12,7 @@
 <dl>
 <dd>
 
-Return granted actions for each requested agent, schedule, or session id.
+Return granted actions for the requested resources.
 </dd>
 </dl>
 </dd>
@@ -55,7 +55,7 @@ client.internal.list_permissions(
 <dl>
 <dd>
 
-**resource_ids:** `typing.List[str]` — Resource ids of `resource_type` to evaluate for the caller.
+**resource_ids:** `typing.List[str]` — Resource ids of `resource_type` to evaluate.
     
 </dd>
 </dl>
@@ -2534,7 +2534,7 @@ client.sessions.delete(
 <dl>
 <dd>
 
-Update a session by replacing `agent` with `{ spec: AgentSpec }`. Named (reference) sessions reject agent updates. An empty body is a valid no-op that refreshes `updated_at`. Only the session creator may update it.
+Update a session: optional `title`, `metadata`, and (inline sessions only) `agent` as `{ spec: AgentSpec }`. Named sessions reject agent updates. An empty body is a valid no-op that refreshes `updated_at`. Only the session creator may update it.
 </dd>
 </dl>
 </dd>
@@ -2591,6 +2591,14 @@ client.sessions.update(
 <dd>
 
 **metadata:** `typing.Optional[SessionMetadata]` 
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**title:** `typing.Optional[str]` — Human-readable session title.
     
 </dd>
 </dl>
@@ -4573,7 +4581,7 @@ client.internal.sessions.get_or_create_by_external_id(
 <dl>
 <dd>
 
-TypeScript TrueForge SDK samples (stream and non-stream) for creating a session and turn against this agent.
+TrueForge SDK samples (TypeScript and Python, stream and non-stream) for a session and turn against this agent.
 </dd>
 </dl>
 </dd>

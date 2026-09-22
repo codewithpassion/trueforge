@@ -10,7 +10,7 @@
  * Migrations are owned by the server (`main.ts`). This process only connects to the
  * already-migrated database; the loops have per-pass error boundaries, so they retry
  * each tick until the schema is present. The loops call the server over HTTP(S) at
- * `SERVER_URL` (mutual TLS when `TRUEFORGE_MTLS_ENABLED`), so no Redis peering is wired here.
+ * `SERVER_URL` (mutual TLS when `MTLS_ENABLED`), so no Redis peering is wired here.
  */
 import { Sessions } from '@truefoundry/trueforge-core/agent-session';
 import configuration from './config';
@@ -41,16 +41,18 @@ try {
     throw new Error('TRUEFORGE_RUNTIME=workers has no dedicated controller process.');
   }
 
+  logger.info('Connecting to Postgres');
   const db = createDb({
     connectionString: configuration.DATABASE_URL,
     poolMax: configuration.DATABASE_POOL_MAX,
     statementTimeoutMs: configuration.POSTGRES_STATEMENT_TIMEOUT_MS,
     idleInTransactionSessionTimeoutMs: configuration.POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS,
+    ssl: configuration.DATABASE_SSL,
   });
 
   logger.info('Controller starting', {
     serverUrl: configuration.SERVER_URL,
-    mTlsEnabled: configuration.TRUEFORGE_MTLS_ENABLED,
+    mTlsEnabled: configuration.MTLS_ENABLED,
   });
 
   runController({

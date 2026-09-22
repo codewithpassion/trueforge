@@ -2,7 +2,7 @@
  * Built-in Harness → AgentUIServer factory for `<TrueForgeUI server={{ type: "trueforge", … }} />`.
  */
 import type { TrueForge } from '@truefoundry/trueforge-sdk';
-import { createTrueFoundryServer } from '../../server/createTrueFoundryServer.js';
+import { createTrueForgeServer } from '../../server/createTrueForgeServer.js';
 import type { CatalogServer, PermissionsServer } from '../../server/types.js';
 import { createHarnessAgentMetricsServer } from './agentMetricsServer.js';
 import { createHarnessAgentSessionsServer } from './agentSessionsServer.js';
@@ -108,7 +108,7 @@ export function createTrueForgeAgentUIServer(options: CreateTrueForgeAgentUIServ
   const client = createTrueForgeClient(clientOptions);
   const catalog = catalogOverride ?? createTrueForgeCatalog({ client });
 
-  return createTrueFoundryServer<HarnessAgentSpec>({
+  return createTrueForgeServer<HarnessAgentSpec>({
     chatServer: createHarnessChatServer({ client }),
     ...createHarnessBuilderServer({ client }),
     catalog,

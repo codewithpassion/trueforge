@@ -11,6 +11,7 @@ import { AgentComputerSelector } from './AgentComputerSelector.js';
 export type AgentRuntimeConfigFieldsProps = {
   value: AgentRuntimeConfig;
   sandboxAvailable: boolean;
+  webSearchAvailable?: boolean;
   hasSkills: boolean;
   disabled?: boolean;
   showCapabilities?: boolean;
@@ -44,6 +45,7 @@ type RuntimeSwitchField = {
 export function AgentRuntimeConfigFields({
   value,
   sandboxAvailable,
+  webSearchAvailable = false,
   hasSkills,
   disabled = false,
   showCapabilities = true,
@@ -72,6 +74,14 @@ export function AgentRuntimeConfigFields({
   ];
   const sandboxEnabled = value.sandbox?.enabled ?? false;
   const compactionEnabled = value.contextManagement?.compaction?.enabled ?? true;
+  const webSearchField: RuntimeSwitchField | null = webSearchAvailable
+    ? {
+        label: 'Web search',
+        description: 'Allow the agent to search the web and fetch pages.',
+        checked: value.webSearch?.enabled ?? true,
+        update: enabled => ({ ...value, webSearch: { enabled } }),
+      }
+    : null;
   const sandboxField: RuntimeSwitchField = {
     label: 'Sandbox',
     description: 'Provide an isolated environment for code, files, and skills.',
@@ -156,7 +166,7 @@ export function AgentRuntimeConfigFields({
     >
       <div className={cn('flex w-full', className ?? 'items-center justify-between gap-3 py-1.5')}>
         <span className="min-w-0">
-          <span className={cn('text-text-primary text-xs', layout === 'detailed' && 'block font-medium')}>
+          <span className={cn('text-text-primary', layout === 'detailed' ? 'block text-sm font-medium' : 'text-xs')}>
             {field.label}
           </span>
           {layout === 'detailed' ? (
@@ -174,11 +184,12 @@ export function AgentRuntimeConfigFields({
   );
 
   if (layout === 'detailed') {
+    const rowClassName = 'items-center justify-between gap-4';
     return (
-      <div className="space-y-5">
+      <div className="divide-y divide-border">
         {showCapabilities ? (
           // Stack below `md` so narrow bottom sheets retain usable control widths.
-          <div className="flex flex-col gap-3 border-b border-border pb-5 md:flex-row">
+          <div className="flex flex-col gap-3 py-4 md:flex-row md:gap-4">
             {capabilityFields.map((field, index) =>
               switchField({
                 field,
@@ -186,16 +197,16 @@ export function AgentRuntimeConfigFields({
                 wrapperClassName: cn(
                   'flex-1',
                   index < capabilityFields.length - 1 &&
-                    'border-b border-border pb-3 md:border-b-0 md:border-r md:pb-0 md:pr-3',
+                    'border-b border-border pb-4 md:border-b-0 md:border-r md:pb-0 md:pr-4',
                 ),
               }),
             )}
           </div>
         ) : null}
-        <label className="flex items-center justify-between gap-4 border-b border-border py-3">
-          <span>
+        <label className={cn('flex py-4', rowClassName)}>
+          <span className="min-w-0">
             <span className="text-text-primary block text-sm font-medium">Iteration limit</span>
-            <span className="text-text-secondary mt-0.5 block text-xs">
+            <span className="text-text-secondary mt-0.5 block text-xs leading-snug">
               Maximum agent-loop iterations for one turn.
             </span>
           </span>
@@ -205,61 +216,62 @@ export function AgentRuntimeConfigFields({
             max={1024}
             disabled={disabled}
             value={value.iterationLimit ?? 100}
-            className={auiInputClass('h-8 w-24 disabled:opacity-60')}
+            className={auiInputClass('h-8 w-24 shrink-0 disabled:opacity-60')}
             onChange={event => {
               const iterationLimit = parseIterationLimit(event.target.value);
               if (iterationLimit !== null) onChange({ ...value, iterationLimit });
             }}
           />
         </label>
-        <div className="divide-y divide-border">
-          <section className="py-3">
-            {switchField({ field: sandboxField, className: 'items-center justify-between gap-4' })}
-            <div className={`mt-3 border-l-2 border-primary-button-bg/50 pl-3 ${sandboxEnabled ? '' : 'opacity-50'}`}>
-              {switchField({ field: fileDownloadsField, className: 'items-center justify-between gap-4' })}
-            </div>
-            <div className={sandboxEnabled ? '' : 'opacity-50'}>{computerSelector}</div>
-          </section>
-          <section className="py-3">
-            {switchField({ field: compactionField, className: 'items-center justify-between gap-4' })}
-            <label
-              className={`mt-3 flex items-center justify-between gap-4 border-l-2 border-primary-button-bg/50 pl-3 ${
-                compactionEnabled ? '' : 'opacity-50'
-              }`}
-            >
-              <span>
-                <span className="text-text-primary block text-xs font-medium">Compaction threshold tokens</span>
-                <span className="text-text-secondary mt-0.5 block text-xs">
-                  Input-token threshold that triggers compaction.
-                </span>
+        {webSearchField != null ? switchField({ field: webSearchField, className: cn('py-4', rowClassName) }) : null}
+        <section className="py-4">
+          {switchField({ field: sandboxField, className: rowClassName })}
+          <div className={`mt-3 border-l-2 border-primary-button-bg/50 pl-3 ${sandboxEnabled ? '' : 'opacity-50'}`}>
+            {switchField({ field: fileDownloadsField, className: rowClassName })}
+          </div>
+          <div className={sandboxEnabled ? '' : 'opacity-50'}>{computerSelector}</div>
+        </section>
+        <section className="py-4">
+          {switchField({ field: compactionField, className: rowClassName })}
+          <label
+            className={cn(
+              'mt-3 flex border-l-2 border-primary-button-bg/50 pl-3',
+              rowClassName,
+              compactionEnabled ? '' : 'opacity-50',
+            )}
+          >
+            <span className="min-w-0">
+              <span className="text-text-primary block text-sm font-medium">Compaction threshold tokens</span>
+              <span className="text-text-secondary mt-0.5 block text-xs leading-snug">
+                Input-token threshold that triggers compaction.
               </span>
-              <input
-                type="number"
-                min={1}
-                disabled={disabled || !compactionEnabled}
-                value={compactionThreshold}
-                className={auiInputClass('h-8 w-28 disabled:opacity-60')}
-                onChange={event => {
-                  const threshold = parsePositiveInteger(event.target.value);
-                  if (threshold === null) return;
-                  onChange({
-                    ...value,
-                    contextManagement: {
-                      ...value.contextManagement,
-                      compaction: {
-                        ...value.contextManagement?.compaction,
-                        enabled: compactionEnabled,
-                        trigger: { type: 'input_tokens', value: threshold },
-                      },
-                      largeToolResponse: value.contextManagement?.largeToolResponse ?? { enabled: true },
+            </span>
+            <input
+              type="number"
+              min={1}
+              disabled={disabled || !compactionEnabled}
+              value={compactionThreshold}
+              className={auiInputClass('h-8 w-28 shrink-0 disabled:opacity-60')}
+              onChange={event => {
+                const threshold = parsePositiveInteger(event.target.value);
+                if (threshold === null) return;
+                onChange({
+                  ...value,
+                  contextManagement: {
+                    ...value.contextManagement,
+                    compaction: {
+                      ...value.contextManagement?.compaction,
+                      enabled: compactionEnabled,
+                      trigger: { type: 'input_tokens', value: threshold },
                     },
-                  });
-                }}
-              />
-            </label>
-          </section>
-          {switchField({ field: largeToolResponseField, className: 'items-center justify-between gap-4 py-3' })}
-        </div>
+                    largeToolResponse: value.contextManagement?.largeToolResponse ?? { enabled: true },
+                  },
+                });
+              }}
+            />
+          </label>
+        </section>
+        {switchField({ field: largeToolResponseField, className: cn('py-4', rowClassName) })}
       </div>
     );
   }
@@ -281,7 +293,11 @@ export function AgentRuntimeConfigFields({
           }}
         />
       </label>
-      {[...runtimeFields, ...(showCapabilities ? capabilityFields : [])].map(field => switchField({ field }))}
+      {[
+        ...(webSearchField != null ? [webSearchField] : []),
+        ...runtimeFields,
+        ...(showCapabilities ? capabilityFields : []),
+      ].map(field => switchField({ field }))}
       {computerSelector}
     </div>
   );

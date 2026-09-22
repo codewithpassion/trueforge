@@ -9,6 +9,7 @@ import type { WithTransaction } from '../db/transaction';
 import { getCapabilitiesRoute } from '../routes/capabilityRoutes';
 import type { SandboxIntegration, SandboxUsability } from '../sandbox/integration';
 import type { SandboxBuildStatus } from '../schemas/sandboxProvider';
+import { resolveWebSearchProvider } from '../websearch/providers';
 
 /**
  * Why skills are unavailable, keyed off the sandbox build status.
@@ -67,6 +68,9 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
     }
     const sandboxEnabled = usability.usable;
     const skillEnabled = sandboxEnabled && integration.isSkillMountingSupported();
+    const sandboxEnabled = status === 'ready' || (status === undefined && isLocalSandboxFallbackEnabled());
+    const settingsEnabled = hasAdminRole(requestContext);
+    const webSearchEnabled = resolveWebSearchProvider() !== undefined;
     return c.json(
       {
         data: {
@@ -81,6 +85,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
               },
           settings: { enabled: settingsEnabled },
           computers: { enabled: computersEnabled },
+          web_search: { enabled: webSearchEnabled },
         },
       },
       200,

@@ -108,6 +108,7 @@ export { MessageTimestamp } from './atoms/MessageTimestamp.js';
 export type { MessageTimestampProps } from './atoms/MessageTimestamp.js';
 export { MonacoEditorCore } from './atoms/MonacoEditorCore.js';
 export type { MonacoEditorCoreProps } from './atoms/MonacoEditorCore.js';
+export { preloadMonaco } from './atoms/monacoPreload.js';
 export { OpenUiFenceBlock } from './atoms/OpenUiFenceBlock.js';
 export type { OpenUiFenceBlockProps } from './atoms/OpenUiFenceBlock.js';
 export { SandboxArtifactDownload } from './atoms/SandboxArtifactDownload.js';
@@ -226,6 +227,8 @@ export { ToolCallContainer } from './containers/ToolCallContainer.js';
 export { ToolCallContentBlockContainer } from './containers/ToolCallContentBlockContainer.js';
 export { ToolGroupContainer } from './containers/ToolGroupContainer.js';
 export type { ThreadGroupPart } from './containers/ToolGroupContainer.js';
+export { TrueForgeChatProvider } from './containers/TrueForgeChatProvider.js';
+export type { TrueForgeChatProviderProps } from './containers/TrueForgeChatProvider.js';
 export { TrueForgeUI } from './containers/TrueForgeUI.js';
 export type {
   ChatLayout,
@@ -235,12 +238,12 @@ export type {
   TrueForgeServerConfig,
   TrueForgeUIProps,
 } from './containers/TrueForgeUI.js';
-export { TrueFoundryChatProvider } from './containers/TrueFoundryChatProvider.js';
-export type { TrueFoundryChatProviderProps } from './containers/TrueFoundryChatProvider.js';
 export { UserEditComposerContainer } from './containers/UserEditComposerContainer.js';
 export { UserMessageContainer } from './containers/UserMessageContainer.js';
 export { useApprovalNav } from './hooks/useApprovalNav.js';
 export type { ApprovalNavState } from './hooks/useApprovalNav.js';
+export { useCanCreateAgent } from './hooks/useCanCreateAgent.js';
+export type { UseCanCreateAgentResult } from './hooks/useCanCreateAgent.js';
 export { ComposerBusyProvider, useComposerBusyState } from './hooks/useComposerBusyState.js';
 export type { ComposerBusyState } from './hooks/useComposerBusyState.js';
 export { threadHasPendingMcpAuth, useComposerPauseView } from './hooks/useComposerPauseView.js';
@@ -260,25 +263,25 @@ export { useTheme } from './theme/useTheme.js';
 // Runtime / server — consumer surface.
 export {
   mergeAgentSpec,
-  trueFoundryAttachmentAdapter,
-  useTrueFoundryAgentRuntime,
-  useTrueFoundryAgentSpec,
-  useTrueFoundryApprovals,
-  useTrueFoundryCancel,
-  useTrueFoundryDownloadSandboxFile,
-  useTrueFoundryHistoryPagination,
-  useTrueFoundryMcpAuth,
-  useTrueFoundryRespondToToolApproval,
-  useTrueFoundryToolResponses,
-  useTrueFoundryTurnId,
-  useTrueFoundryUpdateAgentSpec,
-} from '@truefoundry/assistant-ui-runtime';
+  trueForgeAttachmentAdapter,
+  useTrueForgeAgentRuntime,
+  useTrueForgeAgentSpec,
+  useTrueForgeApprovals,
+  useTrueForgeCancel,
+  useTrueForgeDownloadSandboxFile,
+  useTrueForgeHistoryPagination,
+  useTrueForgeMcpAuth,
+  useTrueForgeRespondToToolApproval,
+  useTrueForgeToolResponses,
+  useTrueForgeTurnId,
+  useTrueForgeUpdateAgentSpec,
+} from '@truefoundry/trueforge-assistant-ui-runtime';
 export type {
   DraftAgentConfig,
   NamedAgentConfig,
-  TrueFoundryAgentConfig,
-  UseTrueFoundryAgentRuntimeOptions,
-} from '@truefoundry/assistant-ui-runtime';
+  TrueForgeAgentConfig,
+  UseTrueForgeAgentRuntimeOptions,
+} from '@truefoundry/trueforge-assistant-ui-runtime';
 
 // Server port types + factory
 export { ClearChatButton } from './atoms/ClearChatButton.js';
@@ -290,8 +293,8 @@ export {
 } from './atoms/lib/sessionCreateAgent.js';
 export { SelectAgentEmptyState } from './atoms/SelectAgentEmptyState.js';
 export { ShellActionsActionSlot } from './atoms/ShellActionsActionSlot.js';
-export { createTrueFoundryServer } from './server/createTrueFoundryServer.js';
-export type { CreateTrueFoundryServerOptions, TrueFoundryServer } from './server/createTrueFoundryServer.js';
+export { createTrueForgeServer } from './server/createTrueForgeServer.js';
+export type { CreateTrueForgeServerOptions, TrueForgeServer } from './server/createTrueForgeServer.js';
 export {
   CustomActionRenderersProvider,
   useOptionalCustomActionRenderers,

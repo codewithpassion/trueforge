@@ -60,12 +60,21 @@ jobs:
               - 'packages/frontend/**'
               # trueforge-sdk is workspace:* (no version bump); SDK-only PRs must still run FE checks.
               - 'packages/trueforge-sdk/**'
+              # trueforge-ui depends on the runtime workspace package.
+              - 'packages/assistant-ui-runtime/**'
               - 'package.json'
               - 'pnpm-workspace.yaml'
               - 'tsconfig.base.json'
               - '.github/workflows/ci.yml'
             trueforge-ui:
               - 'packages/trueforge-ui/**'
+              - 'packages/assistant-ui-runtime/**'
+              - 'package.json'
+              - 'pnpm-workspace.yaml'
+              - 'tsconfig.base.json'
+              - '.github/workflows/ci.yml'
+            assistant-ui-runtime:
+              - 'packages/assistant-ui-runtime/**'
               - 'package.json'
               - 'pnpm-workspace.yaml'
               - 'tsconfig.base.json'
@@ -110,6 +119,7 @@ jobs:
           FRONTEND: ${{ steps.filter.outputs.frontend }}
           TRUEFORGE_UI: ${{ steps.filter.outputs['trueforge-ui'] }}
           TRUEFORGE_COMPUTER: ${{ steps.filter.outputs['trueforge-computer'] }}
+          ASSISTANT_UI_RUNTIME: ${{ steps.filter.outputs['assistant-ui-runtime'] }}
         run: |
           node <<'EOF' >> "$GITHUB_OUTPUT"
           const changedPackages = [];
@@ -118,6 +128,7 @@ jobs:
           if (process.env.FRONTEND === 'true') changedPackages.push('frontend');
           if (process.env.TRUEFORGE_UI === 'true') changedPackages.push('trueforge-ui');
           if (process.env.TRUEFORGE_COMPUTER === 'true') changedPackages.push('trueforge-computer');
+          if (process.env.ASSISTANT_UI_RUNTIME === 'true') changedPackages.push('assistant-ui-runtime');
           console.log(`list=${JSON.stringify(changedPackages)}`);
           EOF
 

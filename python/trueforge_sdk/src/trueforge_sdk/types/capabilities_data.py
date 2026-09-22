@@ -9,6 +9,7 @@ from .computers_capability import ComputersCapability
 from .sandbox_capability import SandboxCapability
 from .settings_capability import SettingsCapability
 from .skill_capability import SkillCapability
+from .web_search_capability import WebSearchCapability
 
 
 class CapabilitiesData(UncheckedBaseModel):
@@ -16,6 +17,7 @@ class CapabilitiesData(UncheckedBaseModel):
     sandbox: SandboxCapability
     settings: SettingsCapability
     skill: SkillCapability
+    web_search: WebSearchCapability
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow")  # type: ignore # Pydantic v2
