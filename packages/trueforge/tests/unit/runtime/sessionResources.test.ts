@@ -200,7 +200,6 @@ describe('withGatewayMetadataHeaders', () => {
 
 describe('validateAgentSpec', () => {
   afterEach(() => {
-    setCachedLocalSandboxSupport(undefined);
     jest.mocked(resolveWebSearchProvider).mockReset();
     jest.mocked(resolveWebSearchProvider).mockReturnValue(undefined);
   });
@@ -403,6 +402,7 @@ describe('validateAgentSpec', () => {
           config: { web_search: { enabled: true } },
         }),
         tenant_id: 'default',
+        agent_id: undefined,
         ...stores,
       }),
     ).rejects.toMatchObject({
@@ -422,6 +422,7 @@ describe('validateAgentSpec', () => {
           config: { web_search: { enabled: true } },
         }),
         tenant_id: 'default',
+        agent_id: undefined,
         ...stores,
       }),
     ).resolves.toBeUndefined();

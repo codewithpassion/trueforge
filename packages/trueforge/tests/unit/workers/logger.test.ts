@@ -46,7 +46,7 @@ describe('createConsoleLogger', () => {
         run_id: 'run-1',
         error: {
           name: 'ScheduleRunConflictError',
-          error: 'Schedule run already exists',
+          error: 'Schedule run already exists: UNIQUE constraint failed: schedule_run.name',
           stack: expect.any(String),
           cause: {
             name: 'D1Error',
@@ -69,8 +69,8 @@ describe('createConsoleLogger', () => {
     expect(loggedEntries(consoleError)).toEqual([
       expect.objectContaining({
         error: expect.objectContaining({
-          error: 'first',
-          cause: expect.objectContaining({ error: 'second', cause: '[circular cause]' }),
+          error: 'first: second',
+          cause: expect.objectContaining({ error: 'second: first', cause: '[circular cause]' }),
         }),
       }),
     ]);

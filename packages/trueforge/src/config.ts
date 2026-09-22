@@ -975,6 +975,16 @@ export function parseServerConfiguration(): ServerConfiguration {
     return { ...shared, RUNTIME: 'workers', STANDALONE: false, OIDC: oidc };
   }
 
+  // Upstream renamed these; a deployment still setting the old names would otherwise run without mTLS.
+  for (const [legacy, current] of [
+    ['TRUEFORGE_MTLS_ENABLED', 'MTLS_ENABLED'],
+    ['TRUEFORGE_MTLS_CERTS_DIR', 'MTLS_CERTS_DIR'],
+  ] as const) {
+    if (getEnv(legacy) !== undefined) {
+      throw new Error(`${legacy} was renamed to ${current}; set ${current} and remove ${legacy}.`);
+    }
+  }
+
   const port = parsePort(getEnv('PORT'));
   const nodeShared: NodeSharedServerConfiguration = {
     PORT: port,

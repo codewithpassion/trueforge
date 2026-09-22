@@ -14,6 +14,8 @@ const MANAGED_KEYS = [
   'PUBLIC_BASE_URL',
   'TRUEFORGE_SANDBOX_BACKEND',
   'SANDBOX_EXEC_TIMEOUT_SECONDS',
+  'TRUEFORGE_MTLS_ENABLED',
+  'TRUEFORGE_MTLS_CERTS_DIR',
 ] as const;
 
 type ManagedEnv = Partial<Record<(typeof MANAGED_KEYS)[number], string>>;
@@ -51,6 +53,13 @@ function parseWithEnv(env: ManagedEnv) {
 }
 
 describe('parseServerConfiguration', () => {
+  it.each([
+    ['TRUEFORGE_MTLS_ENABLED', 'MTLS_ENABLED'],
+    ['TRUEFORGE_MTLS_CERTS_DIR', 'MTLS_CERTS_DIR'],
+  ] as const)('rejects the pre-rename %s and names %s', (legacy, current) => {
+    expect(() => parseWithEnv({ [legacy]: 'true' })).toThrow(`${legacy} was renamed to ${current}`);
+  });
+
   describe('without TRUEFORGE_RUNTIME', () => {
     it('defaults to standalone', () => {
       const config = parseWithEnv({});

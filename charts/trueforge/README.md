@@ -375,6 +375,9 @@ extraObjects:
 | `mtls.secretName`     | `""`                                | Secret with `tls.crt` / `tls.key` / `ca.crt` (required when `mtls.enabled`). |
 | `mtls.certsDir`       | `/etc/tls`                          | Mount path / `MTLS_CERTS_DIR`. |
 
+The server and controller refuse to start while the pre-rename `TRUEFORGE_MTLS_ENABLED` or
+`TRUEFORGE_MTLS_CERTS_DIR` is set; move custom `extraEnv` entries to `MTLS_ENABLED` / `MTLS_CERTS_DIR`.
+
 The server uses a RollingUpdate strategy by default (`server.strategy`); the
 controller is fixed to a single replica with `Recreate` and exposes neither.
 

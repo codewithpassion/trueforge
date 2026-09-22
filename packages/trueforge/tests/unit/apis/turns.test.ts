@@ -203,7 +203,7 @@ describe('turns', () => {
     it('rejects a malformed header before starting the turn', async () => {
       const db = createSqliteDb(':memory:');
       await migrateSqliteToLatest(db);
-      const sessionStore = new SqliteSessionStore(db);
+      const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
       const sessions = new Sessions({ sessionStore });
       await sessionStore.createSession({
         tenant_id: 'default',
@@ -232,13 +232,13 @@ describe('turns', () => {
         createTurnsRouter({
           sessions,
           sessionStore,
-          activeTurns: new ActiveTurnRegistry(),
           resolveModelProviderStore: () => new SqliteModelProviderStore(db),
           resolveMcpServerStore: () => mcpServerStoreWithAuth(db, new SqliteOAuthTokenStore(db)),
           resolveSkillStore: () => new SqliteSkillStore(db),
           resolveAgentStore: () => new SqliteAgentStore(db),
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          turnExecutor: testNodeTurnExecutor(),
           resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
+          sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
           logger: createLogger({ silent: true }),
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
           authorizer: new TrueForgeAuthorizer(),

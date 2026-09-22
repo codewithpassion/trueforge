@@ -132,6 +132,7 @@ describe('capabilities routers', () => {
         },
         settings: { enabled: true },
         computers: { enabled: false },
+        web_search: { enabled: false },
       },
     });
     expect(mockUsability).not.toHaveBeenCalled();
@@ -168,6 +169,7 @@ describe('capabilities routers', () => {
         skill: { enabled: true },
         settings: { enabled: true },
         computers: { enabled: false },
+        web_search: { enabled: false },
       },
     });
   });

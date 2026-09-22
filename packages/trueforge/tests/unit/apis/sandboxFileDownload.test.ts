@@ -174,6 +174,7 @@ describe('GET /{session_id}/turns/{turn_id}/download-sandbox-file', () => {
           created_at: new Date('2026-09-01T00:00:00.000Z'),
           updated_at: new Date('2026-09-01T00:00:00.000Z'),
           custom: null,
+          active_executor_id: 'default',
         });
       }
     }

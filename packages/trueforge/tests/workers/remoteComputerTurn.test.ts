@@ -91,7 +91,7 @@ function computerSpec({
 }: {
   providerName: string;
   computerId: string;
-  skillName?: string;
+  skillName?: string | undefined;
 }) {
   return AgentSpecSchema.parse({
     model: { name: `${providerName}/mock-model` },
