@@ -74,7 +74,7 @@ const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const CROSS_ORIGIN_STRIPPED_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'host'];
 
-/** Also routes outbound traffic through this guard, so a Node host calls this once at startup. */
+/** Applies the host's allow/block lists (or disables the guard); loading this module already installs it. */
 export function configureOutboundUrlGuard(config: {
   enabled?: boolean;
   allowedHosts: readonly string[];
@@ -315,3 +315,6 @@ export async function ssrfFetch(input: string | URL | Request, init?: RequestIni
 export async function mcpSsrfFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   return guardedFetch(input, init ?? {}, MAX_REDIRECTS, mcpOutboundAgent);
 }
+
+// Loading this module on Node turns the guard on with empty host lists; runtimes that never load it keep plain fetch.
+setOutboundPolicy({ fetch: ssrfFetch, mcpFetch: mcpSsrfFetch, assertUrl: assertSafeOutboundUrl });
