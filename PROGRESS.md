@@ -21,13 +21,17 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 - Verify the merge base before planning the merge. The briefing's tip, commit count and conflict count were all stale, and the 16 commits nobody mentioned contained the one change that invalidated a whole numbered step.
 - A conflict list is a scope estimate, not a work estimate. Thirty of 35 files were mechanical unions; the remaining five were two teams restructuring the same file in different directions, and those five are most of the real work.
-- When upstream absorbs a dependency you were patching, the patch is not migrated — it is deleted and its content re-homed. Check what the dependency *became* before re-rolling anything against it.
+- When upstream absorbs a dependency you were patching, the patch is not migrated — it is deleted and its content re-homed. Check what the dependency _became_ before re-rolling anything against it.
 - Resolving a file to "ours" is a decision to port behaviour later, not a resolution. It has to be recorded as such or it silently becomes a regression.
 
 **Avoid next time:**
 
 - Don't resolve `config.ts`-class files under time pressure. Two competing restructurings of the same config surface cannot be unioned mechanically, and a wrong guess there fails at deploy, not at typecheck.
 - Don't take upstream's barrel imports into a fork whose bundle depends on deep ones — `workers:check` is the only thing that catches it, and it runs late.
+
+**Follow-up (P1–P4, same cycle):** runtime ports re-homed in `packages/assistant-ui-runtime`; upstream config fields added on top of the three-runtime union (`MTLS_*` rename taken, so deployments still setting `TRUEFORGE_MTLS_*` silently lose mTLS); SQLite turn queries are the fork's D1-safe version plus `active_executor_id`; Node cancel routes on `turn.active_executor_id`, Workers turns record `session-do`. Upstream's core imported the undici/`node:dns` SSRF guard from the LLM and MCP clients, which broke the Workers graph and every D1 test at import: those callers now go through `core/util/outboundFetch.ts`, which Node fills via `configureOutboundUrlGuard` and Workers leaves as platform `fetch` with no URL check. Inline MCP/skills, caller `x-tfy-metadata`, web search in the resolver and the MCP response cap are ported; the tenant model filter was already in.
+
+**Still open after P4:** the D1 migration twin for `active_executor_id` (all 64 failing `test:store:d1` tests are that one missing column). Do not copy the SQLite backfill `substr(turn_id, instr(turn_id, '.') + 1)`: Workers turn ids never had a dot, so `instr` is 0 and the whole id lands in the column; backfill `'session-do'`. Workers has no outbound host allow/block list. Pre-existing test merge fallout: `tests/unit` `turns.test.ts` (3), `sessionResources.test.ts` (3), `sandboxFileDownload.test.ts` (1), and `tests/workers/remoteComputerTurn.test.ts:158` (1).
 
 **Deferred (not done in this cycle):** the runtime source port and import rename, `pnpm install` / lockfile reconciliation, OpenAPI + SDK regeneration, the D1 migration twins `0006`/`0007` and the Kysely ordering rename, `active_executor_id` in `SessionDO` and the D1 turn queries, upstream's outbound-guard/inline-MCP/tenant-filter wiring into our five kept files, changesets, and the whole verification matrix. None of it was run.
 
