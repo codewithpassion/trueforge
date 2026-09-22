@@ -27,6 +27,36 @@ vi.mock('../../src/workers/alarmBudget', async importOriginal => {
   };
 });
 
+/**
+ * Stands in for the platform replacing this instance. Workerd never supersedes one, so the only way
+ * to reach the path is to make the probe fail the way a moved-away object's storage does.
+ */
+const liveness = vi.hoisted((): { probeMs: number | undefined; failFrom: number | undefined; probes: number } => ({
+  probeMs: undefined,
+  failFrom: undefined,
+  probes: 0,
+}));
+
+/** What a superseded instance is told by its own storage, verbatim from the live Workers tail. */
+const INSTANCE_LOST_MESSAGE =
+  'Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request.';
+
+vi.mock('../../src/workers/instanceLiveness', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../src/workers/instanceLiveness')>();
+  return {
+    get INSTANCE_LIVENESS_PROBE_MS() {
+      return liveness.probeMs ?? actual.INSTANCE_LIVENESS_PROBE_MS;
+    },
+    probeInstanceAlive: (storage: DurableObjectStorage) => {
+      liveness.probes += 1;
+      if (liveness.failFrom !== undefined && liveness.probes >= liveness.failFrom) {
+        return Promise.reject(new Error(INSTANCE_LOST_MESSAGE));
+      }
+      return actual.probeInstanceAlive(storage);
+    },
+  };
+});
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -402,6 +432,57 @@ describe('SessionDO', () => {
 
     expect(await turnStatus({ sessionId, turnId })).toMatchObject({ status: 'done' });
   });
+
+  it('ends a held turn as abandoned, and its pass quietly, once the object has moved to another instance', async () => {
+    const sessionId = 'alarm-instance-lost';
+    await createMockSession({ sessionId, scenario: 'delay-4000' });
+    const stub = sessionStub(sessionId);
+    const turnId = await startedTurnId(sessionId);
+    liveness.probeMs = 100;
+    liveness.failFrom = liveness.probes + 1;
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      // The pass returns rather than throwing: the instance that took the object over owns the
+      // alarm now, so re-arming from here would be a write into storage that no longer answers.
+      await runInDurableObject(stub, instance => instance.alarm());
+
+      expect(logLinesAbout(warnings, 'no longer owns the object')).toHaveLength(1);
+    } finally {
+      liveness.failFrom = undefined;
+      liveness.probeMs = undefined;
+      warnings.mockRestore();
+    }
+
+    // Not `client-cancelled`: nobody cancelled it, the instance running it was replaced.
+    await expect
+      .poll(() => turnStatus({ sessionId, turnId }), { timeout: 10_000 })
+      .toMatchObject({ status: 'cancelled', reason: CancellationReason.Abandoned });
+  });
+
+  it('leaves the turns to the invocation already holding them and only pushes the fallback out', async () => {
+    const sessionId = 'alarm-overlap';
+    await createMockSession({ sessionId, scenario: 'delay-3000' });
+    const stub = sessionStub(sessionId);
+    const turnId = await startedTurnId(sessionId);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const held = instance.alarm();
+      await sleep(500);
+      const armed = await state.storage.getAlarm();
+
+      // The fallback fires 60 seconds in while the holder may still have minutes to run. A second
+      // invocation that waited on the same turns would hold the object twice for no gain; it must
+      // return at once, which it cannot do if it parks on the same promises.
+      await instance.alarm();
+
+      expect(await state.storage.getAlarm()).toBeGreaterThan(armed ?? 0);
+      expect((await turnStatus({ sessionId, turnId }))?.status).toBe('running');
+      await held;
+    });
+
+    expect(await turnStatus({ sessionId, turnId })).toMatchObject({ status: 'done' });
+    expect(await startedTurnRows(stub)).toEqual([]);
+  }, 20_000);
 
   it('an alarm already awaiting a turn also awaits a turn started after it', async () => {
     const sessionId = 'alarm-late-turn';

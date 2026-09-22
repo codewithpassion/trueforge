@@ -4,6 +4,34 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 32 — Phase 8b live test: the turn died on the caller, not on the relay (2026-09-22)
+
+**Goal:** Fix what the live test of remote computers found twice on version `418acfec`: a turn whose remote `exec` ran about 45 s ended `cancelled` with reason `client-cancelled`, and so did a turn whose exec output was 2 MB. Short commands with small output never failed.
+
+**What we did:**
+
+- **Followed the stack instead of the story.** The brief read as "a long DO-to-DO RPC cannot be held", and the relay looked guilty. The tail said otherwise: `RemoteComputerDO.request` ran 45,019 ms and returned `ok`, and the `SessionDO` alarm holding the turn died 218 ms **after** that. Both stacks name `SessionDO`'s own storage — the drain in `DurableObjectEventSubscription.put`, then the alarm's `finally` in `deleteExpired` — with `Connection closed: this Durable Object instance is no longer active.` Reading the code closed it: `RemoteComputerProvider` catches every relay rejection and turns it into an `interrupted` outcome, so a failing relay can never surface as a drain error at all.
+- **Named the root cause: a superseded instance keeps running.** The platform restarts or moves a Durable Object for its own reasons, and it tells the replaced instance nothing. An invocation parked on an outbound RPC needs no claim on the object, so it runs on and only finds out at its next storage access. The exposure is time parked without touching storage, which is why a 45 s command and a 2 MB payload failed the same way and a 2 s command never did. No deploy was in flight for either sighting.
+- **Contained the zombie rather than redesigning the relay.** `RemoteComputerDO` and the frozen v1 wire contract are untouched. The holding alarm now probes its own storage every five seconds while it waits; when the probe fails it cancels the turns it holds with `Abandoned`, skips the storage work in its `finally`, and ends the pass without an exception so the invocation's outcome stops blaming the code.
+- **Closed the Cycle 13 backlog item on the way.** A turn ended by a lost instance is recorded `abandoned`, not `client-cancelled`. It is the same cancel path `SessionDO.cancel` already uses, so Node behaviour is unchanged: none of this code runs there.
+- **Stopped one alarm invocation holding another's turns.** `alarm()` arms a 60-second fallback on entry and then holds for up to 14 minutes, so every turn over a minute gets a second invocation that would park on the same promises and hold the object twice. It now pushes the fallback out and returns. Each pass logs an instance id, because the platform names no instance and the live tail could not say which one ran what.
+- **Reproduced what could be reproduced.** Workerd never supersedes an instance, so the probe is a one-function module a test replaces to make it fail the way a moved-away object's storage does. The 2 MB round trip is real end to end: through the relay and the RPC at provider level, and through a whole turn, where it takes over 30 s locally — the same slowness that left the live turn's alarm parked for 21.6 s. A held command answered past the 25-second staleness threshold guards the other half of the claim: the relay waits out a slow machine rather than declaring it gone. The three tests add about 33 s to the workers suite.
+
+**Lessons learned:**
+
+- A symptom that correlates with a feature is not evidence the feature is at fault. Long commands and big payloads both correlate with "the caller sits still for a long time", and that was the actual variable.
+- Read the error's catch sites before believing where it came from. One `try/catch` in the provider ruled out the entire relay before any test was written.
+- An invocation that parks for tens of seconds is making a bet that its instance survives. On Durable Objects the loser of that bet is told nothing, so anything holding a turn has to ask.
+- `client-cancelled` is what a broken event iterator looks like from inside the agent loop. Any cause that breaks the drain wears that label until something upstream gives the turn a better reason.
+
+**Avoid next time:**
+
+- Don't take a reported root cause as the starting point when the tail is available; the brief's chain and the stack disagreed at the first link.
+- Don't arm a fallback alarm for a fixed delay and then hold the invocation for much longer than that, unless a second invocation arriving mid-hold is harmless.
+- Don't reach for a store-and-poll protocol redesign to fix a symptom the evidence puts on the other side of the RPC.
+
+---
+
 ## Cycle 30 — Phase 8b live test: one missing Python package stopped every command (2026-09-22)
 
 **Goal:** Fix what the next live test of remote computers found. A machine with `python3` and `git` but without the `pydantic` package connected fine, and an agent with **no skills** then failed every `exec` with `Sandbox initialization failed: (exit code 1): Traceback ... skill_downloader.py, line 89 ... from pydantic import ...`.

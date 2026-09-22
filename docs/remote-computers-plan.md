@@ -58,7 +58,7 @@ Keep: the envelope, `hello`/`heartbeat`, the setsid group kill and 124 conventio
 - **Concurrency.** Per-session serialisation (a turn is already sequential) plus a cap on in-flight execs per computer (default 4, queued beyond that). This replaces Agentum's one exec per host.
 - **Revocation.** A `revoke()` RPC closes sockets with 4401.
 
-The in-memory pending map is safe because `SessionDO`'s RPC holds the object active for the call, the same argument `ComputerDO` relies on. The exec timeout stays at or under `SANDBOX_EXEC_TIMEOUT_SECONDS`, which is already capped at two thirds of `ALARM_PASS_BUDGET_MS` (`packages/trueforge/src/workers/alarmBudget.ts:2`, `packages/trueforge/src/config.ts:461`). The relay adds 10 s of grace so the daemon's own 124 wins the race. The spike must measure the inbound WebSocket message size limit; chunking keeps frames at 256 KiB regardless.
+The in-memory pending map is safe because `SessionDO`'s RPC holds the object active for the call, the same argument `ComputerDO` relies on. That argument held up live; what did not is the caller, which parks for the whole command and can be replaced while it waits. Section 11 has the evidence and what `SessionDO` does about it. The exec timeout stays at or under `SANDBOX_EXEC_TIMEOUT_SECONDS`, which is already capped at two thirds of `ALARM_PASS_BUDGET_MS` (`packages/trueforge/src/workers/alarmBudget.ts:2`, `packages/trueforge/src/config.ts:461`). The relay adds 10 s of grace so the daemon's own 124 wins the race. The spike must measure the inbound WebSocket message size limit; chunking keeps frames at 256 KiB regardless.
 
 **Node standalone.** An in-process `ComputerHub` holds sockets on the Hono upgrade path with the DO's `request` surface.
 
@@ -359,3 +359,19 @@ Against the Section 8 criteria:
 **For protocol v2**, one thing this phase wanted and could not have: a way to re-measure the frame ceiling without a permanent op on every client. The other — a "can this computer run skills" capability answered by the client rather than `python3` and `git` booleans the server has to interpret — arrived in Cycle 30 as `hello.capabilities.skills`, additively, because a defaulted field leaves every older client and stored row readable.
 
 **The path guess, and how the live test ended it.** 8b derived the session directory from `run_as_user` and `os` (`/root`, `/home/<user>`, `/Users/<user>`) because `hello` carried no path. The live test of Cycle 29 ran the client in its own container image — uid 1000, no `/home/trueforge`, sessions under `/var/lib/trueforge-computer/sessions` — and every `exec` failed. `hello` now carries a required `workdir`, still at `protocol_version` 1 because no client had shipped, and nothing derives a path from `run_as_user` any more.
+
+## 11. Phase 8b live findings: the turn dies, not the relay
+
+Two turns on the live deploy (version `418acfec`, 2026-09-22, no deploy in flight) ended `cancelled` with reason `client-cancelled` although nobody cancelled them. One ran `sleep 45; echo SLEPT`; the other read a 2 MB file. Short commands with small output never failed. The obvious reading — that a long DO-to-DO RPC cannot be held — is wrong, and the tail says so:
+
+- The relay's `request` RPC **succeeded**: 45,019 ms wall, 3 ms CPU, outcome `ok`. Phase 7a already held `ComputerDO.execCommand` for 326 s. A held RPC is fine.
+- The `SessionDO` alarm invocation that held the turn ended `exception` 218 ms **after** that RPC returned, not while it was waiting.
+- Both stacks name `SessionDO`'s own storage: the drain died in `DurableObjectEventSubscription.put`, and the alarm's `finally` then died in `deleteExpired`. The message both times: `Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request.`
+
+**Root cause.** The platform replaced the instance while the alarm was parked. A Durable Object is restarted or moved for reasons outside the application's control — a runtime update, a decision about where to host the object — and a superseded instance is told nothing. It keeps running whatever it was parked on, because an outbound RPC needs no claim on the object, and finds out only when it next touches storage. Between the two the exposure is the same thing: **time parked without a storage access**. A 45 s command and a 2 MB payload both park the alarm for tens of seconds; a 2 s command parks it for two. That, not the exec mechanism, is why short commands always worked.
+
+Two consequences followed from the same gap. The turn kept running on the dead instance for the whole command, and when its next event hit the gone storage the drain's `for await` broke, which the agent loop reads as the consumer walking away — hence `client-cancelled`, the misleading reason already on the backlog from Cycle 13.
+
+**The fix is containment, not a relay redesign.** `RemoteComputerDO.request` and the v1 wire contract are unchanged. `SessionDO`'s holding alarm now probes its own storage every five seconds while it waits; on failure it cancels the turns it holds with `Abandoned`, skips the storage work in its `finally`, and ends the pass without an exception. A second alarm invocation that arrives while one is already holding — which the 60-second fallback guarantees for any turn over a minute — pushes the fallback out and returns instead of holding the same turns twice. Every alarm pass logs an instance id, because the platform never names which instance ran what.
+
+What this does not do is prevent the reset. It bounds the damage to about five seconds of work on a dead instance and records the turn as abandoned rather than blaming the caller. The 14-minute alarm budget and Section 4's argument for the in-memory pending map are untouched.

@@ -25,6 +25,7 @@ import { newId } from '../utils/id';
 import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
 import { DurableObjectEventSubscriptions } from './durableObjectEventSubscriptions';
 import type { Env } from './env';
+import { INSTANCE_LIVENESS_PROBE_MS, probeInstanceAlive } from './instanceLiveness';
 import { createConsoleLogger } from './logger';
 import { CodeModeBridgeRegistry, type CodeModeDispatchOutcome } from './sandbox/codeModeBridge';
 import { workersSandboxIntegrationFromEnv } from './sandbox/workersSandboxIntegration';
@@ -81,6 +82,15 @@ export interface StartTurnRequest {
 
 export type TurnEventStreamResult = { ok: true; stream: ReadableStream<Uint8Array> } | TurnExecutorFailure;
 
+/** A turn this instance executes. The session id is kept so a lost instance can still abort it. */
+interface RunningTurn {
+  readonly session_id: string;
+  readonly settled: Promise<undefined>;
+}
+
+/** Why an alarm stopped holding its turns. `lost` means the object moved to another instance. */
+type HoldOutcome = 'settled' | 'budget' | 'lost';
+
 function startFailure(error: unknown): TurnExecutorFailure | undefined {
   if (error instanceof D1WriteOutcomeUnknownError) {
     // The write may have committed; a retry could fork the session a second time.
@@ -99,8 +109,14 @@ function startFailure(error: unknown): TurnExecutorFailure | undefined {
 export class SessionDO extends DurableObject {
   readonly #activeTurns = new ActiveTurnRegistry();
   readonly #events: DurableObjectEventSubscriptions<TurnStreamingEvent>;
-  /** Turns this instance runs, from start request to drain end; each promise resolves when its drain settles. */
-  readonly #running = new Map<string, Promise<undefined>>();
+  /** Turns this instance runs, from start request to drain end; `settled` resolves when the drain settles. */
+  readonly #running = new Map<string, RunningTurn>();
+  /** Distinguishes two instances of one object in the logs, which the platform never names. */
+  readonly #instanceId = newId();
+  /** Set once a probe finds the object has moved on; this instance then stops touching its storage. */
+  #instanceLost = false;
+  /** Whether an invocation of this instance is already holding its turns, so a second one leaves. */
+  #holding = false;
   readonly #logger = createConsoleLogger({ level: configuration.LOG_LEVEL, bindings: { component: 'SessionDO' } });
   /** Public so a test can prove the providers it hands out are bound to this object's bridge. */
   readonly sandboxIntegration: SandboxIntegration;
@@ -146,7 +162,7 @@ export class SessionDO extends DurableObject {
       request.session_id,
     );
     const { promise: settled, resolve: settle } = Promise.withResolvers<undefined>();
-    this.#running.set(turnId, settled);
+    this.#running.set(turnId, { session_id: request.session_id, settled });
 
     const notifier = new TurnCompletionNotifier({
       integrationStore: persistence.integrationStore,
@@ -288,6 +304,20 @@ export class SessionDO extends DurableObject {
    * instance's turns run, then prunes expired streams.
    */
   override async alarm(): Promise<void> {
+    // The fallback armed below fires 60 seconds in while the holding invocation may still have
+    // minutes to run. That second invocation would freeze nothing and park on the same promises,
+    // so it only pushes the fallback out and leaves.
+    if (this.#holding) {
+      // Nothing to re-arm once the object has moved on: the instance that took it over owns the alarm.
+      if (!this.#instanceLost) {
+        await this.ctx.storage.setAlarm(Date.now() + WATCHDOG_DELAY_MS);
+      }
+      return;
+    }
+    this.#logger.info('Session alarm pass started', {
+      instanceId: this.#instanceId,
+      holding: this.#running.size,
+    });
     // Counted from entry, so the orphan passes and the wait together stay inside the wall limit.
     const deadline = Date.now() + ALARM_PASS_BUDGET_MS;
     // Stays true if settling orphans throws outright, so the next alarm retries them.
@@ -301,28 +331,39 @@ export class SessionDO extends DurableObject {
         orphansRemain = await this.#freezeOrphans();
       } catch (error) {
         // A failed orphan pass must not stop this invocation from holding the running turns.
-        this.#logger.error(
-          'Watchdog could not read the turns this Durable Object started',
-          extractErrorLogFields(error),
-        );
+        this.#logger.error('Watchdog could not read the turns this Durable Object started', {
+          instanceId: this.#instanceId,
+          ...extractErrorLogFields(error),
+        });
         orphansRemain = true;
       }
-      if (await this.#awaitRunningTurns(deadline)) {
+      const held = await this.#holdRunningTurns(deadline);
+      if (held === 'settled' || held === 'budget') {
         // Clears the rows of the turns that just settled, and any whose start failed meanwhile.
         orphansRemain = await this.#freezeOrphans();
       }
     } finally {
-      const now = Date.now();
-      this.#events.deleteExpired(now);
-      if (this.#running.size > 0) {
-        // The pass budget ran out; the next invocation keeps holding the turns.
-        await this.ctx.storage.setAlarm(now);
-      } else if (orphansRemain) {
-        await this.ctx.storage.setAlarm(now + WATCHDOG_DELAY_MS);
+      // A superseded instance owns nothing: its storage throws, and the instance that took the
+      // object over is the one that must re-arm. Ending the pass quietly keeps the invocation's
+      // outcome honest about whose work was lost.
+      if (this.#instanceLost) {
+        this.#logger.warn('Session alarm pass ended on an instance the object had moved away from', {
+          instanceId: this.#instanceId,
+          holding: this.#running.size,
+        });
       } else {
-        const nextExpiry = this.#events.nextExpiry(now);
-        if (nextExpiry !== undefined) {
-          await this.ctx.storage.setAlarm(nextExpiry);
+        const now = Date.now();
+        this.#events.deleteExpired(now);
+        if (this.#running.size > 0) {
+          // The pass budget ran out; the next invocation keeps holding the turns.
+          await this.ctx.storage.setAlarm(now);
+        } else if (orphansRemain) {
+          await this.ctx.storage.setAlarm(now + WATCHDOG_DELAY_MS);
+        } else {
+          const nextExpiry = this.#events.nextExpiry(now);
+          if (nextExpiry !== undefined) {
+            await this.ctx.storage.setAlarm(nextExpiry);
+          }
         }
       }
     }
@@ -403,30 +444,82 @@ export class SessionDO extends DurableObject {
   }
 
   /**
-   * Waits until no turn runs in this instance, including turns started while waiting, or until the pass
-   * deadline. Returns whether any turn was running.
+   * Holds the invocation until no turn runs in this instance, including turns started while waiting,
+   * until the pass deadline, or until the object has moved to another instance.
    */
-  async #awaitRunningTurns(deadline: number): Promise<boolean> {
+  async #holdRunningTurns(deadline: number): Promise<HoldOutcome | 'none'> {
     if (this.#running.size === 0) {
-      return false;
+      return 'none';
     }
-    const { promise: budgetSpent, resolve: spend } = Promise.withResolvers<boolean>();
+    const { promise: budgetSpent, resolve: spend } = Promise.withResolvers<HoldOutcome>();
     const budget = setTimeout(
       () => {
-        spend(true);
+        spend('budget');
       },
       Math.max(0, deadline - Date.now()),
     );
+    const stopProbing = new AbortController();
+    const lost = this.#awaitInstanceLost(stopProbing.signal);
+    this.#holding = true;
     try {
-      let spent = false;
-      while (this.#running.size > 0 && !spent) {
+      let outcome: HoldOutcome = 'settled';
+      do {
         // Settling the current set only re-checks the map, which may hold turns started meanwhile.
-        spent = await Promise.race([Promise.all(this.#running.values()).then(() => false), budgetSpent]);
+        outcome = await Promise.race([
+          Promise.all([...this.#running.values()].map(turn => turn.settled)).then<HoldOutcome>(() => 'settled'),
+          budgetSpent,
+          lost,
+        ]);
+      } while (this.#running.size > 0 && outcome === 'settled');
+      if (outcome === 'lost') {
+        this.#abandonRunningTurns();
       }
+      return outcome;
     } finally {
+      this.#holding = false;
       clearTimeout(budget);
+      stopProbing.abort();
     }
-    return true;
+  }
+
+  /**
+   * Resolves when this instance no longer owns the object. Nothing tells a superseded instance that
+   * it has been replaced, so a turn parked on a model call or a computer command would run on for
+   * minutes and write its events into storage that has stopped answering.
+   */
+  async #awaitInstanceLost(stop: AbortSignal): Promise<HoldOutcome> {
+    for (;;) {
+      await new Promise<void>(resolve => setTimeout(resolve, INSTANCE_LIVENESS_PROBE_MS));
+      if (stop.aborted) {
+        // The hold is over and something else won the race; never settling leaves it untouched.
+        return new Promise<HoldOutcome>(() => undefined);
+      }
+      try {
+        await probeInstanceAlive(this.ctx.storage);
+      } catch (error) {
+        this.#instanceLost = true;
+        this.#logger.warn('This Durable Object instance no longer owns the object; abandoning its turns', {
+          instanceId: this.#instanceId,
+          holding: this.#running.size,
+          ...extractErrorLogFields(error),
+        });
+        return 'lost';
+      }
+    }
+  }
+
+  /**
+   * Stops the turns of an instance that has been replaced. Without it they end as `client-cancelled`
+   * whenever the drain's next write finds the storage gone, which reads as the caller's doing.
+   */
+  #abandonRunningTurns(): void {
+    for (const [turnId, turn] of this.#running) {
+      this.#activeTurns.cancelIfRunning({
+        sessionId: turn.session_id,
+        turnId,
+        abortReason: CancellationReason.Abandoned,
+      });
+    }
   }
 
   /** Fresh stores per turn or watchdog pass, so the statement count covers one turn or one pass. */
