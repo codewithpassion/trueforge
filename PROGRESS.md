@@ -4,6 +4,35 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 31 — Upstream merge: 74 commits, 35 conflicts, and a patch that deleted itself (2026-09-22)
+
+**Goal:** Merge upstream `origin/main` into the fork without losing the Workers port, remote computers, Slack, or Code Mode.
+
+**What upstream brought:** Web search (`agent_web_search` migration, a provider port on the turn resolver, a `web_search` capability), `active_executor_id` on turns, an outbound URL guard (SSRF) with `NETWORK_POLICY_ENABLED` and host allow/block lists, an mTLS env rename (`TRUEFORGE_MTLS_*` → `MTLS_*`), Postgres TLS and schema config, a per-tenant model-provider allowlist, inline MCP and skill resolution from `x-tfg-*` headers, session rename, agent clone, MCP approval in the builder, and a release to 0.2.0 out of pre mode.
+
+**What we did:**
+
+- **Merged the real tip, not the briefed one.** The task was scoped against `e5e651cd` (58 commits, 18 conflicts). `origin/main` had moved to `0da3794d` — 74 commits, 35 conflicts. `e5e651cd` is an ancestor, so nothing was lost by merging the tip directly, and staging through it would only have meant doing the runtime work twice.
+- **The patch deleted itself.** Upstream #826 moved `@truefoundry/assistant-ui-runtime` into the monorepo as `packages/assistant-ui-runtime`, renamed it `@truefoundry/trueforge-assistant-ui-runtime` (`workspace:*`), and dropped `patchedDependencies` from `pnpm-workspace.yaml` entirely. The briefed job — re-roll our 0.1.37 patch against 0.1.43 — had no npm dependency left to patch. The three additions (`integrationCatalog`, `computerCatalog`, `AgentSandboxConfig.computerId`) become ordinary source edits in a package we now own in-tree. Checked first: the in-repo runtime does not already expose the slots, so the port is still needed.
+- **Deep imports stayed deep.** Upstream consolidated `@truefoundry/trueforge-core/core/...` imports onto the barrel. Our Workers code imports deep paths exclusively and never the barrel, so every import-block conflict was resolved to deep paths plus upstream's new symbol. `winston` `Logger` in `TFYSandboxProvider` stayed on our own logger module for the same reason.
+- **Five files kept our shape.** `config.ts`, `main.ts`, `apis/turns.ts`, `apis/sessions.ts`, `apis/schedules.ts` are seams the Workers port owns: a three-runtime discriminated union instead of upstream's standalone boolean, turn execution behind `TurnExecutor`, cancel in `runtime/nodeTurnExecutor.ts`. Upstream restructured the same code. Taking their side would have deleted the port; taking ours defers their behaviour. We took ours and wrote the deferred list down rather than pretending the merge was complete.
+
+**Lessons learned:**
+
+- Verify the merge base before planning the merge. The briefing's tip, commit count and conflict count were all stale, and the 16 commits nobody mentioned contained the one change that invalidated a whole numbered step.
+- A conflict list is a scope estimate, not a work estimate. Thirty of 35 files were mechanical unions; the remaining five were two teams restructuring the same file in different directions, and those five are most of the real work.
+- When upstream absorbs a dependency you were patching, the patch is not migrated — it is deleted and its content re-homed. Check what the dependency *became* before re-rolling anything against it.
+- Resolving a file to "ours" is a decision to port behaviour later, not a resolution. It has to be recorded as such or it silently becomes a regression.
+
+**Avoid next time:**
+
+- Don't resolve `config.ts`-class files under time pressure. Two competing restructurings of the same config surface cannot be unioned mechanically, and a wrong guess there fails at deploy, not at typecheck.
+- Don't take upstream's barrel imports into a fork whose bundle depends on deep ones — `workers:check` is the only thing that catches it, and it runs late.
+
+**Deferred (not done in this cycle):** the runtime source port and import rename, `pnpm install` / lockfile reconciliation, OpenAPI + SDK regeneration, the D1 migration twins `0006`/`0007` and the Kysely ordering rename, `active_executor_id` in `SessionDO` and the D1 turn queries, upstream's outbound-guard/inline-MCP/tenant-filter wiring into our five kept files, changesets, and the whole verification matrix. None of it was run.
+
+---
+
 ## Cycle 30 — Phase 8b live test: one missing Python package stopped every command (2026-09-22)
 
 **Goal:** Fix what the next live test of remote computers found. A machine with `python3` and `git` but without the `pydantic` package connected fine, and an agent with **no skills** then failed every `exec` with `Sandbox initialization failed: (exit code 1): Traceback ... skill_downloader.py, line 89 ... from pydantic import ...`.
