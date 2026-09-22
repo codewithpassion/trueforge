@@ -34,6 +34,7 @@ export async function executeScheduleRun({
     input: prepared.input,
     previous_turn_id: prepared.previous_turn_id,
     userRef: prepared.userRef,
+    request_metadata: undefined,
     stores: deps.resolveTurnStores(prepared.agent),
   });
   return started.ok ? undefined : started;

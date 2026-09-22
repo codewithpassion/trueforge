@@ -401,6 +401,7 @@ export class IntegrationRouter<TTransaction> {
       input: input.input,
       previous_turn_id: 'auto',
       userRef: integration.created_by_subject.subject_id,
+      request_metadata: undefined,
       stores: resolveTurnStores(input.agent),
     });
     if (!started.ok) {

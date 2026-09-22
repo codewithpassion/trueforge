@@ -46,6 +46,8 @@ export interface TurnStartInput {
   input: TurnInputItem[] | undefined;
   previous_turn_id: string | undefined;
   userRef: string;
+  /** Caller gateway metadata (`x-tfy-metadata`); harness `tfg.*` keys win over it. */
+  request_metadata: Record<string, string> | undefined;
   stores: TurnStores;
 }
 

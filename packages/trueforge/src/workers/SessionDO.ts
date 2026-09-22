@@ -167,6 +167,8 @@ export class SessionDO extends DurableObject {
         input: request.input,
         previous_turn_id: request.previous_turn_id,
         userRef: request.user_ref,
+        // Gateway metadata headers exist only in TrueFoundry mode, which Workers rejects.
+        request_metadata: undefined,
         deps: {
           agentStore: persistence.agentStore,
           modelProviderStore: persistence.modelProviderStore,

@@ -281,6 +281,7 @@ export class NodeTurnExecutor implements TurnExecutor {
       input: input.input,
       previous_turn_id: input.previous_turn_id,
       userRef: input.userRef,
+      request_metadata: input.request_metadata,
       deps: {
         ...input.stores,
         activeTurns: this.#deps.activeTurns,

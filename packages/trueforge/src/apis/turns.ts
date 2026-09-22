@@ -30,6 +30,7 @@ import {
   subscribeTurnRoute,
 } from '../routes/turnRoutes';
 import { validateSandboxFilePath } from '../runtime/sandboxFilePath';
+import { parseGatewayMetadataHeader, X_TFY_METADATA } from '../runtime/sessionResources';
 import type { TurnExecutor } from '../runtime/turnExecutor';
 import { toWireTurn } from '../runtime/turnRunner';
 import type { SandboxIntegration } from '../sandbox/integration';
@@ -379,11 +380,13 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       referencedAgent = agent;
     }
 
+    const rawTfyMetadata = c.req.header(X_TFY_METADATA);
     const startInput = {
       session,
       input: body.input,
       previous_turn_id: body.previous_turn_id,
       userRef: requestContext.subject.id,
+      request_metadata: rawTfyMetadata === undefined ? undefined : parseGatewayMetadataHeader(rawTfyMetadata),
       stores: {
         modelProviderStore: deps.resolveModelProviderStore(c, referencedAgent),
         mcpServerStore: deps.resolveMcpServerStore(c, referencedAgent),

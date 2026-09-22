@@ -16,20 +16,17 @@ import { isAgentInputUserMessage, isFileContentPart } from '@truefoundry/truefor
 import { existingSandboxIdForProvider } from '@truefoundry/trueforge-core/core/sandbox/sandboxRef';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
+import type { IWebSearchProvider } from '@truefoundry/trueforge-core/core/web-search/WebSearchProvider';
 import { HTTPException } from 'hono/http-exception';
 import { REMOTE_COMPUTER_PROVIDER_TYPE, RemoteComputerProvider } from '../computers/RemoteComputerProvider';
 import { computerNotUsableMessage } from '../computers/resolveComputer';
-import configuration, { isTrueFoundryModeEnabled } from '../config';
+import configuration from '../config';
 import type { SandboxIntegration } from '../sandbox/integration';
+import { MAX_SESSION_TITLE_LENGTH } from '../schemas/session';
+import { resolveWebSearchProvider } from '../websearch/providers';
 import type { ActiveTurnRegistry } from './activeTurns';
 import type { EventSubscription, EventSubscriptionRegistry } from './event-subscription';
-import {
-  buildGatewayMetadata,
-  gatewayMetadataHeaders,
-  getMcpConnection,
-  getModelDetails,
-  withGatewayMetadataHeaders,
-} from './sessionResources';
+import { gatewayTurnHeaders, getMcpConnection, getModelDetails, withGatewayMetadataHeaders } from './sessionResources';
 import type { TurnStores } from './turnExecutor';
 
 export function toWireTurn(record: TurnRecordWithoutSnapshot): Turn {
@@ -76,6 +73,8 @@ function createTurnResolver(
     userRef: string;
     session: SessionHandle;
     turnId: string;
+    turnHeaders: Record<string, string>;
+    webSearchProvider: IWebSearchProvider | undefined;
   },
 ): TurnResourceResolver {
   const {
@@ -90,12 +89,11 @@ function createTurnResolver(
     userRef,
     session,
     turnId,
+    turnHeaders,
+    webSearchProvider,
   } = deps;
   const tenant_id = session.tenant_id;
   const sessionId = session.session_id;
-  const metadataHeaders = isTrueFoundryModeEnabled()
-    ? gatewayMetadataHeaders(buildGatewayMetadata({ session, turnId }))
-    : {};
 
   return new TurnResourceResolver({
     llm: async name => {
@@ -108,7 +106,7 @@ function createTurnResolver(
         modelClient: new VercelAILLM({
           providerConfig: {
             ...resolved.providerConfig,
-            headers: { ...resolved.providerConfig.headers, ...metadataHeaders },
+            headers: { ...resolved.providerConfig.headers, ...turnHeaders },
           },
           logger,
           signal,
@@ -133,12 +131,13 @@ function createTurnResolver(
         url: connection.url,
         headers: withGatewayMetadataHeaders({
           headers: connection.headers,
-          metadataHeaders,
+          metadataHeaders: turnHeaders,
         }),
       };
     },
     mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,
     mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
+    mcpMaxResponseBytes: configuration.MCP_TOOL_CALL_MAX_RESPONSE_BYTES,
     // Stays wired without an integration so sandbox-enabled specs get the 422 below instead of running sandbox-less.
     sandboxProvider: async ({ spec, existingSandboxId, tracing }) => {
       const computerId = spec.config.sandbox.computer_id;
@@ -229,11 +228,10 @@ function createTurnResolver(
       }
       return record.manifest;
     },
+    webSearchProvider,
     logger,
   });
 }
-
-const MAX_SESSION_TITLE_LENGTH = 50;
 
 /**
  * Derives a session title from the first user message of the first turn. Returns the
@@ -345,6 +343,7 @@ export async function beginTurnExecution(params: {
   input: TurnInputItem[] | undefined;
   previous_turn_id: string | undefined;
   userRef: string;
+  request_metadata: Record<string, string> | undefined;
   deps: BeginTurnExecutionDeps;
 }): Promise<{ turn: TurnHandle; drainInput: TurnEventDrainInput }> {
   const {
@@ -354,6 +353,7 @@ export async function beginTurnExecution(params: {
     input,
     previous_turn_id: previousTurnId,
     userRef,
+    request_metadata: requestMetadata,
     deps,
   } = params;
   const sessionId = session.session_id;
@@ -372,6 +372,8 @@ export async function beginTurnExecution(params: {
     userRef,
     session,
     turnId,
+    turnHeaders: gatewayTurnHeaders({ session, turnId, requestMetadata }),
+    webSearchProvider: resolveWebSearchProvider(),
   });
 
   // First turn only: derive the title from the first user message. The store
@@ -430,6 +432,7 @@ export async function startTurnInProcess(params: {
   input: TurnInputItem[] | undefined;
   previous_turn_id: string | undefined;
   userRef: string;
+  request_metadata: Record<string, string> | undefined;
   deps: BeginTurnExecutionDeps;
 }): Promise<{ turn: TurnHandle; drained: Promise<void> }> {
   const { turn, drainInput } = await beginTurnExecution(params);
