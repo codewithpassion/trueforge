@@ -4,7 +4,7 @@ import { isAuthRequired } from '@truefoundry/trueforge-core/core/mcp/IMCPServer'
 import { RemoteMCP } from '@truefoundry/trueforge-core/core/mcp/RemoteMCP';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import { assertSafeOutboundUrl } from '@truefoundry/trueforge-core/core/util/ssrfGuard';
+import { assertOutboundUrl } from '@truefoundry/trueforge-core/core/util/outboundFetch';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { ResolveRequestContext } from '../auth/identity';
@@ -195,7 +195,7 @@ export function createSettingsMcpServersRouter<TTransaction>(deps: McpServersRou
     const incomingManifest = body.manifest;
 
     try {
-      await assertSafeOutboundUrl(incomingManifest.url);
+      await assertOutboundUrl(incomingManifest.url);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Outbound URL blocked';
       return c.json({ error: { message } }, 400);
@@ -272,7 +272,7 @@ export function createSettingsMcpServersRouter<TTransaction>(deps: McpServersRou
     const incomingManifest = body.manifest;
 
     try {
-      await assertSafeOutboundUrl(incomingManifest.url);
+      await assertOutboundUrl(incomingManifest.url);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Outbound URL blocked';
       return c.json({ error: { message } }, 400);

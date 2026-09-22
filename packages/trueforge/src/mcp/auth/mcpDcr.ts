@@ -14,7 +14,7 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { McpConnectionError, McpDcrConfigurationError } from '@truefoundry/trueforge-core/core/errors';
-import { ssrfFetch } from '@truefoundry/trueforge-core/core/util/ssrfGuard';
+import { outboundFetch } from '@truefoundry/trueforge-core/core/util/outboundFetch';
 import { randomBytes } from 'node:crypto';
 import {
   isOAuthAccessTokenUsable,
@@ -44,7 +44,7 @@ export const MCP_OAUTH_HTTP_TIMEOUT_MS = 15_000;
 const mcpOAuthFetch: FetchLike = async (url, init) => {
   const timeoutSignal = AbortSignal.timeout(MCP_OAUTH_HTTP_TIMEOUT_MS);
   const signal = init?.signal != null ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
-  return ssrfFetch(url, { ...init, signal });
+  return outboundFetch(url, { ...init, signal });
 };
 
 function isTimeoutError(error: unknown): boolean {

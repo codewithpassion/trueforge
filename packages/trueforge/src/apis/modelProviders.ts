@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import { assertSafeOutboundUrl } from '@truefoundry/trueforge-core/core/util/ssrfGuard';
+import { assertOutboundUrl } from '@truefoundry/trueforge-core/core/util/outboundFetch';
 import type { Context } from 'hono';
 import type { ResolveRequestContext } from '../auth/identity';
 import {
@@ -80,7 +80,7 @@ export function createModelProvidersRouter<TTransaction>(deps: ModelProvidersRou
     const provider = body.manifest;
     const name = modelProviderName(provider);
     try {
-      await assertSafeOutboundUrl(provider.base_url);
+      await assertOutboundUrl(provider.base_url);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Outbound URL blocked';
       return c.json({ error: { message } }, 400);
@@ -112,7 +112,7 @@ export function createModelProvidersRouter<TTransaction>(deps: ModelProvidersRou
     const provider = body.manifest;
     const name = modelProviderName(provider);
     try {
-      await assertSafeOutboundUrl(provider.base_url);
+      await assertOutboundUrl(provider.base_url);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Outbound URL blocked';
       return c.json({ error: { message } }, 400);

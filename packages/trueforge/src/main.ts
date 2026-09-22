@@ -11,6 +11,7 @@
  * Postgres store modules stay dynamic so only the active engine is loaded.
  */
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
+import { configureOutboundUrlGuard } from '@truefoundry/trueforge-core/core/util/ssrfGuard';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -33,6 +34,11 @@ try {
   }
   configuration = loadedConfiguration;
   ({ isTrueFoundryModeEnabled, getTrueForgeAuthMode, getPublicUiBasePath, TrueForgeAuthMode } = loaded);
+  configureOutboundUrlGuard({
+    enabled: configuration.NETWORK_POLICY_ENABLED,
+    allowedHosts: configuration.OUTBOUND_URL_ALLOWED_HOSTS,
+    blockedHosts: configuration.OUTBOUND_URL_BLOCKED_HOSTS,
+  });
 } catch (error) {
   console.error(
     'Failed to start server: Failed to load configuration:',

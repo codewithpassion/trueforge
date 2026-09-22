@@ -3,6 +3,7 @@ import { lookup as dnsLookup } from 'node:dns';
 import { lookup as dnsLookupAsync } from 'node:dns/promises';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
 import { Agent, fetch as undiciFetch } from 'undici';
+import { setOutboundPolicy } from './outboundFetch';
 
 let allowedHosts: string[] = [];
 let blockedHosts: string[] = [];
@@ -73,11 +74,13 @@ const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const CROSS_ORIGIN_STRIPPED_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'host'];
 
+/** Also routes outbound traffic through this guard, so a Node host calls this once at startup. */
 export function configureOutboundUrlGuard(config: {
   enabled?: boolean;
   allowedHosts: readonly string[];
   blockedHosts: readonly string[];
 }): void {
+  setOutboundPolicy({ fetch: ssrfFetch, mcpFetch: mcpSsrfFetch, assertUrl: assertSafeOutboundUrl });
   guardEnabled = config.enabled ?? true;
   allowedHosts = config.allowedHosts.map(normalizeHost);
   blockedHosts = config.blockedHosts.map(normalizeHost);
