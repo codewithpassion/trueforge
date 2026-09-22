@@ -123,6 +123,8 @@ export interface AgentCapabilityConfig {
 
 export interface AgentSandboxConfig extends AgentCapabilityConfig {
   fileDownloads?: boolean;
+  /** Run on this enrolled machine instead of the tenant sandbox provider. */
+  computerId?: string;
 }
 
 export interface AgentInputTokensCompactionTrigger {
@@ -801,9 +803,210 @@ export type ConnectorState = ConnectorSelectorEntry;
 export type AgentLibraryEntry = AgentSelectorEntry;
 export type SearchAgentsParams = SearchAgentSelectorParams;
 
+/** A finished schedule run posted to a channel; the outcome filter is always explicit. */
+export interface IntegrationNotificationRule {
+  /** Schedule whose runs are posted. */
+  scheduleName: string;
+  /** Channel the result goes to. Separate from `allowedChannelIds`, which is where the bot listens. */
+  channelId: string;
+  outcome: 'any' | 'success' | 'failure';
+}
+
+/** Whether a channel integration still needs the credentials its app issues. */
+export type IntegrationStatus = 'pending' | 'connected';
+
+/** One channel connection in settings. Credentials are never read back. */
+export interface IntegrationBase {
+  id: string;
+  /** Channel type (e.g. `"slack"`). */
+  type: string;
+  status: IntegrationStatus;
+  /** Name the bot shows in the channel. */
+  botDisplayName: string;
+  /** Agent that answers messages arriving on this channel. */
+  defaultAgentName: string;
+  /** Allowlist; an empty list allows no channel. */
+  allowedChannelIds: string[];
+  allowDirectMessages: boolean;
+  /** Channel users allowed to decide a tool approval. Empty allows nobody. */
+  approverUserIds: string[];
+  /** Schedule results posted to a channel. */
+  notificationRules: IntegrationNotificationRule[];
+  /** Channel-side workspace, known once the integration is connected. */
+  externalAccountId?: string;
+}
+
+/** Credentials the channel's app issues after it is installed. */
+export interface IntegrationAuthInput {
+  botToken: string;
+  signingSecret: string;
+}
+
+export interface CreateIntegrationRequest {
+  type: string;
+  botDisplayName: string;
+  defaultAgentName: string;
+  allowedChannelIds: string[];
+  allowDirectMessages: boolean;
+  /** Channel users allowed to decide a tool approval. Empty allows nobody. */
+  approverUserIds: string[];
+  /** Schedule results posted to a channel. */
+  notificationRules: IntegrationNotificationRule[];
+}
+
+export interface UpdateIntegrationRequest {
+  id: string;
+  botDisplayName: string;
+  defaultAgentName: string;
+  allowedChannelIds: string[];
+  allowDirectMessages: boolean;
+  /** Channel users allowed to decide a tool approval. Empty allows nobody. */
+  approverUserIds: string[];
+  /** Schedule results posted to a channel. */
+  notificationRules: IntegrationNotificationRule[];
+  /** Omit to keep the stored credentials; send both to connect or rotate. */
+  auth?: IntegrationAuthInput;
+}
+
+/** What the host pastes into the channel's app builder to create the app. */
+export interface IntegrationSetupManifest {
+  /** URL the channel posts events to. */
+  requestUrl: string;
+  /** URL the channel posts button clicks to. */
+  interactionsRequestUrl: string;
+  /** App manifest document, ready to copy. */
+  manifestJson: string;
+  /** Where the channel's app builder accepts the manifest. */
+  createAppUrl: string;
+}
+
+/** Where a computer stands. `pending` until it first enrolls; `revoked` is terminal. */
+export type ComputerStatus = 'pending' | 'online' | 'offline' | 'revoked';
+
+/** Kinds of operation the audit records. */
+export type ComputerAuditOp = 'exec' | 'file_put' | 'file_get';
+
+/** What the machine reported it has. */
+export interface ComputerTools {
+  python3: boolean;
+  git: boolean;
+}
+
+/** One enrolled machine. Everything the machine reports stays null until it first connects. */
+export interface ComputerBase {
+  id: string;
+  name: string;
+  status: ComputerStatus;
+  hostname: string | null;
+  os: string | null;
+  arch: string | null;
+  agentVersion: string | null;
+  tools: ComputerTools | null;
+  /** Account the machine's own daemon runs commands as. */
+  runAsUser: string | null;
+  /** Ask a person before each command. */
+  requireApproval: boolean;
+  /** ISO-8601 instant of the last heartbeat. */
+  lastSeenAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The one-time code and the two commands that carry it. Returned by create and rotate only. */
+export interface ComputerEnrollment {
+  /** Single-use, valid for 15 minutes, shown once. */
+  enrollmentCode: string;
+  installCommand: string;
+  /** Null when the server has no client image configured. */
+  dockerCommand: string | null;
+}
+
+export interface CreateComputerRequest {
+  name: string;
+  requireApproval: boolean;
+}
+
+/** Omitted fields keep their stored value. */
+export interface UpdateComputerRequest {
+  computerId: string;
+  name?: string;
+  requireApproval?: boolean;
+}
+
+/** One line of what ran on a machine. */
+export interface ComputerAuditEntry {
+  id: string;
+  computerId: string;
+  /** The name the computer had when this ran; it may since have gone. */
+  computerName: string;
+  sessionId: string | null;
+  turnId: string | null;
+  op: ComputerAuditOp;
+  /** The command, or the path for a file operation. */
+  command: string;
+  /** Null when the outcome never came back. */
+  exitCode: number | null;
+  /** `ok`, or why it did not finish. */
+  outcome: string;
+  durationMs: number;
+  bytesOut: number;
+  createdAt: string;
+}
+
+export interface ListComputerAuditParams {
+  computerId: string;
+  limit?: number;
+  pageToken?: string;
+}
+
+/**
+ * Machines a tenant has enrolled: add one, say which agents may use it, and read what
+ * ran on it. Agents are named here and resolved to ids by the server.
+ */
+export interface ComputerCatalogServer<
+  TComputer extends ComputerBase = ComputerBase,
+  TCreate extends CreateComputerRequest = CreateComputerRequest,
+  TUpdate extends UpdateComputerRequest = UpdateComputerRequest,
+  TEnrollment extends ComputerEnrollment = ComputerEnrollment,
+  TAudit extends ComputerAuditEntry = ComputerAuditEntry,
+> {
+  listComputers(): Promise<TComputer[]>;
+  /** The enrollment is the only time its code is readable. */
+  createComputer(req: TCreate): Promise<{ computer: TComputer; enrollment: TEnrollment }>;
+  getComputer(req: { computerId: string }): Promise<TComputer>;
+  updateComputer(req: TUpdate): Promise<TComputer>;
+  /** Refused while an agent is still granted. */
+  deleteComputer(req: { computerId: string }): Promise<void>;
+  getComputerAgentAccess(req: { computerId: string }): Promise<string[]>;
+  /** Replaces the whole allowlist; rejects a name no saved agent answers to. */
+  putComputerAgentAccess(req: { computerId: string; agentNames: string[] }): Promise<string[]>;
+  /** A fresh one-time code; the machine has to enroll again. */
+  rotateComputerEnrollment(req: { computerId: string }): Promise<TEnrollment>;
+  /** Terminal: the credential is dropped and the live connection closes. */
+  revokeComputer(req: { computerId: string }): Promise<TComputer>;
+  listComputerAudit(req: ListComputerAuditParams): Promise<ListResult<TAudit>>;
+}
+
+/**
+ * Channel integrations (Slack and the like): create one, read the app manifest it
+ * needs, then save the credentials the installed app issues.
+ */
+export interface IntegrationCatalogServer<
+  TIntegration extends IntegrationBase = IntegrationBase,
+  TCreate extends CreateIntegrationRequest = CreateIntegrationRequest,
+  TUpdate extends UpdateIntegrationRequest = UpdateIntegrationRequest,
+  TSetup extends IntegrationSetupManifest = IntegrationSetupManifest,
+> {
+  listIntegrations(): Promise<TIntegration[]>;
+  createIntegration(req: TCreate): Promise<TIntegration>;
+  updateIntegration(req: TUpdate): Promise<TIntegration>;
+  deleteIntegration(req: { id: string }): Promise<void>;
+  getIntegrationSetupManifest(req: { id: string }): Promise<TSetup>;
+}
+
 /**
  * Settings management aggregate — modelCatalog + connectorCatalog + optional
- * skill and sandbox catalogs.
+ * skill, sandbox, integration and computer catalogs.
  * Hosts may pass the whole object to an app shell, or a focused sub-port to a page.
  */
 export interface CatalogServer<
@@ -811,6 +1014,8 @@ export interface CatalogServer<
   TConnectorCatalog extends ConnectorCatalogServer = ConnectorCatalogServer,
   TSkillCatalog extends SkillCatalogServer = SkillCatalogServer,
   TSandboxCatalog extends SandboxCatalogServer = SandboxCatalogServer,
+  TIntegrationCatalog extends IntegrationCatalogServer = IntegrationCatalogServer,
+  TComputerCatalog extends ComputerCatalogServer = ComputerCatalogServer,
 > {
   modelCatalog: TModelCatalog;
   connectorCatalog: TConnectorCatalog;
@@ -818,6 +1023,10 @@ export interface CatalogServer<
   skillCatalog?: TSkillCatalog;
   /** Optional — omit when the host has no sandboxes settings surface. */
   sandboxCatalog?: TSandboxCatalog;
+  /** Optional — omit when the host has no channel-integrations settings surface. */
+  integrationCatalog?: TIntegrationCatalog;
+  /** Optional — omit when the host has no remote-computers settings surface. */
+  computerCatalog?: TComputerCatalog;
 }
 
 // ---------------------------------------------------------------------------
