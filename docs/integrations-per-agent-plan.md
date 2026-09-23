@@ -2,7 +2,7 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation.
 
-Status: proposed 2026-09-23. Builds on `docs/integrations-slack-plan.md` (phases I1–I4).
+Status: proposed 2026-09-23. Builds on `docs/integrations-slack-plan.md` (phases I1–I4). P1 and P2 landed and were deployed on 2026-09-23 (Workers version `69e8103c`, D1 migration `0008`). The P3 docs update is done; the P3 live Slack workspace test is still pending and needs a real Slack app, the same blocker as I2.4. Section 1 describes the state before P1.
 
 Goal: a Slack integration belongs to an agent. It is created, edited and deleted from that agent's page by the people who manage the agent, not from the admin Settings section.
 
@@ -41,7 +41,7 @@ The unique key becomes `(tenant_id, type, external_account_id, agent_id)`. The s
 
 ### 2.2 Migrating existing rows
 
-One migration per backend, paired as the port plan requires: Kysely SQLite, Kysely Postgres, and `migrations/d1/0005_integration_agent.sql`.
+One migration per backend, paired as the port plan requires: Kysely SQLite, Kysely Postgres, and `migrations/d1/0008_integration_agent.sql`.
 
 1. Add `agent_id` and `agent_name` as nullable.
 2. Backfill from `manifest.default_agent_name`, joining `agent` on `(tenant_id, name)`: `json_extract(manifest, '$.default_agent_name')` on SQLite/D1, `manifest->>'default_agent_name'` on Postgres.

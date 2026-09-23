@@ -2,18 +2,11 @@
 
 Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation.
 
-Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4). Phase I2.5 landed on 2026-09-21: connecting a workspace is now a Settings section, reached through an `integrationCatalog` slot added to `CatalogServer` by a types-only `pnpm patch` of `@truefoundry/assistant-ui-runtime` (`patches/@truefoundry__assistant-ui-runtime@0.1.37.patch`), and TrueForge generates the Slack app manifest rather than asking people to build the app by hand (Section 3.1). Phases I3 (approvals and questions) and I4 (notification rules) landed on 2026-09-21, apart from their live workspace test, which shares I2.4's blocker.
+Status: Phase I1 (the layer) landed on 2026-09-16. Phase I2 (Slack messaging) landed on 2026-09-17 apart from the live workspace test (I2.4). Phase I2.5 landed on 2026-09-21: a UI to connect a workspace, and TrueForge generates the Slack app manifest rather than asking people to build the app by hand (Section 3.1). Phases I3 (approvals and questions) and I4 (notification rules) landed on 2026-09-21, apart from their live workspace test, which shares I2.4's blocker.
 
 > **An app created from an earlier manifest does not have interactivity.** The generated manifest now carries an `interactivity` block pointing at `/api/v1/integrations/<id>/interactions`; an existing Slack app must be updated from the regenerated manifest before any button works. Nothing else about an installed app changes: the scopes and subscriptions are the same three and two.
 
-> **Do not publish `@truefoundry/trueforge-ui` while that patch is in place.** It is workspace-local, and the package's built `.d.ts` re-exports the new port types by name from `@truefoundry/assistant-ui-runtime/server`. Deploying this fork is unaffected, because it does not publish trueforge-ui. Publishing is unblocked when the slot ships upstream and the patch is dropped — which is also the moment the patch stops needing to be re-rolled by hand, since its filename `dist/types-hS8TQqBP.d.ts` carries a content hash and will not survive a version bump.
->
-> Measured, not assumed: `pnpm pack` of `@truefoundry/trueforge-ui@0.3.0-rc.8` installed into a bare project alongside stock `@truefoundry/assistant-ui-runtime@0.1.37`, then `tsc --noEmit`:
->
-> - with `skipLibCheck: false`, seven `TS2305` errors in `node_modules/@truefoundry/trueforge-ui/dist/index.d.ts` line 5 — `Module '"@truefoundry/assistant-ui-runtime/server"' has no exported member` for `CreateIntegrationRequest`, `IntegrationAuthInput`, `IntegrationBase`, `IntegrationCatalogServer`, `IntegrationSetupManifest`, `IntegrationStatus` and `UpdateIntegrationRequest`;
-> - with `skipLibCheck: true` (the usual default) those are suppressed and the imported names silently degrade, but any real use still fails: `CatalogServer['integrationCatalog']` gives `TS2339 Property 'integrationCatalog' does not exist on type 'CatalogServer<…>'`.
->
-> **The upstream request is therefore exactly:** add an optional `integrationCatalog?: TIntegrationCatalog` slot to `CatalogServer` with a `TIntegrationCatalog extends IntegrationCatalogServer = IntegrationCatalogServer` parameter, and export `IntegrationCatalogServer`, `IntegrationBase`, `IntegrationStatus`, `IntegrationAuthInput`, `IntegrationSetupManifest`, `CreateIntegrationRequest` and `UpdateIntegrationRequest` from `src/server/types.ts` and its barrel. The patch in this repo is that change and can be sent as-is.
+Integrations belong to agents since the per-agent change; its design and migration are in `docs/integrations-per-agent-plan.md`.
 
 Goal: let people talk to TrueForge agents from Slack, and let agents and schedules post results back to Slack. Build a small integrations layer first, then ship Slack as its first channel. It must run on both the Node deploy and the Workers deploy.
 
@@ -32,7 +25,7 @@ Non-goals:
 
 **Sessions keyed by an outside id.** `POST /api/internal/sessions/get-or-create-by-external-id` returns the session for an `external_id` that is unique per tenant, or creates it. `external_id` is at most 128 characters. Session `source` is a discriminated schema, `SessionSourceSchema` in `trueforge-core/src/agent-session/schemas/session.ts`, and today its only variant is `{ type: "schedule", id, run_id }`.
 
-**Running as a user without a request.** Schedules store `created_by_subject` and rebuild a request context with `requestContextFromCreatedBySubject` in `src/auth/identity.ts`. An integration runs turns the same way, as the admin who connected it.
+**Running as a user without a request.** Schedules store `created_by_subject` and rebuild a request context with `requestContextFromCreatedBySubject` in `src/auth/identity.ts`. An integration runs turns the same way, as the person who connected it.
 
 **Auth.** API routes accept an OIDC bearer token or login cookie (`src/auth/token.ts`). The only service key, `TRUEFORGE_API_KEY`, is Node-only and gates the internal schedule execution route. An external Slack webhook therefore cannot call the existing API. It needs its own ingress route that verifies Slack's signature instead of user auth.
 
@@ -49,8 +42,7 @@ Modules live in `packages/trueforge/src/integrations/`. Channel code never impor
 
 ### 2.1 Concepts
 
-- **Integration.** One configured connection per tenant and channel type, such as one Slack workspace. It is stored as a manifest (see 2.3) and carries:
-  - the default agent name,
+- **Integration.** One agent's connection to one channel account, such as a Slack workspace. It belongs to exactly one agent, fixed at creation; there is no default agent. Several agents may connect to the same workspace, each through its own Slack app. It is stored as a row bound to the agent plus a manifest (see 2.3), and carries:
   - allowed conversations,
   - credentials, redacted on read,
   - `created_by_subject`.
@@ -85,8 +77,10 @@ interface ChannelAdapter<TManifest> {
 
 New tables, with the migration paired across Kysely SQLite and Postgres and D1 `.sql` (see the port plan's pairing rule):
 
-- **`integration`:** `tenant_id`, `id`, `type`, `manifest` (jsonb/json), `created_by_subject`, `created_at`, `updated_at`.
-  - Unique on (`tenant_id`, `type`, `external_account_id`), for example the Slack `team_id`.
+- **`integration`:** `tenant_id`, `id`, `agent_id`, `agent_name`, `type`, `external_account_id`, `manifest` (jsonb/json), `created_by_subject`, `created_at`, `updated_at`.
+  - `agent_id` references `agent(id)` with `ON DELETE CASCADE` and never changes; deleting an agent deletes its integrations. `agent_name` is a create-time snapshot, as on `schedule`.
+  - Unique on (`tenant_id`, `type`, `external_account_id`, `agent_id`), where `external_account_id` is the Slack `team_id`, so one workspace holds at most one integration per agent. A pending integration stands on `pending:<integration_id>`.
+  - The agent columns came with migration `20260923_000001_integration_agent` (Kysely SQLite and Postgres) and `migrations/d1/0008_integration_agent.sql`. It moved `manifest.default_agent_name` into them and stops on an integration whose agent no longer exists.
 - **`integration_event`:** `integration_id`, `event_id`, `received_at`.
   - Unique on (`integration_id`, `event_id`) for replay and retry dedupe.
   - Rows older than 24 hours are pruned by the `SchedulerDO` alarm on Workers and by the controller on Node.
@@ -109,11 +103,13 @@ Schemas:
 
 ### 2.4 API
 
-Admin settings routes, following the repo's OpenAPI naming convention:
+CRUD routes under `/api/v1/integrations`, Fern group `integrations`, following the repo's OpenAPI naming convention:
 
-- `GET /api/v1/settings/integrations` returns `ListIntegrationsResponse`.
-- `POST /api/v1/settings/integrations` takes `CreateIntegrationRequest { manifest }` and returns `201` `GetIntegrationResponse`.
-- `GET`, `PUT`, and `DELETE /api/v1/settings/integrations/{integration_id}`.
+- `GET /api/v1/integrations?agent_names=…` returns `ListIntegrationsResponse`.
+- `POST /api/v1/integrations` takes `CreateIntegrationRequest { agent_name, manifest }` and returns `201` `GetIntegrationResponse`.
+- `GET`, `PUT`, and `DELETE /api/v1/integrations/{integration_id}`. `PUT` takes `{ manifest }` only: an integration cannot move to another agent.
+- `GET /api/v1/integrations/{integration_id}/app-manifest` (Section 3.1) and `/decisions` (Section 6).
+- User auth is bound to these paths one by one rather than to the whole prefix, so the ingress routes below stay unauthenticated.
 - Credentials are redacted on read. On `PUT`, a redacted value keeps the stored secret, the same pattern as the Daytona `api_key`. A `PUT` that moves the integration to another channel account while sending a redacted credential is rejected, since the stored secret belongs to the old account. That check compares `external_account_id` alone; once a second channel type exists it must compare `(type, external_account_id)`, and `type` has to become updatable.
 
 Ingress for channels, with no user auth middleware:
@@ -125,7 +121,8 @@ After schema changes, regenerate OpenAPI with `pnpm openapi:write` and the SDK t
 
 ### 2.5 Identity and permissions
 
-- **Run-as user.** Turns run as the integration's `created_by_subject`, like schedules, so an admin connects Slack and the bot acts with that admin's agent access.
+- **Who may manage an integration.** Creating one requires permission to manage its agent. Reading, updating, deleting, and the app-manifest and decisions routes are open to the integration's creator, a manager of its agent, or an admin. The list returns what the caller created plus the integrations of agents the caller manages; admins see all. The agent's Integrations tab enables Add, Save and Disconnect only for agent managers.
+- **Run-as user.** Turns run as the integration's `created_by_subject`, like schedules: the bot acts with the agent access of the person who connected it.
 - **Sender recorded.** The Slack sender's id and display name go into session `metadata`, but they do not change permissions in I2.
 - **Per-sender identity** (mapping Slack users to OIDC subjects) is deferred. It needs a linking flow and is not required to ship.
 - **Deleting an integration** stops ingress at once. Existing sessions stay.
@@ -137,7 +134,6 @@ Slack adapter in `src/integrations/slack/`.
 **Manifest (`type: "slack"`):**
 
 - `bot_display_name`, the name the person chooses for the app and its bot user
-- `default_agent_name`
 - `allowed_channel_ids` (empty means none are allowed; a DM with the bot is allowed when `allow_direct_messages` is true)
 - `reply_mode` (`thread`)
 - `approver_slack_user_ids` (empty allows nobody to approve) and `notification_rules` (Phase I4)
@@ -147,12 +143,12 @@ Slack adapter in `src/integrations/slack/`.
 
 The app cannot exist before its request URL does, and its credentials cannot exist before the app does, so the order is fixed:
 
-1. Create the integration with a bot name and an agent. It is `pending`: no workspace, no bot user, no credentials, and `external_account_id` stands on the integration's own id so two pending integrations do not collide on the unique key.
-2. `GET /api/v1/settings/integrations/{integration_id}/app-manifest` builds the manifest from the bot name and `<PUBLIC_BASE_URL>/api/v1/integrations/<id>/events`. Scopes, event subscriptions and the interaction `action_id`s come from `src/integrations/slack/appCapabilities.ts`, the same list `slack/events.ts` and `slack/interactions.ts` parse against, so the generated app and the adapter cannot drift. Since I3 the manifest also carries `interactivity`, pointing at `<PUBLIC_BASE_URL>/api/v1/integrations/<id>/interactions`.
+1. Create the integration with a bot name from the agent's Integrations tab, which binds it to that agent. It is `pending`: no workspace, no bot user, no credentials, and `external_account_id` stands on the integration's own id so two pending integrations do not collide on the unique key.
+2. `GET /api/v1/integrations/{integration_id}/app-manifest` builds the manifest from the bot name and `<PUBLIC_BASE_URL>/api/v1/integrations/<id>/events`. Scopes, event subscriptions and the interaction `action_id`s come from `src/integrations/slack/appCapabilities.ts`, the same list `slack/events.ts` and `slack/interactions.ts` parse against, so the generated app and the adapter cannot drift. Since I3 the manifest also carries `interactivity`, pointing at `<PUBLIC_BASE_URL>/api/v1/integrations/<id>/interactions`.
 3. The person pastes it into Slack. **Slack posts the `url_verification` challenge while it creates the app**, before the signing secret exists on this side, so a pending integration answers the challenge unsigned and refuses everything else with `409`. Once credentials are stored the signature is required again, challenge included — the unsigned branch is unreachable from then on.
-4. Saving the bot token calls `auth.test` (30 s timeout, token only in the Authorization header, never logged) and stores the `team_id` and `bot_user_id` it returns. A token naming another workspace is `409`; one Slack refuses is `502` and the integration stays pending.
+4. Saving the bot token calls `auth.test` (30 s timeout, token only in the Authorization header, never logged) and stores the `team_id` and `bot_user_id` it returns. A token naming another workspace is `409`; one Slack refuses is `422`, Slack being unreachable is `502`, and in both cases the integration stays pending.
 
-Bot names are constrained to what both Slack fields accept — up to 35 characters of `a-z`, `0-9`, `.`, `-`, `_` — since `display_information.name` caps at 35 and `features.bot_user.display_name` restricts the character set.
+The bot name is free text of up to 35 characters, Slack's cap on `display_information.name`, and may not contain "slack". The bot user's display name is derived from it, since `features.bot_user.display_name` accepts only `a-z`, `0-9`, `.`, `-`, `_`; a name that leaves no letter or digit after that is refused.
 
 **Inbound flow:**
 
@@ -205,7 +201,7 @@ Each phase follows the port process:
 ### Phase I2: Slack messaging
 
 1. The Slack adapter: signature verification, parsing, filtering, mention stripping, mrkdwn conversion, chunking, and `chat.postMessage` over `fetch`. No Slack SDK is needed.
-2. A settings UI section to connect Slack. It shipped first as a host page in `packages/frontend`, and moved into `SettingsBuilder` in I2.5 once `CatalogServer` gained an `integrationCatalog` slot through a types-only `pnpm patch`; the host page, its route helper and its nav override were deleted in the same change.
+2. A settings UI section to connect Slack. It shipped first as a host page in `packages/frontend`, and moved into `SettingsBuilder` in I2.5 once `CatalogServer` gained an `integrationCatalog` slot through a types-only `pnpm patch`; the host page, its route helper and its nav override were deleted in the same change. The per-agent change later moved it to the agent's Integrations tab and removed the Settings section.
 3. Tests:
    - signature fixtures (valid, bad signature, stale timestamp, wrong secret),
    - `url_verification`,
@@ -242,7 +238,7 @@ Each phase follows the port process:
 - **A rule never posts buttons.** A click on a channel post derives `slack:<team>:<channel>:<message_ts>`, which is not the run session's `external_id`, so the resume could never find the turn — and the layer deliberately does not take session identity from the button. A held run is reported as a status line instead, and the decision is taken in TrueForge.
 - **One delivery per rule per turn**, collapsed per channel: two rules naming the same channel both match, and the unique `(turn_id, conversation_key)` key lets only the first row land, so nobody is told twice. That collapse is the definition of "one per rule".
 - **Rule channels are separate from `allowed_channel_ids`** — one is where the bot posts, the other where it listens — and the bot must be invited to the posting channel, because `chat:write` alone does not reach a channel it is not in. Adding `chat:write.public` would be a scope change requiring a reinstall, so the guide says "invite the bot" instead.
-- **Added D1 statements per finished schedule turn:** 1 (`listIntegrations`). If no connected integration carries a rule, that is the whole cost. Otherwise +1 `getSchedule` (the session source carries the schedule id; rules name it), +1 turn read, and per matching channel 3 (enqueue, claim, settle) — so `2 + 1 + 3N`. A turn from any other source costs nothing new.
+- **Added D1 statements per finished schedule turn:** 1 (`listIntegrations`). If no connected integration carries a rule, that is the whole cost. Otherwise +1 `getSchedule` (the session source carries the schedule id; rules name it), +1 turn read, and per matching channel 3 (enqueue, claim, settle) — so `2 + 1 + 3N`. A turn from any other source costs nothing new. Since the per-agent change the schedule is read first and only its agent's integrations are listed, so the base cost is always 2; a rule no longer matches another agent's schedule of the same name.
 - **Why not MCP.** Posting stays out of the agent's tool set, so results arrive even when the agent does not call a Slack tool.
 
 ## 5. Rules
@@ -256,16 +252,15 @@ Each phase follows the port process:
 ## 6. Risks and open questions
 
 - **Busy threads.** Several messages in one thread while a turn runs. I2 replies "still working"; queuing follow-up messages is a later option.
-- **Run-as admin.** The bot runs with the connecting admin's access, so anyone in an allowed channel can use that agent. Allowed channels and the approval allowlist are the mitigation until per-sender identity exists.
+- **Run-as connector.** The bot acts with the access of the agent manager who connected it, so anyone in an allowed channel can use that agent. Allowed channels and the approval allowlist are the mitigation until per-sender identity exists.
 - **Slack retries.** Slack retries delivery when the acknowledgement is slow. Dedupe covers it, but the 3-second window depends on the turn start staying fast, especially during a Workers cold start.
 - **D1 query budget.** Each inbound event adds a few statements (dedupe, session, outbox) outside the turn. The turn budget is unchanged.
 - **Formatting.** Markdown-to-mrkdwn conversion loses tables and some formatting. Generative UI blocks are replaced with a text fallback.
-- **Multiple workspaces per tenant.** Supported by the unique key, but the settings UI in I2 shows one Slack integration.
 - **Dropped event on a failed start.** A start failure deletes the event's dedupe row so the channel's retry runs it, but a retry that arrives between the dedupe write and that delete reads as a replay and is dropped. Slack retries three times over roughly 20 minutes, so a later attempt still runs; the message is only lost if every retry lands inside that window.
-- **A second app in the same workspace can be half-connected.** `auth.test` proves which workspace a bot token belongs to, not which app issued it. A `PUT` carrying a real bot token from a _different_ Slack app in the _same_ workspace passes the workspace check, and a redacted signing secret is kept — so the stored pair is app A's secret with app B's token, and every inbound event fails signature verification with 401 until both are re-saved. Pairing the two credentials on any rotation would close it. Not reachable from the Settings section, which sends both or neither; API callers can hit it.
+- **A second app in the same workspace can be half-connected.** `auth.test` proves which workspace a bot token belongs to, not which app issued it. A `PUT` carrying a real bot token from a _different_ Slack app in the _same_ workspace passes the workspace check, and a redacted signing secret is kept — so the stored pair is app A's secret with app B's token, and every inbound event fails signature verification with 401 until both are re-saved. Pairing the two credentials on any rotation would close it. Not reachable from the agent's Integrations tab, which sends both or neither; API callers can hit it.
 
 - **Channel-shaped helpers in the notifier.** `TurnCompletionNotifier` calls `connectedSlackManifest` and `slackChannelKey` directly for the rule path. A second channel type needs a `channelKey` method on `ChannelAdapter` instead; the notifier is the only place that would change.
 - **Ingress probing on interactions too.** `/interactions` answers 404 for an unknown integration and 409 for a pending one before the signature is checked, so an unauthenticated caller can tell a live id from a dead one. `/events` has always done the same, and the id grants nothing on its own; worth closing together if ids ever become guessable.
-- **Approver identity outside the turn.** `UserToolApprovalMessage` carries no metadata field, so who approved cannot ride on the resume input without a `trueforge-core` change the plan does not allow. It is recorded instead in `integration_decision`, one row per held turn, readable through `GET /api/v1/settings/integrations/{integration_id}/decisions` and writable only by the channel — session metadata was the first home and is not one, because `PATCH /api/v1/sessions/{id}` lets any tenant user rewrite it. A denial also names the decider in the reason the agent sees.
+- **Approver identity outside the turn.** `UserToolApprovalMessage` carries no metadata field, so who approved cannot ride on the resume input without a `trueforge-core` change the plan does not allow. It is recorded instead in `integration_decision`, one row per held turn, readable through `GET /api/v1/integrations/{integration_id}/decisions` and writable only by the channel — session metadata was the first home and is not one, because `PATCH /api/v1/sessions/{id}` lets any tenant user rewrite it. A denial also names the decider in the reason the agent sees.
 - **Ingress probing.** The ingress looks the integration up by the id in the URL before the adapter checks the signature, so an unauthenticated caller can tell a live integration id from a dead one. Acceptable while the id grants nothing on its own — the credentials live in the record and every event is signature-checked — but worth closing if ids ever become guessable.
 - **Code execution.** Sandbox features depend on Phase 7 (`docs/cloudflare-workers-sandbox-plan.md`). Slack turns follow the agent's sandbox settings on each runtime.
