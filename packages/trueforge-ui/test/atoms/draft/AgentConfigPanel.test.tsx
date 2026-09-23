@@ -8,7 +8,11 @@ import { CompactLayoutProvider } from '@/atoms/lib/CompactLayoutContext.js';
 import { ServerProvider } from '@/server/ServerContext.js';
 import type { AgentSpec, ModelSelection } from '@/server/types.js';
 import { SlotsProvider } from '@/theme/SlotsProvider.js';
-import { createMockAgentUIServer, createMockIntegrationServer } from '../../server/mockServer.js';
+import {
+  createMockAgentSessionsServer,
+  createMockAgentUIServer,
+  createMockIntegrationServer,
+} from '../../server/mockServer.js';
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function showModal() {
@@ -108,10 +112,15 @@ describe('AgentConfigPanel', () => {
     );
   });
 
-  it('places Integrations after Runtime Config when the host serves integrations', () => {
+  it('places Integrations after Runtime Config when the host serves integrations and sessions', () => {
     render(
       <SlotsProvider>
-        <ServerProvider server={createMockAgentUIServer({ integrations: createMockIntegrationServer() })}>
+        <ServerProvider
+          server={createMockAgentUIServer({
+            integrations: createMockIntegrationServer(),
+            sessions: createMockAgentSessionsServer(),
+          })}
+        >
           <AgentConfigPanel
             spec={spec}
             model={model}

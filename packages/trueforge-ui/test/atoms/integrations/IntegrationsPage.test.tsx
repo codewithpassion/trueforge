@@ -453,6 +453,96 @@ describe('IntegrationsPage permissions', () => {
   });
 });
 
+describe('IntegrationsPage initial integration', () => {
+  const HELP: IntegrationBase = { ...PENDING, id: 'int-2', botDisplayName: 'help-bot' };
+
+  function pageServer(port: Partial<IntegrationServer> = {}) {
+    return createMockAgentUIServer({
+      integrations: createMockIntegrationServer({
+        listIntegrations: async () => [PENDING, HELP],
+        getIntegrationSetupManifest: async ({ id }) => ({
+          requestUrl: `https://trueforge.test/api/v1/integrations/${id}/events`,
+          interactionsRequestUrl: `https://trueforge.test/api/v1/integrations/${id}/interactions`,
+          manifestJson: MANIFEST_JSON,
+          createAppUrl: 'https://api.slack.com/apps?new_app=1',
+        }),
+        ...port,
+      }),
+      sessions: createMockAgentSessionsServer({
+        getAgent: async ({ agentId }) => ({ agentId, name: 'support-bot', agentSpec: { model: { name: 'm' } } }),
+      }),
+    });
+  }
+
+  it("opens the requested integration's setup once the list has loaded", async () => {
+    render(
+      <ServerProvider server={pageServer()}>
+        <IntegrationsPage agentId="agent-1" initialIntegrationId="int-2" />
+      </ServerProvider>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'help-bot' })).toBeInTheDocument();
+    expect(
+      await screen.findByText('Request URL: https://trueforge.test/api/v1/integrations/int-2/events'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Bot user OAuth token')).toBeInTheDocument();
+  });
+
+  it("shows the list when the requested integration is not among the agent's", async () => {
+    render(
+      <ServerProvider server={pageServer()}>
+        <IntegrationsPage agentId="agent-1" initialIntegrationId="int-elsewhere" />
+      </ServerProvider>,
+    );
+
+    expect(await screen.findByRole('button', { name: /release-bot/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /help-bot/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Back/ })).not.toBeInTheDocument();
+  });
+
+  it('does not reopen the requested integration after the user navigates away and the list refreshes', async () => {
+    const listIntegrations = vi.fn(async () => [PENDING, HELP]);
+    const updateIntegration = vi.fn(async () => HELP);
+    render(
+      <ServerProvider server={pageServer({ listIntegrations, updateIntegration })}>
+        <IntegrationsPage agentId="agent-1" initialIntegrationId="int-1" />
+      </ServerProvider>,
+    );
+    expect(await screen.findByRole('heading', { name: 'release-bot' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Back/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /help-bot/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(updateIntegration).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(listIntegrations).toHaveBeenCalledTimes(2);
+    });
+
+    expect(await screen.findByRole('heading', { name: 'help-bot' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'release-bot' })).not.toBeInTheDocument();
+  });
+
+  it('opens a newly requested integration when the prop changes', async () => {
+    const server = pageServer();
+    const { rerender } = render(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="agent-1" initialIntegrationId="int-1" />
+      </ServerProvider>,
+    );
+    expect(await screen.findByRole('heading', { name: 'release-bot' })).toBeInTheDocument();
+
+    rerender(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="agent-1" initialIntegrationId="int-2" />
+      </ServerProvider>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'help-bot' })).toBeInTheDocument();
+  });
+});
+
 describe('IntegrationsPage agent switch', () => {
   const FOR_A: IntegrationBase = { ...PENDING, id: 'int-a', agentName: 'agent-a', botDisplayName: 'a-bot' };
   const FOR_B: IntegrationBase = { ...PENDING, id: 'int-b', agentName: 'agent-b', botDisplayName: 'b-bot' };

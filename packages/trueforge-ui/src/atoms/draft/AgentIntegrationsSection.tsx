@@ -5,7 +5,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useResourcePermissions } from '../../hooks/useResourcePermissions.js';
 import { Icon } from '../../icons/Icon.js';
 import { isIntegrationsChromeEnabled } from '../../server/serverChrome.js';
-import { useOptionalIntegrationServer } from '../../server/ServerContext.js';
+import { useOptionalAgentSessionsServer, useOptionalIntegrationServer } from '../../server/ServerContext.js';
 import { useOptionalShellMode } from '../../server/ShellModeContext.js';
 import type { IntegrationBase } from '../../server/types.js';
 import { useSlot } from '../../theme/SlotsProvider.js';
@@ -22,6 +22,7 @@ const MANAGE_LABEL = 'Manage integrations';
 /** Builder summary of the loaded agent's Slack integrations; managing them happens in the integrations page. */
 export function AgentIntegrationsSection() {
   const integrationServer = useOptionalIntegrationServer();
+  const sessionsServer = useOptionalAgentSessionsServer();
   const shell = useOptionalShellMode();
   const Section = useSlot('AgentConfigSection');
   const PermissionGuard = useSlot('PermissionGuard');
@@ -36,8 +37,10 @@ export function AgentIntegrationsSection() {
   });
   const canManage = allows(agentId, 'MANAGE');
   const [open, setOpen] = useState(false);
+  // The integration a row asked the drawer to open on; the Manage action opens the list.
+  const [drawerIntegrationId, setDrawerIntegrationId] = useState<string | undefined>(undefined);
   const [reloadEpoch, setReloadEpoch] = useState(0);
-  // Tagged with the agent it was listed for, so a slower answer for a previous agent never shows.
+  // Tagged with the agent it was listed for, so a switch shows Loading… rather than the previous agent's rows.
   const [listed, setListed] = useState<{ agentName: string; integrations: IntegrationBase[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +61,8 @@ export function AgentIntegrationsSection() {
     };
   }, [agentName, integrationServer, reloadEpoch]);
 
-  if (!isIntegrationsChromeEnabled({ integrations: integrationServer })) return null;
+  // The drawer's page resolves the agent through the sessions port, so it cannot render without one.
+  if (!isIntegrationsChromeEnabled({ integrations: integrationServer }) || sessionsServer === null) return null;
 
   if (agentId === undefined || agentName === undefined) {
     return (
@@ -69,7 +73,8 @@ export function AgentIntegrationsSection() {
   }
 
   const integrations = listed?.agentName === agentName ? listed.integrations : null;
-  const openDrawer = () => {
+  const openDrawer = (integrationId?: string) => {
+    setDrawerIntegrationId(integrationId);
     setOpen(true);
   };
   // The drawer reports a close from its button and again from the dialog's close event.
@@ -94,7 +99,9 @@ export function AgentIntegrationsSection() {
             <button
               type="button"
               className="border-border hover:bg-ghost-button-hover flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left transition-colors"
-              onClick={openDrawer}
+              onClick={() => {
+                openDrawer(integration.id);
+              }}
             >
               <Icon name="message-square-text" className="text-text-secondary size-3.5 shrink-0" />
               <span className="min-w-0 flex-1 truncate text-xs font-medium">{integration.botDisplayName}</span>
@@ -119,7 +126,9 @@ export function AgentIntegrationsSection() {
                 aria-label={MANAGE_LABEL}
                 title={MANAGE_LABEL}
                 className={auiButtonClass({ variant: 'ghost', size: 'icon', className: 'size-7' })}
-                onClick={openDrawer}
+                onClick={() => {
+                  openDrawer();
+                }}
               >
                 <Icon name="sliders" className="size-3.5" />
               </button>
@@ -138,7 +147,6 @@ export function AgentIntegrationsSection() {
         description="Let a Slack workspace talk to this agent."
         anchor="right"
         size="xl"
-        aria-label={MANAGE_LABEL}
       >
         {open ? (
           <Suspense
@@ -148,7 +156,7 @@ export function AgentIntegrationsSection() {
               </div>
             }
           >
-            <IntegrationsPage agentId={agentId} embedded />
+            <IntegrationsPage agentId={agentId} embedded initialIntegrationId={drawerIntegrationId} />
           </Suspense>
         ) : null}
       </SideDrawer>

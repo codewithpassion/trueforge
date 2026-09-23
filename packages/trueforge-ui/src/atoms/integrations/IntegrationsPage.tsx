@@ -35,6 +35,8 @@ export type IntegrationsPageProps = {
   agentId: string;
   /** Drops the page heading and background when another surface (a drawer) supplies the chrome. */
   embedded?: boolean;
+  /** Opens this integration's detail once the list has loaded; ignored when the agent has no such integration. */
+  initialIntegrationId?: string | undefined;
 };
 
 const NOTIFICATION_OUTCOMES: { value: IntegrationNotificationRule['outcome']; label: string }[] = [
@@ -70,7 +72,7 @@ function FieldLabel({ htmlFor, children }: { htmlFor: string; children: string }
   );
 }
 
-export function IntegrationsPage({ agentId, embedded = false }: IntegrationsPageProps) {
+export function IntegrationsPage({ agentId, embedded = false, initialIntegrationId }: IntegrationsPageProps) {
   const integrationServer = useIntegrationServer();
   const sessionsServer = useAgentSessionsServer();
   const scheduleServer = useOptionalScheduleServer();
@@ -99,6 +101,8 @@ export function IntegrationsPage({ agentId, embedded = false }: IntegrationsPage
   const [botToken, setBotToken] = useState('');
   const [signingSecret, setSigningSecret] = useState('');
   const [setup, setSetup] = useState<IntegrationSetupManifest | null>(null);
+  // Remembers the requested integration once honoured, so later refreshes never undo the user's Back.
+  const appliedInitialIdRef = useRef<string | undefined>(undefined);
 
   const selected = integrations.find(integration => integration.id === selectedId) ?? null;
   const botHandle = setup === null ? undefined : botHandleFrom(setup.manifestJson);
@@ -193,14 +197,23 @@ export function IntegrationsPage({ agentId, embedded = false }: IntegrationsPage
     };
   }, [integrationServer, selectedId]);
 
-  const openDetail = (integration: IntegrationBase) => {
+  const openDetail = useCallback((integration: IntegrationBase) => {
     setSelectedId(integration.id);
     setDetailForm(toIntegrationForm(integration));
     setBotToken('');
     setSigningSecret('');
     setError(null);
     setFormError(null);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (initialIntegrationId === undefined || appliedInitialIdRef.current === initialIntegrationId) return;
+    // Wait for this agent's list: during a switch the previous agent's list is still in state.
+    if (loading || agentName === null || agentNameRef.current !== agentName) return;
+    appliedInitialIdRef.current = initialIntegrationId;
+    const initial = integrations.find(integration => integration.id === initialIntegrationId);
+    if (initial !== undefined) openDetail(initial);
+  }, [agentName, initialIntegrationId, integrations, loading, openDetail]);
 
   const runMutation = async (fn: (stale: () => boolean) => Promise<void>, setMutationError = setError) => {
     // A request for an agent the page has since left must not touch the new one.

@@ -14,7 +14,11 @@ import type {
   ListPermissionsResponse,
 } from '@/server/types.js';
 import { SlotsProvider } from '@/theme/SlotsProvider.js';
-import { createMockAgentUIServer, createMockIntegrationServer } from '../../server/mockServer.js';
+import {
+  createMockAgentSessionsServer,
+  createMockAgentUIServer,
+  createMockIntegrationServer,
+} from '../../server/mockServer.js';
 
 const PENDING: IntegrationBase = {
   id: 'int-1',
@@ -41,8 +45,12 @@ beforeAll(() => {
 });
 
 /** The page itself is covered by its own tests; here only what the drawer hands it matters. */
-function StubIntegrationsPage({ agentId, embedded = false }: IntegrationsPageProps) {
-  return <p data-testid="integrations-page">{`${agentId}${embedded ? ' embedded' : ''}`}</p>;
+function StubIntegrationsPage({ agentId, embedded = false, initialIntegrationId }: IntegrationsPageProps) {
+  return (
+    <p data-testid="integrations-page">
+      {`${agentId}${embedded ? ' embedded' : ''}${initialIntegrationId === undefined ? '' : ` on ${initialIntegrationId}`}`}
+    </p>
+  );
 }
 
 /** Puts the builder into update mode, as opening a saved agent for editing does. */
@@ -83,7 +91,11 @@ function serverWith(
   listIntegrations: (req: ListIntegrationsParams) => Promise<IntegrationBase[]>,
   overrides: Partial<AgentUIServer> = {},
 ) {
-  return createMockAgentUIServer({ integrations: createMockIntegrationServer({ listIntegrations }), ...overrides });
+  return createMockAgentUIServer({
+    integrations: createMockIntegrationServer({ listIntegrations }),
+    sessions: createMockAgentSessionsServer(),
+    ...overrides,
+  });
 }
 
 const SUPPORT_BOT = { agentId: 'agent-1', agentName: 'support-bot' };
@@ -91,6 +103,17 @@ const SUPPORT_BOT = { agentId: 'agent-1', agentName: 'support-bot' };
 describe('AgentIntegrationsSection', () => {
   it('renders nothing when the host has no integration server', () => {
     renderSection({ server: createMockAgentUIServer(), saved: SUPPORT_BOT });
+
+    expect(screen.queryByRole('heading', { name: 'Integrations' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('renders nothing when the host serves integrations but no sessions port for the page', () => {
+    const listIntegrations = vi.fn(async () => [PENDING]);
+    renderSection({
+      server: createMockAgentUIServer({ integrations: createMockIntegrationServer({ listIntegrations }) }),
+      saved: SUPPORT_BOT,
+    });
 
     expect(screen.queryByRole('heading', { name: 'Integrations' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
@@ -115,18 +138,31 @@ describe('AgentIntegrationsSection', () => {
     expect(listIntegrations).toHaveBeenCalledWith({ agentNames: ['support-bot'] });
   });
 
-  it('opens the integrations page for the agent from the action and from a row', async () => {
-    renderSection({ server: serverWith(async () => [PENDING]), saved: SUPPORT_BOT });
+  it("opens the list from the action and a row's integration from the row", async () => {
+    renderSection({ server: serverWith(async () => [PENDING, CONNECTED]), saved: SUPPORT_BOT });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Manage integrations' }));
     const drawer = await screen.findByRole('dialog', { name: 'Integrations' });
-    expect(within(drawer).getByTestId('integrations-page')).toHaveTextContent('agent-1 embedded');
+    expect(within(drawer).getByTestId('integrations-page')).toHaveTextContent(/^agent-1 embedded$/);
 
     fireEvent.click(within(drawer).getByRole('button', { name: 'Close' }));
     expect(screen.queryByTestId('integrations-page')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /release-bot/ }));
-    expect(await screen.findByTestId('integrations-page')).toHaveTextContent('agent-1 embedded');
+    fireEvent.click(screen.getByRole('button', { name: /help-bot/ }));
+    expect(await screen.findByTestId('integrations-page')).toHaveTextContent(/^agent-1 embedded on int-2$/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Manage integrations' }));
+    expect(await screen.findByTestId('integrations-page')).toHaveTextContent(/^agent-1 embedded$/);
+  });
+
+  it('names the drawer by its visible title', async () => {
+    renderSection({ server: serverWith(async () => [PENDING]), saved: SUPPORT_BOT });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage integrations' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Integrations' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Manage integrations' })).not.toBeInTheDocument();
   });
 
   it('keeps the action disabled for a caller who cannot manage the agent', async () => {
@@ -186,6 +222,35 @@ describe('AgentIntegrationsSection', () => {
     });
 
     expect(screen.queryByRole('button', { name: /a-bot/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /b-bot/ })).toBeInTheDocument();
+  });
+
+  it("shows Loading… rather than the previous agent's rows while the next agent's list is pending", async () => {
+    let answerB: (integrations: IntegrationBase[]) => void = () => undefined;
+    const listIntegrations = vi.fn(({ agentNames }: ListIntegrationsParams) =>
+      agentNames?.includes('agent-a') === true
+        ? Promise.resolve([{ ...PENDING, agentName: 'agent-a', botDisplayName: 'a-bot' }])
+        : new Promise<IntegrationBase[]>(resolve => {
+            answerB = resolve;
+          }),
+    );
+    const { switchAgent } = renderSection({
+      server: serverWith(listIntegrations),
+      saved: { agentId: 'id-a', agentName: 'agent-a' },
+    });
+    expect(await screen.findByRole('button', { name: /a-bot/ })).toBeInTheDocument();
+
+    switchAgent({ agentId: 'id-b', agentName: 'agent-b' });
+    await waitFor(() => {
+      expect(listIntegrations).toHaveBeenCalledWith({ agentNames: ['agent-b'] });
+    });
+
+    expect(screen.queryByRole('button', { name: /a-bot/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+
+    await act(async () => {
+      answerB([{ ...CONNECTED, agentName: 'agent-b', botDisplayName: 'b-bot' }]);
+    });
     expect(screen.getByRole('button', { name: /b-bot/ })).toBeInTheDocument();
   });
 });
