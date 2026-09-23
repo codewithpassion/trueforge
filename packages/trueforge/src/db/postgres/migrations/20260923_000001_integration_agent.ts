@@ -53,6 +53,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   `.execute(db);
 }
 
+/** Fails once one workspace is bound to two agents: the restored unique key has no `agent_id`. */
 export async function down(db: Kysely<unknown>): Promise<void> {
   await sql`
     SET LOCAL lock_timeout = '5s';

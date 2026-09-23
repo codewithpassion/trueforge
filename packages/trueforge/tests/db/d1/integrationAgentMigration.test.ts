@@ -88,28 +88,6 @@ describe('D1 0008_integration_agent', () => {
     expect(await childCounts()).toEqual({ events: 0, deliveries: 0, decisions: 0 });
   });
 
-  it('clears a copy a failed, un-rolled-back run left behind', async () => {
-    await seededBefore0008();
-    const migration = bindings.TEST_MIGRATIONS.find(it => it.name.startsWith('0008_'));
-    const createCopy = migration?.queries.find(query => query.includes('CREATE TABLE IF NOT EXISTS integration_new'));
-    if (createCopy === undefined) {
-      throw new Error('0008 no longer creates integration_new');
-    }
-    await bindings.DB.batch([
-      bindings.DB.prepare(createCopy),
-      bindings.DB.prepare(
-        `INSERT INTO integration_new (id, tenant_id, agent_id, agent_name, type, external_account_id, manifest,
-           created_by_subject, created_at, updated_at)
-         VALUES ('stale', 't1', 'a1', 'writer', 'slack', 'T0STALE', jsonb('{}'), jsonb('{}'), ?1, ?1)`,
-      ).bind(NOW),
-    ]);
-
-    await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS);
-
-    const ids = await bindings.DB.prepare(`SELECT id FROM integration ORDER BY id`).all();
-    expect(ids.results).toEqual([{ id: 'i-good' }]);
-  });
-
   it('fails on an integration whose agent is missing', async () => {
     await seededBefore0008();
     await insertIntegration({ id: 'i-orphan', agent_name: 'ghost' }).run();
@@ -117,7 +95,10 @@ describe('D1 0008_integration_agent', () => {
     await expect(applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS)).rejects.toThrow(/NOT NULL/);
 
     expect(await childCounts()).toEqual({ events: 1, deliveries: 1, decisions: 1 });
-    const probe = await bindings.DB.prepare(`SELECT name FROM sqlite_master WHERE name = 'integration_new'`).all();
-    expect(probe.results).toEqual([]);
+    // The file is one batch, so the failure rolled back every table it had created.
+    const leftovers = await bindings.DB.prepare(
+      `SELECT name FROM sqlite_master WHERE name LIKE '%\\_keep' ESCAPE '\\' OR name = 'integration_new'`,
+    ).all();
+    expect(leftovers.results).toEqual([]);
   });
 });
