@@ -134,7 +134,7 @@ export class S3FileObjectStore implements IFileObjectStore {
     });
     // A 200 still lists the keys it could not delete.
     const result = await response.text();
-    if (response.status === 404 || result.includes('<Error>')) {
+    if (result.includes('<Error>')) {
       throw new Error(`S3 DeleteObjects failed: ${result.slice(0, 500)}`);
     }
   }
