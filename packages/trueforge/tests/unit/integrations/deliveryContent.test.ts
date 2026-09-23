@@ -3,8 +3,11 @@ import type {
   MCPAuthRequiredEvent,
   ModelMessageEvent,
   ToolApprovalRequiredEvent,
+  ToolResponseRequiredEvent,
 } from '@truefoundry/trueforge-core/core/events/schema';
 import { EventType } from '@truefoundry/trueforge-core/core/events/schema';
+import { agentScreenUrl, REQUEST_HUMAN_TAKEOVER_TOOL } from '../../../src/computers/requestHumanTakeover';
+import { getPublicBaseUrlOrUndefined } from '../../../src/config';
 import { buildDeliveryContent } from '../../../src/integrations/deliveryContent';
 import { turnEventReader } from './turnEventReader';
 
@@ -153,6 +156,50 @@ describe('buildDeliveryContent', () => {
         },
       ],
     });
+  });
+
+  it('posts a takeover request, even where nothing could click a button', async () => {
+    const responseRequired: ToolResponseRequiredEvent = {
+      type: EventType.TOOL_RESPONSE_REQUIRED,
+      id: 'evt-2',
+      created_at: COMPLETED_AT,
+      thread_id: 'main',
+      tool_calls: [{ id: 'call-1', source_event_id: 'evt-1' }],
+    };
+    const narration: ModelMessageEvent = {
+      ...modelMessage('I reached the login page.'),
+      tool_calls: [
+        {
+          id: 'call-1',
+          type: 'function',
+          function: { name: REQUEST_HUMAN_TAKEOVER_TOOL, arguments: '{"reason":"Log into the portal"}' },
+          tool_info: { type: 'truefoundry-system', name: REQUEST_HUMAN_TAKEOVER_TOOL },
+        },
+      ],
+    };
+
+    for (const interactive of [true, false]) {
+      expect(
+        await buildDeliveryContent({
+          turn: turnEventReader([narration]),
+          turn_id: TURN_ID,
+          agent: AGENT,
+          interactive,
+          state: {
+            status: 'done',
+            output: narration,
+            required_actions: [responseRequired],
+            completed_at: COMPLETED_AT,
+          },
+        }),
+      ).toEqual({
+        type: 'takeover_request',
+        turn_id: TURN_ID,
+        intro: 'I reached the login page.',
+        takeover: { thread_id: 'main', tool_call_id: 'call-1', reason: 'Log into the portal' },
+        screen_url: agentScreenUrl({ public_base_url: getPublicBaseUrlOrUndefined(), agent_id: AGENT.id }),
+      });
+    }
   });
 
   it('falls back to the status line when the pending action is one no channel can answer', async () => {
