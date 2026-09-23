@@ -27,9 +27,16 @@ export type DesktopScreenTarget = {
 
 export type DesktopFrame = { url: string; receivedAt: number };
 
+function sameProblem({ a, b }: { a: DesktopFrameProblem | null; b: DesktopFrameProblem | null }): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.kind !== b.kind) return false;
+  return !('message' in a) || !('message' in b) || a.message === b.message;
+}
+
 /**
  * Polls one desktop's frames and status and sends input while the caller holds control.
  * Frames live only as the one object URL on screen; each replaces and revokes the last.
+ * Input goes out one request at a time; whatever queues meanwhile goes in the next one.
  */
 export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenTarget) {
   const [status, setStatus] = useState<DesktopStatus | null>(null);
@@ -53,8 +60,11 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
 
   const queueRef = useRef<DesktopAction[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sendingRef = useRef<Promise<void>>(Promise.resolve());
+  const inputInFlightRef = useRef(false);
+  const flushWaitersRef = useRef<(() => void)[]>([]);
   const activeRef = useRef(true);
+  // Bumped when this view leaves a desktop, so input still in flight stops at the next batch.
+  const generationRef = useRef(0);
 
   // Bumped by every status an action returns, so a poll that started earlier cannot undo it.
   const statusVersionRef = useRef(0);
@@ -81,6 +91,13 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
     setFrame({ url, receivedAt: Date.now() });
     frameProblemRef.current = null;
     setFrameProblem(null);
+  }, []);
+
+  // A down machine is re-reported every tick; the same problem must not re-render the view.
+  const reportProblem = useCallback((next: DesktopFrameProblem) => {
+    if (sameProblem({ a: frameProblemRef.current, b: next })) return;
+    frameProblemRef.current = next;
+    setFrameProblem(next);
   }, []);
 
   const dropFrame = useCallback(() => {
@@ -150,8 +167,7 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
       const known = statusRef.current;
       // A machine known to be down has no frame to give; status polling notices when it is back.
       if (known !== null && (!known.online || !known.desktop)) {
-        frameProblemRef.current = known.online ? { kind: 'unavailable', message: '' } : { kind: 'offline' };
-        setFrameProblem(frameProblemRef.current);
+        reportProblem(known.online ? { kind: 'unavailable', message: '' } : { kind: 'offline' });
         schedule(interval());
         return;
       }
@@ -167,8 +183,7 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
         .catch((error: unknown) => {
           if (stopped) return;
           const problem = toFrameProblem(error);
-          frameProblemRef.current = problem;
-          setFrameProblem(problem);
+          reportProblem(problem);
           // Another person's screen is theirs alone, so nothing of it stays on this one.
           if (problem.kind === 'human_in_control') dropFrame();
         })
@@ -191,38 +206,54 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
       document.removeEventListener('visibilitychange', onVisibilityChange);
       pollFrameSoonRef.current = () => undefined;
     };
-  }, [computerId, agentId, showFrame, dropFrame]);
+  }, [computerId, agentId, showFrame, dropFrame, reportProblem]);
 
-  // Released frames and queued input belong to this desktop only.
-  useEffect(
-    () => () => {
+  // Released frames and queued input belong to this desktop only, and so does control of it.
+  useEffect(() => {
+    const target = scopeRef.current;
+    return () => {
+      generationRef.current += 1;
       if (flushTimerRef.current !== null) clearTimeout(flushTimerRef.current);
       flushTimerRef.current = null;
       queueRef.current = [];
+      const waiting = flushWaitersRef.current;
+      flushWaitersRef.current = [];
+      for (const resolve of waiting) resolve();
       const previous = frameUrlRef.current;
       frameUrlRef.current = null;
       if (previous !== null) URL.revokeObjectURL(previous);
-    },
-    [computerId, agentId],
-  );
+      // Leaving while in control would lock everyone else out until the lease lapses.
+      const controller = statusRef.current?.controller;
+      statusRef.current = null;
+      if (controller?.kind === 'human' && controller.isMe) {
+        const { server: port, ...req } = target;
+        void port.handBackDesktop(req).catch(() => undefined);
+      }
+    };
+  }, [computerId, agentId]);
 
+  /** Sends one pass of queued input; a refusal drops the rest of it and anything queued since. */
   const sendBatches = useCallback(
-    async (actions: DesktopAction[]) => {
+    async ({ actions, generation }: { actions: DesktopAction[]; generation: number }): Promise<void> => {
       for (const batch of packActions(actions)) {
+        if (generation !== generationRef.current) return;
         const seq = ++frameSeqRef.current;
         const { server: port, ...req } = scopeRef.current;
         try {
           const blob = await port.sendDesktopInput({ ...req, actions: batch });
+          if (generation !== generationRef.current) return;
           showFrame(blob, seq);
           setInputError(null);
           pollFrameSoonRef.current(FRAME_INTERVAL_MS);
         } catch (error: unknown) {
+          if (generation !== generationRef.current) return;
           const failure = readDesktopFailure(error);
           setInputError(
             failure?.statusCode === 423
               ? 'You no longer control the desktop.'
               : failure?.message || (error instanceof Error ? error.message : 'Input was not delivered'),
           );
+          // Input typed after control was lost must not land once it is taken again.
           queueRef.current = [];
           void refreshStatusRef.current();
           return;
@@ -236,30 +267,55 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
     [showFrame],
   );
 
-  /** Sends everything queued now; resolves once it and anything before it was delivered. */
-  const flushInput = useCallback((): Promise<void> => {
+  // One input request at a time; moves queued during a slow round trip merge into the next pass.
+  const drainInput = useCallback(async () => {
+    if (inputInFlightRef.current) return;
     if (flushTimerRef.current !== null) clearTimeout(flushTimerRef.current);
     flushTimerRef.current = null;
-    const pending = queueRef.current;
-    queueRef.current = [];
-    if (pending.length > 0) {
-      sendingRef.current = sendingRef.current.then(() => sendBatches(pending));
+    inputInFlightRef.current = true;
+    try {
+      while (queueRef.current.length > 0 || flushWaitersRef.current.length > 0) {
+        const generation = generationRef.current;
+        const waiters = flushWaitersRef.current;
+        flushWaitersRef.current = [];
+        const actions = queueRef.current;
+        queueRef.current = [];
+        if (actions.length > 0) await sendBatches({ actions, generation });
+        for (const resolve of waiters) resolve();
+      }
+    } finally {
+      inputInFlightRef.current = false;
     }
-    return sendingRef.current;
   }, [sendBatches]);
 
-  /** Queues input; it goes out in one batch about every 100 ms. */
+  /**
+   * Sends everything queued now; resolves once it was delivered or refused. `dropMoves` skips
+   * queued pointer moves (presses, releases and keys still go) so handing back is not held up.
+   */
+  const flushInput = useCallback(
+    ({ dropMoves = false }: { dropMoves?: boolean } = {}): Promise<void> => {
+      if (dropMoves) queueRef.current = queueRef.current.filter(action => action.type !== 'mouse_move');
+      const delivered = new Promise<void>(resolve => {
+        flushWaitersRef.current.push(resolve);
+      });
+      void drainInput();
+      return delivered;
+    },
+    [drainInput],
+  );
+
+  /** Queues input; it goes out about 100 ms later, or as soon as the request before it lands. */
   const sendInput = useCallback(
     (actions: DesktopAction[]) => {
       if (actions.length === 0) return;
       queueRef.current.push(...actions);
-      if (flushTimerRef.current === null) {
-        flushTimerRef.current = setTimeout(() => {
-          void flushInput();
-        }, INPUT_BATCH_MS);
-      }
+      if (inputInFlightRef.current || flushTimerRef.current !== null) return;
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null;
+        void drainInput();
+      }, INPUT_BATCH_MS);
     },
-    [flushInput],
+    [drainInput],
   );
 
   /** Puts local text on the remote clipboard (CLIPBOARD and PRIMARY) and pastes it with ctrl+v. */

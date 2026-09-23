@@ -246,4 +246,170 @@ describe('DesktopScreen', () => {
       expect.objectContaining({ actions: [{ type: 'key', keys: 'ctrl+v' }] }),
     );
   });
+
+  it('ignores typing and pasting that reach the keyboard while not in control', async () => {
+    const server = createServer();
+    render(<DesktopScreen server={server} computerId="computer-1" agentId="agent-1" />);
+    await settle();
+    const keyboard = screen.getByLabelText('Desktop keyboard');
+
+    keyboard.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'x', cancelable: true }));
+    keyboard.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertLineBreak', cancelable: true }));
+    fireEvent.paste(keyboard, { clipboardData: { getData: () => 's3cret' } });
+    await settle(500);
+
+    expect(server.sendDesktopInput).not.toHaveBeenCalled();
+    expect(server.setDesktopClipboard).not.toHaveBeenCalled();
+  });
+
+  it('types text once when the browser lets the text land despite beforeinput', async () => {
+    const server = createServer();
+    await renderInControl(server);
+    const keyboard = screen.getByLabelText<HTMLTextAreaElement>('Desktop keyboard');
+
+    // An uncancellable beforeinput already sent the text, which then lands in the field anyway.
+    keyboard.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'a', cancelable: false }));
+    keyboard.value = 'a';
+    fireEvent.input(keyboard);
+    await settle(100);
+
+    expect(server.sendDesktopInput).toHaveBeenCalledTimes(1);
+    expect(server.sendDesktopInput).toHaveBeenCalledWith(
+      expect.objectContaining({ actions: [{ type: 'type', text: 'a' }] }),
+    );
+    expect(keyboard.value).toBe('');
+  });
+
+  it('types from input events in a browser without beforeinput', async () => {
+    const server = createServer();
+    await renderInControl(server);
+    const keyboard = screen.getByLabelText<HTMLTextAreaElement>('Desktop keyboard');
+    keyboard.value = 'b';
+    fireEvent.input(keyboard);
+    await settle(100);
+    expect(server.sendDesktopInput).toHaveBeenCalledWith(
+      expect.objectContaining({ actions: [{ type: 'type', text: 'b' }] }),
+    );
+  });
+
+  it('lets go of held buttons when the pointer is cancelled, loses capture or the window loses focus', async () => {
+    const server = createServer();
+    await renderInControl(server);
+    const frame = screen.getByTestId('desktop-frame');
+    expect(frame).toHaveClass('touch-none');
+    vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue(DOMRect.fromRect({ x: 0, y: 0, width: 640, height: 400 }));
+    const sentActions = () => vi.mocked(server.sendDesktopInput).mock.calls.flatMap(([req]) => req.actions);
+
+    fireEvent.pointerDown(frame, { clientX: 10, clientY: 10, button: 0, pointerId: 1 });
+    fireEvent.pointerCancel(frame, { pointerId: 1 });
+    fireEvent.pointerDown(frame, { clientX: 10, clientY: 10, button: 2, pointerId: 1 });
+    fireEvent.lostPointerCapture(frame, { pointerId: 1 });
+    fireEvent.pointerDown(frame, { clientX: 10, clientY: 10, button: 1, pointerId: 1 });
+    fireEvent(window, new Event('blur'));
+    await settle(100);
+
+    expect(sentActions().filter(action => action.type !== 'mouse_move')).toEqual([
+      { type: 'mouse_down', button: 'left' },
+      { type: 'mouse_up', button: 'left' },
+      { type: 'mouse_down', button: 'right' },
+      { type: 'mouse_up', button: 'right' },
+      { type: 'mouse_down', button: 'middle' },
+      { type: 'mouse_up', button: 'middle' },
+    ]);
+  });
+
+  it('does not release a button twice when capture ends after a normal release', async () => {
+    const server = createServer();
+    await renderInControl(server);
+    const frame = screen.getByTestId('desktop-frame');
+    fireEvent.pointerDown(frame, { button: 0, pointerId: 1 });
+    fireEvent.pointerUp(frame, { button: 0, pointerId: 1 });
+    fireEvent.lostPointerCapture(frame, { pointerId: 1 });
+    await settle(100);
+    const ups = vi
+      .mocked(server.sendDesktopInput)
+      .mock.calls.flatMap(([req]) => req.actions)
+      .filter(action => action.type === 'mouse_up');
+    expect(ups).toHaveLength(1);
+  });
+
+  it('releases a held button before handing back', async () => {
+    const calls: string[] = [];
+    const server = createServer({
+      sendDesktopInput: vi.fn(async ({ actions }) => {
+        calls.push(`input:${actions.map(action => action.type).join(',')}`);
+        return new Blob(['after-input']);
+      }),
+      handBackDesktop: vi.fn(async () => {
+        calls.push('hand-back');
+        return { status: status({ kind: 'none' }), takeover: null };
+      }),
+    });
+    await renderInControl(server);
+    const frame = screen.getByTestId('desktop-frame');
+    fireEvent.pointerDown(frame, { button: 0, pointerId: 1 });
+    await settle(100);
+    fireEvent.pointerMove(frame, { pointerId: 1 });
+    fireEvent.click(screen.getByRole('button', { name: 'Hand back' }));
+    await settle();
+
+    // The pending move is dropped; the release still goes, and before the hand back.
+    expect(calls).toEqual(['input:mouse_move,mouse_down', 'input:mouse_up', 'hand-back']);
+  });
+
+  it('gives the keyboard back to the page on Ctrl+Alt+Shift and shows when it is captured', async () => {
+    const server = createServer();
+    await renderInControl(server);
+    const keyboard = screen.getByLabelText('Desktop keyboard');
+    const view = screen.getByTestId('desktop-view');
+    expect(keyboard).toHaveFocus();
+    expect(view).toHaveClass('ring-2');
+    expect(screen.getByText(/press Ctrl\+Alt\+Shift to give the keyboard back/)).toBeInTheDocument();
+
+    fireEvent.keyDown(keyboard, { key: 'Control', ctrlKey: true });
+    fireEvent.keyDown(keyboard, { key: 'Alt', ctrlKey: true, altKey: true });
+    fireEvent.keyDown(keyboard, { key: 'Shift', ctrlKey: true, altKey: true, shiftKey: true });
+    await settle(100);
+
+    expect(keyboard).not.toHaveFocus();
+    expect(view).not.toHaveClass('ring-2');
+    expect(server.sendDesktopInput).not.toHaveBeenCalled();
+  });
+
+  it('dims the last frame and says why once the computer goes offline', async () => {
+    const getDesktopStatus = vi.fn(async () => status({ kind: 'none' }));
+    const server = createServer({ getDesktopStatus });
+    render(<DesktopScreen server={server} computerId="computer-1" agentId="agent-1" />);
+    await settle();
+    expect(screen.getByRole('img', { name: 'Remote desktop' })).not.toHaveClass('opacity-40');
+    expect(screen.queryByTestId('desktop-stale-label')).toBeNull();
+
+    getDesktopStatus.mockResolvedValue({ ...status({ kind: 'none' }), online: false });
+    await settle(3000);
+    expect(screen.getByRole('img', { name: 'Remote desktop' })).toHaveClass('opacity-40');
+    expect(screen.getByTestId('desktop-stale-label')).toHaveTextContent('The computer is offline.');
+  });
+
+  it('labels a stale frame while the last person’s clipboard is being cleared', async () => {
+    const getDesktopScreenshot = vi.fn(async (): Promise<Blob> => new Blob(['frame']));
+    const server = createServer({ getDesktopScreenshot });
+    render(<DesktopScreen server={server} computerId="computer-1" agentId="agent-1" />);
+    await settle();
+    getDesktopScreenshot.mockRejectedValue(Object.assign(new Error('Clearing'), { statusCode: 409, code: 'clearing' }));
+    await settle(500);
+    expect(screen.getByRole('img', { name: 'Remote desktop' })).toHaveClass('opacity-40');
+    expect(screen.getByTestId('desktop-stale-label')).toHaveTextContent('Clearing the last person’s clipboard…');
+  });
+
+  it('clears clipboard text left to copy by hand once control ends', async () => {
+    const server = createServer();
+    await renderInControl(server);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy from remote' }));
+    await settle();
+    expect(screen.getByDisplayValue('copied text')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hand back' }));
+    await settle();
+    expect(screen.queryByDisplayValue('copied text')).toBeNull();
+  });
 });

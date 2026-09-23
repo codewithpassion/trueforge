@@ -1,6 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 
 import { useDesktopScreen, type DesktopFrame } from '../../hooks/useDesktopScreen.js';
 import { Icon } from '../../icons/Icon.js';
@@ -8,6 +15,7 @@ import type {
   ComputerDesktopServer,
   DesktopAction,
   DesktopController,
+  DesktopMouseButton,
   DesktopStatus,
   DesktopTakeoverResult,
   PendingDesktopTakeover,
@@ -15,7 +23,9 @@ import type {
 import { readDesktopFailure, type DesktopFrameProblem } from '../../utils/desktopFailure.js';
 import {
   DESKTOP_SCREEN,
+  isMacPlatform,
   isPasteChord,
+  isReleaseChord,
   keydownToKeys,
   toDesktopButton,
   toDesktopPoint,
@@ -83,33 +93,32 @@ function frameAgeLabel({ frame, now }: { frame: DesktopFrame | null; now: number
   return seconds <= 1 ? 'Live' : `Frame ${String(seconds)}s old`;
 }
 
-function Placeholder({ problem, status }: { problem: DesktopFrameProblem | null; status: DesktopStatus | null }) {
-  let text: string;
-  if (status !== null && !status.online) {
-    text = 'The computer is offline.';
-  } else if (status !== null && !status.desktop) {
-    text = 'The computer is not running a desktop.';
-  } else if (problem === null) {
-    text = 'Connecting to the desktop…';
-  } else {
-    switch (problem.kind) {
-      case 'human_in_control':
-        text = 'Another person is controlling the desktop. The view comes back when they hand it back.';
-        break;
-      case 'clearing':
-        text = 'Clearing the last person’s clipboard…';
-        break;
-      case 'offline':
-        text = 'The computer is offline.';
-        break;
-      case 'unavailable':
-        text = problem.message || 'The desktop is not available right now.';
-        break;
-      case 'failed':
-        text = problem.message;
-        break;
-    }
+/** Why the view is not live, or null while it is. */
+function problemText({
+  problem,
+  status,
+}: {
+  problem: DesktopFrameProblem | null;
+  status: DesktopStatus | null;
+}): string | null {
+  if (status !== null && !status.online) return 'The computer is offline.';
+  if (status !== null && !status.desktop) return 'The computer is not running a desktop.';
+  if (problem === null) return null;
+  switch (problem.kind) {
+    case 'human_in_control':
+      return 'Another person is controlling the desktop. The view comes back when they hand it back.';
+    case 'clearing':
+      return 'Clearing the last person’s clipboard…';
+    case 'offline':
+      return 'The computer is offline.';
+    case 'unavailable':
+      return problem.message || 'The desktop is not available right now.';
+    case 'failed':
+      return problem.message;
   }
+}
+
+function Placeholder({ text }: { text: string }) {
   return (
     <div
       role="status"
@@ -193,6 +202,10 @@ export function DesktopScreen({
   const frameRef = useRef<HTMLDivElement>(null);
   const wheelRemainderRef = useRef<WheelRemainder>({ dx: 0, dy: 0 });
   const composingRef = useRef(false);
+  // Once a beforeinput has arrived, it carries all typing and input events only clean up.
+  const beforeInputSeenRef = useRef(false);
+  const pressedRef = useRef(new Set<DesktopMouseButton>());
+  const [keyboardFocused, setKeyboardFocused] = useState(false);
 
   const controller = status?.controller;
   const inControl = isMine(controller);
@@ -213,12 +226,33 @@ export function DesktopScreen({
 
   const { sendInput, pasteText } = screen;
 
+  /** Lets go of every button still held on the desktop, so none stays pressed there. */
+  const releaseButtons = useCallback(() => {
+    const pressed = [...pressedRef.current];
+    pressedRef.current.clear();
+    if (pressed.length === 0 || !inControlRef.current) return;
+    sendInput(pressed.map((button): DesktopAction => ({ type: 'mouse_up', button })));
+  }, [sendInput]);
+
+  useEffect(() => {
+    window.addEventListener('blur', releaseButtons);
+    return () => window.removeEventListener('blur', releaseButtons);
+  }, [releaseButtons]);
+
+  // Nothing of a control session outlives it: held buttons and clipboard text left to copy.
+  useEffect(() => {
+    if (inControl) return;
+    pressedRef.current.clear();
+    setManualCopy(null);
+  }, [inControl]);
+
   // Native listeners: React's beforeinput carries no inputType, and wheel must not be passive.
   useEffect(() => {
     const keyboard = keyboardRef.current;
     const surface = frameRef.current;
     if (keyboard === null || surface === null) return;
     const onBeforeInput = (event: InputEvent) => {
+      beforeInputSeenRef.current = true;
       if (!inControlRef.current) return;
       if (event.inputType === 'insertText' || event.inputType === 'insertReplacementText') {
         event.preventDefault();
@@ -239,8 +273,10 @@ export function DesktopScreen({
     };
     const onInput = () => {
       if (composingRef.current) return;
-      // A browser that ignored the cancelled beforeinput still left the text here.
-      if (inControlRef.current && keyboard.value !== '') sendInput(typeActions(keyboard.value));
+      // Only a browser without beforeinput types through here; elsewhere that event already sent it.
+      if (!beforeInputSeenRef.current && inControlRef.current && keyboard.value !== '') {
+        sendInput(typeActions(keyboard.value));
+      }
       keyboard.value = '';
     };
     const onWheel = (event: WheelEvent) => {
@@ -318,7 +354,8 @@ export function DesktopScreen({
 
   const handBack = () =>
     run(async () => {
-      await screen.flushInput();
+      releaseButtons();
+      await screen.flushInput({ dropMoves: true });
       const answer = await server.handBackDesktop({
         ...scope,
         ...(selectedTakeover === null ? {} : { sessionId: selectedTakeover }),
@@ -388,6 +425,7 @@ export function DesktopScreen({
   const leaseLeftMs = humanExpiresAt - now;
   const showLeaseWarning = inControl && Number.isFinite(leaseLeftMs) && leaseLeftMs <= LEASE_WARNING_MS;
   const canTakeControl = status !== null && status.online && status.desktop && controller?.kind !== 'clearing';
+  const notLive = problemText({ problem: frameProblem, status });
 
   const toolbarButton = ({ label, keys }: { label: string; keys: string }) => (
     <Button.Secondary
@@ -483,18 +521,24 @@ export function DesktopScreen({
       ) : null}
 
       <div
-        className="relative max-h-[75vh] w-full shrink-0 overflow-hidden rounded-lg border border-border bg-secondary-bg"
+        className={cn(
+          'relative max-h-[75vh] w-full shrink-0 overflow-hidden rounded-lg border border-border bg-secondary-bg',
+          inControl && keyboardFocused && 'ring-2 ring-focus-ring',
+        )}
+        data-testid="desktop-view"
         style={{ aspectRatio: `${String(DESKTOP_SCREEN.width)} / ${String(DESKTOP_SCREEN.height)}` }}
       >
         <div
           ref={frameRef}
           data-testid="desktop-frame"
-          className={cn('absolute inset-0 select-none', inControl ? 'cursor-default' : 'cursor-not-allowed')}
+          className={cn('absolute inset-0 touch-none select-none', inControl ? 'cursor-default' : 'cursor-not-allowed')}
           onPointerDown={event => {
             if (!inControlRef.current) return;
             event.preventDefault();
             event.currentTarget.setPointerCapture?.(event.pointerId);
             keyboardRef.current?.focus();
+            const button = toDesktopButton(event.button);
+            if (button !== null) pressedRef.current.add(button);
             sendInput(pointerActions(event, 'down'));
           }}
           onPointerMove={event => {
@@ -503,21 +547,38 @@ export function DesktopScreen({
           }}
           onPointerUp={event => {
             if (!inControlRef.current) return;
+            const button = toDesktopButton(event.button);
+            if (button !== null) pressedRef.current.delete(button);
             sendInput(pointerActions(event, 'up'));
           }}
+          onPointerCancel={releaseButtons}
+          onLostPointerCapture={releaseButtons}
           onContextMenu={event => {
             if (inControlRef.current) event.preventDefault();
           }}
         >
           {frame !== null && frameProblem?.kind !== 'human_in_control' ? (
-            <img
-              src={frame.url}
-              alt="Remote desktop"
-              draggable={false}
-              className="pointer-events-none h-full w-full object-contain"
-            />
+            <>
+              <img
+                src={frame.url}
+                alt="Remote desktop"
+                draggable={false}
+                className={cn('pointer-events-none h-full w-full object-contain', notLive !== null && 'opacity-40')}
+              />
+              {notLive === null ? null : (
+                <div
+                  role="status"
+                  data-testid="desktop-stale-label"
+                  className="absolute inset-0 flex items-center justify-center p-6"
+                >
+                  <span className="rounded-md bg-primary-bg/90 px-3 py-2 text-center text-sm text-text-primary">
+                    {notLive}
+                  </span>
+                </div>
+              )}
+            </>
           ) : (
-            <Placeholder problem={frameProblem} status={status} />
+            <Placeholder text={notLive ?? 'Connecting to the desktop…'} />
           )}
         </div>
         <textarea
@@ -530,9 +591,16 @@ export function DesktopScreen({
           spellCheck={false}
           readOnly={!inControl}
           className="absolute left-0 top-0 size-[0.0625rem] resize-none overflow-hidden border-0 p-0 opacity-0"
+          onFocus={() => setKeyboardFocused(true)}
+          onBlur={() => setKeyboardFocused(false)}
           onKeyDown={event => {
-            if (!inControlRef.current) return;
             const native = event.nativeEvent;
+            if (isReleaseChord(native)) {
+              event.preventDefault();
+              event.currentTarget.blur();
+              return;
+            }
+            if (!inControlRef.current) return;
             if (isPasteChord(native)) return;
             const keys = keydownToKeys({
               key: native.key,
@@ -543,6 +611,7 @@ export function DesktopScreen({
               metaKey: native.metaKey,
               isComposing: native.isComposing,
               altGraph: native.getModifierState('AltGraph'),
+              mac: isMacPlatform(),
             });
             if (keys === null) return;
             event.preventDefault();
@@ -560,7 +629,8 @@ export function DesktopScreen({
 
       {inControl ? (
         <p className="text-xs text-text-secondary">
-          Click the screen to type into it. Pasting sends your clipboard to the desktop and presses Ctrl+V.
+          Click the screen to type into it; press Ctrl+Alt+Shift to give the keyboard back to this page. Pasting sends
+          your clipboard to the desktop and presses Ctrl+V.
         </p>
       ) : (
         <p className="text-xs text-text-secondary">Take control to use the mouse and keyboard on this desktop.</p>

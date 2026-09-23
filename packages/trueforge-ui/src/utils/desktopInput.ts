@@ -146,7 +146,26 @@ export type DesktopKeyEvent = {
   isComposing: boolean;
   /** AltGr on layouts that type characters with it; the input event carries those. */
   altGraph: boolean;
+  /** A Mac keyboard: Cmd stands for Ctrl on the Linux desktop, and Option composes characters. */
+  mac: boolean;
 };
+
+/** Cmd chords a Mac user means as the Ctrl chords the Linux desktop knows. */
+const MAC_COMMAND_KEYS = new Set(['c', 'x', 'v', 'a', 'z', 'l']);
+
+export function isMacPlatform(): boolean {
+  return typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+}
+
+/** Ctrl+Alt+Shift gives the keyboard back to the page; it types nothing on the desktop. */
+export function isReleaseChord(event: Pick<DesktopKeyEvent, 'key' | 'ctrlKey' | 'altKey' | 'shiftKey'>): boolean {
+  return (
+    event.ctrlKey &&
+    event.altKey &&
+    event.shiftKey &&
+    (event.key === 'Control' || event.key === 'Alt' || event.key === 'Shift')
+  );
+}
 
 function chordBase(event: DesktopKeyEvent): string | null {
   if (/^[A-Za-z0-9]$/.test(event.key)) return event.key.toLowerCase();
@@ -168,7 +187,9 @@ export function keydownToKeys(event: DesktopKeyEvent): string | null {
     return null;
   }
   const named = NAMED_KEYS[event.key];
-  const chorded = event.ctrlKey || event.metaKey || (event.altKey && !event.altGraph);
+  // Option+letter on a Mac is a character (ø, é via a dead key), so the input event carries it.
+  const altChord = event.altKey && !event.altGraph && !event.mac;
+  const chorded = event.ctrlKey || event.metaKey || altChord;
   let base: string | null;
   if (named !== undefined) {
     base = named;
@@ -178,11 +199,12 @@ export function keydownToKeys(event: DesktopKeyEvent): string | null {
     return null;
   }
   if (base === null) return null;
+  const macCommand = event.mac && event.metaKey && MAC_COMMAND_KEYS.has(base);
   const modifiers = [
-    event.ctrlKey && !event.altGraph ? 'ctrl' : undefined,
+    (event.ctrlKey && !event.altGraph) || macCommand ? 'ctrl' : undefined,
     event.altKey && !event.altGraph ? 'alt' : undefined,
     event.shiftKey ? 'shift' : undefined,
-    event.metaKey ? 'super' : undefined,
+    event.metaKey && !macCommand ? 'super' : undefined,
   ].filter((modifier): modifier is string => modifier !== undefined);
   const keys = [...modifiers, base].join('+');
   return isSendableKeys(keys) ? keys : null;
@@ -244,6 +266,30 @@ function scrollClicks(action: DesktopAction): number {
   return action.type === 'scroll' ? Math.abs(action.dx) + Math.abs(action.dy) : 0;
 }
 
+/** `value` moved toward zero until its size is at most `limit`. */
+function capMagnitude({ value, limit }: { value: number; limit: number }): number {
+  const size = Math.min(Math.abs(value), limit);
+  return value < 0 && size > 0 ? -size : size;
+}
+
+/** One scroll split into steps that each fit a batch's wheel-click budget, at the same point. */
+function splitScroll(action: DesktopAction): DesktopAction[] {
+  if (action.type !== 'scroll' || scrollClicks(action) <= MAX_SCROLL_CLICKS_PER_BATCH) return [action];
+  const steps: DesktopAction[] = [];
+  let { dx, dy } = action;
+  while (dx !== 0 || dy !== 0) {
+    const stepY = capMagnitude({ value: dy, limit: MAX_SCROLL_CLICKS_PER_ACTION });
+    const stepX = capMagnitude({
+      value: dx,
+      limit: Math.min(MAX_SCROLL_CLICKS_PER_ACTION, MAX_SCROLL_CLICKS_PER_BATCH - Math.abs(stepY)),
+    });
+    steps.push({ ...action, dx: stepX, dy: stepY });
+    dx -= stepX;
+    dy -= stepY;
+  }
+  return steps;
+}
+
 /** Merges what can be merged: runs of pointer moves keep the last, adjacent typing joins up. */
 function coalesce(actions: readonly DesktopAction[]): DesktopAction[] {
   const merged: DesktopAction[] = [];
@@ -266,15 +312,18 @@ function coalesce(actions: readonly DesktopAction[]): DesktopAction[] {
 
 /**
  * Packs queued actions into batches the server accepts: at most 64 actions and 60 wheel clicks
- * each, in the order they happened.
+ * each, in the order they happened. A scroll bigger than one batch's budget is split.
  */
 export function packActions(actions: readonly DesktopAction[]): DesktopAction[][] {
   const batches: DesktopAction[][] = [];
   let current: DesktopAction[] = [];
   let clicks = 0;
-  for (const action of coalesce(actions)) {
+  for (const action of coalesce(actions).flatMap(splitScroll)) {
     const actionClicks = scrollClicks(action);
-    if (current.length >= MAX_ACTIONS_PER_BATCH || clicks + actionClicks > MAX_SCROLL_CLICKS_PER_BATCH) {
+    if (
+      current.length > 0 &&
+      (current.length >= MAX_ACTIONS_PER_BATCH || clicks + actionClicks > MAX_SCROLL_CLICKS_PER_BATCH)
+    ) {
       batches.push(current);
       current = [];
       clicks = 0;

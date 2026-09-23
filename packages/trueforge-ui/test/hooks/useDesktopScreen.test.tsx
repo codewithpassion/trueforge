@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDesktopScreen } from '@/hooks/useDesktopScreen.js';
-import type { ComputerDesktopServer, DesktopStatus } from '@/server/types.js';
+import type { ComputerDesktopServer, DesktopAction, DesktopStatus } from '@/server/types.js';
 
 const onlineStatus: DesktopStatus = {
   computerId: 'computer-1',
@@ -10,6 +10,11 @@ const onlineStatus: DesktopStatus = {
   desktop: true,
   controller: { kind: 'none' },
   pendingTakeovers: [],
+};
+
+const mineStatus: DesktopStatus = {
+  ...onlineStatus,
+  controller: { kind: 'human', userId: 'me', isMe: true, expiresAt: '2099-01-01T00:00:00.000Z' },
 };
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void };
@@ -249,5 +254,251 @@ describe('useDesktopScreen input', () => {
     act(() => result.current.sendInput([{ type: 'key', keys: 'Return' }]));
     await advance(100);
     expect(result.current.inputError).toBe('You no longer control the desktop.');
+  });
+});
+
+describe('useDesktopScreen frame guards', () => {
+  it('never starts a second frame request while one is pending, whatever asks for it', async () => {
+    const first = deferred<Blob>();
+    const getDesktopScreenshot = vi.fn(() => first.promise);
+    const server = createServer({ getDesktopScreenshot });
+    const { result } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+    expect(getDesktopScreenshot).toHaveBeenCalledTimes(1);
+
+    // Coming back to the tab and a delivered input both ask for a frame soon.
+    act(() => setVisibility('hidden'));
+    act(() => setVisibility('visible'));
+    act(() => result.current.sendInput([{ type: 'key', keys: 'Return' }]));
+    await advance(2000);
+    expect(server.sendDesktopInput).toHaveBeenCalledTimes(1);
+    expect(getDesktopScreenshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the frame an input returned over a slower poll that started before it', async () => {
+    const poll = deferred<Blob>();
+    const getDesktopScreenshot = vi.fn(() => poll.promise);
+    const server = createServer({ getDesktopScreenshot });
+    const { result } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+
+    act(() => result.current.sendInput([{ type: 'key', keys: 'Return' }]));
+    await advance(100);
+    expect(result.current.frame?.url).toBe('blob:frame-1');
+
+    await act(async () => {
+      poll.resolve(new Blob(['older']));
+      await Promise.resolve();
+    });
+    expect(result.current.frame?.url).toBe('blob:frame-1');
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it('revokes the shown frame and aborts the pending request on unmount', async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    const getDesktopScreenshot = vi.fn((req: { signal?: AbortSignal }): Promise<Blob> => {
+      signals.push(req.signal);
+      return signals.length === 1 ? Promise.resolve(new Blob(['first'])) : new Promise<Blob>(() => undefined);
+    });
+    const server = createServer({ getDesktopScreenshot });
+    const { result, unmount } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+    expect(result.current.frame?.url).toBe('blob:frame-1');
+    await advance(500);
+    expect(signals).toHaveLength(2);
+    expect(signals[1]?.aborted).toBe(false);
+
+    unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:frame-1');
+    expect(signals[1]?.aborted).toBe(true);
+  });
+
+  it('reports a machine that stays down once rather than every tick', async () => {
+    const server = createServer({ getDesktopStatus: vi.fn(async () => ({ ...onlineStatus, online: false })) });
+    const { result } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(600);
+    const reported = result.current.frameProblem;
+    expect(reported).toEqual({ kind: 'offline' });
+    await advance(3000);
+    expect(result.current.frameProblem).toBe(reported);
+  });
+});
+
+describe('useDesktopScreen input pacing', () => {
+  const RTT_MS = 400;
+
+  function slowServer() {
+    const sent: DesktopAction[][] = [];
+    const load = { inFlight: 0, max: 0 };
+    const server = createServer({
+      // The pending frame poll keeps screenshots out of the way.
+      getDesktopScreenshot: vi.fn(() => new Promise<Blob>(() => undefined)),
+      sendDesktopInput: vi.fn(
+        ({ actions }: { actions: DesktopAction[] }) =>
+          new Promise<Blob>(resolve => {
+            sent.push(actions);
+            load.inFlight += 1;
+            load.max = Math.max(load.max, load.inFlight);
+            setTimeout(() => {
+              load.inFlight -= 1;
+              resolve(new Blob(['after-input']));
+            }, RTT_MS);
+          }),
+      ),
+    });
+    return { server, sent, load };
+  }
+
+  it('sends one request at a time, merging moves queued during a slow round trip, clicks in order', async () => {
+    const { server, sent, load } = slowServer();
+    const { result } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+
+    const buttons = ['left', 'right', 'left', 'middle', 'left'] as const;
+    // 10 s of pointer moves every 16 ms, with a press and a release every 2 s.
+    for (let t = 0; t < 10_000; t += 16) {
+      const x = t % 1280;
+      act(() => result.current.sendInput([{ type: 'mouse_move', x, y: 10 }]));
+      const button = t % 2000 < 16 ? buttons[Math.floor(t / 2000)] : undefined;
+      if (button !== undefined) {
+        act(() => result.current.sendInput([{ type: 'mouse_down', button }]));
+        act(() => result.current.sendInput([{ type: 'mouse_up', button }]));
+      }
+      await advance(16);
+    }
+    // The last move reaches the desktop within two round trips, with no backlog still to send.
+    await advance(2 * RTT_MS);
+    const lastMove = sent.flat().findLast(action => action.type === 'mouse_move');
+    expect(lastMove).toEqual({ type: 'mouse_move', x: 9984 % 1280, y: 10 });
+    const settled = sent.length;
+    await advance(60_000);
+    expect(sent).toHaveLength(settled);
+
+    expect(load.max).toBe(1);
+    expect(sent.length).toBeLessThanOrEqual(26);
+    const presses = sent.flat().filter(action => action.type === 'mouse_down' || action.type === 'mouse_up');
+    expect(presses).toEqual(
+      buttons.flatMap(button => [
+        { type: 'mouse_down', button },
+        { type: 'mouse_up', button },
+      ]),
+    );
+    // Only the last move of each run survives, so nothing piles up behind the round trips.
+    for (const batch of sent) expect(batch.length).toBeLessThanOrEqual(4);
+  });
+
+  it('flushes for hand back without the queued moves, keeping presses and keys', async () => {
+    const { server, sent } = slowServer();
+    const { result } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+
+    act(() => result.current.sendInput([{ type: 'mouse_move', x: 1, y: 1 }]));
+    await advance(100);
+    expect(sent).toHaveLength(1);
+
+    act(() =>
+      result.current.sendInput([
+        { type: 'mouse_move', x: 2, y: 2 },
+        { type: 'mouse_up', button: 'left' },
+        { type: 'mouse_move', x: 3, y: 3 },
+        { type: 'key', keys: 'Return' },
+        { type: 'mouse_move', x: 4, y: 4 },
+      ]),
+    );
+    let flushed = false;
+    act(() => {
+      void result.current.flushInput({ dropMoves: true }).then(() => {
+        flushed = true;
+      });
+    });
+    await advance(RTT_MS);
+    expect(sent[1]).toEqual([
+      { type: 'mouse_up', button: 'left' },
+      { type: 'key', keys: 'Return' },
+    ]);
+    expect(flushed).toBe(false);
+    await advance(RTT_MS);
+    expect(flushed).toBe(true);
+    expect(sent).toHaveLength(2);
+  });
+
+  it('drops input queued behind a refused request, so none of it lands after control is taken again', async () => {
+    const refused = deferred<Blob>();
+    const sendDesktopInput = vi.fn((_req: { actions: DesktopAction[] }): Promise<Blob> => refused.promise);
+    const server = createServer({
+      sendDesktopInput,
+      getDesktopScreenshot: vi.fn(() => new Promise<Blob>(() => undefined)),
+    });
+    const { result } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+
+    act(() => result.current.sendInput([{ type: 'type', text: 'first' }]));
+    await advance(100);
+    act(() => result.current.sendInput([{ type: 'type', text: 'queued' }]));
+    await act(async () => {
+      refused.reject(Object.assign(new Error('Take control first'), { statusCode: 423, code: 'lease_required' }));
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(sendDesktopInput).toHaveBeenCalledTimes(1);
+    expect(result.current.inputError).toBe('You no longer control the desktop.');
+
+    sendDesktopInput.mockImplementation(async () => new Blob(['after-input']));
+    act(() => result.current.sendInput([{ type: 'type', text: 'after' }]));
+    await advance(100);
+    expect(sendDesktopInput).toHaveBeenCalledTimes(2);
+    expect(sendDesktopInput.mock.calls[1]?.[0].actions).toEqual([{ type: 'type', text: 'after' }]);
+  });
+});
+
+describe('useDesktopScreen leaving', () => {
+  it('hands control back and sends nothing more when unmounted while in control', async () => {
+    const sent: DesktopAction[][] = [];
+    const first = deferred<Blob>();
+    const sendDesktopInput = vi.fn(({ actions }: { actions: DesktopAction[] }) => {
+      sent.push(actions);
+      return first.promise;
+    });
+    const server = createServer({ sendDesktopInput });
+    const { result, unmount } = renderHook(() =>
+      useDesktopScreen({ server, computerId: 'computer-1', agentId: 'agent-1' }),
+    );
+    await advance(0);
+    act(() => result.current.applyStatus(mineStatus));
+
+    // Three batches' worth of keys; the first is in flight when the view goes away.
+    act(() => result.current.sendInput(Array.from({ length: 130 }, (): DesktopAction => ({ type: 'key', keys: 'a' }))));
+    await advance(100);
+    expect(sent).toHaveLength(1);
+    act(() => result.current.sendInput([{ type: 'key', keys: 'b' }]));
+
+    unmount();
+    expect(server.handBackDesktop).toHaveBeenCalledWith({ computerId: 'computer-1', agentId: 'agent-1' });
+    await act(async () => {
+      first.resolve(new Blob(['after-input']));
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('does not hand back a desktop it was only watching', async () => {
+    const server = createServer();
+    const { unmount } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+    unmount();
+    expect(server.handBackDesktop).not.toHaveBeenCalled();
+  });
+
+  it('ignores a failed best-effort hand back', async () => {
+    const server = createServer({
+      handBackDesktop: vi.fn(async () => {
+        throw Object.assign(new Error('Take control first'), { statusCode: 423, code: 'lease_required' });
+      }),
+    });
+    const { result, unmount } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+    act(() => result.current.applyStatus(mineStatus));
+    unmount();
+    await advance(0);
+    expect(server.handBackDesktop).toHaveBeenCalledWith({ computerId: 'computer-1' });
   });
 });

@@ -4,6 +4,7 @@ import type { DesktopAction } from '@/server/types.js';
 import {
   containedFrameRect,
   isPasteChord,
+  isReleaseChord,
   keydownToKeys,
   packActions,
   toDesktopButton,
@@ -22,6 +23,7 @@ function key(overrides: Partial<DesktopKeyEvent> & Pick<DesktopKeyEvent, 'key'>)
     metaKey: false,
     isComposing: false,
     altGraph: false,
+    mac: false,
     ...overrides,
   };
 }
@@ -116,6 +118,34 @@ describe('keydownToKeys', () => {
     expect(keydownToKeys(key({ key: '@', code: 'KeyQ', ctrlKey: true, altKey: true, altGraph: true }))).toBeNull();
   });
 
+  it('sends Cmd+C/X/V/A/Z/L on a Mac as the Ctrl chords the Linux desktop uses', () => {
+    for (const letter of ['c', 'x', 'v', 'a', 'z', 'l']) {
+      expect(keydownToKeys(key({ key: letter, code: `Key${letter.toUpperCase()}`, metaKey: true, mac: true }))).toBe(
+        `ctrl+${letter}`,
+      );
+    }
+    expect(keydownToKeys(key({ key: 'z', code: 'KeyZ', metaKey: true, shiftKey: true, mac: true }))).toBe(
+      'ctrl+shift+z',
+    );
+    // Other Cmd chords stay Super chords, and off a Mac Cmd is always Super.
+    expect(keydownToKeys(key({ key: 'd', code: 'KeyD', metaKey: true, mac: true }))).toBe('super+d');
+    expect(keydownToKeys(key({ key: 'c', code: 'KeyC', metaKey: true }))).toBe('super+c');
+  });
+
+  it('leaves Option+letter on a Mac to the input event, which carries the composed character', () => {
+    expect(keydownToKeys(key({ key: 'ø', code: 'KeyO', altKey: true, mac: true }))).toBeNull();
+    expect(keydownToKeys(key({ key: 'o', code: 'KeyO', altKey: true }))).toBe('alt+o');
+    // Option still modifies keys that type nothing.
+    expect(keydownToKeys(key({ key: 'ArrowLeft', altKey: true, mac: true }))).toBe('alt+Left');
+  });
+
+  it('recognises the release chord only once all of Ctrl, Alt and Shift are down', () => {
+    expect(isReleaseChord(key({ key: 'Shift', ctrlKey: true, altKey: true, shiftKey: true }))).toBe(true);
+    expect(isReleaseChord(key({ key: 'Control', ctrlKey: true, altKey: true, shiftKey: true }))).toBe(true);
+    expect(isReleaseChord(key({ key: 'Shift', ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(isReleaseChord(key({ key: 'T', code: 'KeyT', ctrlKey: true, altKey: true, shiftKey: true }))).toBe(false);
+  });
+
   it('recognises the paste chords', () => {
     expect(isPasteChord(key({ key: 'v', code: 'KeyV', ctrlKey: true }))).toBe(true);
     expect(isPasteChord(key({ key: 'v', code: 'KeyV', metaKey: true }))).toBe(true);
@@ -177,5 +207,36 @@ describe('packActions', () => {
   it('splits batches before they scroll more than 60 clicks', () => {
     const scroll: DesktopAction = { type: 'scroll', x: 0, y: 0, dx: 0, dy: 25 };
     expect(packActions([scroll, scroll, scroll]).map(batch => batch.length)).toEqual([2, 1]);
+  });
+
+  it('splits one scroll bigger than the budget and never sends an empty batch', () => {
+    const batches = packActions([{ type: 'scroll', x: 10, y: 20, dx: -50, dy: 50 }]);
+    expect(batches.every(batch => batch.length > 0)).toBe(true);
+    const steps = batches.flat();
+    let dx = 0;
+    let dy = 0;
+    for (const step of steps) {
+      if (step.type !== 'scroll') throw new Error('expected only scroll steps');
+      expect(step).toMatchObject({ x: 10, y: 20 });
+      expect(Math.abs(step.dx) + Math.abs(step.dy)).toBeLessThanOrEqual(60);
+      expect(Math.abs(step.dx)).toBeLessThanOrEqual(50);
+      expect(Math.abs(step.dy)).toBeLessThanOrEqual(50);
+      dx += step.dx;
+      dy += step.dy;
+    }
+    expect({ dx, dy }).toEqual({ dx: -50, dy: 50 });
+    for (const batch of batches) {
+      const clicks = batch.reduce((sum, a) => sum + (a.type === 'scroll' ? Math.abs(a.dx) + Math.abs(a.dy) : 0), 0);
+      expect(clicks).toBeLessThanOrEqual(60);
+    }
+  });
+
+  it('starts a batch with an oversized scroll instead of an empty one', () => {
+    const batches = packActions([
+      { type: 'scroll', x: 0, y: 0, dx: 0, dy: 50 },
+      { type: 'scroll', x: 0, y: 0, dx: 30, dy: 40 },
+    ]);
+    expect(batches.map(batch => batch.length)).not.toContain(0);
+    expect(batches.length).toBeGreaterThan(1);
   });
 });
