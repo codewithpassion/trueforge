@@ -5,7 +5,9 @@ import winston from 'winston';
 import { createIntegrationEventsRouter } from '../../../src/apis/integrationEvents';
 import { createIntegrationsRouter } from '../../../src/apis/integrations';
 import { createAppErrorHandler } from '../../../src/app';
-import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
+import { TrueForgeAuthorizer } from '../../../src/auth/authorizer';
+import { STANDALONE_ADMIN_ROLE, STANDALONE_REQUEST_CONTEXT, type RequestContext } from '../../../src/auth/identity';
+import type { AgentRecord } from '../../../src/db/agentStore';
 import type { IIntegrationStore } from '../../../src/db/integrationStore';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
@@ -27,10 +29,16 @@ import type {
   InboundResult,
   InteractionOutcome,
 } from '../../../src/integrations/types';
-import type { Integration, IntegrationManifest } from '../../../src/schemas/integration';
+import {
+  GetIntegrationResponseSchema,
+  ListIntegrationsResponseSchema,
+  type Integration,
+  type IntegrationManifest,
+} from '../../../src/schemas/integration';
 import { newId } from '../../../src/utils/id';
 import { SECRET_REDACTION, toRedactedSecretValue } from '../../../src/utils/secretRedaction';
 import { RecordingTurnExecutor } from '../integrations/recordingTurnExecutor';
+import { seedAgent } from '../integrations/seedAgent';
 import { slackRequest } from '../integrations/slack/slackRequest';
 
 const TENANT = STANDALONE_REQUEST_CONTEXT.tenant_id;
@@ -50,7 +58,6 @@ function manifest(overrides: Partial<IntegrationManifest> = {}): IntegrationMani
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
-    default_agent_name: AGENT_NAME,
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -66,7 +73,6 @@ function pendingManifest(overrides: Partial<IntegrationManifest> = {}): Integrat
   return {
     type: 'slack',
     bot_display_name: 'release-bot',
-    default_agent_name: AGENT_NAME,
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -83,9 +89,28 @@ function jsonInit(method: 'POST' | 'PUT', body: unknown): RequestInit {
 interface Harness {
   db: Kysely<Database>;
   integrationStore: IIntegrationStore<Kysely<Database>>;
-  settings: ReturnType<typeof createIntegrationsRouter>;
+  api: ReturnType<typeof createIntegrationsRouter>;
   authTestCalls: string[];
+  /** `AGENT_NAME`, created by the default caller, who therefore manages it. */
+  agent: AgentRecord;
+  /** Makes every later request come from `context` instead of the default caller. */
+  actAs: (context: RequestContext) => void;
 }
+
+/** A tenant user who is not an admin and did not create the agent. */
+const STRANGER: RequestContext = {
+  tenant_id: TENANT,
+  subject: { id: 'stranger', type: 'user', display_name: 'Stranger' },
+  roles: [],
+  user_credential: null,
+};
+
+/** An admin who did not create the agent either. */
+const OTHER_ADMIN: RequestContext = {
+  ...STRANGER,
+  subject: { id: 'other-admin', type: 'user', display_name: 'Other Admin' },
+  roles: [STANDALONE_ADMIN_ROLE],
+};
 
 const PUBLIC_BASE_URL = 'https://trueforge.test';
 
@@ -95,6 +120,8 @@ async function createHarness(
   const db = createSqliteDb(':memory:');
   await migrateSqliteToLatest(db);
   const integrationStore = new SqliteIntegrationStore(db, new BetterSqliteAtomicRunner(db));
+  const agent = await seedAgent({ db, tenant_id: TENANT, name: AGENT_NAME, created_by_subject: CREATED_BY });
+  let caller = STANDALONE_REQUEST_CONTEXT;
   const authTestCalls: string[] = [];
   // Never the real client: a unit test that reached slack.com would be asserting on Slack.
   const slackAuthTest: SlackAuthTest =
@@ -103,15 +130,30 @@ async function createHarness(
       authTestCalls.push(input.botToken);
       return { ok: true, team_id: 'T0TEAM', bot_user_id: 'U0BOT' };
     });
-  const settings = createIntegrationsRouter({
+  const api = createIntegrationsRouter({
     resolveIntegrationStore: () => integrationStore,
+    resolveAgentStore: () => new SqliteAgentStore(db),
     withTransaction: callback => db.transaction().execute(callback),
-    resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+    resolveRequestContext: () => caller,
+    authorizer: new TrueForgeAuthorizer(),
+    // Identity comes from `caller`; the real middleware is exercised against the whole app.
+    authMiddleware: async (_c, next) => {
+      await next();
+    },
     publicBaseUrl: options.publicBaseUrl ?? (() => PUBLIC_BASE_URL),
     logger: winston.createLogger({ silent: true }),
     slackAuthTest,
   });
-  return { db, integrationStore, settings, authTestCalls };
+  return {
+    db,
+    integrationStore,
+    api,
+    authTestCalls,
+    agent,
+    actAs: context => {
+      caller = context;
+    },
+  };
 }
 
 async function createIngress(options: { adapters: IntegrationAdapterRegistry; pending?: boolean }) {
@@ -121,7 +163,7 @@ async function createIngress(options: { adapters: IntegrationAdapterRegistry; pe
   const sessionStore = new SqliteSessionStore(db, atomic);
   const integrationStore = new SqliteIntegrationStore(db, atomic);
   const agentStore = new SqliteAgentStore(db);
-  await agentStore.createAgent({
+  const agent = await agentStore.createAgent({
     tenant_id: TENANT,
     name: AGENT_NAME,
     description: AGENT_NAME,
@@ -133,6 +175,8 @@ async function createIngress(options: { adapters: IntegrationAdapterRegistry; pe
   const integration = await integrationStore.createIntegration({
     id: integrationId,
     tenant_id: TENANT,
+    agent_id: agent.id,
+    agent_name: agent.name,
     type: 'slack',
     external_account_id: options.pending === true ? `pending:${integrationId}` : 'T0TEAM',
     manifest: options.pending === true ? pendingManifest() : manifest(),
@@ -177,7 +221,7 @@ function slackAdapter(receive: () => InboundResult): IntegrationAdapterRegistry 
   return new Map([['slack', adapter]]);
 }
 
-describe('settings integrations router', () => {
+describe('integrations router', () => {
   let harness: Harness;
 
   afterEach(async () => {
@@ -186,9 +230,10 @@ describe('settings integrations router', () => {
 
   it('creates an integration and redacts both credentials on read', async () => {
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const created = await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }));
     expect(created.status).toBe(201);
     const body = (await created.json()) as { data: Integration };
+    expect(body.data.agent_name).toBe(AGENT_NAME);
     expect(body.data.external_account_id).toBe('T0TEAM');
     expect(body.data.manifest.auth).toEqual({
       bot_token: toRedactedSecretValue(BOT_TOKEN),
@@ -196,20 +241,23 @@ describe('settings integrations router', () => {
     });
     expect(body.data.created_by_subject).toEqual(CREATED_BY);
 
-    const listed = await harness.settings.request('/');
+    const listed = await harness.api.request('/');
     expect(listed.status).toBe(200);
     expect(await listed.json()).toEqual({ data: [body.data] });
 
-    const fetched = await harness.settings.request(`/${body.data.id}`);
+    const fetched = await harness.api.request(`/${body.data.id}`);
     expect(fetched.status).toBe(200);
     expect(await fetched.json()).toEqual({ data: body.data });
   });
 
   it('rejects a create whose credentials are redacted stand-ins', async () => {
     harness = await createHarness();
-    const response = await harness.settings.request(
+    const response = await harness.api.request(
       '/',
-      jsonInit('POST', { manifest: manifest({ auth: { bot_token: SECRET_REDACTION, signing_secret: 'real' } }) }),
+      jsonInit('POST', {
+        agent_name: AGENT_NAME,
+        manifest: manifest({ auth: { bot_token: SECRET_REDACTION, signing_secret: 'real' } }),
+      }),
     );
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({
@@ -219,17 +267,19 @@ describe('settings integrations router', () => {
 
   it('returns 409 when the same channel account is connected twice', async () => {
     harness = await createHarness();
-    expect((await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }))).status).toBe(201);
-    const clash = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    expect(
+      (await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }))).status,
+    ).toBe(201);
+    const clash = await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }));
     expect(clash.status).toBe(409);
   });
 
   it('keeps stored credentials when a PUT sends redacted stand-ins', async () => {
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const created = await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }));
     const { data } = (await created.json()) as { data: Integration };
 
-    const updated = await harness.settings.request(
+    const updated = await harness.api.request(
       `/${data.id}`,
       jsonInit('PUT', {
         manifest: manifest({
@@ -251,10 +301,10 @@ describe('settings integrations router', () => {
 
   it('rotates a credential when a PUT sends a real value', async () => {
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const created = await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }));
     const { data } = (await created.json()) as { data: Integration };
 
-    const updated = await harness.settings.request(
+    const updated = await harness.api.request(
       `/${data.id}`,
       jsonInit('PUT', {
         manifest: manifest({
@@ -270,11 +320,11 @@ describe('settings integrations router', () => {
 
   it('ignores a workspace a PUT tries to claim, credentials or not', async () => {
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const created = await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }));
     const { data } = (await created.json()) as { data: Integration };
 
     // Without credentials nothing is asked of Slack, so the stored workspace simply stands.
-    const response = await harness.settings.request(
+    const response = await harness.api.request(
       `/${data.id}`,
       jsonInit('PUT', {
         manifest: manifest({
@@ -298,9 +348,12 @@ describe('settings integrations router', () => {
 
   it('ignores a workspace a create tries to reserve, so it cannot squat the unique key', async () => {
     harness = await createHarness();
-    const response = await harness.settings.request(
+    const response = await harness.api.request(
       '/',
-      jsonInit('POST', { manifest: pendingManifest({ team_id: 'T0SQUAT', bot_user_id: 'U0SQUAT' }) }),
+      jsonInit('POST', {
+        agent_name: AGENT_NAME,
+        manifest: pendingManifest({ team_id: 'T0SQUAT', bot_user_id: 'U0SQUAT' }),
+      }),
     );
     expect(response.status).toBe(201);
     const { data } = (await response.json()) as { data: Integration };
@@ -311,14 +364,17 @@ describe('settings integrations router', () => {
     expect(harness.authTestCalls).toEqual([]);
 
     // The squatted workspace is still free for the integration that can prove it owns it.
-    const real = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const real = await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }));
     expect(real.status).toBe(201);
     expect(((await real.json()) as { data: Integration }).data.external_account_id).toBe('T0TEAM');
   });
 
   it('creates a pending integration from a bot name alone, and asks Slack nothing', async () => {
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const created = await harness.api.request(
+      '/',
+      jsonInit('POST', { agent_name: AGENT_NAME, manifest: pendingManifest() }),
+    );
     expect(created.status).toBe(201);
     const { data } = (await created.json()) as { data: Integration };
     expect(data.status).toBe('pending');
@@ -332,16 +388,25 @@ describe('settings integrations router', () => {
 
   it('lets two pending integrations coexist', async () => {
     harness = await createHarness();
-    expect((await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }))).status).toBe(201);
-    expect((await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }))).status).toBe(201);
+    expect(
+      (await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: pendingManifest() })))
+        .status,
+    ).toBe(201);
+    expect(
+      (await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: pendingManifest() })))
+        .status,
+    ).toBe(201);
   });
 
   it('fills the workspace and bot ids from auth.test when credentials are saved', async () => {
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const created = await harness.api.request(
+      '/',
+      jsonInit('POST', { agent_name: AGENT_NAME, manifest: pendingManifest() }),
+    );
     const { data } = (await created.json()) as { data: Integration };
 
-    const connected = await harness.settings.request(
+    const connected = await harness.api.request(
       `/${data.id}`,
       jsonInit('PUT', {
         manifest: pendingManifest({ auth: { bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET } }),
@@ -364,10 +429,13 @@ describe('settings integrations router', () => {
         error: 'Slack rejected the bot token: invalid_auth',
       }),
     });
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const created = await harness.api.request(
+      '/',
+      jsonInit('POST', { agent_name: AGENT_NAME, manifest: pendingManifest() }),
+    );
     const { data } = (await created.json()) as { data: Integration };
 
-    const response = await harness.settings.request(
+    const response = await harness.api.request(
       `/${data.id}`,
       jsonInit('PUT', {
         manifest: pendingManifest({ auth: { bot_token: 'xoxb-wrong', signing_secret: SIGNING_SECRET } }),
@@ -388,10 +456,13 @@ describe('settings integrations router', () => {
         error: 'Slack auth.test could not be reached',
       }),
     });
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const created = await harness.api.request(
+      '/',
+      jsonInit('POST', { agent_name: AGENT_NAME, manifest: pendingManifest() }),
+    );
     const { data } = (await created.json()) as { data: Integration };
 
-    const response = await harness.settings.request(
+    const response = await harness.api.request(
       `/${data.id}`,
       jsonInit('PUT', {
         manifest: pendingManifest({ auth: { bot_token: BOT_TOKEN, signing_secret: SIGNING_SECRET } }),
@@ -406,10 +477,10 @@ describe('settings integrations router', () => {
   it('edits a connected integration from the settings form alone, which sends no ids', async () => {
     // Exactly the request the Settings section makes: no workspace, no bot user, no credentials.
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const created = await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }));
     const { data } = (await created.json()) as { data: Integration };
 
-    const updated = await harness.settings.request(
+    const updated = await harness.api.request(
       `/${data.id}`,
       jsonInit('PUT', { manifest: pendingManifest({ allowed_channel_ids: ['C0GENERAL', 'C0RANDOM'] }) }),
     );
@@ -431,9 +502,9 @@ describe('settings integrations router', () => {
     harness = await createHarness({
       slackAuthTest: async () => ({ ok: true, team_id: 'T0OTHER', bot_user_id: 'U0OTHERBOT' }),
     });
-    const response = await harness.settings.request(
+    const response = await harness.api.request(
       '/',
-      jsonInit('POST', { manifest: manifest({ team_id: 'T0TEAM', bot_user_id: 'U0BOT' }) }),
+      jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest({ team_id: 'T0TEAM', bot_user_id: 'U0BOT' }) }),
     );
     expect(response.status).toBe(201);
     const { data } = (await response.json()) as { data: Integration };
@@ -446,11 +517,11 @@ describe('settings integrations router', () => {
     harness = await createHarness({
       slackAuthTest: async () => ({ ok: true, team_id: teamId, bot_user_id: 'U0BOT' }),
     });
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const created = await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }));
     const { data } = (await created.json()) as { data: Integration };
 
     teamId = 'T0OTHER';
-    const rotated = await harness.settings.request(
+    const rotated = await harness.api.request(
       `/${data.id}`,
       jsonInit('PUT', {
         manifest: pendingManifest({ auth: { bot_token: 'xoxb-other', signing_secret: 'other-secret' } }),
@@ -465,10 +536,13 @@ describe('settings integrations router', () => {
 
   it('serves an app manifest carrying the bot name and this integration ingress URL', async () => {
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const created = await harness.api.request(
+      '/',
+      jsonInit('POST', { agent_name: AGENT_NAME, manifest: pendingManifest() }),
+    );
     const { data } = (await created.json()) as { data: Integration };
 
-    const response = await harness.settings.request(`/${data.id}/app-manifest`);
+    const response = await harness.api.request(`/${data.id}/app-manifest`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as { data: { request_url: string; manifest_json: string } };
     expect(body.data.request_url).toBe(`${PUBLIC_BASE_URL}/api/v1/integrations/${data.id}/events`);
@@ -485,37 +559,130 @@ describe('settings integrations router', () => {
         throw new Error('PUBLIC_BASE_URL is required for OIDC callbacks but was empty');
       },
     });
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: pendingManifest() }));
+    const created = await harness.api.request(
+      '/',
+      jsonInit('POST', { agent_name: AGENT_NAME, manifest: pendingManifest() }),
+    );
     const { data } = (await created.json()) as { data: Integration };
-    expect((await harness.settings.request(`/${data.id}/app-manifest`)).status).toBe(500);
+    expect((await harness.api.request(`/${data.id}/app-manifest`)).status).toBe(500);
   });
 
   it('returns 404 for an unknown integration on GET and PUT', async () => {
     harness = await createHarness();
-    expect((await harness.settings.request('/missing')).status).toBe(404);
-    expect((await harness.settings.request('/missing', jsonInit('PUT', { manifest: manifest() }))).status).toBe(404);
+    expect((await harness.api.request('/missing')).status).toBe(404);
+    expect((await harness.api.request('/missing', jsonInit('PUT', { manifest: manifest() }))).status).toBe(404);
   });
 
   it('delete is idempotent and stops listing the integration', async () => {
     harness = await createHarness();
-    const created = await harness.settings.request('/', jsonInit('POST', { manifest: manifest() }));
+    const created = await harness.api.request('/', jsonInit('POST', { agent_name: AGENT_NAME, manifest: manifest() }));
     const { data } = (await created.json()) as { data: Integration };
 
-    const deleted = await harness.settings.request(`/${data.id}`, { method: 'DELETE' });
+    const deleted = await harness.api.request(`/${data.id}`, { method: 'DELETE' });
     expect(deleted.status).toBe(200);
     expect(await deleted.json()).toEqual({});
-    expect((await harness.settings.request(`/${data.id}`, { method: 'DELETE' })).status).toBe(200);
-    expect(await (await harness.settings.request('/')).json()).toEqual({ data: [] });
+    expect((await harness.api.request(`/${data.id}`, { method: 'DELETE' })).status).toBe(200);
+    expect(await (await harness.api.request('/')).json()).toEqual({ data: [] });
+  });
+});
+
+describe('integration access by agent', () => {
+  let harness: Harness;
+
+  afterEach(async () => {
+    await harness?.db.destroy();
+  });
+
+  async function createFor(agentName: string, body: IntegrationManifest = pendingManifest()): Promise<Integration> {
+    const response = await harness.api.request('/', jsonInit('POST', { agent_name: agentName, manifest: body }));
+    expect(response.status).toBe(201);
+    return GetIntegrationResponseSchema.parse(await response.json()).data;
+  }
+
+  async function listedIds(query = ''): Promise<string[]> {
+    const response = await harness.api.request(`/${query}`);
+    expect(response.status).toBe(200);
+    return ListIntegrationsResponseSchema.parse(await response.json()).data.map(integration => integration.id);
+  }
+
+  it('answers 404 for an agent that does not exist', async () => {
+    harness = await createHarness();
+    const response = await harness.api.request(
+      '/',
+      jsonInit('POST', { agent_name: 'no-such-agent', manifest: pendingManifest() }),
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: { message: 'Agent not found: no-such-agent' } });
+  });
+
+  it('answers 403 when the caller does not manage the agent', async () => {
+    harness = await createHarness();
+    harness.actAs(STRANGER);
+    const response = await harness.api.request(
+      '/',
+      jsonInit('POST', { agent_name: AGENT_NAME, manifest: pendingManifest() }),
+    );
+    expect(response.status).toBe(403);
+    expect(await harness.integrationStore.listIntegrations({ tenant_id: TENANT })).toEqual([]);
+  });
+
+  it("keeps another agent's integration from a non-manager: not listed, 403 on every item route", async () => {
+    harness = await createHarness();
+    const integration = await createFor(AGENT_NAME);
+
+    harness.actAs(STRANGER);
+    expect(await listedIds()).toEqual([]);
+    expect((await harness.api.request(`/${integration.id}`)).status).toBe(403);
+    expect(
+      (await harness.api.request(`/${integration.id}`, jsonInit('PUT', { manifest: pendingManifest() }))).status,
+    ).toBe(403);
+    expect((await harness.api.request(`/${integration.id}/app-manifest`)).status).toBe(403);
+    expect((await harness.api.request(`/${integration.id}/decisions`)).status).toBe(403);
+    expect((await harness.api.request(`/${integration.id}`, { method: 'DELETE' })).status).toBe(403);
+    expect(await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: integration.id })).toBeDefined();
+  });
+
+  it('lets an admin list and open every integration', async () => {
+    harness = await createHarness();
+    const integration = await createFor(AGENT_NAME);
+
+    harness.actAs(OTHER_ADMIN);
+    expect(await listedIds()).toEqual([integration.id]);
+    expect((await harness.api.request(`/${integration.id}`)).status).toBe(200);
+  });
+
+  it('filters the list by agent name', async () => {
+    harness = await createHarness();
+    await seedAgent({ db: harness.db, tenant_id: TENANT, name: 'other-bot', created_by_subject: CREATED_BY });
+    const mine = await createFor(AGENT_NAME);
+    const other = await createFor('other-bot');
+
+    expect(await listedIds(`?agent_names=${AGENT_NAME}`)).toEqual([mine.id]);
+    expect((await listedIds(`?agent_names=${AGENT_NAME},other-bot`)).sort()).toEqual([mine.id, other.id].sort());
+    expect(other.agent_name).toBe('other-bot');
+  });
+
+  it('connects one workspace to two agents, each with its own integration', async () => {
+    harness = await createHarness();
+    await seedAgent({ db: harness.db, tenant_id: TENANT, name: 'other-bot', created_by_subject: CREATED_BY });
+
+    const first = await createFor(AGENT_NAME, manifest());
+    const second = await createFor('other-bot', manifest());
+
+    expect([first.external_account_id, second.external_account_id]).toEqual(['T0TEAM', 'T0TEAM']);
+    expect(first.id).not.toBe(second.id);
   });
 });
 
 describe('the decisions an integration recorded', () => {
   it('lists them newest first, and never a question answer', async () => {
-    const { db, integrationStore, settings } = await createHarness();
+    const { db, integrationStore, api, agent } = await createHarness();
     try {
       const created = await integrationStore.createIntegration({
         id: newId(),
         tenant_id: TENANT,
+        agent_id: agent.id,
+        agent_name: agent.name,
         type: 'slack',
         external_account_id: 'T0TEAM',
         manifest: manifest(),
@@ -532,7 +699,7 @@ describe('the decisions an integration recorded', () => {
         decision: 'deny',
       });
 
-      const response = await settings.request(`/${created.id}/decisions`);
+      const response = await api.request(`/${created.id}/decisions`);
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
         data: [
@@ -553,9 +720,9 @@ describe('the decisions an integration recorded', () => {
   });
 
   it('answers 404 for an integration this tenant does not have', async () => {
-    const { db, settings } = await createHarness();
+    const { db, api } = await createHarness();
     try {
-      expect((await settings.request('/missing/decisions')).status).toBe(404);
+      expect((await api.request('/missing/decisions')).status).toBe(404);
     } finally {
       await db.destroy();
     }

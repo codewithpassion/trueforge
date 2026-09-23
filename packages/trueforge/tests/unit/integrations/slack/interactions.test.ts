@@ -17,7 +17,6 @@ function manifest(overrides: Partial<SlackIntegrationManifest> = {}): SlackInteg
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
-    default_agent_name: 'support-bot',
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -138,7 +137,6 @@ describe('the interactions signature, over the raw form body', () => {
       manifest: {
         type: 'slack',
         bot_display_name: 'release-bot',
-        default_agent_name: 'support-bot',
         allowed_channel_ids: [],
         allow_direct_messages: true,
         reply_mode: 'thread',

@@ -1,3 +1,4 @@
+import { SqliteAgentStore } from '../../../../src/db/sqlite/agent-store/SqliteAgentStore';
 import { BetterSqliteAtomicRunner } from '../../../../src/db/sqlite/client';
 import { SqliteIntegrationStore } from '../../../../src/db/sqlite/integration-store/SqliteIntegrationStore';
 import { runIntegrationStoreContractSuite } from '../../integrationStoreContractSuite';
@@ -14,5 +15,8 @@ describe('SqliteIntegrationStore (IIntegrationStore contract)', () => {
     await env?.teardown();
   });
 
-  runIntegrationStoreContractSuite(() => new SqliteIntegrationStore(env.db, new BetterSqliteAtomicRunner(env.db)));
+  runIntegrationStoreContractSuite({
+    getAgentStore: () => new SqliteAgentStore(env.db),
+    getIntegrationStore: () => new SqliteIntegrationStore(env.db, new BetterSqliteAtomicRunner(env.db)),
+  });
 });

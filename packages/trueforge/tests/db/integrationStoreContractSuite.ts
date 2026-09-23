@@ -2,8 +2,9 @@
  * Backend-agnostic behavioural contract for IIntegrationStore.
  * Runs under jest (SQLite / Postgres) and vitest (D1) against a fresh store per test.
  */
-import type { CreatedBySubject } from '@truefoundry/trueforge-core/agent-session';
+import { AgentSpecSchema, type CreatedBySubject } from '@truefoundry/trueforge-core/agent-session';
 import { ulid } from 'ulid';
+import type { AgentRecord, IAgentStore } from '../../src/db/agentStore';
 import type { CreateIntegrationInput, IIntegrationStore } from '../../src/db/integrationStore';
 import { IntegrationConflictError } from '../../src/db/integrationStore';
 import type { IntegrationManifest } from '../../src/schemas/integration';
@@ -23,25 +24,12 @@ function manifest(overrides: Partial<IntegrationManifest> = {}): IntegrationMani
     bot_display_name: 'trueforge',
     team_id: TEAM_ID,
     bot_user_id: 'U0BOT',
-    default_agent_name: 'support-bot',
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
     approver_slack_user_ids: ['U0APPROVER'],
     notification_rules: [{ schedule_name: 'nightly-report', channel_id: 'C0RELEASES', outcome: 'any' }],
     auth: { bot_token: 'xoxb-test', signing_secret: 'sigsecret' },
-    ...overrides,
-  };
-}
-
-function createInput(overrides: Partial<CreateIntegrationInput> = {}): CreateIntegrationInput {
-  return {
-    id: ulid().toLowerCase(),
-    tenant_id: TENANT,
-    type: 'slack',
-    external_account_id: TEAM_ID,
-    manifest: manifest(),
-    created_by_subject: CREATED_BY,
     ...overrides,
   };
 }
@@ -73,7 +61,43 @@ function target(integrationId: string) {
   return { integration_id: integrationId, turn_id: 'turn-1', conversation_key: CONVERSATION };
 }
 
-export function runIntegrationStoreContractSuite(getStore: () => IIntegrationStore): void {
+export function runIntegrationStoreContractSuite(deps: {
+  getAgentStore: () => IAgentStore;
+  getIntegrationStore: () => IIntegrationStore;
+}): void {
+  const getStore = deps.getIntegrationStore;
+  /** The agent `createInput` binds to unless a case names another; seeded fresh for every case. */
+  let agent: AgentRecord;
+
+  function seedAgent(input: { tenant_id?: string } = {}): Promise<AgentRecord> {
+    return deps.getAgentStore().createAgent({
+      tenant_id: input.tenant_id ?? TENANT,
+      created_by_subject: CREATED_BY,
+      name: `agent-${ulid().toLowerCase()}`,
+      description: 'Test agent.',
+      manifest: AgentSpecSchema.parse({ model: { name: 'anthropic/claude-sonnet-4-6' } }),
+      external_id: null,
+    });
+  }
+
+  function createInput(overrides: Partial<CreateIntegrationInput> = {}): CreateIntegrationInput {
+    return {
+      id: ulid().toLowerCase(),
+      tenant_id: TENANT,
+      agent_id: agent.id,
+      agent_name: agent.name,
+      type: 'slack',
+      external_account_id: TEAM_ID,
+      manifest: manifest(),
+      created_by_subject: CREATED_BY,
+      ...overrides,
+    };
+  }
+
+  beforeEach(async () => {
+    agent = await seedAgent();
+  });
+
   it('create round-trips the manifest and creator, and is readable by id', async () => {
     const store = getStore();
     const input = createInput();
@@ -81,6 +105,8 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
 
     expect(created.id).toBe(input.id);
     expect(created.tenant_id).toBe(TENANT);
+    expect(created.agent_id).toBe(agent.id);
+    expect(created.agent_name).toBe(agent.name);
     expect(created.type).toBe('slack');
     expect(created.external_account_id).toBe(TEAM_ID);
     expect(created.manifest).toEqual(manifest());
@@ -108,7 +134,6 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     const pending: IntegrationManifest = {
       type: 'slack',
       bot_display_name: 'release-bot',
-      default_agent_name: 'support-bot',
       allowed_channel_ids: ['C0GENERAL'],
       allow_direct_messages: true,
       reply_mode: 'thread',
@@ -142,17 +167,80 @@ export function runIntegrationStoreContractSuite(getStore: () => IIntegrationSto
     expect(await store.listIntegrations({ tenant_id: TENANT })).toHaveLength(2);
   });
 
-  it('create rejects a second integration for the same channel account', async () => {
+  it('create rejects a second integration for the same channel account on the same agent', async () => {
     const store = getStore();
     await store.createIntegration(createInput());
     await expect(store.createIntegration(createInput())).rejects.toBeInstanceOf(IntegrationConflictError);
   });
 
+  it('one channel account may hold one integration per agent', async () => {
+    const store = getStore();
+    const second = await seedAgent();
+    const first = await store.createIntegration(createInput());
+    const other = await store.createIntegration(createInput({ agent_id: second.id, agent_name: second.name }));
+
+    expect(other.external_account_id).toBe(TEAM_ID);
+    expect((await store.listIntegrations({ tenant_id: TENANT })).map(it => it.id).sort()).toEqual(
+      [first.id, other.id].sort(),
+    );
+  });
+
   it('the same channel account may be connected once per tenant', async () => {
     const store = getStore();
     await store.createIntegration(createInput());
-    const other = await store.createIntegration(createInput({ tenant_id: 'other-tenant' }));
+    const elsewhere = await seedAgent({ tenant_id: 'other-tenant' });
+    const other = await store.createIntegration(
+      createInput({ tenant_id: 'other-tenant', agent_id: elsewhere.id, agent_name: elsewhere.name }),
+    );
     expect(other.external_account_id).toBe(TEAM_ID);
+  });
+
+  it('list filters by agent id, agent name, and creator-or-agent', async () => {
+    const store = getStore();
+    const second = await seedAgent();
+    const mine = await store.createIntegration(createInput());
+    const theirs = await store.createIntegration(
+      createInput({
+        agent_id: second.id,
+        agent_name: second.name,
+        created_by_subject: { ...CREATED_BY, subject_id: 'someone-else' },
+      }),
+    );
+    const ids = (records: { id: string }[]) => records.map(record => record.id);
+
+    expect(ids(await store.listIntegrations({ tenant_id: TENANT, agent_ids: [second.id] }))).toEqual([theirs.id]);
+    expect(ids(await store.listIntegrations({ tenant_id: TENANT, agent_ids: [] }))).toEqual([]);
+    expect(ids(await store.listIntegrations({ tenant_id: TENANT, agent_names: [agent.name] }))).toEqual([mine.id]);
+    expect(
+      ids(
+        await store.listIntegrations({
+          tenant_id: TENANT,
+          created_by_or_agent_ids: { created_by_subject_id: CREATED_BY.subject_id, agent_ids: [] },
+        }),
+      ),
+    ).toEqual([mine.id]);
+    expect(
+      ids(
+        await store.listIntegrations({
+          tenant_id: TENANT,
+          created_by_or_agent_ids: { created_by_subject_id: 'nobody', agent_ids: [second.id] },
+        }),
+      ),
+    ).toEqual([theirs.id]);
+  });
+
+  it('deleting the agent deletes its integrations and their deliveries', async () => {
+    const store = getStore();
+    const survivor = await seedAgent();
+    const doomed = await store.createIntegration(createInput());
+    const kept = await store.createIntegration(createInput({ agent_id: survivor.id, agent_name: survivor.name }));
+    await enqueue(store, doomed.id);
+
+    await deps.getAgentStore().deleteAgent({ tenant_id: TENANT, id: agent.id });
+
+    expect(await store.getIntegrationById({ id: doomed.id })).toBeUndefined();
+    expect(await store.getPendingDelivery(target(doomed.id))).toBeUndefined();
+    expect((await store.listIntegrations({ tenant_id: TENANT })).map(it => it.id)).toEqual([kept.id]);
   });
 
   it('update replaces the whole manifest and preserves created_at', async () => {

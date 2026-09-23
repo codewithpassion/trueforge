@@ -37,13 +37,12 @@ const CREATED_BY: CreatedBySubject = {
 
 const ANSWERER = 'U0ADMIN';
 
-function manifest(agentName: string): IntegrationManifest {
+function manifest(): IntegrationManifest {
   return {
     type: 'slack',
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
-    default_agent_name: agentName,
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -62,7 +61,7 @@ async function heldSession(input: { sessionId: string; scenario: string }) {
   const integrationId = `int-${input.sessionId}`;
   const agentName = `support-${input.sessionId}`;
   const spec = AgentSpecSchema.parse({ model: { name: `${providerName}/mock-model` }, instructions: 'test' });
-  await stores.agentStore.createAgent({
+  const agent = await stores.agentStore.createAgent({
     tenant_id: TENANT_ID,
     name: agentName,
     description: agentName,
@@ -73,9 +72,11 @@ async function heldSession(input: { sessionId: string; scenario: string }) {
   await stores.integrationStore.createIntegration({
     id: integrationId,
     tenant_id: TENANT_ID,
+    agent_id: agent.id,
+    agent_name: agent.name,
     type: 'slack',
     external_account_id: `T-${input.sessionId}`,
-    manifest: manifest(agentName),
+    manifest: manifest(),
     created_by_subject: CREATED_BY,
   });
   await stores.sessionStore.createSession({

@@ -30,7 +30,7 @@ import {
 } from '../../integrationStore';
 import type { AtomicRunner } from '../atomic';
 import { isUniqueViolation } from '../errors';
-import { jsonbBind, jsonText, nowIso } from '../sqlExpressions';
+import { jsonbBind, jsonListValues, jsonText, nowIso, whereCreatedByOrAgentIds } from '../sqlExpressions';
 import type { Database } from '../types';
 
 /** Column list projecting the JSONB manifest/created_by_subject as parsed JSON (see JSON_RESULT_COLUMNS). */
@@ -38,6 +38,8 @@ function integrationColumns(eb: ExpressionBuilder<Database, 'integration'>) {
   return [
     'id' as const,
     'tenant_id' as const,
+    'agent_id' as const,
+    'agent_name' as const,
     'type' as const,
     'external_account_id' as const,
     jsonText<unknown>(eb.ref('manifest')).as('manifest'),
@@ -50,6 +52,8 @@ function integrationColumns(eb: ExpressionBuilder<Database, 'integration'>) {
 interface IntegrationRow {
   id: string;
   tenant_id: string;
+  agent_id: string;
+  agent_name: string;
   type: IntegrationType;
   external_account_id: string;
   manifest: unknown;
@@ -105,13 +109,15 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
 
   async listIntegrations(input: ListIntegrationsInput, transaction?: Kysely<Database>): Promise<IntegrationRecord[]> {
     const db = transaction ?? this.#db;
-    const rows = await db
-      .selectFrom('integration')
-      .select(integrationColumns)
-      .where('tenant_id', '=', input.tenant_id)
-      .orderBy('created_at')
-      .orderBy('id')
-      .execute();
+    let query = db.selectFrom('integration').select(integrationColumns).where('tenant_id', '=', input.tenant_id);
+    if (input.agent_ids !== undefined) {
+      query = query.where('agent_id', 'in', jsonListValues(input.agent_ids));
+    }
+    if (input.agent_names !== undefined) {
+      query = query.where('agent_name', 'in', jsonListValues(input.agent_names));
+    }
+    query = whereCreatedByOrAgentIds(query, input.created_by_or_agent_ids);
+    const rows = await query.orderBy('created_at').orderBy('id').execute();
     return rows.map(toRecord);
   }
 
@@ -151,6 +157,8 @@ export class SqliteIntegrationStore implements IIntegrationStore<Kysely<Database
         .values({
           id: input.id,
           tenant_id: input.tenant_id,
+          agent_id: input.agent_id,
+          agent_name: input.agent_name,
           type: input.type,
           external_account_id: input.external_account_id,
           manifest: jsonbBind(input.manifest),

@@ -1,8 +1,15 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import type { Context } from 'hono';
-import { createdBySubjectFromRequestContext, type ResolveRequestContext } from '../auth/identity';
+import type { Context, MiddlewareHandler } from 'hono';
+import type { Authorizer } from '../auth/authorizer';
+import {
+  createdBySubjectFromRequestContext,
+  hasAdminRole,
+  type RequestContext,
+  type ResolveRequestContext,
+} from '../auth/identity';
+import type { IAgentStore } from '../db/agentStore';
 import {
   IntegrationConflictError,
   type IIntegrationStore,
@@ -43,12 +50,23 @@ import {
   resolveStoredSecretValue,
   toRedactedSecretValue,
 } from '../utils/secretRedaction';
+import { agentIfAccessible, canReadAgentBoundResource, resolveManagedAgentIds } from './agentAccess';
 
 /** A settings surface shows a recent window, not the whole history. */
 const INTEGRATION_DECISIONS_PAGE_LIMIT = 50;
 
 const CREDENTIALS_REQUIRED_MESSAGE =
   'Integration credentials are required; send real values when the channel account changes';
+
+const FORBIDDEN_INTEGRATION_ACCESS =
+  'Only the integration creator or a manager of its agent can access this integration';
+
+/**
+ * CRUD paths. Channel ingress shares the `/api/v1/integrations` prefix and carries no TrueForge
+ * credential, so auth is bound to these paths one by one: a `use('*')` would also catch
+ * `/{integration_id}/events` and `/{integration_id}/interactions`.
+ */
+const AUTHENTICATED_PATHS = ['/', '/:integration_id', '/:integration_id/app-manifest', '/:integration_id/decisions'];
 
 /** The credential itself is wrong — the caller has something to fix. */
 class ChannelRejectedCredentialsError extends Error {
@@ -76,8 +94,12 @@ class ChannelAccountMismatchError extends Error {
 
 export interface IntegrationsRouterDeps<TTransaction> {
   resolveIntegrationStore: (c: Context) => IIntegrationStore<TTransaction>;
+  resolveAgentStore: (c: Context) => IAgentStore<TTransaction>;
   withTransaction: WithTransaction<TTransaction>;
   resolveRequestContext: ResolveRequestContext;
+  authorizer: Authorizer;
+  /** Applied to the CRUD paths only; see `AUTHENTICATED_PATHS`. */
+  authMiddleware: MiddlewareHandler;
   /** Public origin the channel posts events back to. */
   publicBaseUrl: () => string;
   logger: Logger;
@@ -177,6 +199,7 @@ function toWireDecision(record: IntegrationDecisionRecord): IntegrationDecision 
 function toWireIntegration(record: IntegrationRecord): Integration {
   return {
     id: record.id,
+    agent_name: record.agent_name,
     type: record.type,
     status: integrationStatus(record.manifest),
     external_account_id: record.external_account_id,
@@ -187,9 +210,27 @@ function toWireIntegration(record: IntegrationRecord): Integration {
   };
 }
 
-/** Admin/settings integration surface (mounted at /api/v1/settings/integrations). */
+/** Integration CRUD (mounted at /api/v1/integrations, beside the channel ingress). */
 export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterDeps<TTransaction>) {
   const authTest = deps.slackAuthTest ?? slackAuthTest;
+
+  /**
+   * The creator or a manager of the bound agent, like a schedule. Admins held every integration
+   * while they lived in settings, and still see them all in the list, so they may open any.
+   */
+  const canAccessIntegration = async (input: {
+    c: Context;
+    context: RequestContext;
+    record: IntegrationRecord;
+  }): Promise<boolean> =>
+    hasAdminRole(input.context) ||
+    canReadAgentBoundResource({
+      store: deps.resolveAgentStore(input.c),
+      context: input.context,
+      authorizer: deps.authorizer,
+      created_by_subject_id: input.record.created_by_subject.subject_id,
+      agent_id: input.record.agent_id,
+    });
 
   /**
    * Fills the workspace and bot ids from the channel so nobody copies them by hand, and
@@ -222,8 +263,25 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
   };
 
   const listHandler: RouteHandler<typeof listIntegrationsRoute> = async c => {
+    const { agent_names: agentNames } = c.req.valid('query');
     const requestContext = deps.resolveRequestContext(c);
-    const records = await deps.resolveIntegrationStore(c).listIntegrations({ tenant_id: requestContext.tenant_id });
+    // An `all` agent scope is not an admin grant (see `resolveManagedAgentIds`), so the tenant-wide
+    // view keys on the admin role instead.
+    const createdByOrAgentIds = hasAdminRole(requestContext)
+      ? undefined
+      : {
+          created_by_subject_id: requestContext.subject.id,
+          agent_ids: await resolveManagedAgentIds({
+            store: deps.resolveAgentStore(c),
+            context: requestContext,
+            authorizer: deps.authorizer,
+          }),
+        };
+    const records = await deps.resolveIntegrationStore(c).listIntegrations({
+      tenant_id: requestContext.tenant_id,
+      agent_names: agentNames,
+      created_by_or_agent_ids: createdByOrAgentIds,
+    });
     return c.json({ data: records.map(toWireIntegration) }, 200);
   };
 
@@ -236,12 +294,28 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
     if (record === undefined) {
       return c.json({ error: { message: `Integration not found: ${integrationId}` } }, 404);
     }
+    if (!(await canAccessIntegration({ c, context: requestContext, record }))) {
+      return c.json({ error: { message: FORBIDDEN_INTEGRATION_ACCESS } }, 403);
+    }
     return c.json({ data: toWireIntegration(record) }, 200);
   };
 
   const createHandler: RouteHandler<typeof createIntegrationRoute> = async c => {
     const body: CreateIntegrationRequest = c.req.valid('json');
     const requestContext = deps.resolveRequestContext(c);
+    // Turns run as the creator, so connecting a channel is managing the agent, not just using it.
+    const agent = await agentIfAccessible({
+      authorizer: deps.authorizer,
+      context: requestContext,
+      action: 'use',
+      agent: await deps.resolveAgentStore(c).getAgent({ tenant_id: requestContext.tenant_id, name: body.agent_name }),
+    });
+    if (agent === undefined) {
+      return c.json({ error: { message: `Agent not found: ${body.agent_name}` } }, 404);
+    }
+    if (!(await deps.authorizer.canAccessAgent({ context: requestContext, action: 'manage', agent }))) {
+      return c.json({ error: { message: `Only a manager of agent ${agent.name} can connect it to a channel` } }, 403);
+    }
     try {
       // Create has no prior row, so a redacted stand-in resolves to MissingStoredSecretError → 400.
       const resolved = resolveManifestForWrite({
@@ -253,6 +327,8 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
       const record = await deps.resolveIntegrationStore(c).createIntegration({
         id,
         tenant_id: requestContext.tenant_id,
+        agent_id: agent.id,
+        agent_name: agent.name,
         type: manifest.type,
         external_account_id: integrationExternalAccountId({ manifest, integration_id: id }),
         manifest,
@@ -286,6 +362,9 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
       const before = await store.getIntegration({ tenant_id: requestContext.tenant_id, id: integrationId });
       if (before === undefined) {
         return c.json({ error: { message: `Integration not found: ${integrationId}` } }, 404);
+      }
+      if (!(await canAccessIntegration({ c, context: requestContext, record: before }))) {
+        return c.json({ error: { message: FORBIDDEN_INTEGRATION_ACCESS } }, 403);
       }
       // Identity comes from the caller's own token, so it does not go stale if the stored
       // credentials change underneath: an omitted or redacted token asks the channel nothing.
@@ -349,6 +428,9 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
     if (record === undefined) {
       return c.json({ error: { message: `Integration not found: ${integrationId}` } }, 404);
     }
+    if (!(await canAccessIntegration({ c, context: requestContext, record }))) {
+      return c.json({ error: { message: FORBIDDEN_INTEGRATION_ACCESS } }, 403);
+    }
     let publicBaseUrl: string;
     try {
       publicBaseUrl = deps.publicBaseUrl();
@@ -387,6 +469,9 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
     if (record === undefined) {
       return c.json({ error: { message: `Integration not found: ${integrationId}` } }, 404);
     }
+    if (!(await canAccessIntegration({ c, context: requestContext, record }))) {
+      return c.json({ error: { message: FORBIDDEN_INTEGRATION_ACCESS } }, 403);
+    }
     const decisions = await store.listDecisions({
       tenant_id: requestContext.tenant_id,
       integration_id: integrationId,
@@ -398,11 +483,22 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
   const deleteHandler: RouteHandler<typeof deleteIntegrationRoute> = async c => {
     const { integration_id: integrationId } = c.req.valid('param');
     const requestContext = deps.resolveRequestContext(c);
-    await deps.resolveIntegrationStore(c).deleteIntegration({ tenant_id: requestContext.tenant_id, id: integrationId });
+    const store = deps.resolveIntegrationStore(c);
+    const record = await store.getIntegration({ tenant_id: requestContext.tenant_id, id: integrationId });
+    if (record === undefined) {
+      return c.json({}, 200);
+    }
+    if (!(await canAccessIntegration({ c, context: requestContext, record }))) {
+      return c.json({ error: { message: FORBIDDEN_INTEGRATION_ACCESS } }, 403);
+    }
+    await store.deleteIntegration({ tenant_id: requestContext.tenant_id, id: integrationId });
     return c.json({}, 200);
   };
 
   const router = new OpenAPIHono();
+  for (const path of AUTHENTICATED_PATHS) {
+    router.use(path, deps.authMiddleware);
+  }
   router.openapi(listIntegrationsRoute, listHandler);
   router.openapi(createIntegrationRoute, createHandler);
   router.openapi(getIntegrationRoute, getHandler);

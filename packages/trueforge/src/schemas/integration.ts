@@ -1,10 +1,10 @@
 /**
  * Integration domain + wire schemas: the persisted `integration.manifest` jsonb
- * document and the settings OpenAPI request/response shapes.
+ * document and the OpenAPI request/response shapes.
  */
 import { z } from '@hono/zod-openapi';
 import { CreatedBySubjectSchema } from '@truefoundry/trueforge-core/agent-session';
-import { NameSchema } from './common';
+import { NameSchema, parseCommaSeparatedQuery } from './common';
 
 /** Channel types the integrations layer knows about. */
 export const IntegrationTypeSchema = z.enum(['slack']).describe('Channel type.').openapi('IntegrationType');
@@ -143,7 +143,6 @@ export const SlackIntegrationManifestSchema = z
       .min(1)
       .optional()
       .describe('User id of the bot, used to ignore its own messages. Filled from `auth.test`.'),
-    default_agent_name: NameSchema,
     allowed_channel_ids: z
       .array(z.string().min(1))
       .describe('Channels the bot answers in. An empty list allows no channel.'),
@@ -187,6 +186,7 @@ export const IntegrationManifestSchema = SlackIntegrationManifestSchema.describe
 export const IntegrationSchema = z
   .object({
     id: z.string().describe('Immutable integration id.'),
+    agent_name: NameSchema,
     type: IntegrationTypeSchema,
     status: IntegrationStatusSchema,
     external_account_id: z.string().describe('Channel-side account this integration is bound to.'),
@@ -198,8 +198,10 @@ export const IntegrationSchema = z
   .strict()
   .openapi('Integration');
 
+/** The agent binding is fixed at create: the channel app is named for it and its threads map to its sessions. */
 export const CreateIntegrationRequestSchema = z
   .object({
+    agent_name: NameSchema,
     manifest: IntegrationManifestSchema,
   })
   .strict()
@@ -254,6 +256,21 @@ export const ListIntegrationDecisionsResponseSchema = z
 
 export const GetIntegrationResponseSchema = z.object({ data: IntegrationSchema }).openapi('GetIntegrationResponse');
 
+export const ListIntegrationsQuerySchema = z
+  .object({
+    // comma-separated string -> array of names
+    agent_names: z
+      .string()
+      .optional()
+      .openapi({
+        type: 'string',
+        description: 'Filter by one or more agent names (comma-separated). When set, at least one name is required.',
+      })
+      .transform(value => parseCommaSeparatedQuery(value))
+      .pipe(z.array(NameSchema).min(1).optional()),
+  })
+  .openapi('ListIntegrationsQuery');
+
 export const ListIntegrationsResponseSchema = z
   .object({ data: z.array(IntegrationSchema) })
   .openapi('ListIntegrationsResponse');
@@ -289,7 +306,7 @@ export function integrationStatus(manifest: IntegrationManifest): IntegrationSta
 
 /**
  * Channel-side account a manifest is bound to, used for the
- * `(tenant_id, type, external_account_id)` uniqueness of an integration.
+ * `(tenant_id, type, external_account_id, agent_id)` uniqueness of an integration.
  *
  * A pending integration has no channel account yet, so it stands on its own id: the column is
  * `NOT NULL` and two pending integrations must not collide with each other.

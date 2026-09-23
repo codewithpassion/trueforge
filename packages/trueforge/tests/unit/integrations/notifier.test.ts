@@ -39,6 +39,7 @@ import type { IntegrationManifest, IntegrationNotificationRule } from '../../../
 import { newId } from '../../../src/utils/id';
 import { ScriptedTurnSessions } from '../apis/scriptedSessions';
 import { fakeChannelAdapter, type FakeChannelAdapter } from './fakeChannelAdapter';
+import { seedAgent } from './seedAgent';
 
 /** Notification rules only fire for schedule sessions, which these cases do not create. */
 const scheduleStore = { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) };
@@ -60,7 +61,6 @@ function manifest(): IntegrationManifest {
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
-    default_agent_name: 'support-bot',
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -75,6 +75,8 @@ interface Harness {
   sessionStore: SqliteSessionStore;
   integrationStore: IIntegrationStore<Kysely<Database>>;
   integrationId: string;
+  /** The agent the integration is bound to. */
+  agentId: string;
   turnStores: Pick<
     BeginTurnExecutionDeps,
     'agentStore' | 'modelProviderStore' | 'mcpServerStore' | 'sandboxProviderStore' | 'skillStore'
@@ -88,10 +90,13 @@ async function createHarness(options: { source?: SessionSource | null; external_
   const sessionStore = new SqliteSessionStore(db, atomic);
   const integrationStore = new SqliteIntegrationStore(db, atomic);
   const integrationId = newId();
+  const agent = await seedAgent({ db, tenant_id: TENANT, name: 'support-bot', created_by_subject: CREATED_BY });
 
   await integrationStore.createIntegration({
     id: integrationId,
     tenant_id: TENANT,
+    agent_id: agent.id,
+    agent_name: agent.name,
     type: 'slack',
     external_account_id: 'T0TEAM',
     manifest: manifest(),
@@ -118,6 +123,7 @@ async function createHarness(options: { source?: SessionSource | null; external_
     sessionStore,
     integrationStore,
     integrationId,
+    agentId: agent.id,
     turnStores: {
       agentStore: new SqliteAgentStore(db),
       modelProviderStore: new SqliteModelProviderStore(db),
@@ -404,7 +410,8 @@ const RUN_ID = 'run-1';
 const SCHEDULE_NAME = 'nightly-report';
 
 /** Only the fields the notifier reads; the real record carries a manifest and timestamps. */
-function scheduleStoreNamed(name: string | undefined) {
+function scheduleStoreNamed(input: { name: string | undefined; agent_id: string }) {
+  const { name } = input;
   return {
     getSchedule: (): Promise<ScheduleRecord | undefined> =>
       Promise.resolve(
@@ -413,7 +420,7 @@ function scheduleStoreNamed(name: string | undefined) {
           : {
               id: SCHEDULE_ID,
               tenant_id: TENANT,
-              agent_id: 'agent-1',
+              agent_id: input.agent_id,
               agent_name: 'support-bot',
               name,
               manifest: { task: 'report', cron: '0 0 * * *', timezone: 'UTC', status: 'active' },
@@ -496,12 +503,23 @@ describe('notification rules for a finished schedule run', () => {
     await harness?.db.destroy();
   });
 
-  /** `scheduleName: null` stands for a schedule that has since been deleted. */
-  function notifierFor(input: { harness: Harness; fake: FakeChannelAdapter; scheduleName?: string | null }) {
+  /**
+   * `scheduleName: null` stands for a schedule that has since been deleted. `scheduleAgentId`
+   * defaults to the integration's own agent.
+   */
+  function notifierFor(input: {
+    harness: Harness;
+    fake: FakeChannelAdapter;
+    scheduleName?: string | null;
+    scheduleAgentId?: string;
+  }) {
     const named = input.scheduleName === undefined ? SCHEDULE_NAME : input.scheduleName;
     return new TurnCompletionNotifier({
       integrationStore: input.harness.integrationStore,
-      scheduleStore: scheduleStoreNamed(named === null ? undefined : named),
+      scheduleStore: scheduleStoreNamed({
+        name: named === null ? undefined : named,
+        agent_id: input.scheduleAgentId ?? input.harness.agentId,
+      }),
       adapters: input.fake.adapters,
       logger: createLogger({ silent: true }),
     });
@@ -545,6 +563,23 @@ describe('notification rules for a finished schedule run', () => {
     expect(fake.delivered).toHaveLength(0);
   });
 
+  it("ignores another agent's schedule of the same name", async () => {
+    harness = await scheduleHarness({ rules: [rule()] });
+    const other = await seedAgent({
+      db: harness.db,
+      tenant_id: TENANT,
+      name: 'other-bot',
+      created_by_subject: CREATED_BY,
+    });
+    const fake = fakeChannelAdapter();
+
+    // Schedule names are unique per agent only, so agent B's `nightly-report` is not agent A's.
+    await runTurn({ harness, notifier: notifierFor({ harness, fake, scheduleAgentId: other.id }) });
+
+    expect(fake.delivered).toHaveLength(0);
+    expect(await harness.db.selectFrom('integration_delivery').selectAll().execute()).toEqual([]);
+  });
+
   it('honours an outcome filter: a successful run is not a failure', async () => {
     harness = await scheduleHarness({ rules: [rule({ outcome: 'failure' })] });
     const fake = fakeChannelAdapter();
@@ -573,7 +608,7 @@ describe('notification rules for a finished schedule run', () => {
     expect(await harness.db.selectFrom('integration_delivery').selectAll().execute()).toEqual([]);
   });
 
-  it('posts nothing when the tenant has no rules at all', async () => {
+  it('posts nothing when the agent has no rules at all', async () => {
     harness = await scheduleHarness({ rules: [] });
     const fake = fakeChannelAdapter();
 

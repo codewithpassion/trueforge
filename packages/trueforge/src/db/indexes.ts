@@ -27,3 +27,6 @@ export const SCHEDULE_AGENT_ID_IDX = 'schedule_agent_id_idx';
 
 /** `(tenant_id, created_by_subject.subject_id)` on schedule_run. */
 export const SCHEDULE_RUN_CREATED_BY_SUBJECT_ID_IDX = 'schedule_run_created_by_subject_id_idx';
+
+/** `(tenant_id, agent_id)` on integration — list one agent's integrations and serve the agent cascade. */
+export const INTEGRATION_AGENT_ID_IDX = 'integration_agent_id_idx';

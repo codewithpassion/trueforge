@@ -51,7 +51,7 @@ function ruleMatches(input: {
  * the caller that wins `claimDelivery`, a single guarded `pending` -> `sending` write.
  *
  * A turn from a schedule takes the other branch: nothing is owed in advance, so the rules of
- * this tenant's connected integrations decide what to enqueue, and the same claim-first
+ * its agent's connected integrations decide what to enqueue, and the same claim-first
  * outbox carries it.
  *
  * Never throws: the drain must not fail because a channel is unreachable.
@@ -115,29 +115,33 @@ export class TurnCompletionNotifier<TTransaction> {
   }
 
   /**
-   * Fans a finished schedule run out to the channels its tenant's rules name. One delivery per
-   * matching channel: two rules pointing at the same channel collapse onto the one outbox row
-   * the unique `(turn_id, conversation_key)` key allows, so nobody is told twice.
+   * Fans a finished schedule run out to the channels named by the rules of its agent's
+   * integrations. Schedule names are unique per agent only, so a rule never matches another
+   * agent's schedule of the same name. One delivery per matching channel: two rules pointing at
+   * the same channel collapse onto the one outbox row the unique `(turn_id, conversation_key)`
+   * key allows, so nobody is told twice.
    *
-   * Statements added per finished schedule turn: one `listIntegrations`; then, only when some
-   * connected integration carries a rule, one `getSchedule`, one turn read, and per matching
-   * channel an enqueue, a claim and a settle.
+   * Statements added per finished schedule turn: one `getSchedule` and one `listIntegrations`
+   * for its agent; then, only when some connected integration carries a rule, one turn read, and
+   * per matching channel an enqueue, a claim and a settle.
    */
   async #deliverScheduleResult(input: { session: SessionHandle; turn_id: string; schedule_id: string }): Promise<void> {
     const { session, turn_id: turnId } = input;
     const { integrationStore, scheduleStore, logger } = this.#deps;
     try {
       const tenantId = session.record.tenant_id;
-      const integrations = (await integrationStore.listIntegrations({ tenant_id: tenantId })).filter(
+      const schedule = await scheduleStore.getSchedule({ tenant_id: tenantId, id: input.schedule_id });
+      if (schedule === undefined) {
+        return;
+      }
+      const integrations = (
+        await integrationStore.listIntegrations({ tenant_id: tenantId, agent_ids: [schedule.agent_id] })
+      ).filter(
         // A pending integration has no credentials, so it could not post if it tried.
         candidate =>
           connectedSlackManifest(candidate.manifest) !== undefined && candidate.manifest.notification_rules.length > 0,
       );
       if (integrations.length === 0) {
-        return;
-      }
-      const schedule = await scheduleStore.getSchedule({ tenant_id: tenantId, id: input.schedule_id });
-      if (schedule === undefined) {
         return;
       }
       const turn = await session.getTurn(turnId);

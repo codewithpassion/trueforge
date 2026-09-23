@@ -45,7 +45,7 @@ export function jsonListValues(values: readonly string[]): RawBuilder<string> {
 }
 
 /** Creator match, or creator OR `agent_id IN agent_ids` when the list is non-empty. */
-export function whereCreatedByOrAgentIds<TB extends 'session' | 'schedule', O>(
+export function whereCreatedByOrAgentIds<TB extends 'session' | 'schedule' | 'integration', O>(
   query: SelectQueryBuilder<Database, TB, O>,
   filter:
     | {

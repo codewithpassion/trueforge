@@ -34,7 +34,6 @@ function manifest(scheduleName: string): IntegrationManifest {
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
-    default_agent_name: 'support-bot',
     allowed_channel_ids: [],
     allow_direct_messages: false,
     reply_mode: 'thread',
@@ -45,15 +44,17 @@ function manifest(scheduleName: string): IntegrationManifest {
 }
 
 /**
- * A schedule, a connected integration carrying a rule, and the run's own session. The D1
- * database is shared across this file, so every case needs its own schedule name: a rule left
- * behind by an earlier case would otherwise match this one's run.
+ * A schedule, a connected integration carrying a rule, and the run's own session. Every case
+ * binds its integration to its own agent, so a rule left behind by an earlier case in this shared
+ * D1 database cannot match this one's run. `ruleOnOtherAgent` binds the integration to a second
+ * agent instead of the schedule's.
  */
 async function createScheduleRun(input: {
   sessionId: string;
   scenario: string;
   scheduleName: string;
   ruleScheduleName?: string;
+  ruleOnOtherAgent?: boolean;
 }) {
   const stores = d1Persistence();
   const providerName = await upsertMockProvider({ stores, scenario: input.scenario });
@@ -74,9 +75,22 @@ async function createScheduleRun(input: {
     created_by_subject: CREATED_BY,
     runFrom: new Date(),
   });
+  const ruleAgent =
+    input.ruleOnOtherAgent === true
+      ? await stores.agentStore.createAgent({
+          tenant_id: TENANT_ID,
+          name: `other-${input.sessionId}`,
+          description: 'another agent with a same-named schedule',
+          manifest: AgentSpecSchema.parse({ model: { name: `${providerName}/mock-model` }, instructions: 'test' }),
+          external_id: null,
+          created_by_subject: CREATED_BY,
+        })
+      : agent;
   await stores.integrationStore.createIntegration({
     id: `int-${input.sessionId}`,
     tenant_id: TENANT_ID,
+    agent_id: ruleAgent.id,
+    agent_name: ruleAgent.name,
     type: 'slack',
     external_account_id: `T-${input.sessionId}`,
     manifest: manifest(input.ruleScheduleName ?? input.scheduleName),
@@ -153,6 +167,26 @@ describe('notification rules inside SessionDO', () => {
       scheduleName: 'weekly-digest',
       ruleScheduleName: 'some-other-schedule',
     });
+    const stub = sessionStub(sessionId);
+
+    const started = await stub.startTurn({
+      tenant_id: TENANT_ID,
+      session_id: sessionId,
+      input: [{ type: 'user.message', content: 'report' }],
+      previous_turn_id: undefined,
+      user_ref: USER_REF,
+    });
+    if (!started.ok) {
+      throw new Error(`startTurn failed: ${started.code} ${started.message}`);
+    }
+    await runInDurableObject(stub, instance => instance.alarm());
+
+    expect(posted).toHaveLength(0);
+  });
+
+  it("does not fire another agent's rule for a schedule of the same name", async () => {
+    const sessionId = 'schedule-notify-other-agent';
+    await createScheduleRun({ sessionId, scenario: 'text', scheduleName: 'daily', ruleOnOtherAgent: true });
     const stub = sessionStub(sessionId);
 
     const started = await stub.startTurn({

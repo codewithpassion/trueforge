@@ -17,9 +17,13 @@ export interface IntegrationRecord {
   /** Application-generated (ULID); FK target for the child tables. */
   id: string;
   tenant_id: string;
+  /** FK → agent(id); immutable. Deleting the agent deletes the integration. */
+  agent_id: string;
+  /** Create-time snapshot of the agent's registry name. */
+  agent_name: string;
   type: IntegrationType;
   /**
-   * Channel-side account (for Slack, the `team_id`); unique per tenant and type. A pending
+   * Channel-side account (for Slack, the `team_id`); unique per tenant, type and agent. A pending
    * integration has no account yet and stands on its own id instead.
    */
   external_account_id: string;
@@ -124,7 +128,7 @@ export function parseStoredIntegrationManifest(manifest: unknown): IntegrationMa
   return IntegrationManifestSchema.parse(manifest);
 }
 
-/** The `(tenant_id, type, external_account_id)` key is already taken. */
+/** The `(tenant_id, type, external_account_id, agent_id)` key is already taken. */
 export class IntegrationConflictError extends Error {
   readonly tenant_id: string;
   readonly integration_type: IntegrationType;
@@ -134,7 +138,7 @@ export class IntegrationConflictError extends Error {
     { tenant_id, type, external_account_id }: { tenant_id: string; type: IntegrationType; external_account_id: string },
     options?: ErrorOptions,
   ) {
-    super(`Integration already connected for ${type} account ${external_account_id}`, options);
+    super(`This agent is already connected to ${type} account ${external_account_id}`, options);
     this.name = 'IntegrationConflictError';
     this.tenant_id = tenant_id;
     this.integration_type = type;
@@ -144,6 +148,17 @@ export class IntegrationConflictError extends Error {
 
 export interface ListIntegrationsInput {
   tenant_id: string;
+  /** When set, only integrations bound to these agent ids. */
+  agent_ids?: readonly string[] | undefined;
+  /** When set, only integrations bound to these agent names. */
+  agent_names?: readonly string[] | undefined;
+  /** When set, match creator or agent binding. Empty `agent_ids` means creator-only. */
+  created_by_or_agent_ids?:
+    | {
+        created_by_subject_id: string;
+        agent_ids: readonly string[];
+      }
+    | undefined;
 }
 
 export interface GetIntegrationInput {
@@ -159,6 +174,8 @@ export interface GetIntegrationByIdInput {
 export interface CreateIntegrationInput {
   id: string;
   tenant_id: string;
+  agent_id: string;
+  agent_name: string;
   type: IntegrationType;
   external_account_id: string;
   manifest: IntegrationManifest;
@@ -270,7 +287,7 @@ export interface IIntegrationStore<TTransaction = never> {
     input: GetIntegrationByIdInput,
     transaction?: TTransaction,
   ): Promise<IntegrationRecord | undefined>;
-  /** Throws `IntegrationConflictError` when the channel account is already connected. */
+  /** Throws `IntegrationConflictError` when the channel account is already connected to that agent. */
   createIntegration(input: CreateIntegrationInput, transaction?: TTransaction): Promise<IntegrationRecord>;
   /**
    * Replaces the manifest of an existing integration. Returns undefined when it is gone.

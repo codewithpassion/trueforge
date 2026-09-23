@@ -7,13 +7,11 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import type { ResolveRequestContext } from '../auth/identity';
-import type { IIntegrationStore } from '../db/integrationStore';
 import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { WithTransaction } from '../db/transaction';
 import type { SandboxIntegration } from '../sandbox/integration';
-import { createIntegrationsRouter } from './integrations';
 import { createSettingsMcpServersRouter } from './mcpServers';
 import { createModelProvidersRouter } from './modelProviders';
 import { createSandboxProvidersRouter } from './sandboxProviders';
@@ -24,9 +22,6 @@ export interface SettingsRouterDeps<TTransaction> {
   resolveMcpServerStore: (c: Context) => IMcpServerWithAuthStore<TTransaction>;
   resolveSkillStore: ResolveSkillStore<TTransaction>;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
-  resolveIntegrationStore: (c: Context) => IIntegrationStore<TTransaction>;
-  /** Public origin channels post back to; read lazily so an unset value only fails its own route. */
-  publicBaseUrl: () => string;
   sandboxIntegration: SandboxIntegration | undefined;
   withTransaction: WithTransaction<TTransaction>;
   logger: Logger;
@@ -58,16 +53,6 @@ export function createSettingsRouter<TTransaction>(deps: SettingsRouterDeps<TTra
       resolveSkillStore: deps.resolveSkillStore,
       withTransaction: deps.withTransaction,
       resolveRequestContext: deps.resolveRequestContext,
-    }),
-  );
-  router.route(
-    '/integrations',
-    createIntegrationsRouter({
-      resolveIntegrationStore: deps.resolveIntegrationStore,
-      withTransaction: deps.withTransaction,
-      resolveRequestContext: deps.resolveRequestContext,
-      publicBaseUrl: deps.publicBaseUrl,
-      logger: deps.logger,
     }),
   );
   router.route(

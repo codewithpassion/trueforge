@@ -43,7 +43,6 @@ function manifest(): IntegrationManifest {
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
-    default_agent_name: 'support-bot',
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -58,9 +57,19 @@ async function createIntegrationSession(input: { sessionId: string; scenario: st
   const stores = d1Persistence();
   const providerName = await upsertMockProvider({ stores, scenario: input.scenario });
   const integrationId = `int-${input.sessionId}`;
+  const agent = await stores.agentStore.createAgent({
+    tenant_id: TENANT_ID,
+    name: `agent-${input.sessionId}`,
+    description: 'integration owner',
+    manifest: AgentSpecSchema.parse({ model: { name: `${providerName}/mock-model` }, instructions: 'test' }),
+    external_id: null,
+    created_by_subject: CREATED_BY,
+  });
   await stores.integrationStore.createIntegration({
     id: integrationId,
     tenant_id: TENANT_ID,
+    agent_id: agent.id,
+    agent_name: agent.name,
     type: 'slack',
     external_account_id: `T-${input.sessionId}`,
     manifest: manifest(),

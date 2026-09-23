@@ -13,7 +13,6 @@ import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import type { IModelProviderStore } from '../../../src/db/modelProviderStore';
 import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
-import { SqliteIntegrationStore } from '../../../src/db/sqlite/integration-store/SqliteIntegrationStore';
 import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
@@ -131,8 +130,6 @@ async function createRouters(): Promise<{
         }),
       resolveSkillStore: () => new SqliteSkillStore(db),
       resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
-      resolveIntegrationStore: () => new SqliteIntegrationStore(db, new BetterSqliteAtomicRunner(db)),
-      publicBaseUrl: () => 'https://trueforge.test',
       sandboxIntegration: createNodeSandboxIntegration({ localSupport: undefined }),
       withTransaction: callback => db.transaction().execute(callback),
       logger: winston.createLogger({ silent: true }),

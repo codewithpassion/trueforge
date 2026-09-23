@@ -520,15 +520,21 @@ export interface OAuthPendingAuthorizationTable {
  * Canonical Kysely database.
  */
 /**
- * One connected channel account.
+ * One connected channel account, bound to one agent.
  * PRIMARY KEY (id)
- * CREATE UNIQUE INDEX integration_account_uq ON integration (tenant_id, type, external_account_id)
+ * FK (agent_id) -> agent(id) ON DELETE CASCADE
+ * CREATE UNIQUE INDEX integration_account_uq ON integration (tenant_id, type, external_account_id, agent_id)
  * CREATE INDEX integration_list_idx ON integration (tenant_id, created_at, id)
+ * CREATE INDEX integration_agent_id_idx ON integration (tenant_id, agent_id)
  */
 export interface IntegrationTable {
   /** application-generated (ulid); FK target for the child tables */
   id: string;
   tenant_id: string;
+  /** FK → agent(id). Immutable. */
+  agent_id: string;
+  /** Create-time snapshot of registry agent name. */
+  agent_name: string;
   /** varchar(32) */
   type: IntegrationType;
   /** channel-side account id (Slack `team_id`) */

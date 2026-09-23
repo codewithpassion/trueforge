@@ -54,7 +54,6 @@ function manifest(): IntegrationManifest {
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
-    default_agent_name: AGENT_NAME,
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -114,7 +113,7 @@ interface Harness {
   flush: () => Promise<void>;
 }
 
-async function createHarness(options: { withAgent?: boolean } = {}): Promise<Harness> {
+async function createHarness(): Promise<Harness> {
   const db = createSqliteDb(':memory:');
   await migrateSqliteToLatest(db);
   const atomic = new BetterSqliteAtomicRunner(db);
@@ -122,20 +121,20 @@ async function createHarness(options: { withAgent?: boolean } = {}): Promise<Har
   const agentStore = new SqliteAgentStore(db);
   const integrationStore = new SqliteIntegrationStore(db, atomic);
 
-  if (options.withAgent !== false) {
-    await agentStore.createAgent({
-      tenant_id: TENANT,
-      name: AGENT_NAME,
-      description: AGENT_NAME,
-      manifest: AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } }),
-      external_id: null,
-      created_by_subject: CREATED_BY,
-    });
-  }
+  const agent = await agentStore.createAgent({
+    tenant_id: TENANT,
+    name: AGENT_NAME,
+    description: AGENT_NAME,
+    manifest: AgentSpecSchema.parse({ model: { name: 'test-provider/test-model' } }),
+    external_id: null,
+    created_by_subject: CREATED_BY,
+  });
 
   const integration = await integrationStore.createIntegration({
     id: newId(),
     tenant_id: TENANT,
+    agent_id: agent.id,
+    agent_name: agent.name,
     type: 'slack',
     external_account_id: 'T0TEAM',
     manifest: manifest(),
@@ -393,14 +392,16 @@ describe('IntegrationRouter', () => {
   });
 
   it('reports a missing agent without starting a turn, and releases the event', async () => {
-    harness = await createHarness({ withAgent: false });
+    harness = await createHarness();
+    // The agent cascade removes its integrations, so only a record read before the delete can
+    // still name it.
     const routed = await harness.router.route({
-      integration: harness.integration,
+      integration: { ...harness.integration, agent_id: 'deleted-agent', agent_name: 'deleted-bot' },
       adapter: harness.channel.adapter,
       event: inboundEvent(),
     });
 
-    expect(routed).toEqual({ type: 'agent_not_found', agent_name: AGENT_NAME });
+    expect(routed).toEqual({ type: 'agent_not_found', agent_name: 'deleted-bot' });
     expect(harness.executor.starts).toHaveLength(0);
     // Nothing ran, so the channel's retry of the same event id must not look like a replay.
     expect(await harness.db.selectFrom('integration_event').selectAll().execute()).toEqual([]);
@@ -640,6 +641,8 @@ describe('IntegrationRouter.resume', () => {
     const other = await harness.integrationStore.createIntegration({
       id: newId(),
       tenant_id: TENANT,
+      agent_id: harness.integration.agent_id,
+      agent_name: harness.integration.agent_name,
       type: 'slack',
       external_account_id: 'T0OTHER',
       manifest: manifest(),

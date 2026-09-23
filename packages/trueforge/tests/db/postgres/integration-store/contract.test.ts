@@ -1,5 +1,6 @@
 import { sql } from 'kysely';
 
+import { PostgresAgentStore } from '../../../../src/db/postgres/agent-store/PostgresAgentStore';
 import { PostgresIntegrationStore } from '../../../../src/db/postgres/integration-store/PostgresIntegrationStore';
 import { runIntegrationStoreContractSuite } from '../../integrationStoreContractSuite';
 import { createPostgresTestDatabase, type PostgresTestDatabase } from '../testDatabase';
@@ -22,14 +23,22 @@ describePg('PostgresIntegrationStore (IIntegrationStore contract)', () => {
 
   beforeEach(async () => {
     if (env !== undefined) {
-      await sql`TRUNCATE TABLE integration CASCADE`.execute(env.db);
+      await sql`TRUNCATE TABLE agent, integration CASCADE`.execute(env.db);
     }
   });
 
-  runIntegrationStoreContractSuite(() => {
-    if (env === undefined) {
-      throw new Error('Postgres test environment not initialized');
-    }
-    return new PostgresIntegrationStore(env.db);
+  runIntegrationStoreContractSuite({
+    getAgentStore: () => {
+      if (env === undefined) {
+        throw new Error('Postgres test environment not initialized');
+      }
+      return new PostgresAgentStore(env.db);
+    },
+    getIntegrationStore: () => {
+      if (env === undefined) {
+        throw new Error('Postgres test environment not initialized');
+      }
+      return new PostgresIntegrationStore(env.db);
+    },
   });
 });

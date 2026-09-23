@@ -19,6 +19,7 @@ import type { DeliveryResult } from '../../../src/integrations/types';
 import type { IntegrationManifest } from '../../../src/schemas/integration';
 import { newId } from '../../../src/utils/id';
 import { fakeChannelAdapter, type FakeChannelAdapter } from './fakeChannelAdapter';
+import { seedAgent } from './seedAgent';
 
 /** Notification rules only fire for schedule sessions, which these cases do not create. */
 const scheduleStore = { getSchedule: (): Promise<undefined> => Promise.resolve(undefined) };
@@ -41,7 +42,6 @@ function manifest(): IntegrationManifest {
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
-    default_agent_name: 'support-bot',
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -73,9 +73,12 @@ async function createHarness(
   const integrationStore = new SqliteIntegrationStore(db, atomic);
   const integrationId = newId();
 
+  const agent = await seedAgent({ db, tenant_id: TENANT, name: 'support-bot', created_by_subject: CREATED_BY });
   await integrationStore.createIntegration({
     id: integrationId,
     tenant_id: TENANT,
+    agent_id: agent.id,
+    agent_name: agent.name,
     type: 'slack',
     external_account_id: 'T0TEAM',
     manifest: manifest(),

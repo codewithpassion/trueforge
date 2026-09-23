@@ -13,6 +13,7 @@ import {
 } from '../../../src/integrations/pruneEvents';
 import type { IntegrationManifest } from '../../../src/schemas/integration';
 import { newId } from '../../../src/utils/id';
+import { seedAgent } from './seedAgent';
 
 const TENANT = 'default';
 
@@ -28,7 +29,6 @@ function manifest(): IntegrationManifest {
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: 'U0BOT',
-    default_agent_name: 'support-bot',
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -49,9 +49,12 @@ describe('integrationEventPruneLoop', () => {
     db = createSqliteDb(':memory:');
     await migrateSqliteToLatest(db);
     const integrationStore = new SqliteIntegrationStore(db, new BetterSqliteAtomicRunner(db));
+    const agent = await seedAgent({ db, tenant_id: TENANT, name: 'support-bot', created_by_subject: CREATED_BY });
     const integration = await integrationStore.createIntegration({
       id: newId(),
       tenant_id: TENANT,
+      agent_id: agent.id,
+      agent_name: agent.name,
       type: 'slack',
       external_account_id: 'T0TEAM',
       manifest: manifest(),

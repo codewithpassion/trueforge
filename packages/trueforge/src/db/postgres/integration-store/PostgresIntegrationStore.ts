@@ -28,7 +28,7 @@ import {
   type UpdateIntegrationInput,
 } from '../../integrationStore';
 import { isUniqueViolation } from '../client';
-import { json, now } from '../sqlExpressions';
+import { json, now, whereCreatedByOrAgentIds } from '../sqlExpressions';
 import type { Database, IntegrationDecisionTable, IntegrationDeliveryTable, IntegrationTable } from '../types';
 
 /** Re-validates both persisted documents, so a row written under an older schema cannot leak through. */
@@ -36,6 +36,8 @@ function toRecord(row: Selectable<IntegrationTable>): IntegrationRecord {
   return {
     id: row.id,
     tenant_id: row.tenant_id,
+    agent_id: row.agent_id,
+    agent_name: row.agent_name,
     type: row.type,
     external_account_id: row.external_account_id,
     manifest: parseStoredIntegrationManifest(row.manifest),
@@ -77,14 +79,20 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
     input: ListIntegrationsInput,
     transaction?: Transaction<Database>,
   ): Promise<IntegrationRecord[]> {
+    // `IN ()` is a syntax error in Postgres; an empty filter matches nothing.
+    if (input.agent_ids?.length === 0 || input.agent_names?.length === 0) {
+      return [];
+    }
     const db = transaction ?? this.#db;
-    const rows = await db
-      .selectFrom('integration')
-      .selectAll()
-      .where('tenant_id', '=', input.tenant_id)
-      .orderBy('created_at')
-      .orderBy('id')
-      .execute();
+    let query = db.selectFrom('integration').selectAll().where('tenant_id', '=', input.tenant_id);
+    if (input.agent_ids !== undefined) {
+      query = query.where('agent_id', 'in', [...input.agent_ids]);
+    }
+    if (input.agent_names !== undefined) {
+      query = query.where('agent_name', 'in', [...input.agent_names]);
+    }
+    query = whereCreatedByOrAgentIds(query, input.created_by_or_agent_ids);
+    const rows = await query.orderBy('created_at').orderBy('id').execute();
     return rows.map(toRecord);
   }
 
@@ -122,6 +130,8 @@ export class PostgresIntegrationStore implements IIntegrationStore<Transaction<D
         .values({
           id: input.id,
           tenant_id: input.tenant_id,
+          agent_id: input.agent_id,
+          agent_name: input.agent_name,
           type: input.type,
           external_account_id: input.external_account_id,
           manifest: json(input.manifest),

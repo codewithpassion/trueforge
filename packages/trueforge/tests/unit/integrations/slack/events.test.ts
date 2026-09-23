@@ -18,7 +18,6 @@ function manifest(overrides: Partial<ConnectedSlackIntegrationManifest> = {}): C
     bot_display_name: 'trueforge',
     team_id: 'T0TEAM',
     bot_user_id: BOT,
-    default_agent_name: 'support-bot',
     allowed_channel_ids: ['C0GENERAL'],
     allow_direct_messages: true,
     reply_mode: 'thread',

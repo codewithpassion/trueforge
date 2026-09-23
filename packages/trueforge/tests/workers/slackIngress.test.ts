@@ -49,7 +49,6 @@ function manifest(teamId: string): IntegrationManifest {
     bot_display_name: 'trueforge',
     team_id: teamId,
     bot_user_id: 'U0BOT',
-    default_agent_name: AGENT_NAME,
     allowed_channel_ids: [CHANNEL_ID],
     allow_direct_messages: true,
     reply_mode: 'thread',
@@ -84,9 +83,16 @@ function ingressApp() {
 }
 
 async function connectSlack(input: { integrationId: string; teamId: string }): Promise<void> {
-  await d1Persistence().integrationStore.createIntegration({
+  const stores = d1Persistence();
+  const agent = await stores.agentStore.getAgent({ tenant_id: TENANT_ID, name: AGENT_NAME });
+  if (agent === undefined) {
+    throw new Error(`agent ${AGENT_NAME} was not seeded`);
+  }
+  await stores.integrationStore.createIntegration({
     id: input.integrationId,
     tenant_id: TENANT_ID,
+    agent_id: agent.id,
+    agent_name: agent.name,
     type: 'slack',
     external_account_id: input.teamId,
     manifest: manifest(input.teamId),

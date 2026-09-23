@@ -20,6 +20,7 @@ import {
   registerComputerConnectRoute,
 } from './apis/computers';
 import { createIntegrationEventsRouter } from './apis/integrationEvents';
+import { createIntegrationsRouter } from './apis/integrations';
 import { createMcpOAuthRouter } from './apis/mcpOAuth';
 import { createMcpServersRouter } from './apis/mcpServers';
 import { createModelsRouter } from './apis/models';
@@ -377,8 +378,21 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       logger: deps.logger,
     }),
   );
-  // Channel ingress carries the channel's own signature instead of a TrueForge credential,
-  // so it is mounted without an auth shell.
+  // Channel ingress carries the channel's own signature instead of a TrueForge credential, so
+  // neither mount below has an auth shell: the CRUD router binds auth to its own paths only.
+  app.route(
+    '/api/v1/integrations',
+    createIntegrationsRouter({
+      resolveIntegrationStore: () => deps.integrationStore,
+      resolveAgentStore: deps.resolveAgentStore,
+      withTransaction: deps.withTransaction,
+      resolveRequestContext,
+      authorizer: deps.authorizer,
+      authMiddleware,
+      publicBaseUrl: () => getPublicBaseUrl(),
+      logger: deps.logger,
+    }),
+  );
   app.route(
     '/api/v1/integrations',
     createIntegrationEventsRouter({
@@ -468,8 +482,6 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
         resolveMcpServerStore: deps.resolveMcpServerStore,
         resolveSkillStore: deps.resolveSkillStore,
         resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
-        resolveIntegrationStore: () => deps.integrationStore,
-        publicBaseUrl: () => getPublicBaseUrl(),
         sandboxIntegration: deps.sandboxIntegration,
         withTransaction: deps.withTransaction,
         logger: deps.logger,

@@ -132,11 +132,10 @@ export class IntegrationRouter<TTransaction> {
       }
     };
 
-    const agentName = integration.manifest.default_agent_name;
-    const agent = await agentStore.getAgent({ tenant_id: integration.tenant_id, name: agentName });
+    const agent = await agentStore.getAgent({ tenant_id: integration.tenant_id, id: integration.agent_id });
     if (agent === undefined) {
       await release();
-      return { type: 'agent_not_found', agent_name: agentName };
+      return { type: 'agent_not_found', agent_name: integration.agent_name };
     }
 
     const sessionExternalId = await toSessionExternalId(event.conversation_key);
@@ -280,11 +279,10 @@ export class IntegrationRouter<TTransaction> {
       return stale;
     }
 
-    const agentName = integration.manifest.default_agent_name;
-    const agent = await agentStore.getAgent({ tenant_id: integration.tenant_id, name: agentName });
+    const agent = await agentStore.getAgent({ tenant_id: integration.tenant_id, id: integration.agent_id });
     if (agent === undefined) {
       await release();
-      return { type: 'agent_not_found', agent_name: agentName };
+      return { type: 'agent_not_found', agent_name: integration.agent_name };
     }
 
     const started = await this.#startTurn({
