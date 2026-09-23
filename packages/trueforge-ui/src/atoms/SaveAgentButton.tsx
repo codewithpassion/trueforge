@@ -81,7 +81,7 @@ function SaveAgentButtonContent({
   const [intent, setIntent] = useState<SaveIntent>('create');
   const [name, setName] = useState('');
   // undefined: an update with no known description that the user has not edited; saving then keeps the stored one.
-  const [description, setDescription] = useState<string | undefined>('');
+  const [description, setDescription] = useState<string | undefined>();
   const [draftSpec, setDraftSpec] = useState<AgentSpec | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +93,6 @@ function SaveAgentButtonContent({
   const close = () => {
     if (saving) return;
     setOpen(false);
-    setDescription('');
     setDraftSpec(null);
     setError(null);
   };
@@ -146,7 +145,6 @@ function SaveAgentButtonContent({
       });
       shell?.invalidateAgentsList();
       setOpen(false);
-      setDescription('');
       setDraftSpec(null);
     } catch (caught) {
       setError(getErrorMessage(caught, 'Could not save agent'));

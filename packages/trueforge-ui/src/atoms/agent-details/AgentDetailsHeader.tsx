@@ -6,6 +6,7 @@ import { useOptionalServer } from '../../server/ServerContext.js';
 import { useShellMode } from '../../server/ShellModeContext.js';
 import { useSlot } from '../../theme/SlotsProvider.js';
 import { AgentOverflowMenu } from '../AgentOverflowMenu.js';
+import { storedAgentDescription } from '../lib/agentDescriptionField.js';
 import { auiButtonClass } from '../lib/buttonClasses.js';
 import { cn } from '../lib/cn.js';
 import { PageHeader, pageHeaderTitleClassName } from '../PageHeader.js';
@@ -33,12 +34,13 @@ export function AgentDetailsHeader({ agentId, detail, onBack }: AgentDetailsHead
 
   const handleEdit = () => {
     if (!canManage || detail == null) return;
+    const description = storedAgentDescription({ name: detail.name, description: detail.description });
     shell.selectLibraryAgent({
       isMutable: true,
       isCreateAgent: true,
       agentId: detail.agentId,
       agentName: detail.name,
-      ...(detail.description === undefined ? {} : { description: detail.description }),
+      ...(description === undefined ? {} : { description }),
       agentSpec: detail.agentSpec,
     });
   };

@@ -15,6 +15,7 @@ import { replaceScheduleShareSearch } from '../utils/scheduleShareUrl.js';
 import { AgentOverflowMenu } from './AgentOverflowMenu.js';
 import { CreatedByCell } from './CreatedByCell.js';
 import { EmptyScreen, EmptyScreenQueryHighlight } from './EmptyScreen.js';
+import { storedAgentDescription } from './lib/agentDescriptionField.js';
 import { mountName } from './lib/mountName.js';
 import { useSearchAgentsList } from './lib/useSearchAgentsList.js';
 import { PageHeader } from './PageHeader.js';
@@ -190,8 +191,7 @@ export function AgentLibraryRow({
   const hasConfiguration = modelLabel != null || skillsCount > 0 || mcpCount > 0;
   const hasNoSchedules = scheduleSummary != null && scheduleSummary.count === 0;
   const storedDescription = agent.description?.trim() || null;
-  // Agents saved before descriptions became optional may store the name as description; don't echo it under the title.
-  const description = storedDescription != null && storedDescription !== agent.name ? storedDescription : null;
+  const description = storedAgentDescription({ name: agent.name, description: agent.description }) || null;
 
   return (
     <TableRow className={hasNoSchedules ? 'group' : undefined}>
@@ -447,6 +447,7 @@ export function AgentsLibrary({ onSelectAgent }: AgentsLibraryProps) {
   };
 
   const handleEdit = (agent: AgentLibraryEntry, agentSpec: AgentSpec) => {
+    const description = storedAgentDescription({ name: agent.name, description: agent.description });
     closeLibrary();
     onSelectAgent?.(agent.name);
     shell.selectLibraryAgent({
@@ -454,7 +455,7 @@ export function AgentsLibrary({ onSelectAgent }: AgentsLibraryProps) {
       isCreateAgent: true,
       agentId: libraryAgentId(agent),
       agentName: agent.name,
-      ...(agent.description === undefined ? {} : { description: agent.description }),
+      ...(description === undefined ? {} : { description }),
       agentSpec,
     });
   };

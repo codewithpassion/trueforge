@@ -610,6 +610,7 @@ export function ShellModeProvider({
         isCreateAgent: effectiveMode.isCreateAgent,
         agentId: effectiveMode.agentId,
         agentName: effectiveMode.agentName,
+        description: effectiveMode.description,
         agentSpec: effectiveMode.agentSpec ?? (kind === 'agent' ? agentSeedRef.current : chatSeedRef.current),
         locked: false,
       });

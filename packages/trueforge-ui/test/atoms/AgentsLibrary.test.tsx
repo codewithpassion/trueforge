@@ -232,6 +232,38 @@ describe('AgentsLibrary', () => {
     expect(screen.getByRole('button', { name: 'Try agent try-only' })).toBeInTheDocument();
   });
 
+  it('Edit on a legacy agent whose description is its name pre-fills an empty description', async () => {
+    const server = mockServer([
+      {
+        name: 'echo-agent',
+        agentId: 'echo-id',
+        description: 'echo-agent',
+        agentSpec: { model: { name: 'openai/gpt-4.1' } },
+      },
+    ]);
+    function ModeDescription() {
+      const shell = useShellMode();
+      return (
+        <output data-testid="mode-description">
+          {shell.mode.status === 'active' ? (shell.mode.description ?? 'unknown') : 'idle'}
+        </output>
+      );
+    }
+
+    renderLibrary(
+      <LibraryHarness>
+        <ModeDescription />
+      </LibraryHarness>,
+      { server, agentConfig: { mode: 'AgentLibraryWithComposer' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open library' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for echo-agent' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
+
+    await waitFor(() => expect(screen.getByTestId('mode-description')).toHaveTextContent(/^$/));
+  });
+
   it('keeps Try and Clone available with USE while disabling Edit and Delete', async () => {
     const server = createMockAgentUIServer({
       searchAgents: vi.fn(async () => [

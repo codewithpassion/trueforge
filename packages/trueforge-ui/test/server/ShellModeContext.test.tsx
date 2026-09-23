@@ -466,7 +466,7 @@ describe('ShellModeProvider', () => {
     });
   });
 
-  it('clearChat on Edit preserves agentName and seeded agentSpec', () => {
+  it('clearChat on Edit preserves agentName, description and seeded agentSpec', () => {
     const { result } = renderHook(() => useShellMode(), {
       wrapper: wrap({ mode: 'AgentLibraryWithComposer' }),
     });
@@ -480,6 +480,7 @@ describe('ShellModeProvider', () => {
         isMutable: true,
         agentId: 'writer',
         agentName: 'writer',
+        description: 'Writes docs.',
         agentSpec: spec,
       }),
     );
@@ -493,6 +494,7 @@ describe('ShellModeProvider', () => {
       isCreateAgent: true,
       agentId: 'writer',
       agentName: 'writer',
+      description: 'Writes docs.',
       agentSpec: spec,
       locked: false,
     });

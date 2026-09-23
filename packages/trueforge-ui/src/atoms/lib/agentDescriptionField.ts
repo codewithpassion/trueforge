@@ -3,3 +3,15 @@ export function agentDescriptionField(description: string | undefined): { descri
   const trimmed = description?.trim();
   return trimmed === undefined ? {} : { description: trimmed };
 }
+
+/** Stored description as shown and edited; undefined when unknown. Legacy agents stored their name as description, so that reads as ''. */
+export function storedAgentDescription({
+  name,
+  description,
+}: {
+  name: string;
+  description: string | undefined;
+}): string | undefined {
+  const trimmed = description?.trim();
+  return trimmed === name ? '' : trimmed;
+}
