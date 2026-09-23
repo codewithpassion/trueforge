@@ -1,4 +1,4 @@
-import { InMemorySessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import { createInMemoryFileStore, InMemorySessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import winston from 'winston';
 import { buildOpenApiDocument, createServerApp } from '../../src/app';
 import { TrueForgeAuthorizer } from '../../src/auth/authorizer';
@@ -89,6 +89,7 @@ async function createApp() {
     integrationStore: new SqliteIntegrationStore(db, new BetterSqliteAtomicRunner(db)),
     tokenStore,
     sessionStore,
+    fileStore: createInMemoryFileStore(),
     sessionMetricsStore: new SqliteSessionMetricsStore(db),
     sessions: new Sessions({ sessionStore }),
     turnExecutor: testNodeTurnExecutor({ sandboxIntegration: undefined }),

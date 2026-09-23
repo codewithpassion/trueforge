@@ -1,5 +1,6 @@
 import {
   AgentSpecSchema,
+  createInMemoryFileStore,
   InMemorySessionStore,
   Sessions,
   type CreatedBySubject,
@@ -109,6 +110,7 @@ async function createApp() {
     integrationStore: new SqliteIntegrationStore(db, new BetterSqliteAtomicRunner(db)),
     tokenStore,
     sessionStore,
+    fileStore: createInMemoryFileStore(),
     sessionMetricsStore: new SqliteSessionMetricsStore(db),
     sessions: new Sessions({ sessionStore }),
     turnExecutor: testNodeTurnExecutor({ sandboxIntegration: undefined }),

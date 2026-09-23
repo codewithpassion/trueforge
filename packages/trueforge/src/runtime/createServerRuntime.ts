@@ -1,4 +1,4 @@
-import { Sessions, type ISessionStore } from '@truefoundry/trueforge-core/agent-session';
+import { Sessions, type IFileStore, type ISessionStore } from '@truefoundry/trueforge-core/agent-session';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context, MiddlewareHandler } from 'hono';
 import { createServerApp } from '../app';
@@ -38,6 +38,7 @@ import type { TurnExecutor } from './turnExecutor';
 export interface ServerPersistence<TTransaction> {
   withTransaction: WithTransaction<TTransaction>;
   sessionStore: ISessionStore;
+  fileStore: IFileStore;
   /** Postgres only; undefined disables the session import routes. */
   sessionImport: SessionImport | undefined;
   sessionMetricsStore: ISessionMetricsStore;
@@ -157,6 +158,7 @@ export async function createServerRuntime<TTransaction>(options: {
     agentStore,
     turnSkillsResolverStore,
     sessionStore,
+    fileStore: persistence.fileStore,
     sessionImport: persistence.sessionImport,
     sessionMetricsStore,
     sessions,

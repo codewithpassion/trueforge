@@ -2,7 +2,7 @@
  * DB-backed sessions APIs (mounted at /api/v1/sessions and /api/internal/sessions).
  */
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import type { ISessionStore, SessionRecord, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import type { IFileStore, ISessionStore, SessionRecord, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import {
   CancellationReason,
   SessionStoreConflictError,
@@ -23,6 +23,7 @@ import {
   createSessionRoute,
   deleteSessionRoute,
   getOrCreateSessionByExternalIdRoute,
+  getSessionFileRoute,
   getSessionRoute,
   listSessionEventsRoute,
   listSessionsRoute,
@@ -36,6 +37,7 @@ import { isSessionAgentNameRef, parseListSessionsQuery, type Session } from '../
 import { newId } from '../utils/id';
 import { agentIfAccessible, canReadAgentBoundResource, resolveManagedAgentIds } from './agentAccess';
 import type { ResolveSkillStore } from './skills';
+import { toArrayBuffer } from './turns';
 
 export function toWireSession(record: SessionRecord): Session {
   return {
@@ -54,6 +56,7 @@ export function toWireSession(record: SessionRecord): Session {
 export interface SessionsRouterDeps {
   sessions: Sessions;
   sessionStore: ISessionStore;
+  fileStore: IFileStore;
   resolveModelProviderStore: (c: Context) => IModelProviderStore;
   resolveMcpServerStore: (c: Context) => IMcpServerStore;
   resolveSkillStore: ResolveSkillStore;
@@ -275,11 +278,50 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
     ) {
       return c.json({ error: { message: FORBIDDEN_SESSION_ACCESS } }, 403);
     }
+    // Files first: if their storage fails the session is still there, so a retried delete finds them.
+    await deps.fileStore.deleteSession({
+      tenant_id: requestContext.tenant_id,
+      session_id: sessionId,
+    });
     await deps.sessionStore.deleteSession({
       tenant_id: requestContext.tenant_id,
       session_id: sessionId,
     });
     return c.body(null, 204);
+  };
+
+  const getSessionFileHandler: RouteHandler<typeof getSessionFileRoute> = async c => {
+    const { session_id: sessionId, file_id: fileId } = c.req.valid('param');
+    const requestContext = deps.resolveRequestContext(c);
+    // One answer for a missing session, someone else's session and a missing file, so a caller
+    // learns nothing about sessions they cannot read.
+    const notFound = () => c.json({ error: { message: `File not found: ${fileId}` } }, 404);
+    const record = await deps.sessionStore.getSession({
+      tenant_id: requestContext.tenant_id,
+      session_id: sessionId,
+    });
+    if (
+      record === undefined ||
+      !isSessionOwner({ subject_id: requestContext.subject.id, created_by_subject: record.created_by_subject })
+    ) {
+      return notFound();
+    }
+    const file = await deps.fileStore.get({
+      tenant_id: requestContext.tenant_id,
+      session_id: sessionId,
+      file_id: fileId,
+    });
+    if (file === undefined) {
+      return notFound();
+    }
+    return c.body(toArrayBuffer(file.bytes), 200, {
+      'Content-Type': file.media_type,
+      'Content-Length': String(file.bytes.byteLength),
+      'Cache-Control': 'private',
+      // The bytes come from tools; never let a browser sniff or run them as a page on this origin.
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+    });
   };
 
   const updateSessionHandler: RouteHandler<typeof updateSessionRoute> = async c => {
@@ -457,6 +499,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
   router.openapi(createSessionRoute, createSessionHandler);
   router.openapi(getSessionRoute, getSessionHandler);
   router.openapi(deleteSessionRoute, deleteSessionHandler);
+  router.openapi(getSessionFileRoute, getSessionFileHandler);
   router.openapi(updateSessionRoute, updateSessionHandler);
   router.openapi(listSessionsRoute, listSessionsHandler);
   router.openapi(cancelSessionRoute, cancelSessionHandler);

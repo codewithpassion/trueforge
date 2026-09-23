@@ -310,6 +310,41 @@ function parseSandboxBackend(raw: string | undefined): 'cloudflare-computer' | u
   );
 }
 
+function requiredS3Env(envKey: string): string {
+  const value = getEnv(envKey)?.trim() ?? '';
+  if (value === '') {
+    throw new Error(`Environment variable ${envKey} is required when FILE_STORE_BACKEND is "s3"`);
+  }
+  return value;
+}
+
+function resolveFileStore(): FileStoreConfiguration {
+  const backend = getEnv('FILE_STORE_BACKEND')?.trim() ?? '';
+  if (backend === '' || backend === 'filesystem') {
+    return { FILE_STORE_BACKEND: 'filesystem' };
+  }
+  if (backend !== 's3') {
+    throw new Error(
+      `Environment variable FILE_STORE_BACKEND must be "filesystem" or "s3", got ${JSON.stringify(backend)}`,
+    );
+  }
+  const region = getEnv('FILE_STORE_S3_REGION')?.trim() ?? '';
+  const endpoint = requiredS3Env('FILE_STORE_S3_ENDPOINT');
+  if (!URL.canParse(endpoint) || !/^https?:$/.test(new URL(endpoint).protocol)) {
+    throw new Error(
+      `Environment variable FILE_STORE_S3_ENDPOINT must be an http(s) URL, got ${JSON.stringify(endpoint)}`,
+    );
+  }
+  return {
+    FILE_STORE_BACKEND: 's3',
+    FILE_STORE_S3_ENDPOINT: endpoint,
+    FILE_STORE_S3_BUCKET: requiredS3Env('FILE_STORE_S3_BUCKET'),
+    FILE_STORE_S3_REGION: region === '' ? 'us-east-1' : region,
+    FILE_STORE_S3_ACCESS_KEY_ID: requiredS3Env('FILE_STORE_S3_ACCESS_KEY_ID'),
+    FILE_STORE_S3_SECRET_ACCESS_KEY: requiredS3Env('FILE_STORE_S3_SECRET_ACCESS_KEY'),
+  };
+}
+
 /** Parses `POSTGRES_SSL_MODE`. Unset/blank → `''`. Unknown values throw. */
 function validatePostgresSslMode(raw: string | undefined): PostgresSslMode | '' {
   const mode = raw?.trim() ?? '';
@@ -648,6 +683,24 @@ export interface SharedServerConfiguration {
   OUTBOUND_URL_BLOCKED_HOSTS: string[];
 }
 
+/**
+ * Session file storage on Node. Env: `FILE_STORE_BACKEND` (`filesystem`, the default, or `s3`). The
+ * filesystem directory is `FILE_STORE_DIR` in nodeConfig.ts. `s3` needs `FILE_STORE_S3_ENDPOINT`
+ * (for example `https://s3.us-east-1.amazonaws.com`, an R2 account endpoint, or MinIO),
+ * `FILE_STORE_S3_BUCKET`, `FILE_STORE_S3_ACCESS_KEY_ID` and `FILE_STORE_S3_SECRET_ACCESS_KEY`;
+ * `FILE_STORE_S3_REGION` defaults to `us-east-1`.
+ */
+export type FileStoreConfiguration =
+  | { FILE_STORE_BACKEND: 'filesystem' }
+  | {
+      FILE_STORE_BACKEND: 's3';
+      FILE_STORE_S3_ENDPOINT: string;
+      FILE_STORE_S3_BUCKET: string;
+      FILE_STORE_S3_REGION: string;
+      FILE_STORE_S3_ACCESS_KEY_ID: string;
+      FILE_STORE_S3_SECRET_ACCESS_KEY: string;
+    };
+
 /** Settings only the Node server and controller processes read. */
 export interface NodeSharedServerConfiguration {
   /** HTTP port the server listens on. Env: `PORT`. */
@@ -711,6 +764,8 @@ export interface NodeSharedServerConfiguration {
    * Only used when a Redis client is wired (distributed mode).
    */
   REDIS_REQUEST_REPLY_POLL_INTERVAL_MS: number;
+  /** Where session files are kept. */
+  FILE_STORE: FileStoreConfiguration;
 }
 
 export type StandaloneServerConfiguration = SharedServerConfiguration &
@@ -1027,6 +1082,7 @@ export function parseServerConfiguration(): ServerConfiguration {
       raw: getEnv('REDIS_REQUEST_REPLY_POLL_INTERVAL_MS'),
       defaultValue: 500,
     }),
+    FILE_STORE: resolveFileStore(),
   };
 
   if (runtime === 'standalone') {

@@ -69,6 +69,17 @@ export { MAIN_THREAD_ID } from './models/TurnRecord';
 export type { TurnRecord, TurnSnapshot } from './models/TurnRecord';
 
 export { assertCreateTurnThreadDelta } from './store/assertCreateTurnThreadDelta';
+export type {
+  GetFileInput,
+  IFileObjectStore,
+  IFileStore,
+  ISessionFileMetadataStore,
+  PutFileInput,
+  PutFileResult,
+  SessionFileRecord,
+  StoredFile,
+} from './store/IFileStore';
+export { InMemoryFileObjectStore, createInMemoryFileStore } from './store/InMemoryFileStore';
 export { InMemorySessionStore } from './store/InMemorySessionStore';
 export type {
   AddThreadsInput,
@@ -98,6 +109,7 @@ export type {
   UpdateSessionInput,
   UpdateTurnStateInput,
 } from './store/ISessionStore';
+export { FILE_ID_PATTERN, SessionFileStore } from './store/SessionFileStore';
 export {
   InvalidPageTokenError,
   PreviousTurnRunningError,

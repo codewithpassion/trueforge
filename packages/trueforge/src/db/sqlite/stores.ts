@@ -8,6 +8,7 @@ import { SqliteMcpServerStore } from './mcp-server-store/SqliteMcpServerStore';
 import { SqliteModelProviderStore } from './model-provider-store/SqliteModelProviderStore';
 import { SqliteSandboxProviderStore } from './sandbox-provider-store/SqliteSandboxProviderStore';
 import { SqliteScheduleStore } from './schedule-store/SqliteScheduleStore';
+import { SqliteSessionFileMetadataStore } from './session-file-store/SqliteSessionFileMetadataStore';
 import { SqliteSessionMetricsStore } from './session-metrics/SqliteSessionMetricsStore';
 import { SqliteSessionStore } from './session-store/SqliteSessionStore';
 import { SqliteSkillStore } from './skill-store/SqliteSkillStore';
@@ -27,6 +28,7 @@ export function createSqliteStores({
   const tokenStore = new SqliteOAuthTokenStore(db);
   return {
     sessionStore: new SqliteSessionStore(db, atomic),
+    sessionFileMetadataStore: new SqliteSessionFileMetadataStore(db),
     sessionMetricsStore: new SqliteSessionMetricsStore(db),
     tokenStore,
     mcpServerStore: new McpServerWithAuthStore<Kysely<Database>>({

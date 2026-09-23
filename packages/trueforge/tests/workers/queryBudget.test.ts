@@ -1,4 +1,4 @@
-import { Sessions, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import { createInMemoryFileStore, Sessions, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
 import { ActiveTurnRegistry } from '../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../src/runtime/event-subscription';
 import { startTurnInProcess, turnStreamId } from '../../src/runtime/turnRunner';
@@ -41,6 +41,7 @@ async function measureTurn(toolCalls: number) {
       eventSubscriptions,
       logger: createConsoleLogger({ level: 'error', bindings: {} }),
       sandboxIntegration: undefined,
+      fileStore: createInMemoryFileStore(),
       onTurnDrained: undefined,
     },
   });

@@ -1,4 +1,8 @@
-import type { ISessionStore, TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import {
+  createInMemoryFileStore,
+  type ISessionStore,
+  type TurnStreamingEvent,
+} from '@truefoundry/trueforge-core/agent-session';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import { createLogger } from 'winston';
@@ -29,6 +33,7 @@ export function testNodeTurnExecutor(
       'sandboxIntegration' in options
         ? options.sandboxIntegration
         : createNodeSandboxIntegration({ localSupport: undefined }),
+    fileStore: createInMemoryFileStore(),
     logger: options.logger ?? createLogger({ silent: true }),
     executorId: 'local',
     requestReply: { replyTimeoutMs: 60_000, pollIntervalMs: 500 },

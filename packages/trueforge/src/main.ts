@@ -48,7 +48,13 @@ try {
 }
 
 import { serve } from '@hono/node-server';
-import { CancellationReason, Sessions, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import {
+  CancellationReason,
+  SessionFileStore,
+  Sessions,
+  type ISessionFileMetadataStore,
+  type TurnStreamingEvent,
+} from '@truefoundry/trueforge-core/agent-session';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import { RequestReplyExecutor, RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import type { Kysely, Transaction } from 'kysely';
@@ -69,13 +75,20 @@ import type { Database as PostgresDatabase } from './db/postgres/types';
 import type { ISandboxProviderStore } from './db/sandboxProviderStore';
 import type { ISkillStore } from './db/skillStore';
 import type { Database as SqliteDatabase } from './db/sqlite/types';
+import { createNodeFileObjectStore } from './files/nodeFileObjectStore';
 import { mountFrontend } from './frontend';
 import { createClientCertificateMiddleware, serverTlsServeOptions } from './http/tls';
 import { createIntegrationAdapters } from './integrations/registry';
 import { TurnCompletionNotifier } from './integrations/TurnCompletionNotifier';
 import { createServerLogger, shouldColorize } from './logger';
 import type { IOAuthTokenStore } from './mcp/auth/types';
-import { CODE_MODE_SOCKET_PARENT, FRONTEND_DIR, LOCAL_SANDBOX_ROOT_PARENT, SQLITE_PATH } from './nodeConfig';
+import {
+  CODE_MODE_SOCKET_PARENT,
+  FILE_STORE_DIR,
+  FRONTEND_DIR,
+  LOCAL_SANDBOX_ROOT_PARENT,
+  SQLITE_PATH,
+} from './nodeConfig';
 import { PACKAGE_VERSION } from './packageVersion.gen';
 import { ActiveTurnRegistry } from './runtime/activeTurns';
 import { createServerRuntime, type ServerPersistence } from './runtime/createServerRuntime';
@@ -105,6 +118,14 @@ interface NodeServerPersistence<TTransaction> extends ServerPersistence<TTransac
   redis: RedisClientType | undefined;
   /** One shared client for TrueFoundry store resolvers + auth; undefined when TrueFoundry mode is off. */
   serviceFoundryClient: TrueFoundryServiceFoundryServerClient | undefined;
+}
+
+/** Session files: bytes where `FILE_STORE_BACKEND` says, one row each in this topology's database. */
+function createNodeFileStore(metadata: ISessionFileMetadataStore): SessionFileStore {
+  return new SessionFileStore({
+    objects: createNodeFileObjectStore({ settings: configuration.FILE_STORE, directory: FILE_STORE_DIR }),
+    metadata,
+  });
 }
 
 /** Shared ServiceFoundry HTTP client when TrueFoundry mode is on; otherwise undefined. */
@@ -266,6 +287,7 @@ async function createStandalonePersistence(options: {
 
   const {
     sessionStore,
+    sessionFileMetadataStore,
     sessionMetricsStore,
     tokenStore,
     mcpServerStore,
@@ -284,6 +306,7 @@ async function createStandalonePersistence(options: {
   return {
     withTransaction: callback => db.transaction().execute(callback),
     sessionStore,
+    fileStore: createNodeFileStore(sessionFileMetadataStore),
     sessionImport: undefined,
     sessionMetricsStore,
     mcpOAuthStore: mcpServerStore,
@@ -327,6 +350,7 @@ async function createDistributedPersistence(options: {
     import('./runtime/redis'),
     Promise.all([
       import('./db/postgres/session-store/PostgresSessionStore'),
+      import('./db/postgres/session-file-store/PostgresSessionFileMetadataStore'),
       import('./db/postgres/session-metrics/PostgresSessionMetricsStore'),
       import('./db/postgres/model-provider-store/PostgresModelProviderStore'),
       import('./db/postgres/mcp-server-store/PostgresMcpServerStore'),
@@ -341,6 +365,7 @@ async function createDistributedPersistence(options: {
   ]);
   const [
     { PostgresSessionStore },
+    { PostgresSessionFileMetadataStore },
     { PostgresSessionMetricsStore },
     { PostgresModelProviderStore },
     { PostgresMcpServerStore },
@@ -425,6 +450,7 @@ async function createDistributedPersistence(options: {
   return {
     withTransaction: callback => db.transaction().execute(callback),
     sessionStore,
+    fileStore: createNodeFileStore(new PostgresSessionFileMetadataStore(db)),
     sessionImport: sessionStore,
     sessionMetricsStore: new PostgresSessionMetricsStore(db),
     mcpOAuthStore: mcpServerWithAuthStore,
@@ -471,6 +497,7 @@ async function createNodeServerRuntime<TTransaction>(options: {
     redis,
     requestReplyRouter,
     sandboxIntegration,
+    fileStore: persistence.fileStore,
     logger,
     executorId: configuration.EXECUTOR_ID,
     requestReply: {

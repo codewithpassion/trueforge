@@ -1,5 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { AgentSpecSchema, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import { AgentSpecSchema, createInMemoryFileStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import { createLogger } from 'winston';
 import { createInternalMetricsRouter } from '../../../src/apis/sessionMetrics';
 import {
@@ -89,6 +89,7 @@ describe('sessions HTTP agent binding', () => {
     const deps: SessionsRouterDeps = {
       sessions,
       sessionStore,
+      fileStore: createInMemoryFileStore(),
       resolveModelProviderStore: () => modelProviderStore,
       resolveMcpServerStore: () => mcpServerStore,
       resolveSkillStore: () => skillStore,

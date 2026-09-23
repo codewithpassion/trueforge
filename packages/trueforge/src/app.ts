@@ -1,7 +1,7 @@
 /** The API: resource routers, the OpenAPI document and Swagger UI, all under /api/v1. */
 import { swaggerUI } from '@hono/swagger-ui';
 import { OpenAPIHono, z } from '@hono/zod-openapi';
-import type { ISessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import type { IFileStore, ISessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
@@ -229,6 +229,7 @@ export interface ServerDeps<TTransaction> {
   scheduleStore: IScheduleStore<TTransaction>;
   integrationStore: IIntegrationStore<TTransaction>;
   sessionStore: ISessionStore;
+  fileStore: IFileStore;
   /** Historical session backfill; undefined makes the import session routes fail with 500. */
   sessionImport: SessionImport | undefined;
   sessionMetricsStore: ISessionMetricsStore;
@@ -549,6 +550,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       createSessionsRouter({
         sessions: deps.sessions,
         sessionStore: deps.sessionStore,
+        fileStore: deps.fileStore,
         resolveModelProviderStore: deps.resolveModelProviderStore,
         resolveMcpServerStore: deps.resolveMcpServerStore,
         resolveSkillStore: deps.resolveSkillStore,

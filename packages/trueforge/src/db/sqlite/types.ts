@@ -507,6 +507,16 @@ export interface ComputerAuditTable {
   created_at: string;
 }
 
+export interface SessionFileTable {
+  session_id: string;
+  /** opaque random id, unique within its session */
+  file_id: string;
+  tenant_id: string;
+  media_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
 export interface Database {
   session: SessionTable;
   turn: TurnTable;
@@ -532,4 +542,5 @@ export interface Database {
   computer_enrollment: ComputerEnrollmentTable;
   computer_agent_access: ComputerAgentAccessTable;
   computer_audit: ComputerAuditTable;
+  session_file: SessionFileTable;
 }

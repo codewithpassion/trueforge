@@ -5,6 +5,7 @@
  * Handlers are registered in apis/sessions.ts.
  */
 import { createRoute, z } from '@hono/zod-openapi';
+import { FILE_ID_PATTERN } from '@truefoundry/trueforge-core/agent-session';
 import { RequestErrorResponseSchema } from '../schemas/errors';
 import { ListSessionEventsRequestQuerySchema, ListSessionEventsResponseSchema } from '../schemas/events';
 import {
@@ -130,6 +131,35 @@ export const getSessionRoute = createRoute({
     404: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'Session not found.',
+    },
+  },
+});
+
+const SessionFileParamsSchema = z.object({
+  ...SessionIdParamsSchema.shape,
+  file_id: z.string().regex(FILE_ID_PATTERN).describe('File identifier.'),
+});
+
+export const getSessionFileRoute = createRoute({
+  method: 'get',
+  path: '/{session_id}/files/{file_id}',
+  tags: [OpenApiTag.AGENT_SESSIONS],
+  summary: 'Get a session file',
+  description:
+    'Download a file the session produced, such as a tool-result screenshot, with its stored media type. Only the session creator may read it; anyone else gets 404.',
+  'x-fern-sdk-group-name': ['sessions'],
+  'x-fern-sdk-method-name': 'get_file',
+  request: {
+    params: SessionFileParamsSchema,
+  },
+  responses: {
+    200: {
+      content: { 'application/octet-stream': { schema: z.string().openapi({ format: 'binary' }) } },
+      description: 'File contents, served with the stored media type.',
+    },
+    404: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Session or file not found, or the caller is not the session creator.',
     },
   },
 });

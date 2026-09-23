@@ -39,9 +39,8 @@ import { canReadAgentBoundResource } from './agentAccess';
 /**
  * Copies into a standalone ArrayBuffer for the response body: a pooled Buffer's
  * backing store is shared and typed as ArrayBufferLike, which is not a body.
- * Bounded by SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD.
  */
-function toArrayBuffer(content: Buffer): ArrayBuffer {
+export function toArrayBuffer(content: Uint8Array): ArrayBuffer {
   const buffer = new ArrayBuffer(content.byteLength);
   new Uint8Array(buffer).set(content);
   return buffer;

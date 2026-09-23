@@ -1,5 +1,6 @@
 import {
   AgentSpecSchema,
+  createInMemoryFileStore,
   Sessions,
   type CreatedBySubject,
   type SessionHandle,
@@ -175,6 +176,7 @@ async function runTurn(input: { harness: Harness; notifier: TurnCompletionNotifi
       eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
       logger: createLogger({ silent: true }),
       sandboxIntegration: undefined,
+      fileStore: createInMemoryFileStore(),
       onTurnDrained: hookInput => input.notifier.deliverForTurn(hookInput),
     },
   });

@@ -1,5 +1,6 @@
 import {
   CancellationReason,
+  type IFileStore,
   type ISessionStore,
   type SessionHandle,
   type TurnStreamingEvent,
@@ -180,6 +181,7 @@ export interface NodeTurnExecutorDeps {
   /** Request-reply dispatch table served by this replica's executor. */
   requestReplyRouter: RequestReplyRouter;
   sandboxIntegration: SandboxIntegration | undefined;
+  fileStore: IFileStore;
   logger: Logger;
   /** Peering identity embedded in the turn ids this process mints. */
   executorId: string;
@@ -288,6 +290,7 @@ export class NodeTurnExecutor implements TurnExecutor {
         eventSubscriptions: this.#deps.eventSubscriptions,
         logger: this.#deps.logger,
         sandboxIntegration: this.#deps.sandboxIntegration,
+        fileStore: this.#deps.fileStore,
         onTurnDrained: this.#deps.onTurnDrained,
       },
     };

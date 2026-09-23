@@ -28,6 +28,7 @@ import type { Env } from './env';
 import { WORKERS_EXECUTOR_ID } from './executorId';
 import { INSTANCE_LIVENESS_PROBE_MS, probeInstanceAlive } from './instanceLiveness';
 import { createConsoleLogger } from './logger';
+import { createWorkersFileStore } from './R2FileObjectStore';
 import { CodeModeBridgeRegistry, type CodeModeDispatchOutcome } from './sandbox/codeModeBridge';
 import { workersSandboxIntegrationFromEnv } from './sandbox/workersSandboxIntegration';
 import { encodeTurnEvents, isSequencedTurnStreamingEvent } from './turnEventWire';
@@ -194,6 +195,7 @@ export class SessionDO extends DurableObject {
           eventSubscriptions: this.#events,
           logger: this.#logger,
           sandboxIntegration: this.sandboxIntegration,
+          fileStore: createWorkersFileStore({ bucket: this.env.FILES, metadata: persistence.sessionFileMetadataStore }),
           // Awaited inside `drained`, so the alarm invocation that holds the turn holds this too.
           onTurnDrained: input => notifier.deliverForTurn(input),
         },

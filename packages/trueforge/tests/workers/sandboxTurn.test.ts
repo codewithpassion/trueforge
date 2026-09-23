@@ -1,4 +1,9 @@
-import { AgentSpecSchema, Sessions, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import {
+  AgentSpecSchema,
+  createInMemoryFileStore,
+  Sessions,
+  type TurnStreamingEvent,
+} from '@truefoundry/trueforge-core/agent-session';
 import { CodeModeReplySchema } from '@truefoundry/trueforge-core/core/sandbox/codeMode/types';
 import { env } from 'cloudflare:workers';
 import { ActiveTurnRegistry } from '../../src/runtime/activeTurns';
@@ -153,6 +158,7 @@ async function runSandboxTurn(params: {
       eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
       logger,
       sandboxIntegration: params.sandboxIntegration,
+      fileStore: createInMemoryFileStore(),
       onTurnDrained: undefined,
     },
   });

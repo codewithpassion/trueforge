@@ -48,6 +48,12 @@ export const FRONTEND_DIR = resolveOptionalPathEnv('FRONTEND_DIR') ?? resolveDef
  */
 export const SQLITE_PATH = resolveOptionalPathEnv('SQLITE_PATH') ?? path.join(appDataDir, 'db', 'db.sqlite');
 
+/**
+ * Absolute directory for session files when `FILE_STORE_BACKEND` is `filesystem`; created on first write.
+ * Env: `FILE_STORE_DIR` (optional). Default: env-paths data dir + `files`.
+ */
+export const FILE_STORE_DIR = resolveOptionalPathEnv('FILE_STORE_DIR') ?? path.join(appDataDir, 'files');
+
 /** Parent directory for local sandbox roots (ULID children): `{env-paths data}/sandboxes`. */
 export const LOCAL_SANDBOX_ROOT_PARENT = path.join(appDataDir, 'sandboxes');
 

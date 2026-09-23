@@ -2,7 +2,12 @@
  * A whole turn on a machine the tenant enrolled: a saved agent with `sandbox.computer_id` runs its
  * command through the fake client, and the allowlist is enforced again when the turn starts.
  */
-import { AgentSpecSchema, Sessions, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import {
+  AgentSpecSchema,
+  createInMemoryFileStore,
+  Sessions,
+  type TurnStreamingEvent,
+} from '@truefoundry/trueforge-core/agent-session';
 import { env } from 'cloudflare:workers';
 import { computerSessionDirectory, type ComputersService } from '../../src/computers/service';
 import { D1_MAX_VALUE_BYTES } from '../../src/db/d1/client';
@@ -136,6 +141,7 @@ async function runTurn({
       eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
       logger,
       sandboxIntegration: computerIntegration(computers),
+      fileStore: createInMemoryFileStore(),
       onTurnDrained: undefined,
     },
   });

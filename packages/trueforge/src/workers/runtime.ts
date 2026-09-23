@@ -10,6 +10,7 @@ import type { SandboxIntegration } from '../sandbox/integration';
 import { workersComputersService } from './computersService';
 import type { Env } from './env';
 import { createConsoleLogger } from './logger';
+import { createWorkersFileStore } from './R2FileObjectStore';
 import { assertWorkersRuntime } from './runtimeGuard';
 import { workersSandboxIntegrationFromEnv } from './sandbox/workersSandboxIntegration';
 import { WorkersTurnExecutor } from './workersTurnExecutor';
@@ -29,6 +30,7 @@ export function createWorkersRuntimeDeps(env: Env): WorkersRuntimeDeps {
     persistence: {
       withTransaction: d1.withTransaction,
       sessionStore: d1.sessionStore,
+      fileStore: createWorkersFileStore({ bucket: env.FILES, metadata: d1.sessionFileMetadataStore }),
       sessionImport: undefined,
       sessionMetricsStore: d1.sessionMetricsStore,
       tokenStore: d1.tokenStore,

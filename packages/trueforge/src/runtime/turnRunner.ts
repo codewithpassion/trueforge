@@ -3,6 +3,7 @@ import {
   EventType,
   SessionStoreNotFoundError,
   TurnResourceResolver,
+  type IFileStore,
   type SessionHandle,
   type Turn,
   type TurnHandle,
@@ -51,6 +52,8 @@ export type BeginTurnExecutionDeps = TurnStores & {
   eventSubscriptions: Pick<EventSubscriptionRegistry<TurnStreamingEvent>, 'get'>;
   logger: Logger;
   sandboxIntegration: SandboxIntegration | undefined;
+  /** Where the turn stores files it produces, such as tool-result images. */
+  fileStore: IFileStore;
   /** Runs once the turn's drain settles, before `drained` resolves; undefined skips it. */
   onTurnDrained: TurnDrainedHook | undefined;
 };

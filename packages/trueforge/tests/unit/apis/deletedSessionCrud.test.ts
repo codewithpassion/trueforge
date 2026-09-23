@@ -1,5 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { AgentSpecSchema, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import { AgentSpecSchema, createInMemoryFileStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import { createLogger } from 'winston';
 import { createSessionsRouter } from '../../../src/apis/sessions';
 import { createTurnsRouter } from '../../../src/apis/turns';
@@ -42,6 +42,7 @@ describe('public CRUD after session deletion', () => {
       createSessionsRouter({
         sessions,
         sessionStore,
+        fileStore: createInMemoryFileStore(),
         resolveModelProviderStore: () => modelProviderStore,
         resolveMcpServerStore: () => mcpServerStore,
         resolveSkillStore: () => skillStore,

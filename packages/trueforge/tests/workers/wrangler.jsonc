@@ -12,6 +12,7 @@
       "migrations_dir": "../../migrations/d1",
     },
   ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "trueforge-workers-tests-files" }],
   "durable_objects": {
     "bindings": [
       { "name": "SESSION_DO", "class_name": "SessionDO" },

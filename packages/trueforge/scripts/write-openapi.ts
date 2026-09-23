@@ -8,7 +8,7 @@
  * `.env.test` supplies dummy connection strings.
  */
 import type { TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
-import { InMemorySessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import { createInMemoryFileStore, InMemorySessionStore, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import { RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -61,6 +61,7 @@ function canonicalise(value: unknown): unknown {
 
 // Unconnected stand-ins suffice: route registration never reads a dependency.
 const sessionStore = new InMemorySessionStore();
+const fileStore = createInMemoryFileStore();
 const db = createSqliteDb(':memory:');
 const tokenStore = new SqliteOAuthTokenStore(db);
 const agentStore = new SqliteAgentStore(db);
@@ -94,6 +95,7 @@ const app = createServerApp({
   integrationStore: new SqliteIntegrationStore(db, new BetterSqliteAtomicRunner(db)),
   tokenStore,
   sessionStore,
+  fileStore,
   sessionMetricsStore: new SqliteSessionMetricsStore(db),
   sessions: new Sessions({ sessionStore }),
   turnExecutor: new NodeTurnExecutor({
@@ -104,6 +106,7 @@ const app = createServerApp({
     redis: undefined,
     requestReplyRouter: new RequestReplyRouter(),
     sandboxIntegration: undefined,
+    fileStore,
     logger: winston.createLogger({ silent: true }),
     executorId: 'local',
     requestReply: { replyTimeoutMs: 60_000, pollIntervalMs: 500 },

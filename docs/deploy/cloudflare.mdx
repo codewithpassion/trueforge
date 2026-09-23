@@ -64,6 +64,15 @@ bunx wrangler login
 
   </Step>
 
+  <Step title="Create the files bucket">
+    Session files, such as screenshots returned by tools, live in an R2 bucket bound as `FILES`. Create it, then set `r2_buckets[0].bucket_name` in `wrangler.jsonc` to its name.
+
+    ```bash
+    bunx wrangler r2 bucket create trueforge-files
+    ```
+
+  </Step>
+
   <Step title="Configure OIDC">
     Set the non-secret values in `vars` in `wrangler.jsonc`. `PUBLIC_BASE_URL` is the origin users open, with no path. Register `<PUBLIC_BASE_URL>/api/v1/auth/callback` as the redirect URI with your identity provider.
 
