@@ -13,6 +13,7 @@ import {
   makeTurnDoneEvent,
 } from '../../../../trueforge-core/tests/agent-session/testHelpers';
 import type { ComputerRelayPort, ComputersService } from '../../../src/computers/service';
+import { TurnDesktopLeases } from '../../../src/computers/turnDesktopLeases';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
@@ -93,13 +94,13 @@ async function sessionHandle(harness: Harness): Promise<SessionHandle> {
   return session;
 }
 
-/** Relays that record which computer was asked to release which session. */
+/** Relays that record which computer was asked to release which turn of which session. */
 function recordingComputers(): { computers: Pick<ComputersService, 'relay'>; released: string[] } {
   const released: string[] = [];
   const relay = (computerId: string): ComputerRelayPort => ({
     request: () => Promise.reject(new Error('not used')),
-    releaseLease: ({ session_id }) => {
-      released.push(`${computerId}:${session_id}`);
+    releaseLease: ({ tenant_id, session_id, turn_id }) => {
+      released.push(`${computerId}:${tenant_id}:${session_id}:${turn_id}`);
       return Promise.resolve({ released: true });
     },
     revoke: () => Promise.reject(new Error('not used')),
@@ -111,6 +112,14 @@ function recordingComputers(): { computers: Pick<ComputersService, 'relay'>; rel
 }
 
 const REMOTE_SANDBOX_ID = `v1:remote-computer:${COMPUTER_ID}/${SESSION_ID}`;
+const RELEASED = `${COMPUTER_ID}:${TENANT}:${SESSION_ID}:${TURN_ID}`;
+
+/** A ledger in which this turn sent a desktop op to COMPUTER_ID. */
+function leasedDuringTurn(): TurnDesktopLeases {
+  const leases = new TurnDesktopLeases();
+  leases.record({ turn_id: TURN_ID, computer_id: COMPUTER_ID });
+  return leases;
+}
 
 describe('the turn drained hook', () => {
   let harness: Harness | undefined;
@@ -120,7 +129,7 @@ describe('the turn drained hook', () => {
     harness = undefined;
   });
 
-  it('delivers, then releases the desktop lease on the computer the turn used', async () => {
+  it('delivers, then releases the desktop lease this turn took', async () => {
     harness = await createHarness(REMOTE_SANDBOX_ID);
     const { computers, released } = recordingComputers();
     const order: string[] = [];
@@ -129,28 +138,45 @@ describe('the turn drained hook', () => {
         order.push('deliver');
         return Promise.resolve();
       },
-      computers,
+      desktop: { computers, leases: leasedDuringTurn() },
       logger: silent,
     });
 
     await hook({ session: await sessionHandle(harness), turn_id: TURN_ID });
 
     expect(order).toEqual(['deliver']);
-    expect(released).toEqual([`${COMPUTER_ID}:${SESSION_ID}`]);
+    expect(released).toEqual([RELEASED]);
   });
 
-  it('asks no relay when the turn never used a computer', async () => {
-    for (const sandboxId of [null, 'v1:cloudflare-computer:tenant:s1']) {
-      harness = await createHarness(sandboxId);
-      const { computers, released } = recordingComputers();
-      const hook = createTurnDrainedHook({ deliver: () => Promise.resolve(), computers, logger: silent });
+  it('releases a lease taken by a turn that ended before it recorded any sandbox', async () => {
+    // A turn cancelled or failed mid-op has no sandbox_info; the lease the relay gave it is still there.
+    harness = await createHarness(null);
+    const { computers, released } = recordingComputers();
+    const hook = createTurnDrainedHook({
+      deliver: () => Promise.resolve(),
+      desktop: { computers, leases: leasedDuringTurn() },
+      logger: silent,
+    });
 
-      await hook({ session: await sessionHandle(harness), turn_id: TURN_ID });
+    await hook({ session: await sessionHandle(harness), turn_id: TURN_ID });
 
-      expect(released).toEqual([]);
-      await harness.db.destroy();
-      harness = undefined;
-    }
+    expect(released).toEqual([RELEASED]);
+  });
+
+  it('asks no relay when the turn sent no desktop op, whatever sandbox it used', async () => {
+    harness = await createHarness(REMOTE_SANDBOX_ID);
+    const { computers, released } = recordingComputers();
+    const leases = new TurnDesktopLeases();
+    leases.record({ turn_id: 'another-turn', computer_id: COMPUTER_ID });
+    const hook = createTurnDrainedHook({
+      deliver: () => Promise.resolve(),
+      desktop: { computers, leases },
+      logger: silent,
+    });
+
+    await hook({ session: await sessionHandle(harness), turn_id: TURN_ID });
+
+    expect(released).toEqual([]);
   });
 
   it('still releases the lease when delivery fails', async () => {
@@ -158,12 +184,12 @@ describe('the turn drained hook', () => {
     const { computers, released } = recordingComputers();
     const hook = createTurnDrainedHook({
       deliver: () => Promise.reject(new Error('slack is down')),
-      computers,
+      desktop: { computers, leases: leasedDuringTurn() },
       logger: silent,
     });
 
     await expect(hook({ session: await sessionHandle(harness), turn_id: TURN_ID })).resolves.toBeUndefined();
-    expect(released).toEqual([`${COMPUTER_ID}:${SESSION_ID}`]);
+    expect(released).toEqual([RELEASED]);
   });
 });
 
@@ -198,7 +224,7 @@ describe('NodeTurnExecutor.startStreaming', () => {
       sandboxIntegration: undefined,
       onTurnDrained: createTurnDrainedHook({
         deliver: () => Promise.resolve(),
-        computers: recording.computers,
+        desktop: { computers: recording.computers, leases: leasedDuringTurn() },
         logger: silent,
       }),
     });
@@ -228,7 +254,7 @@ describe('NodeTurnExecutor.startStreaming', () => {
       void event;
     }
 
-    expect(released).toEqual([`${COMPUTER_ID}:${SESSION_ID}`]);
+    expect(released).toEqual([RELEASED]);
   });
 
   it('still runs it when the client has gone away', async () => {
@@ -241,6 +267,6 @@ describe('NodeTurnExecutor.startStreaming', () => {
     for (let attempt = 0; attempt < 100 && released.length === 0; attempt += 1) {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-    expect(released).toEqual([`${COMPUTER_ID}:${SESSION_ID}`]);
+    expect(released).toEqual([RELEASED]);
   });
 });

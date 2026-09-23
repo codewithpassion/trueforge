@@ -1,16 +1,25 @@
 /**
  * The desktop lease over a real relay Durable Object and a fake machine: who may drive the desktop,
- * who is refused and with what, and that a turn gives the lease back when it ends.
+ * who is refused and with what, and that a turn gives the lease back when it ends. Agent frames are
+ * built by a real provider; a person's ops are hand-written until the routes that send them exist.
  */
-import { AgentSpecSchema, Sessions, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
-import { runInDurableObject } from 'cloudflare:test';
+import {
+  AgentSpecSchema,
+  CancellationReason,
+  Sessions,
+  type TurnStreamingEvent,
+} from '@truefoundry/trueforge-core/agent-session';
+import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { desktopProviderTools } from '../../src/computers/desktopTools';
 import {
   ClientOpRequestSchema,
+  type ClientOpRequest,
   type ComputerCapabilities,
-  type RelayPrincipal,
   type RequestOutcome,
 } from '../../src/computers/protocol';
+import { RemoteComputerProvider } from '../../src/computers/RemoteComputerProvider';
+import { TurnDesktopLeases } from '../../src/computers/turnDesktopLeases';
 import { ActiveTurnRegistry } from '../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../src/runtime/event-subscription';
 import { validateAgentSpec } from '../../src/runtime/sessionResources';
@@ -21,10 +30,11 @@ import { workersComputersService } from '../../src/workers/computersService';
 import { createConsoleLogger } from '../../src/workers/logger';
 import { createWorkersSandboxIntegration } from '../../src/workers/sandbox/workersSandboxIntegration';
 import { d1Persistence, migrateDatabase, sessionStub, TENANT_ID, upsertMockProvider, USER_REF } from './harness';
-import { connectNewComputer, settle, type FakeComputerClient } from './remoteComputerClient';
+import { connectNewComputer, FAKE_WORKDIR, settle, waitFor, type FakeComputerClient } from './remoteComputerClient';
 
 const logger = createConsoleLogger({ level: 'error', bindings: { component: 'desktop-test' } });
 
+const OTHER_TENANT = 'another-tenant';
 const OK_EXEC = { exit_code: 0, stdout: '', stderr: '', bytes_total: 0, truncated: false, duration_ms: 1 };
 const SCREENSHOT = { data_b64: '/9j/4AAQ', width: 1280, height: 800, media_type: 'image/jpeg' };
 const WITH_DESKTOP: ComputerCapabilities = {
@@ -44,6 +54,12 @@ function answer(frame: Record<string, unknown>): Record<string, unknown> | undef
   switch (frame['op']) {
     case 'exec':
       return OK_EXEC;
+    case 'cancel':
+      return { cancelled: false };
+    case 'file_get':
+      return { data_b64: '', eof: true, size: 0, sha256: null };
+    case 'file_put':
+      return { bytes_written: 1, sha256: null };
     case 'desktop_screenshot':
       return SCREENSHOT;
     case 'desktop_clipboard_get':
@@ -56,6 +72,11 @@ function answer(frame: Record<string, unknown>): Record<string, unknown> | undef
   }
 }
 
+/** Answers everything but the ops named, which the client holds until the test lets them go. */
+function holding(...ops: string[]): (frame: Record<string, unknown>) => Record<string, unknown> | undefined {
+  return frame => (ops.includes(String(frame['op'])) ? undefined : answer(frame));
+}
+
 let counter = 0;
 function unique(prefix: string): string {
   counter += 1;
@@ -66,37 +87,142 @@ async function desktopComputer(capabilities: ComputerCapabilities = WITH_DESKTOP
   return connectNewComputer({ name: unique('desktop-box'), options: { hello: { capabilities }, onRequest: answer } });
 }
 
-function agent(sessionId: string): RelayPrincipal {
-  return { kind: 'agent', session_id: sessionId };
+function relay(computerId: string) {
+  return workersComputersService(env).relay(computerId);
 }
 
-function human(userId: string): RelayPrincipal {
-  return { kind: 'human', user_id: userId };
+/**
+ * An agent session's turn on the computer. Every frame comes from a real provider; the outcome
+ * each call returns is the relay's own, so a test can assert the exact refusal.
+ */
+function agentOn({
+  computerId,
+  sessionId,
+  turnId = 'turn-1',
+}: {
+  computerId: string;
+  sessionId: string;
+  turnId?: string;
+}) {
+  const computers = workersComputersService(env);
+  const real = computers.relay(computerId);
+  const outcomes: RequestOutcome[] = [];
+  const provider = new RemoteComputerProvider({
+    relay: {
+      ...real,
+      request: async input => {
+        const outcome = await real.request(input);
+        outcomes.push(outcome);
+        return outcome;
+      },
+    },
+    computerId,
+    computerName: 'desktop-box',
+    tenantId: TENANT_ID,
+    sessionId,
+    turnId,
+    workdir: FAKE_WORKDIR,
+    capabilities: WITH_DESKTOP,
+    requireApproval: false,
+    defaultExecTimeoutSeconds: 2,
+    fileMaxBytesForDownload: 1024 * 1024,
+    store: computers.store,
+    desktopLeases: undefined,
+    logger,
+  });
+  const sandboxId = `${computerId}/${sessionId}`;
+  const sessionFile = `${FAKE_WORKDIR}/${sessionId}/notes.txt`;
+  /** The relay's answer to the one request `run` made. File ops throw on refusal; that is fine here. */
+  const outcomeOf = async (run: () => Promise<unknown>): Promise<RequestOutcome> => {
+    const before = outcomes.length;
+    await run().catch(() => undefined);
+    const outcome = outcomes[before];
+    if (outcome === undefined) {
+      throw new Error('the provider sent nothing');
+    }
+    return outcome;
+  };
+  return {
+    screenshot: () => outcomeOf(() => provider.desktopScreenshot()),
+    input: () => outcomeOf(() => provider.desktopInput([{ type: 'click', x: 10, y: 20, button: 'left', count: 1 }])),
+    clipboardGet: () => outcomeOf(() => provider.desktopClipboardGet()),
+    exec: () => outcomeOf(() => provider.exec({ sandboxId, command: 'true' })),
+    /** What the model sees, for calls made in parallel, where outcomes cannot be matched to calls. */
+    execResult: () => provider.exec({ sandboxId, command: 'true' }),
+    fileGet: () => outcomeOf(() => provider.downloadFile({ sandboxId, path: sessionFile })),
+    filePut: () =>
+      outcomeOf(() => provider.uploadFile({ sandboxId, remotePath: sessionFile, content: Buffer.from('x') })),
+  };
 }
 
-const OPS = {
+type AgentOp = Exclude<keyof ReturnType<typeof agentOn>, 'execResult'>;
+const EVERY_AGENT_OP: AgentOp[] = ['screenshot', 'input', 'clipboardGet', 'exec', 'fileGet', 'filePut'];
+
+/** A person's ops. No builder exists for them yet, so they are checked against the contract here. */
+const HUMAN_OPS = {
   screenshot: { op: 'desktop_screenshot', quality: null },
   input: { op: 'desktop_input', actions: [{ type: 'click', x: 10, y: 20, button: 'left', count: 1 }] },
   clipboardGet: { op: 'desktop_clipboard_get' },
   exec: { op: 'exec', command: 'true', cwd: null, env: {}, timeout_ms: 1000 },
-} as const;
+} satisfies Record<string, ClientOpRequest>;
 
-function send({
+function asHuman({
   computerId,
-  principal,
+  userId,
   op,
 }: {
   computerId: string;
-  principal: RelayPrincipal;
-  op: Record<string, unknown>;
+  userId: string;
+  op: ClientOpRequest;
 }): Promise<RequestOutcome> {
-  return workersComputersService(env)
-    .relay(computerId)
-    .request({ tenant_id: TENANT_ID, op_json: JSON.stringify(op), timeout_ms: 2000, principal });
+  return relay(computerId).request({
+    tenant_id: TENANT_ID,
+    op_json: JSON.stringify(ClientOpRequestSchema.parse(op)),
+    timeout_ms: 2000,
+    principal: { kind: 'human', user_id: userId },
+  });
 }
 
 function relayStub(computerId: string) {
   return env.REMOTE_COMPUTER_DO.get(env.REMOTE_COMPUTER_DO.idFromName(computerId));
+}
+
+function takeControl({
+  computerId,
+  userId,
+  tenantId = TENANT_ID,
+}: {
+  computerId: string;
+  userId: string;
+  tenantId?: string;
+}) {
+  return relayStub(computerId).takeHumanLease({ tenant_id: tenantId, user_id: userId });
+}
+
+function handBack({
+  computerId,
+  userId,
+  tenantId = TENANT_ID,
+}: {
+  computerId: string;
+  userId: string;
+  tenantId?: string;
+}) {
+  return relayStub(computerId).releaseHumanLease({ tenant_id: tenantId, user_id: userId });
+}
+
+function releaseTurn({
+  computerId,
+  sessionId,
+  turnId = 'turn-1',
+  tenantId = TENANT_ID,
+}: {
+  computerId: string;
+  sessionId: string;
+  turnId?: string;
+  tenantId?: string;
+}) {
+  return relayStub(computerId).releaseLease({ tenant_id: tenantId, session_id: sessionId, turn_id: turnId });
 }
 
 function refusedWith(outcome: RequestOutcome): string | undefined {
@@ -105,6 +231,14 @@ function refusedWith(outcome: RequestOutcome): string | undefined {
 
 function desktopFrames(client: FakeComputerClient) {
   return client.received.filter(frame => String(frame['op']).startsWith('desktop_'));
+}
+
+function clears(client: FakeComputerClient) {
+  return client.received.filter(frame => frame['op'] === 'desktop_clipboard_set');
+}
+
+function readStoredLease(computerId: string) {
+  return runInDurableObject(relayStub(computerId), (_instance, state) => state.storage.get('desktop_lease'));
 }
 
 beforeAll(async () => {
@@ -118,24 +252,26 @@ afterEach(() => {
 describe('the desktop relay', () => {
   it('never sends a desktop op to a machine without a desktop', async () => {
     const { computerId, client } = await desktopComputer(WITHOUT_DESKTOP);
+    const agent = agentOn({ computerId, sessionId: 's-1' });
 
-    const outcome = await send({ computerId, principal: agent('s-1'), op: OPS.screenshot });
+    const outcome = await agent.screenshot();
     expect(refusedWith(outcome)).toBe('desktop_unavailable');
     expect(outcome.ok ? '' : outcome.message).toContain('Xvfb did not start');
-    await expect(relayStub(computerId).takeHumanLease({ user_id: 'u-1' })).resolves.toMatchObject({
+    await expect(takeControl({ computerId, userId: 'u-1' })).resolves.toMatchObject({
       ok: false,
       reason: 'desktop_unavailable',
     });
     // Commands still run: only the desktop is missing.
-    expect((await send({ computerId, principal: agent('s-1'), op: OPS.exec })).ok).toBe(true);
+    expect((await agent.exec()).ok).toBe(true);
     expect(desktopFrames(client)).toHaveLength(0);
     client.close();
   });
 
   it('sends desktop ops the client can parse, on the contract', async () => {
     const { computerId, client } = await desktopComputer();
-    for (const op of [OPS.screenshot, OPS.input, OPS.clipboardGet]) {
-      expect((await send({ computerId, principal: agent('s-1'), op })).ok).toBe(true);
+    const agent = agentOn({ computerId, sessionId: 's-1' });
+    for (const op of ['screenshot', 'input', 'clipboardGet'] as const) {
+      expect((await agent[op]()).ok).toBe(true);
     }
     const frames = desktopFrames(client);
     expect(frames).toHaveLength(3);
@@ -147,82 +283,252 @@ describe('the desktop relay', () => {
 
   it('gives a second session desktop_busy until the first releases, and leaves its commands alone', async () => {
     const { computerId, client } = await desktopComputer();
+    const first = agentOn({ computerId, sessionId: 's-a' });
+    const second = agentOn({ computerId, sessionId: 's-b' });
 
-    expect((await send({ computerId, principal: agent('s-a'), op: OPS.screenshot })).ok).toBe(true);
-    expect(refusedWith(await send({ computerId, principal: agent('s-b'), op: OPS.screenshot }))).toBe('desktop_busy');
-    expect(refusedWith(await send({ computerId, principal: agent('s-b'), op: OPS.input }))).toBe('desktop_busy');
+    expect((await first.screenshot()).ok).toBe(true);
+    expect(refusedWith(await second.screenshot())).toBe('desktop_busy');
+    expect(refusedWith(await second.input())).toBe('desktop_busy');
     // `exec` never needs the agent lease.
-    expect((await send({ computerId, principal: agent('s-b'), op: OPS.exec })).ok).toBe(true);
+    expect((await second.exec()).ok).toBe(true);
     // The holder keeps working.
-    expect((await send({ computerId, principal: agent('s-a'), op: OPS.input })).ok).toBe(true);
+    expect((await first.input()).ok).toBe(true);
 
-    // Only the holder can let go.
-    await expect(relayStub(computerId).releaseLease({ session_id: 's-b' })).resolves.toEqual({ released: false });
-    await expect(relayStub(computerId).releaseLease({ session_id: 's-a' })).resolves.toEqual({ released: true });
-    expect((await send({ computerId, principal: agent('s-b'), op: OPS.screenshot })).ok).toBe(true);
+    // Only the holder's own turn, in its own tenant, can let go.
+    await expect(releaseTurn({ computerId, sessionId: 's-b' })).resolves.toEqual({ released: false });
+    await expect(releaseTurn({ computerId, sessionId: 's-a', turnId: 'turn-2' })).resolves.toEqual({
+      released: false,
+    });
+    await expect(releaseTurn({ computerId, sessionId: 's-a', tenantId: OTHER_TENANT })).resolves.toEqual({
+      released: false,
+    });
+    expect(refusedWith(await second.screenshot())).toBe('desktop_busy');
+    await expect(releaseTurn({ computerId, sessionId: 's-a' })).resolves.toEqual({ released: true });
+    expect((await second.screenshot()).ok).toBe(true);
     client.close();
   });
 
-  it('lets a person preempt an agent, and refuses agent screenshots and commands while they hold it', async () => {
+  it("ignores a late release from a session's earlier turn once its next turn holds the desktop", async () => {
     const { computerId, client } = await desktopComputer();
-    expect((await send({ computerId, principal: agent('s-a'), op: OPS.screenshot })).ok).toBe(true);
+    expect((await agentOn({ computerId, sessionId: 's-a', turnId: 'turn-1' }).screenshot()).ok).toBe(true);
+    // The next turn of the same session carries on with the desktop and becomes the holder.
+    expect((await agentOn({ computerId, sessionId: 's-a', turnId: 'turn-2' }).screenshot()).ok).toBe(true);
 
-    await expect(relayStub(computerId).takeHumanLease({ user_id: 'u-1' })).resolves.toEqual({ ok: true });
+    await expect(releaseTurn({ computerId, sessionId: 's-a', turnId: 'turn-1' })).resolves.toEqual({
+      released: false,
+    });
+    const other = agentOn({ computerId, sessionId: 's-b' });
+    expect(refusedWith(await other.screenshot())).toBe('desktop_busy');
+    await expect(releaseTurn({ computerId, sessionId: 's-a', turnId: 'turn-2' })).resolves.toEqual({
+      released: true,
+    });
+    expect((await other.screenshot()).ok).toBe(true);
+    client.close();
+  });
+
+  it('keeps the lease across an eviction, so another session is still refused', async () => {
+    const { computerId, client } = await desktopComputer();
+    expect((await agentOn({ computerId, sessionId: 's-a' }).screenshot()).ok).toBe(true);
+
+    await evictDurableObject(relayStub(computerId));
+
+    expect(refusedWith(await agentOn({ computerId, sessionId: 's-b' }).screenshot())).toBe('desktop_busy');
+    client.close();
+  });
+
+  it('answers offline, and takes no lease, when the machine is gone', async () => {
+    const { computerId, client } = await desktopComputer();
+    client.close();
+    for (let attempt = 0; attempt < 200 && (await relay(computerId).status()).connected; attempt += 1) {
+      await settle(2);
+    }
+
+    expect(refusedWith(await agentOn({ computerId, sessionId: 's-a' }).screenshot())).toBe('offline');
+    expect(await readStoredLease(computerId)).toBeUndefined();
+  });
+
+  it('lets a person preempt an agent, and refuses every agent op but cancel while they hold it', async () => {
+    const { computerId, client } = await desktopComputer();
+    expect((await agentOn({ computerId, sessionId: 's-a' }).screenshot()).ok).toBe(true);
+
+    await expect(takeControl({ computerId, userId: 'u-1' })).resolves.toEqual({ ok: true });
     const framesAtTakeover = client.received.length;
 
     // The agent that held it, and every other agent, now sees nothing and runs nothing.
-    for (const session of ['s-a', 's-b']) {
-      for (const op of [OPS.screenshot, OPS.input, OPS.clipboardGet, OPS.exec]) {
-        expect(refusedWith(await send({ computerId, principal: agent(session), op }))).toBe('human_in_control');
+    for (const sessionId of ['s-a', 's-b']) {
+      const agent = agentOn({ computerId, sessionId });
+      for (const op of EVERY_AGENT_OP) {
+        expect({ sessionId, op, reason: refusedWith(await agent[op]()) }).toEqual({
+          sessionId,
+          op,
+          reason: 'human_in_control',
+        });
       }
     }
     expect(client.received.length).toBe(framesAtTakeover);
+    // Cancelling a command already running is still allowed: it only stops agent work.
+    const cancelled = await relay(computerId).request({
+      tenant_id: TENANT_ID,
+      op_json: JSON.stringify({ op: 'cancel', target_id: 'some-exec' }),
+      timeout_ms: 1000,
+      principal: { kind: 'agent', session_id: 's-a', turn_id: 'turn-1' },
+    });
+    expect(cancelled.ok).toBe(true);
 
     // The person in control drives it.
-    for (const op of [OPS.screenshot, OPS.input, OPS.clipboardGet]) {
-      expect((await send({ computerId, principal: human('u-1'), op })).ok).toBe(true);
+    for (const op of [HUMAN_OPS.screenshot, HUMAN_OPS.input, HUMAN_OPS.clipboardGet]) {
+      expect((await asHuman({ computerId, userId: 'u-1', op })).ok).toBe(true);
     }
     // Another person neither sees nor drives it.
-    expect(refusedWith(await send({ computerId, principal: human('u-2'), op: OPS.screenshot }))).toBe(
-      'human_in_control',
-    );
-    expect(refusedWith(await send({ computerId, principal: human('u-2'), op: OPS.input }))).toBe('human_in_control');
+    for (const op of [HUMAN_OPS.screenshot, HUMAN_OPS.input]) {
+      expect(refusedWith(await asHuman({ computerId, userId: 'u-2', op }))).toBe('human_in_control');
+    }
     // A lease release from the agent's turn does not end the person's control.
-    await expect(relayStub(computerId).releaseLease({ session_id: 's-a' })).resolves.toEqual({ released: false });
+    await expect(releaseTurn({ computerId, sessionId: 's-a' })).resolves.toEqual({ released: false });
+    client.close();
+  });
+
+  it('refuses a queued command when a person took control while it waited for a slot', async () => {
+    const { computerId, client } = await desktopComputer();
+    client.answerWith(holding('exec'));
+    const agent = agentOn({ computerId, sessionId: 's-a' });
+
+    // Four fill the slots; the fifth waits in the queue.
+    const running = Array.from({ length: 5 }, () => agent.execResult());
+    await waitFor(() => client.received.filter(frame => frame['op'] === 'exec').length === 4);
+    await expect(takeControl({ computerId, userId: 'u-1' })).resolves.toEqual({ ok: true });
+
+    client.releaseHeld(OK_EXEC);
+    const results = await Promise.all(running);
+
+    expect(results.filter(result => result.success)).toHaveLength(4);
+    const errors = results.flatMap(result => (result.success ? [] : [result.error]));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/^A person is using the desktop/);
+    expect(client.received.filter(frame => frame['op'] === 'exec')).toHaveLength(4);
     client.close();
   });
 
   it('lets anyone watch while nobody holds control, but only the controller type or read the clipboard', async () => {
     const { computerId, client } = await desktopComputer();
-    expect((await send({ computerId, principal: human('u-1'), op: OPS.screenshot })).ok).toBe(true);
-    expect(refusedWith(await send({ computerId, principal: human('u-1'), op: OPS.input }))).toBe('forbidden');
-    expect(refusedWith(await send({ computerId, principal: human('u-1'), op: OPS.clipboardGet }))).toBe('forbidden');
+    const agent = agentOn({ computerId, sessionId: 's-a' });
+    expect((await asHuman({ computerId, userId: 'u-1', op: HUMAN_OPS.screenshot })).ok).toBe(true);
+    expect(refusedWith(await asHuman({ computerId, userId: 'u-1', op: HUMAN_OPS.input }))).toBe('forbidden');
+    expect(refusedWith(await asHuman({ computerId, userId: 'u-1', op: HUMAN_OPS.clipboardGet }))).toBe('forbidden');
     // Watching takes no lease, so an agent can still start.
-    expect((await send({ computerId, principal: agent('s-a'), op: OPS.input })).ok).toBe(true);
+    expect((await agent.input()).ok).toBe(true);
     // A person may watch an agent at work.
-    expect((await send({ computerId, principal: human('u-1'), op: OPS.screenshot })).ok).toBe(true);
+    expect((await asHuman({ computerId, userId: 'u-1', op: HUMAN_OPS.screenshot })).ok).toBe(true);
     // A person sends desktop ops only.
-    expect(refusedWith(await send({ computerId, principal: human('u-1'), op: OPS.exec }))).toBe('forbidden');
+    expect(refusedWith(await asHuman({ computerId, userId: 'u-1', op: HUMAN_OPS.exec }))).toBe('forbidden');
     client.close();
   });
 
-  it('clears both clipboard selections when a person hands back, then frees the desktop', async () => {
+  it('refuses the lease calls of another tenant', async () => {
     const { computerId, client } = await desktopComputer();
-    await relayStub(computerId).takeHumanLease({ user_id: 'u-1' });
-
-    await expect(relayStub(computerId).releaseHumanLease({ user_id: 'u-2' })).resolves.toEqual({
+    await expect(takeControl({ computerId, userId: 'u-1', tenantId: OTHER_TENANT })).resolves.toMatchObject({
+      ok: false,
+      reason: 'forbidden',
+    });
+    await expect(takeControl({ computerId, userId: 'u-1' })).resolves.toEqual({ ok: true });
+    await expect(handBack({ computerId, userId: 'u-1', tenantId: OTHER_TENANT })).resolves.toEqual({
       released: false,
       clipboard_cleared: false,
     });
-    await expect(relayStub(computerId).releaseHumanLease({ user_id: 'u-1' })).resolves.toEqual({
-      released: true,
-      clipboard_cleared: true,
+    expect(refusedWith(await agentOn({ computerId, sessionId: 's-a' }).screenshot())).toBe('human_in_control');
+    expect(clears(client)).toHaveLength(0);
+    client.close();
+  });
+
+  it('keeps everyone off the desktop until the clipboard clear after a hand-back is confirmed', async () => {
+    const { computerId, client } = await desktopComputer();
+    await takeControl({ computerId, userId: 'u-1' });
+    await expect(handBack({ computerId, userId: 'u-2' })).resolves.toEqual({
+      released: false,
+      clipboard_cleared: false,
     });
 
-    const clears = client.received.filter(frame => frame['op'] === 'desktop_clipboard_set');
-    expect(clears).toHaveLength(1);
-    expect(clears[0]).toMatchObject({ text: '', selections: ['clipboard', 'primary'] });
-    expect((await send({ computerId, principal: agent('s-a'), op: OPS.screenshot })).ok).toBe(true);
+    client.answerWith(holding('desktop_clipboard_set'));
+    const handedBack = handBack({ computerId, userId: 'u-1' });
+    await waitFor(() => clears(client).length === 1);
+    expect(clears(client)[0]).toMatchObject({ text: '', selections: ['clipboard', 'primary'] });
+
+    // The person no longer holds it, and nobody else has it yet.
+    const agent = agentOn({ computerId, sessionId: 's-a' });
+    expect(refusedWith(await agent.screenshot())).toBe('desktop_busy');
+    expect(refusedWith(await agent.exec())).toBe('desktop_busy');
+    expect(refusedWith(await asHuman({ computerId, userId: 'u-1', op: HUMAN_OPS.screenshot }))).toBe('desktop_busy');
+
+    client.answerWith(answer);
+    client.releaseHeld({ ok: true });
+    await expect(handedBack).resolves.toEqual({ released: true, clipboard_cleared: true });
+    expect((await agent.screenshot()).ok).toBe(true);
+    expect(clears(client)).toHaveLength(1);
+    client.close();
+  });
+
+  it('hands control from one person to another only after the first clipboard is cleared', async () => {
+    const { computerId, client } = await desktopComputer();
+    await takeControl({ computerId, userId: 'u-1' });
+    client.answerWith(holding('desktop_clipboard_set'));
+
+    let taken = false;
+    const takeover = takeControl({ computerId, userId: 'u-2' }).then(outcome => {
+      taken = true;
+      return outcome;
+    });
+    await waitFor(() => clears(client).length === 1);
+    await settle();
+    expect(taken).toBe(false);
+    for (const userId of ['u-1', 'u-2']) {
+      expect(refusedWith(await asHuman({ computerId, userId, op: HUMAN_OPS.input }))).toBe('desktop_busy');
+    }
+
+    client.answerWith(answer);
+    client.releaseHeld({ ok: true });
+    await expect(takeover).resolves.toEqual({ ok: true });
+    expect((await asHuman({ computerId, userId: 'u-2', op: HUMAN_OPS.input })).ok).toBe(true);
+    // The clear went out before anything the second person sent.
+    const ops = client.received.map(frame => frame['op']);
+    expect(ops.indexOf('desktop_clipboard_set')).toBeLessThan(ops.lastIndexOf('desktop_input'));
+    client.close();
+  });
+
+  it('stays clearing after a clear that failed, and sends it again on the next op and on the alarm', async () => {
+    const { computerId, client } = await desktopComputer();
+    await takeControl({ computerId, userId: 'u-1' });
+    client.answerWith(holding('desktop_clipboard_set'));
+    const handedBack = handBack({ computerId, userId: 'u-1' });
+    await waitFor(() => client.held.length === 1);
+    // The machine answers the clear with an error, so the person's text may still be there.
+    for (const id of client.held.splice(0)) {
+      client.sendRaw(JSON.stringify({ id, error: { code: 'op_failed', message: 'xclip exited' } }));
+    }
+    await expect(handedBack).resolves.toEqual({ released: true, clipboard_cleared: false });
+
+    // The refused op sends the clear again; this one is held, and is answered with an error too.
+    const agent = agentOn({ computerId, sessionId: 's-a' });
+    expect(refusedWith(await agent.screenshot())).toBe('desktop_busy');
+    await waitFor(() => client.held.length === 1);
+    for (const id of client.held.splice(0)) {
+      client.sendRaw(JSON.stringify({ id, error: { code: 'op_failed', message: 'xclip exited' } }));
+    }
+    await settle();
+    expect(refusedWith(await agent.exec())).toBe('desktop_busy');
+    await waitFor(() => client.held.length === 1);
+    for (const id of client.held.splice(0)) {
+      client.sendRaw(JSON.stringify({ id, error: { code: 'op_failed', message: 'xclip exited' } }));
+    }
+    await settle();
+
+    // The alarm retries with nobody asking; this time the machine confirms.
+    client.answerWith(answer);
+    const before = clears(client).length;
+    await runInDurableObject(relayStub(computerId), instance => instance.alarm());
+    await waitFor(() => clears(client).length === before + 1);
+    await settle();
+    expect(await readStoredLease(computerId)).toBeUndefined();
+    expect((await agent.screenshot()).ok).toBe(true);
     client.close();
   });
 
@@ -232,26 +538,26 @@ describe('the desktop relay', () => {
     let offset = 0;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
 
-    expect((await send({ computerId, principal: agent('s-a'), op: OPS.screenshot })).ok).toBe(true);
+    expect((await agentOn({ computerId, sessionId: 's-a' }).screenshot()).ok).toBe(true);
     offset = 9 * 60_000;
-    expect(refusedWith(await send({ computerId, principal: agent('s-b'), op: OPS.screenshot }))).toBe('desktop_busy');
+    expect(refusedWith(await agentOn({ computerId, sessionId: 's-b' }).screenshot())).toBe('desktop_busy');
     offset = 11 * 60_000;
-    expect((await send({ computerId, principal: agent('s-b'), op: OPS.screenshot })).ok).toBe(true);
+    expect((await agentOn({ computerId, sessionId: 's-b' }).screenshot()).ok).toBe(true);
 
     offset = 0;
-    await relayStub(computerId).takeHumanLease({ user_id: 'u-1' });
+    await takeControl({ computerId, userId: 'u-1' });
     // Only the alarm's lease check sees the future: its heartbeat check must still see a live socket.
     clock.mockImplementationOnce(() => realNow() + 6 * 60_000);
     // The relay's own alarm ends a person's control even when nobody else asks for the desktop.
     await runInDurableObject(relayStub(computerId), instance => instance.alarm());
+    await waitFor(() => clears(client).length === 1);
     await settle();
-    expect(client.received.filter(frame => frame['op'] === 'desktop_clipboard_set')).toHaveLength(1);
-    expect((await send({ computerId, principal: agent('s-a'), op: OPS.screenshot })).ok).toBe(true);
+    expect((await agentOn({ computerId, sessionId: 's-a' }).screenshot()).ok).toBe(true);
     client.close();
   });
 });
 
-function computerIntegration() {
+function computerIntegration(desktopLeases?: TurnDesktopLeases) {
   return createWorkersSandboxIntegration({
     backend: undefined,
     computers: workersComputersService(env),
@@ -259,6 +565,7 @@ function computerIntegration() {
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024 * 1024,
     codeModeRegistry: undefined,
+    desktopLeases,
   });
 }
 
@@ -309,8 +616,8 @@ async function desktopAgentSession({
   return { stores, sessionId, agentId: created.id, providerName };
 }
 
-/** A turn run in-process with whichever drained hook the case wants, or none. */
-async function runDesktopTurn({
+/** A turn run in-process, with the drained hook the session Durable Object wires, or none. */
+async function startDesktopTurn({
   stores,
   sessionId,
   withHook,
@@ -326,7 +633,8 @@ async function runDesktopTurn({
   if (session === undefined) {
     throw new Error('expected the session that was just created');
   }
-  const computers = workersComputersService(env);
+  const desktopLeases = new TurnDesktopLeases();
+  const activeTurns = new ActiveTurnRegistry();
   const started = await startTurnInProcess({
     session,
     turn_id: newId(),
@@ -341,17 +649,24 @@ async function runDesktopTurn({
       mcpServerStore: stores.mcpServerStore,
       sandboxProviderStore: stores.sandboxProviderStore,
       skillStore: stores.skillStore,
-      activeTurns: new ActiveTurnRegistry(),
+      activeTurns,
       eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
       logger,
-      sandboxIntegration: computerIntegration(),
+      sandboxIntegration: computerIntegration(desktopLeases),
       onTurnDrained: withHook
-        ? createTurnDrainedHook({ deliver: () => Promise.resolve(), computers, logger })
+        ? createTurnDrainedHook({
+            deliver: () => Promise.resolve(),
+            desktop: { computers: workersComputersService(env), leases: desktopLeases },
+            logger,
+          })
         : undefined,
     },
   });
-  await started.drained;
-  return stores.sessionStore.getTurn({ session_id: sessionId, turn_id: started.turn.record.turn_id });
+  const finished = async () => {
+    await started.drained;
+    return stores.sessionStore.getTurn({ session_id: sessionId, turn_id: started.turn.record.turn_id });
+  };
+  return { turnId: started.turn.record.turn_id, activeTurns, finished };
 }
 
 describe('a desktop turn', () => {
@@ -359,17 +674,17 @@ describe('a desktop turn', () => {
     const { computerId, client } = await desktopComputer();
     const { stores, sessionId } = await desktopAgentSession({ computerId });
 
-    const finished = await runDesktopTurn({ stores, sessionId, withHook: false });
+    const finished = await (await startDesktopTurn({ stores, sessionId, withHook: false })).finished();
 
     expect(finished?.state.status).toBe('done');
     expect(client.received.some(frame => frame['op'] === 'desktop_screenshot')).toBe(true);
     // Images do not reach the model yet; the stub says what was captured.
-    expect(JSON.stringify(finished?.snapshot.threads ?? {})).toContain('[screenshot 1280x800 captured');
-    // A screenshot-only session still records its sandbox, which is how the turn end finds the machine.
-    expect(finished?.snapshot.sandbox_info?.sandbox_id).toBe(`v1:remote-computer:${computerId}/${sessionId}`);
-    expect(refusedWith(await send({ computerId, principal: agent('someone-else'), op: OPS.screenshot }))).toBe(
-      'desktop_busy',
+    expect(JSON.stringify(finished?.snapshot.threads ?? {})).toContain(
+      '[screenshot 1280x800 captured; this model does not receive images yet]',
     );
+    // A screenshot-only session still records its sandbox, so its next turn works in the same directory.
+    expect(finished?.snapshot.sandbox_info?.sandbox_id).toBe(`v1:remote-computer:${computerId}/${sessionId}`);
+    expect(refusedWith(await agentOn({ computerId, sessionId: 'someone-else' }).screenshot())).toBe('desktop_busy');
     client.close();
   });
 
@@ -377,11 +692,40 @@ describe('a desktop turn', () => {
     const { computerId, client } = await desktopComputer();
     const { stores, sessionId } = await desktopAgentSession({ computerId });
 
-    const finished = await runDesktopTurn({ stores, sessionId, withHook: true });
+    const finished = await (await startDesktopTurn({ stores, sessionId, withHook: true })).finished();
 
     expect(finished?.state.status).toBe('done');
     expect(client.received.some(frame => frame['op'] === 'desktop_screenshot')).toBe(true);
-    expect((await send({ computerId, principal: agent('someone-else'), op: OPS.screenshot })).ok).toBe(true);
+    expect((await agentOn({ computerId, sessionId: 'someone-else' }).screenshot()).ok).toBe(true);
+    client.close();
+  });
+
+  it('releases the lease when the turn is cancelled in the middle of a desktop op', async () => {
+    const { computerId, client } = await desktopComputer();
+    client.answerWith(holding('desktop_screenshot'));
+    const { stores, sessionId } = await desktopAgentSession({ computerId });
+
+    const turn = await startDesktopTurn({ stores, sessionId, withHook: true });
+    // A model round trip comes first, so this waits on the clock rather than on a few ticks.
+    for (let attempt = 0; attempt < 200 && client.held.length === 0; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    expect(client.held).toHaveLength(1);
+    // The relay has already given this turn the lease.
+    expect(refusedWith(await agentOn({ computerId, sessionId: 'someone-else' }).screenshot())).toBe('desktop_busy');
+    expect(
+      turn.activeTurns.cancelIfRunning({
+        sessionId,
+        turnId: turn.turnId,
+        abortReason: CancellationReason.ClientCancelled,
+      }),
+    ).toBe(true);
+    client.answerWith(answer);
+    client.releaseHeld(SCREENSHOT);
+
+    const finished = await turn.finished();
+    expect(finished?.state.status).toBe('cancelled');
+    expect((await agentOn({ computerId, sessionId: 'someone-else' }).screenshot()).ok).toBe(true);
     client.close();
   });
 
@@ -401,11 +745,9 @@ describe('a desktop turn', () => {
       throw new Error(`startTurn failed: ${started.code} ${started.message}`);
     }
     // The platform's own alarm may already hold the turn, so wait for what the drained hook leaves behind.
-    const readLease = () =>
-      runInDurableObject(relayStub(computerId), (_instance, state) => state.storage.get('desktop_lease'));
     for (let attempt = 0; attempt < 200; attempt += 1) {
       const turn = await d1Persistence().sessionStore.getTurn({ session_id: sessionId, turn_id: started.turn.id });
-      if (turn?.state.status !== 'running' && (await readLease()) === undefined) {
+      if (turn?.state.status !== 'running' && (await readStoredLease(computerId)) === undefined) {
         break;
       }
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -414,8 +756,8 @@ describe('a desktop turn', () => {
     const finished = await d1Persistence().sessionStore.getTurn({ session_id: sessionId, turn_id: started.turn.id });
     expect(finished?.state.status).toBe('done');
     expect(client.received.some(frame => frame['op'] === 'desktop_screenshot')).toBe(true);
-    expect(await readLease()).toBeUndefined();
-    expect((await send({ computerId, principal: agent('someone-else'), op: OPS.screenshot })).ok).toBe(true);
+    expect(await readStoredLease(computerId)).toBeUndefined();
+    expect((await agentOn({ computerId, sessionId: 'someone-else' }).screenshot()).ok).toBe(true);
     client.close();
   });
 });
@@ -425,12 +767,14 @@ describe('a desktop agent spec', () => {
     grantedOn,
     computerId,
     desktop,
+    requireApproval = false,
   }: {
     grantedOn: string;
     computerId: string | undefined;
     desktop: boolean;
+    requireApproval?: boolean;
   }) {
-    const { stores, agentId, providerName } = await desktopAgentSession({ computerId: grantedOn });
+    const { stores, agentId, providerName } = await desktopAgentSession({ computerId: grantedOn, requireApproval });
     return validateAgentSpec({
       spec: AgentSpecSchema.parse({
         model: { name: `${providerName}/mock-model` },
@@ -465,6 +809,33 @@ describe('a desktop agent spec', () => {
     await expect(validate({ grantedOn: computerId, computerId: undefined, desktop: true })).rejects.toThrow(
       /needs sandbox.computer_id/,
     );
+    client.close();
+  });
+
+  it('on a computer that requires approval, is accepted but offered only the screenshot and clipboard read', async () => {
+    const { computerId, client } = await desktopComputer();
+    // Spec validation has no warning channel, so the reason reaches the model through the instructions.
+    await expect(
+      validate({ grantedOn: computerId, computerId, desktop: true, requireApproval: true }),
+    ).resolves.toBeUndefined();
+
+    const provider = await computerIntegration().resolveProvider({
+      tenant_id: TENANT_ID,
+      store: d1Persistence().sandboxProviderStore,
+      sessionId: unique('approval-session'),
+      computer_id: computerId,
+      turn_id: 'turn-1',
+      logger,
+    });
+    if (!(provider instanceof RemoteComputerProvider)) {
+      throw new Error('expected the remote computer provider');
+    }
+    const offered = desktopProviderTools(provider);
+    expect(offered.tools.map(candidate => candidate.name).sort()).toEqual([
+      'computer_clipboard_read',
+      'computer_screenshot',
+    ]);
+    expect(offered.instructions).toContain('approve each action');
     client.close();
   });
 });

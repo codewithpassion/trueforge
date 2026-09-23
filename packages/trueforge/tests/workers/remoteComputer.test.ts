@@ -113,6 +113,7 @@ function providerFor({
     defaultExecTimeoutSeconds: 10,
     fileMaxBytesForDownload: 1024 * 1024,
     store: computers.store,
+    desktopLeases: undefined,
     logger: silentLogger,
   });
 }
@@ -484,7 +485,7 @@ describe('the tenant check', () => {
       tenant_id: OTHER_TENANT,
       op_json: JSON.stringify({ op: 'exec', command: 'whoami', cwd: null, env: {}, timeout_ms: 1000 }),
       timeout_ms: 1000,
-      principal: { kind: 'agent', session_id: 'session-1' },
+      principal: { kind: 'agent', session_id: 'session-1', turn_id: 'turn-1' },
     });
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {

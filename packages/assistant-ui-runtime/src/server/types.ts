@@ -887,7 +887,7 @@ export interface IntegrationSetupManifest {
 export type ComputerStatus = 'pending' | 'online' | 'offline' | 'revoked';
 
 /** Kinds of operation the audit records. */
-export type ComputerAuditOp = 'exec' | 'file_put' | 'file_get';
+export type ComputerAuditOp = 'exec' | 'file_put' | 'file_get' | 'desktop';
 
 /** What the machine reported it has. */
 export interface ComputerTools {

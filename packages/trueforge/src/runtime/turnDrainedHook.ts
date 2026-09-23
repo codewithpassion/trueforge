@@ -1,50 +1,54 @@
 import type { SessionHandle } from '@truefoundry/trueforge-core/agent-session';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import { computerIdFromSandboxRef } from '../computers/RemoteComputerProvider';
 import type { ComputersService } from '../computers/service';
+import type { TurnDesktopLeases } from '../computers/turnDesktopLeases';
 import type { TurnDrainedHook } from './turnRunner';
 
 /**
- * Lets go of the desktop when a turn ends, however it ended. The computer comes from the sandbox the
- * turn recorded, which carries over from earlier turns, so a session that never used a computer
- * costs one turn read and no relay call.
+ * Lets go of the desktop on every computer the turn sent a desktop op to, however the turn ended.
+ * A turn that never touched a desktop costs no relay call.
  */
-export async function releaseComputerLease({
+export async function releaseComputerLeases({
   computers,
+  desktopLeases,
   session,
   turn_id,
 }: {
   computers: Pick<ComputersService, 'relay'>;
-  session: Pick<SessionHandle, 'session_id' | 'getTurn'>;
+  desktopLeases: TurnDesktopLeases;
+  session: Pick<SessionHandle, 'tenant_id' | 'session_id'>;
   turn_id: string;
 }): Promise<void> {
-  const turn = await session.getTurn(turn_id);
-  const sandboxId = turn?.record.snapshot.sandbox_info?.sandbox_id;
-  const computerId = sandboxId === undefined ? undefined : computerIdFromSandboxRef(sandboxId);
-  if (computerId === undefined) {
-    return;
+  for (const computerId of desktopLeases.take(turn_id)) {
+    await computers.relay(computerId).releaseLease({
+      tenant_id: session.tenant_id,
+      session_id: session.session_id,
+      turn_id,
+    });
   }
-  await computers.relay(computerId).releaseLease({ session_id: session.session_id });
 }
 
 /**
- * Everything that runs when a turn drains: result delivery, then the desktop lease. Each step is
- * isolated, so a delivery that fails still releases the lease.
+ * Everything that runs when a turn drains: result delivery, then the desktop leases. Each step is
+ * isolated, so a delivery that fails still releases the leases.
  */
 export function createTurnDrainedHook({
   deliver,
-  computers,
+  desktop,
   logger,
 }: {
   deliver: TurnDrainedHook;
   /** Undefined on a runtime without remote computers, where no lease can be held. */
-  computers: Pick<ComputersService, 'relay'> | undefined;
+  desktop: { computers: Pick<ComputersService, 'relay'>; leases: TurnDesktopLeases } | undefined;
   logger: Logger;
 }): TurnDrainedHook {
   const steps: { name: string; run: TurnDrainedHook }[] = [{ name: 'deliver', run: deliver }];
-  if (computers !== undefined) {
-    steps.push({ name: 'release_computer_lease', run: input => releaseComputerLease({ computers, ...input }) });
+  if (desktop !== undefined) {
+    steps.push({
+      name: 'release_computer_leases',
+      run: input => releaseComputerLeases({ computers: desktop.computers, desktopLeases: desktop.leases, ...input }),
+    });
   }
   return async input => {
     for (const step of steps) {

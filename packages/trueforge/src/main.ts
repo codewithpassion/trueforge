@@ -469,7 +469,7 @@ async function createNodeServerRuntime<TTransaction>(options: {
     // No remote computers on this runtime yet, so there is no desktop lease to release.
     onTurnDrained: createTurnDrainedHook({
       deliver: input => notifier.deliverForTurn(input),
-      computers: undefined,
+      desktop: undefined,
       logger,
     }),
     eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(redis),

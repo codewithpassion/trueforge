@@ -9,8 +9,11 @@ import {
   type RequestOutcome,
 } from '../../../src/computers/protocol';
 import { RemoteComputerProvider } from '../../../src/computers/RemoteComputerProvider';
+import { TurnDesktopLeases } from '../../../src/computers/turnDesktopLeases';
+import type { AppendComputerAuditInput } from '../../../src/db/computerStore';
 
 const SESSION_ID = 'session-1';
+const TURN_ID = 'turn-1';
 const SCREENSHOT = { data_b64: '/9j/4AAQ', width: 1280, height: 800, media_type: 'image/jpeg' };
 const DESKTOP: ComputerCapabilities = {
   python3: true,
@@ -39,6 +42,8 @@ function providerWith({
   refuse?: Partial<Record<string, RequestOutcome>>;
 }) {
   const sent: RelayRequestInput[] = [];
+  const audited: AppendComputerAuditInput[] = [];
+  const leases = new TurnDesktopLeases();
   const provider = new RemoteComputerProvider({
     relay: {
       request: input => {
@@ -56,7 +61,7 @@ function providerWith({
               : ok({ ok: true }),
         );
       },
-      releaseLease: () => Promise.resolve({ released: false }),
+      releaseLease: () => Promise.reject(new Error('not used')),
       revoke: () => Promise.reject(new Error('not used')),
       disconnect: () => Promise.reject(new Error('not used')),
       destroy: () => Promise.reject(new Error('not used')),
@@ -66,16 +71,22 @@ function providerWith({
     computerName: 'office-box',
     tenantId: 'default',
     sessionId: SESSION_ID,
-    turnId: 'turn-1',
+    turnId: TURN_ID,
     workdir: '/var/lib/x/sessions',
     capabilities,
     requireApproval,
     defaultExecTimeoutSeconds: 10,
     fileMaxBytesForDownload: 1024,
-    store: { appendAudit: () => Promise.resolve() },
+    store: {
+      appendAudit: row => {
+        audited.push(row);
+        return Promise.resolve();
+      },
+    },
+    desktopLeases: leases,
     logger: createLogger({ silent: true }),
   });
-  return { provider, sent };
+  return { provider, sent, audited, leases };
 }
 
 function tool(tools: readonly ToolDefinition[], name: string): ToolDefinition {
@@ -143,16 +154,17 @@ describe('desktop tools', () => {
     const response = await tool(desktopProviderTools(provider).tools, 'computer_click').execute({ x: 100, y: 200 });
 
     expect(text(response)).toEqual({
-      text: '[screenshot 1280x800 captured; image delivery arrives in Phase 9a-2]',
+      text: '[screenshot 1280x800 captured; this model does not receive images yet]',
       isError: false,
     });
     expect(sentOps(sent)).toEqual([
       { op: 'desktop_input', actions: [{ type: 'click', x: 100, y: 200, button: 'left', count: 1 }] },
       { op: 'desktop_screenshot', quality: null },
     ]);
-    expect(sent.every(input => input.principal.kind === 'agent' && input.principal.session_id === SESSION_ID)).toBe(
-      true,
-    );
+    expect(sent.map(input => input.principal)).toEqual([
+      { kind: 'agent', session_id: SESSION_ID, turn_id: TURN_ID },
+      { kind: 'agent', session_id: SESSION_ID, turn_id: TURN_ID },
+    ]);
     expect(sent.map(input => input.timeout_ms)).toEqual([2000, 5000]);
   });
 
@@ -194,12 +206,86 @@ describe('desktop tools', () => {
     });
   });
 
-  it('tells the model to hand over and stop when a person is in control', async () => {
+  it('tells the model to stop and tell the user when a person is in control', async () => {
     const { provider } = providerWith({ refuse: { desktop_screenshot: refused('human_in_control', 'paused') } });
     const result = text(await tool(desktopProviderTools(provider).tools, 'computer_screenshot').execute({}));
+    expect(result).toEqual({
+      text:
+        'A person is using the desktop of this computer, so desktop actions and commands are paused. ' +
+        'Stop and tell the user rather than retrying.',
+      isError: true,
+    });
+  });
+
+  it('never names a tool the model has not got', () => {
+    for (const requireApproval of [false, true]) {
+      const offered = desktopProviderTools(providerWith({ requireApproval }).provider);
+      expect(offered.instructions).not.toContain('request_human_takeover');
+      for (const candidate of offered.tools) {
+        expect(candidate.description).not.toContain('request_human_takeover');
+      }
+    }
+  });
+
+  it('says the action already ran when only the screenshot after it was refused', async () => {
+    const { provider, sent } = providerWith({ refuse: { desktop_screenshot: refused('human_in_control', 'paused') } });
+    const result = text(await tool(desktopProviderTools(provider).tools, 'computer_type').execute({ text: 'hi' }));
     expect(result.isError).toBe(true);
-    expect(result.text).toContain('request_human_takeover');
-    expect(result.text).toContain('Do not retry');
+    expect(result.text).toMatch(/^The action already ran, but the screenshot after it was refused\. A person is using/);
+    expect(sentOps(sent).map(op => op.op)).toEqual(['desktop_input', 'desktop_screenshot']);
+  });
+
+  it('runs parallel calls one after another, so actions and screenshots never interleave', async () => {
+    const { provider, sent } = providerWith({});
+    const { tools } = desktopProviderTools(provider);
+    await Promise.all([
+      tool(tools, 'computer_click').execute({ x: 1, y: 1 }),
+      tool(tools, 'computer_key').execute({ keys: 'Return' }),
+      tool(tools, 'computer_screenshot').execute({}),
+    ]);
+    expect(sentOps(sent).map(op => op.op)).toEqual([
+      'desktop_input',
+      'desktop_screenshot',
+      'desktop_input',
+      'desktop_screenshot',
+      'desktop_screenshot',
+    ]);
+  });
+
+  it('records the lease for the turn before the op leaves, even when the op is refused', async () => {
+    const { provider, leases } = providerWith({ refuse: { desktop_screenshot: refused('desktop_busy', 'busy') } });
+    await tool(desktopProviderTools(provider).tools, 'computer_screenshot').execute({});
+    expect(leases.take(TURN_ID)).toEqual(['cmp_1']);
+    expect(leases.take(TURN_ID)).toEqual([]);
+  });
+
+  it('audits each desktop op by name and action count, never what was typed or copied', async () => {
+    const { provider, audited } = providerWith({ refuse: { desktop_clipboard_get: refused('desktop_busy', 'busy') } });
+    const { tools } = desktopProviderTools(provider);
+    await tool(tools, 'computer_type').execute({ text: 'hunter2' });
+    await tool(tools, 'computer_clipboard_write').execute({ text: 'secret' });
+    await tool(tools, 'computer_clipboard_read').execute({});
+    expect(audited.map(row => ({ op: row.op, command: row.command, outcome: row.outcome }))).toEqual([
+      { op: 'desktop', command: 'desktop_input (1 action)', outcome: 'ok' },
+      { op: 'desktop', command: 'desktop_screenshot', outcome: 'ok' },
+      { op: 'desktop', command: 'desktop_clipboard_set', outcome: 'ok' },
+      { op: 'desktop', command: 'desktop_screenshot', outcome: 'ok' },
+      { op: 'desktop', command: 'desktop_clipboard_get', outcome: 'desktop_busy' },
+    ]);
+    expect(audited.every(row => row.session_id === SESSION_ID && row.turn_id === TURN_ID)).toBe(true);
+    expect(JSON.stringify(audited)).not.toMatch(/hunter2|secret/);
+  });
+
+  it.each([
+    ['computer_key', { keys: 'ctrl+l; rm -rf /' }],
+    ['computer_scroll', { x: 1, y: 1, dx: 40, dy: 40 }],
+    ['computer_click', { x: 1280, y: 0 }],
+    ['computer_clipboard_write', { text: 'x'.repeat(64 * 1024 + 1) }],
+  ])('refuses %s input the machine would reject, before it leaves', async (name, input) => {
+    const { provider, sent } = providerWith({});
+    const result = text(await tool(desktopProviderTools(provider).tools, name).execute(input));
+    expect(result.isError).toBe(true);
+    expect(sent).toEqual([]);
   });
 
   it('does not screenshot after an action a person interrupted', async () => {

@@ -152,10 +152,14 @@ export type FileGetRequest = z.infer<typeof FileGetRequestSchema>;
 export const DESKTOP_WIDTH = 1280;
 export const DESKTOP_HEIGHT = 800;
 export const DESKTOP_TYPE_MAX_CHARS = 512;
-export const DESKTOP_CLIPBOARD_MAX_BYTES = 64 * 1024;
+const DESKTOP_CLIPBOARD_MAX_BYTES = 64 * 1024;
 const DESKTOP_MAX_ACTIONS = 64;
 const DESKTOP_KEYS_MAX_CHARS = 64;
 const DESKTOP_SCROLL_MAX = 50;
+/** Wheel clicks one input batch may scroll in total, so the batch fits its timeout. */
+export const DESKTOP_SCROLL_BATCH_MAX = 60;
+/** An xdotool chord such as `ctrl+l`; anything else could be read as an xdotool command. */
+const DESKTOP_KEYS_PATTERN = /^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$/;
 
 /** Server-chosen `timeout_ms` per desktop op. */
 export const DESKTOP_SCREENSHOT_TIMEOUT_MS = 5_000;
@@ -163,18 +167,27 @@ export const DESKTOP_CLIPBOARD_TIMEOUT_MS = 3_000;
 const DESKTOP_INPUT_BASE_TIMEOUT_MS = 2_000;
 const DESKTOP_INPUT_MS_PER_TYPED_CHAR = 5;
 
-const DesktopXSchema = z
+// The field schemas are exported so the model-facing tools reuse these bounds rather than restating them.
+export const DesktopXSchema = z
   .number()
   .int()
   .min(0)
   .max(DESKTOP_WIDTH - 1);
-const DesktopYSchema = z
+export const DesktopYSchema = z
   .number()
   .int()
   .min(0)
   .max(DESKTOP_HEIGHT - 1);
 export const DesktopButtonSchema = z.enum(['left', 'middle', 'right']);
-const DesktopScrollDeltaSchema = z.number().int().min(-DESKTOP_SCROLL_MAX).max(DESKTOP_SCROLL_MAX);
+export const DesktopClickCountSchema = z.number().int().min(1).max(3);
+export const DesktopScrollDeltaSchema = z.number().int().min(-DESKTOP_SCROLL_MAX).max(DESKTOP_SCROLL_MAX);
+export const DesktopKeysSchema = z.string().max(DESKTOP_KEYS_MAX_CHARS).regex(DESKTOP_KEYS_PATTERN);
+export const DesktopTypeTextSchema = z.string().min(1).max(DESKTOP_TYPE_MAX_CHARS);
+export const DesktopClipboardTextSchema = z
+  .string()
+  .refine(text => new TextEncoder().encode(text).byteLength <= DESKTOP_CLIPBOARD_MAX_BYTES, {
+    message: `Clipboard text is capped at ${String(DESKTOP_CLIPBOARD_MAX_BYTES)} bytes`,
+  });
 
 export const DesktopActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('mouse_move'), x: DesktopXSchema, y: DesktopYSchema }),
@@ -185,7 +198,7 @@ export const DesktopActionSchema = z.discriminatedUnion('type', [
     x: DesktopXSchema,
     y: DesktopYSchema,
     button: DesktopButtonSchema,
-    count: z.number().int().min(1).max(3),
+    count: DesktopClickCountSchema,
   }),
   z.object({
     type: z.literal('scroll'),
@@ -194,10 +207,15 @@ export const DesktopActionSchema = z.discriminatedUnion('type', [
     dx: DesktopScrollDeltaSchema,
     dy: DesktopScrollDeltaSchema,
   }),
-  z.object({ type: z.literal('key'), keys: z.string().min(1).max(DESKTOP_KEYS_MAX_CHARS) }),
-  z.object({ type: z.literal('type'), text: z.string().min(1).max(DESKTOP_TYPE_MAX_CHARS) }),
+  z.object({ type: z.literal('key'), keys: DesktopKeysSchema }),
+  z.object({ type: z.literal('type'), text: DesktopTypeTextSchema }),
 ]);
 export type DesktopAction = z.infer<typeof DesktopActionSchema>;
+
+/** The wheel clicks one scroll moves, counted the way the batch budget counts them. */
+export function scrollClicks({ dx, dy }: { dx: number; dy: number }): number {
+  return Math.abs(dx) + Math.abs(dy);
+}
 
 export const DesktopScreenshotRequestSchema = z.object({
   op: z.literal('desktop_screenshot'),
@@ -208,7 +226,16 @@ export type DesktopScreenshotRequest = z.infer<typeof DesktopScreenshotRequestSc
 
 export const DesktopInputRequestSchema = z.object({
   op: z.literal('desktop_input'),
-  actions: z.array(DesktopActionSchema).min(1).max(DESKTOP_MAX_ACTIONS),
+  actions: z
+    .array(DesktopActionSchema)
+    .min(1)
+    .max(DESKTOP_MAX_ACTIONS)
+    .refine(
+      actions =>
+        actions.reduce((total, action) => total + (action.type === 'scroll' ? scrollClicks(action) : 0), 0) <=
+        DESKTOP_SCROLL_BATCH_MAX,
+      { message: `One batch scrolls at most ${String(DESKTOP_SCROLL_BATCH_MAX)} wheel clicks` },
+    ),
 });
 export type DesktopInputRequest = z.infer<typeof DesktopInputRequestSchema>;
 
@@ -221,9 +248,7 @@ const DesktopClipboardSelectionSchema = z.enum(['clipboard', 'primary']);
 
 export const DesktopClipboardSetRequestSchema = z.object({
   op: z.literal('desktop_clipboard_set'),
-  text: z.string().refine(text => new TextEncoder().encode(text).byteLength <= DESKTOP_CLIPBOARD_MAX_BYTES, {
-    message: `Clipboard text is capped at ${String(DESKTOP_CLIPBOARD_MAX_BYTES)} bytes`,
-  }),
+  text: DesktopClipboardTextSchema,
   selections: z
     .array(DesktopClipboardSelectionSchema)
     .min(1)
@@ -350,9 +375,9 @@ export const RequestFailureReasonSchema = z.enum([
   'interrupted',
   /** A desktop op for a machine whose last hello did not report a running desktop. */
   'desktop_unavailable',
-  /** Another agent session holds the desktop. */
+  /** Another agent session holds the desktop, or the last person's clipboard is still being cleared. */
   'desktop_busy',
-  /** A person holds the desktop; agent desktop ops and `exec` wait until they hand it back. */
+  /** A person holds the desktop; every agent op but `cancel` is refused until they hand it back. */
   'human_in_control',
 ]);
 export type RequestFailureReason = z.infer<typeof RequestFailureReasonSchema>;
@@ -371,10 +396,14 @@ export type RequestOutcome = z.infer<typeof RequestOutcomeSchema>;
 
 /**
  * Who a relay request acts for. The server sets it from the session or the signed-in user, never
- * from anything a client sent, because the desktop lease is decided on it.
+ * from anything a client sent, because the desktop lease is decided on it. An agent's `turn_id` is
+ * null outside a turn, for example on the file-download route.
  */
-export type RelayPrincipal =
-  { readonly kind: 'agent'; readonly session_id: string } | { readonly kind: 'human'; readonly user_id: string };
+export const RelayPrincipalSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('agent'), session_id: z.string(), turn_id: z.string().nullable() }),
+  z.object({ kind: z.literal('human'), user_id: z.string() }),
+]);
+export type RelayPrincipal = z.infer<typeof RelayPrincipalSchema>;
 
 /** What `request()` needs from its caller so the relay can refuse another tenant's computer. */
 export interface RelayRequestInput {
@@ -387,7 +416,12 @@ export interface RelayRequestInput {
 /** The answer to taking the human lease. */
 export type TakeHumanLeaseOutcome =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: 'desktop_unavailable' | 'revoked'; readonly message: string };
+  | {
+      readonly ok: false;
+      /** `desktop_busy`: the last person's clipboard could not be cleared yet, so nobody takes over. */
+      readonly reason: 'desktop_unavailable' | 'revoked' | 'forbidden' | 'desktop_busy';
+      readonly message: string;
+    };
 
 export const ComputerRelayStatusSchema = z.object({
   connected: z.boolean(),

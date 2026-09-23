@@ -6,6 +6,7 @@ import {
 } from '@truefoundry/trueforge-core/agent-session';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import { DurableObject } from 'cloudflare:workers';
+import { TurnDesktopLeases } from '../computers/turnDesktopLeases';
 import configuration from '../config';
 import { D1ValueTooLargeError, D1WriteOutcomeUnknownError } from '../db/d1/client';
 import { createD1Persistence } from '../db/d1/persistence';
@@ -125,10 +126,16 @@ export class SessionDO extends DurableObject {
   readonly sandboxIntegration: SandboxIntegration;
   /** Code Mode channels the turns in this instance have open; their sandboxes reach them by token. */
   readonly #codeMode = new CodeModeBridgeRegistry();
+  /** The desktops the turns in this instance may hold, released when each turn drains. */
+  readonly #desktopLeases = new TurnDesktopLeases();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.sandboxIntegration = workersSandboxIntegrationFromEnv({ env, codeModeRegistry: this.#codeMode });
+    this.sandboxIntegration = workersSandboxIntegrationFromEnv({
+      env,
+      codeModeRegistry: this.#codeMode,
+      desktopLeases: this.#desktopLeases,
+    });
     this.#events = new DurableObjectEventSubscriptions({
       sql: ctx.storage.sql,
       isEvent: isSequencedTurnStreamingEvent,
@@ -199,7 +206,7 @@ export class SessionDO extends DurableObject {
           // Awaited inside `drained`, so the alarm invocation that holds the turn holds this too.
           onTurnDrained: createTurnDrainedHook({
             deliver: input => notifier.deliverForTurn(input),
-            computers: workersComputersService(this.env),
+            desktop: { computers: workersComputersService(this.env), leases: this.#desktopLeases },
             logger: this.#logger,
           }),
         },

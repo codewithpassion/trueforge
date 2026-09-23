@@ -3,7 +3,7 @@
  * are the other side's idea of the frozen v1 contract, so parsing them here is what proves the two
  * halves still agree — a shape that drifts on either side turns this red.
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import {
@@ -58,10 +58,7 @@ const REPLY_FIXTURES = [
 
 const OTHER_FIXTURES = ['client_to_server_hello.json', 'client_to_server_reply_error.json', 'error_codes.json'];
 
-/**
- * The desktop extension's fixtures. The client publishes them as one set, so either all of them are
- * here or none are, and a partial set is a drift this file catches.
- */
+/** The desktop extension's fixtures. */
 const DESKTOP_REQUEST_FIXTURES = [
   ['server_to_client_desktop_screenshot.json', DesktopScreenshotRequestSchema],
   ['server_to_client_desktop_screenshot_null_quality.json', DesktopScreenshotRequestSchema],
@@ -88,8 +85,6 @@ const DESKTOP_FIXTURES = [
   ...DESKTOP_HELLO_FIXTURES,
 ];
 
-const desktopFixturesPresent = DESKTOP_FIXTURES.some(name => existsSync(path.join(FIXTURES, 'protocol', name)));
-
 describe('every fixture the client publishes is checked here', () => {
   it('leaves none of them unaccounted for', () => {
     const onDisk = readdirSync(path.join(FIXTURES, 'protocol')).sort();
@@ -97,7 +92,7 @@ describe('every fixture the client publishes is checked here', () => {
       ...REQUEST_FIXTURES.map(([name]) => name),
       ...REPLY_FIXTURES.map(([name]) => name),
       ...OTHER_FIXTURES,
-      ...(desktopFixturesPresent ? DESKTOP_FIXTURES : []),
+      ...DESKTOP_FIXTURES,
     ].sort();
     // A fixture the client adds without a check here is a shape nobody is holding to the contract.
     expect(onDisk).toEqual(covered);
@@ -154,9 +149,7 @@ describe('frames the client sends', () => {
 });
 
 describe('the desktop extension', () => {
-  const desktopIt = desktopFixturesPresent ? it : it.skip;
-
-  desktopIt('every desktop request matches its op schema and the op union', () => {
+  it('every desktop request matches its op schema and the op union', () => {
     for (const [name, schema] of DESKTOP_REQUEST_FIXTURES) {
       const value = parsed(`protocol/${name}`);
       expect({ name, ok: schema.safeParse(value).success }).toEqual({ name, ok: true });
@@ -164,14 +157,14 @@ describe('the desktop extension', () => {
     }
   });
 
-  desktopIt('the input fixture exercises every action type', () => {
+  it('the input fixture exercises every action type', () => {
     const input = DesktopInputRequestSchema.parse(parsed('protocol/server_to_client_desktop_input.json'));
     expect(new Set(input.actions.map(action => action.type))).toEqual(
       new Set(['mouse_move', 'mouse_down', 'mouse_up', 'click', 'scroll', 'key', 'type']),
     );
   });
 
-  desktopIt('every desktop reply is a reply whose result matches its payload schema', () => {
+  it('every desktop reply is a reply whose result matches its payload schema', () => {
     for (const [name, schema] of DESKTOP_REPLY_FIXTURES) {
       const frame = classifyClientFrame(fixture(`protocol/${name}`));
       if (frame.kind !== 'reply' || !frame.reply.ok) {
@@ -181,7 +174,7 @@ describe('the desktop extension', () => {
     }
   });
 
-  desktopIt('a desktop hello says so, and one whose desktop failed says why', () => {
+  it('a desktop hello says so, and one whose desktop failed says why', () => {
     const plain = HelloMessageSchema.parse(parsed('protocol/client_to_server_hello.json'));
     expect(plain.capabilities).toMatchObject({ desktop: false, desktop_unavailable_reason: null });
     const desktop = HelloMessageSchema.parse(parsed('protocol/client_to_server_hello_desktop.json'));
@@ -191,7 +184,7 @@ describe('the desktop extension', () => {
     expect(unavailable.capabilities.desktop_unavailable_reason).toEqual(expect.any(String));
   });
 
-  desktopIt('the client can answer desktop_unavailable, which the server maps', () => {
+  it('the client can answer desktop_unavailable, which the server maps', () => {
     const codes = z.object({ codes: z.array(z.string()) }).parse(parsed('protocol/error_codes.json'));
     expect(codes.codes).toContain('desktop_unavailable');
   });

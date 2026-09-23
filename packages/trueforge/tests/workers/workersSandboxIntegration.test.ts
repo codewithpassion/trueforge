@@ -125,6 +125,7 @@ function build(backend: 'cloudflare-computer' | undefined) {
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024,
     codeModeRegistry: undefined,
+    desktopLeases: undefined,
   });
 }
 

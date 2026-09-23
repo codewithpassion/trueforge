@@ -38,6 +38,7 @@ import {
   type RequestOutcome,
 } from './protocol';
 import { computerSessionDirectory, isInsideDirectory, type ComputerRelayPort } from './service';
+import type { TurnDesktopLeases } from './turnDesktopLeases';
 
 export const REMOTE_COMPUTER_PROVIDER_TYPE = 'remote-computer';
 
@@ -138,6 +139,8 @@ export interface RemoteComputerProviderOptions {
   defaultExecTimeoutSeconds: number;
   fileMaxBytesForDownload: number;
   store: Pick<IComputerStore, 'appendAudit'>;
+  /** Where a desktop op records the lease its turn may now hold. Undefined where no turn runs. */
+  desktopLeases: TurnDesktopLeases | undefined;
   logger: Logger;
 }
 
@@ -233,33 +236,73 @@ export class RemoteComputerProvider implements SandboxProvider {
     return this.#options.requireApproval;
   }
 
-  async desktopScreenshot(): Promise<DesktopCallResult<DesktopScreenshotResultPayload>> {
-    const outcome = await this.#call({
+  desktopScreenshot(): Promise<DesktopCallResult<DesktopScreenshotResultPayload>> {
+    return this.#desktopCall({
       op: { op: 'desktop_screenshot', quality: null },
       timeoutMs: DESKTOP_SCREENSHOT_TIMEOUT_MS,
+      parse: parseDesktopScreenshotResult,
+      auditCommand: 'desktop_screenshot',
     });
-    return this.#desktopResult({ outcome, parse: parseDesktopScreenshotResult });
   }
 
-  async desktopInput(actions: readonly DesktopAction[]): Promise<DesktopCallResult<{ ok: true }>> {
-    const outcome = await this.#call({
+  desktopInput(actions: readonly DesktopAction[]): Promise<DesktopCallResult<{ ok: true }>> {
+    return this.#desktopCall({
       op: { op: 'desktop_input', actions },
       timeoutMs: desktopInputTimeoutMs(actions),
+      parse: parseDesktopOkResult,
+      auditCommand: `desktop_input (${String(actions.length)} ${actions.length === 1 ? 'action' : 'actions'})`,
     });
-    return this.#desktopResult({ outcome, parse: parseDesktopOkResult });
   }
 
-  async desktopClipboardGet(): Promise<DesktopCallResult<{ text: string }>> {
-    const outcome = await this.#call({ op: { op: 'desktop_clipboard_get' }, timeoutMs: DESKTOP_CLIPBOARD_TIMEOUT_MS });
-    return this.#desktopResult({ outcome, parse: parseDesktopClipboardGetResult });
+  desktopClipboardGet(): Promise<DesktopCallResult<{ text: string }>> {
+    return this.#desktopCall({
+      op: { op: 'desktop_clipboard_get' },
+      timeoutMs: DESKTOP_CLIPBOARD_TIMEOUT_MS,
+      parse: parseDesktopClipboardGetResult,
+      auditCommand: 'desktop_clipboard_get',
+    });
   }
 
-  async desktopClipboardSet(text: string): Promise<DesktopCallResult<{ ok: true }>> {
-    const outcome = await this.#call({
+  desktopClipboardSet(text: string): Promise<DesktopCallResult<{ ok: true }>> {
+    return this.#desktopCall({
       op: { op: 'desktop_clipboard_set', text, selections: DESKTOP_CLIPBOARD_SELECTIONS },
       timeoutMs: DESKTOP_CLIPBOARD_TIMEOUT_MS,
+      parse: parseDesktopOkResult,
+      auditCommand: 'desktop_clipboard_set',
     });
-    return this.#desktopResult({ outcome, parse: parseDesktopOkResult });
+  }
+
+  /**
+   * One desktop op. The turn's lease is recorded before the op leaves, and the audit row names the
+   * op and, for input, how many actions: never the text, keys or clipboard contents.
+   */
+  async #desktopCall<T>({
+    op,
+    timeoutMs,
+    parse,
+    auditCommand,
+  }: {
+    op: Record<string, unknown>;
+    timeoutMs: number;
+    parse: (json: string) => T | undefined;
+    auditCommand: string;
+  }): Promise<DesktopCallResult<T>> {
+    const turnId = this.#options.turnId;
+    if (turnId !== null) {
+      this.#options.desktopLeases?.record({ turn_id: turnId, computer_id: this.#options.computerId });
+    }
+    const startedAt = Date.now();
+    const outcome = await this.#call({ op, timeoutMs });
+    const result = this.#desktopResult({ outcome, parse });
+    await this.#audit({
+      op: 'desktop',
+      command: auditCommand,
+      exitCode: result.ok ? 0 : null,
+      durationMs: Date.now() - startedAt,
+      bytesOut: 0,
+      outcome: outcome.ok ? (result.ok ? 'ok' : 'unreadable_reply') : outcome.reason,
+    });
+    return result;
   }
 
   /**
@@ -586,7 +629,7 @@ export class RemoteComputerProvider implements SandboxProvider {
         tenant_id: this.#options.tenantId,
         op_json: JSON.stringify(op),
         timeout_ms: timeoutMs,
-        principal: { kind: 'agent', session_id: this.#options.sessionId },
+        principal: { kind: 'agent', session_id: this.#options.sessionId, turn_id: this.#options.turnId },
       });
     } catch (error) {
       this.#options.logger.warn('Remote computer relay call was interrupted', {

@@ -39,6 +39,7 @@ function computerIntegration(computers: ComputersService = workersComputersServi
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024 * 1024,
     codeModeRegistry: undefined,
+    desktopLeases: undefined,
   });
 }
 

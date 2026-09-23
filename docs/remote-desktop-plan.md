@@ -205,10 +205,11 @@ There is no server-side frame loop and no SSE. The browser polls.
 
 **Controller and enforcement**
 
-- **One controller.** The desktop has one controller: `null`, `agent:<session_id>`, or `human:<user_id>`. It lives in one `RemoteComputerDO` storage key, `{holder, expires_at}`.
-- **Enforced in the DO, per op.** `RelayRequestInput` gains a `principal`: `{kind:'agent', session_id}` or `{kind:'human', user_id}`.
+- **One controller.** The desktop has one controller: `null`, `agent:<session_id, turn_id>`, or `human:<user_id>`. It lives in one `RemoteComputerDO` storage key, `{holder, last_op_at}`, next to a `clearing` state (below).
+- **Enforced in the DO, per op.** `RelayRequestInput` gains a `principal`: `{kind:'agent', session_id, turn_id}` or `{kind:'human', user_id}`.
   - The server always sets it from the auth or session context, never from the client.
-  - `request()` checks every `desktop_*` op against the matrix below before forwarding, and refuses agent `exec` while a human holds the lease.
+  - `request()` checks every `desktop_*` op against the matrix below before forwarding, and refuses every other agent op except `cancel` while a human holds the lease.
+  - The lease RPCs (`releaseLease`, `takeHumanLease`, `releaseHumanLease`) take the caller's `tenant_id` and check it the way `request()` does.
   - The DO is the only place this check is race-free. A `computer_click` is an input op followed by a screenshot op. If a human takes control between the two, the screenshot must be refused.
 
   | holder ↓ / caller →   | agent, read (`screenshot`, `clipboard_get`) | agent, write (`input`, `clipboard_set`) | human viewer, read (`screenshot`) | human, write or `clipboard_get`  |
@@ -219,13 +220,15 @@ There is no server-side frame loop and no SSE. The browser polls.
   | human (controller)    | `human_in_control`                          | `human_in_control`                      | ok                                | ok                               |
   | human (not caller)    | `human_in_control`                          | `human_in_control`                      | `423 human_in_control`            | `423 human_in_control`           |
 
-- **`exec` is covered by the human lease.** `exec` runs as the same user with `DISPLAY` set, so it can drive xdotool, xclip or an X screenshot behind the tools' back. While a human holds control, the DO refuses agent `exec` with `human_in_control` too. `exec` never takes or needs the agent lease, so agents on other sessions keep `exec` while another agent uses the desktop.
+- **Every agent op is covered by the human lease.** `exec` runs as the same user with `DISPLAY` set, so it can drive xdotool, xclip or an X screenshot behind the tools' back. While a human holds control, the DO refuses every agent op except `cancel` (`exec`, `file_get`, `file_put` and all `desktop_*`) with `human_in_control`. `exec` never takes or needs the agent lease, so agents on other sessions keep `exec` while another agent uses the desktop.
+- **Documented limit: processes already running.** A refusal stops new agent work only. Background processes an agent started earlier keep running through a takeover, so an agent could have left, say, an `xclip` loop behind that reads what the person copies. The Settings desktop warning says so.
 
 **Agent lease**
 
 - **Taking it.** The first `computer_*` call in a turn takes the lease if it is free.
 - **Duration.** The lease lasts for the turn.
-  - When a turn that took the lease finishes, errors or is cancelled, the shared runner's `onTurnDrained` hook calls a new `RemoteComputerDO.releaseLease({session_id})`.
+  - The provider records each computer it sends a desktop op to, per turn, before the op leaves. When the turn finishes, errors or is cancelled, the shared runner's `onTurnDrained` hook calls `RemoteComputerDO.releaseLease({tenant_id, session_id, turn_id})` on exactly those computers. The turn's `sandbox_info` is not used: a turn cancelled mid-op may never record it.
+  - The session's next turn takes over the lease as the new holder, so a late release from an earlier turn is a no-op.
     - The hook is in `runtime/turnRunner.ts:442-465`, wired at `SessionDO.ts:198` and `main.ts:468`.
     - Its only consumer today is `notifier.deliverForTurn`. 9b makes it composable: deliver, release the lease, record the takeover pointer.
     - `NodeTurnExecutor.startStreaming` bypasses the hook today (Section 2). Phase 8c, or 9b if it lands first, routes that path through `onTurnDrained` so Node releases leases and records takeovers too. Without that, every Node takeover leaks the agent lease until the 10-minute backstop.
@@ -237,7 +240,7 @@ There is no server-side frame loop and no SSE. The browser polls.
 - **What the agent sees.** While a human holds control, agent `computer_*` calls and `exec` fail at once with `human_in_control`, and that includes screenshots. So the model never sees a password being typed. The error text tells the model to call `request_human_takeover` and stop, so it does not loop on retries.
 - **Other viewers.** Only the controller receives frames; others get `423` and see a placeholder.
 - **Expiry.** It expires after 5 minutes without input, and the UI warns at 4 minutes. Renewal is the same as for the agent lease.
-- **Hand-back or expiry.** Both CLIPBOARD and PRIMARY are cleared.
+- **Hand-back or expiry.** Both CLIPBOARD and PRIMARY are cleared. Until the daemon confirms the clear, the desktop is `clearing`: every op but `cancel` is refused with `desktop_busy`, and a person taking over waits for the clear. A clear that fails (the machine is offline) leaves it `clearing`, stored, and the next op, alarm or reconnect sends it again. Taking control from another person clears first too.
 
 **Pending takeover**
 
@@ -444,7 +447,8 @@ Computer use is useless if a screenshot reaches the model as a string. **File st
 
 **Human input and credentials**
 
-- **Credentials a human types** go browser → server → daemon as input ops and never pass through the model. Agent `exec` is refused for the duration, so the agent cannot read the display or clipboard through a shell either (4.4).
+- **Credentials a human types** go browser → server → daemon as input ops and never pass through the model. Every new agent op but `cancel` is refused for the duration, so the agent cannot read the display or clipboard through a shell either (4.4).
+  - **Limit:** background processes an agent started before the takeover keep running, and one could watch the display or clipboard. The Settings desktop warning states this; admins should attach desktop agents only where that is acceptable.
   - The input route logs only the number of actions and their types, never text, keys or clipboard contents.
   - Takeover start, hand-back and cancel are audited with the acting user.
 
@@ -454,7 +458,7 @@ Computer use is useless if a screenshot reaches the model as a string. **File st
 - **The profile is readable by the agent.** It lives on disk as the run-as user under `<state-dir>/desktop/chromium-profile`, and every attached agent runs `exec` as that user.
   - Saved passwords are off (policy).
   - Persistent login cookies, localStorage and IndexedDB tokens do persist, since that is the point of takeover. Without a desktop keyring, Chromium encrypts cookies with a fixed key (`--password-store=basic`), so an agent that reads the files with `exec` can recover them.
-- **Clipboard.** Both selections are cleared on hand-back and on lease expiry. Clipboard text is never logged and is capped at 64 KiB.
+- **Clipboard.** Both selections are cleared on hand-back, on lease expiry and when one person takes over from another, and nobody gets the desktop until the daemon confirms. Clipboard text is never logged and is capped at 64 KiB. Agent desktop ops are audited as `desktop` rows naming the op and, for input, the action count only.
 
 **Network and identity**
 

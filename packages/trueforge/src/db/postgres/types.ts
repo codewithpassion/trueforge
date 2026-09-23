@@ -686,7 +686,7 @@ export interface ComputerAuditTable {
   tenant_id: string;
   session_id: string | null;
   turn_id: string | null;
-  /** `exec` | `file_put` | `file_get` — varchar(16) */
+  /** `exec` | `file_put` | `file_get` | `desktop` — varchar(16) */
   op: ComputerAuditOp;
   /** the command, or the path for a file op */
   command: string;

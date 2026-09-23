@@ -7,11 +7,19 @@ import { defineTool, type ToolDefinition } from '@truefoundry/trueforge-core/cor
 import type { SandboxProviderTools } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import { z } from 'zod';
 import {
-  DESKTOP_CLIPBOARD_MAX_BYTES,
   DESKTOP_HEIGHT,
+  DESKTOP_SCROLL_BATCH_MAX,
   DESKTOP_TYPE_MAX_CHARS,
   DESKTOP_WIDTH,
   DesktopButtonSchema,
+  DesktopClickCountSchema,
+  DesktopClipboardTextSchema,
+  DesktopKeysSchema,
+  DesktopScrollDeltaSchema,
+  DesktopTypeTextSchema,
+  DesktopXSchema,
+  DesktopYSchema,
+  scrollClicks,
   type DesktopAction,
   type DesktopScreenshotResultPayload,
 } from './protocol';
@@ -20,18 +28,8 @@ import type { DesktopCallResult, DesktopFailureCode, RemoteComputerProvider } fr
 /** Lets a click's effect reach the screen before the screenshot that shows it. */
 const SETTLE_MS = 500;
 
-const X_SCHEMA = z
-  .number()
-  .int()
-  .min(0)
-  .max(DESKTOP_WIDTH - 1)
-  .describe(`Pixels from the left edge, 0 to ${String(DESKTOP_WIDTH - 1)}.`);
-const Y_SCHEMA = z
-  .number()
-  .int()
-  .min(0)
-  .max(DESKTOP_HEIGHT - 1)
-  .describe(`Pixels from the top edge, 0 to ${String(DESKTOP_HEIGHT - 1)}.`);
+const X_SCHEMA = DesktopXSchema.describe(`Pixels from the left edge, 0 to ${String(DESKTOP_WIDTH - 1)}.`);
+const Y_SCHEMA = DesktopYSchema.describe(`Pixels from the top edge, 0 to ${String(DESKTOP_HEIGHT - 1)}.`);
 const POINT_SCHEMA = z.object({ x: X_SCHEMA, y: Y_SCHEMA });
 
 const NO_INPUT_SCHEMA = z.object({});
@@ -39,24 +37,24 @@ const CLICK_SCHEMA = z.object({
   x: X_SCHEMA,
   y: Y_SCHEMA,
   button: DesktopButtonSchema.default('left'),
-  count: z.number().int().min(1).max(3).default(1).describe('2 for a double click, 3 for a triple click.'),
+  count: DesktopClickCountSchema.default(1).describe('2 for a double click, 3 for a triple click.'),
 });
-const TYPE_SCHEMA = z.object({ text: z.string().min(1).max(DESKTOP_TYPE_MAX_CHARS) });
+const TYPE_SCHEMA = z.object({ text: DesktopTypeTextSchema });
 const KEY_SCHEMA = z.object({
-  keys: z.string().min(1).max(64).describe('An xdotool key chord, e.g. "ctrl+l", "Return", "ctrl+shift+t".'),
+  keys: DesktopKeysSchema.describe('An xdotool key chord, e.g. "ctrl+l", "Return", "ctrl+shift+t".'),
 });
-const SCROLL_SCHEMA = z.object({
-  x: X_SCHEMA,
-  y: Y_SCHEMA,
-  dx: z.number().int().min(-50).max(50).describe('Wheel clicks; positive scrolls right.'),
-  dy: z.number().int().min(-50).max(50).describe('Wheel clicks; positive scrolls down.'),
-});
+const SCROLL_SCHEMA = z
+  .object({
+    x: X_SCHEMA,
+    y: Y_SCHEMA,
+    dx: DesktopScrollDeltaSchema.describe('Wheel clicks; positive scrolls right.'),
+    dy: DesktopScrollDeltaSchema.describe('Wheel clicks; positive scrolls down.'),
+  })
+  .refine(input => scrollClicks(input) <= DESKTOP_SCROLL_BATCH_MAX, {
+    message: `|dx| + |dy| is at most ${String(DESKTOP_SCROLL_BATCH_MAX)}`,
+  });
 const DRAG_SCHEMA = z.object({ from: POINT_SCHEMA, to: POINT_SCHEMA });
-const CLIPBOARD_WRITE_SCHEMA = z.object({
-  text: z.string().refine(text => new TextEncoder().encode(text).byteLength <= DESKTOP_CLIPBOARD_MAX_BYTES, {
-    message: `At most ${String(DESKTOP_CLIPBOARD_MAX_BYTES)} bytes`,
-  }),
-});
+const CLIPBOARD_WRITE_SCHEMA = z.object({ text: DesktopClipboardTextSchema });
 
 /**
  * The single place a screenshot becomes tool content. Images in tool results are not wired yet,
@@ -68,7 +66,7 @@ export function screenshotToolContent(
   return [
     {
       type: 'text',
-      text: `[screenshot ${String(shot.width)}x${String(shot.height)} captured; image delivery arrives in Phase 9a-2]`,
+      text: `[screenshot ${String(shot.width)}x${String(shot.height)} captured; this model does not receive images yet]`,
     },
   ];
 }
@@ -78,8 +76,8 @@ export function desktopFailureText({ code, message }: { code: DesktopFailureCode
   switch (code) {
     case 'human_in_control':
       return (
-        'A person has taken control of this computer, so desktop actions and commands are paused. ' +
-        'Do not retry. Call request_human_takeover if you need them to do something, then stop and end your turn.'
+        'A person is using the desktop of this computer, so desktop actions and commands are paused. ' +
+        'Stop and tell the user rather than retrying.'
       );
     case 'desktop_busy':
       return (
@@ -112,6 +110,21 @@ async function screenshot(provider: RemoteComputerProvider): Promise<CallToolRes
 }
 
 /**
+ * Looks after an action that already happened. When the look is refused the model must still learn
+ * the action ran, or it would repeat a click or retype text.
+ */
+async function lookAfterActing(provider: RemoteComputerProvider): Promise<CallToolResponse> {
+  const shot = await provider.desktopScreenshot();
+  if (shot.ok) {
+    return { result: { content: screenshotToolContent(shot.value) }, wasInitialized: undefined };
+  }
+  return toolResultResponse({
+    text: `The action already ran, but the screenshot after it was refused. ${desktopFailureText(shot)}`,
+    isError: true,
+  });
+}
+
+/**
  * Acting and then looking are two relay calls, and each is checked against the lease on its own:
  * a person who takes control between them must not be screenshotted.
  */
@@ -127,86 +140,109 @@ async function actThenLook({
     return failure(acted);
   }
   await wait(SETTLE_MS);
-  return screenshot(provider);
+  return lookAfterActing(provider);
 }
 
-function inputTools(provider: RemoteComputerProvider): ToolDefinition[] {
+/**
+ * Runs desktop tool calls one at a time. A model may call several in parallel, and one call's
+ * action and screenshot must not interleave with another's.
+ */
+function serialQueue(): (task: () => Promise<CallToolResponse>) => Promise<CallToolResponse> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return task => {
+    const run = tail.then(task);
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
+type Serial = ReturnType<typeof serialQueue>;
+
+function inputTools({ provider, serial }: { provider: RemoteComputerProvider; serial: Serial }): ToolDefinition[] {
   return [
     defineTool({
       name: 'computer_click',
       description: 'Click at a point on the desktop, then return a screenshot.',
       schema: CLICK_SCHEMA,
       handler: input =>
-        actThenLook({
-          provider,
-          actions: [{ type: 'click', x: input.x, y: input.y, button: input.button, count: input.count }],
-        }),
+        serial(() =>
+          actThenLook({
+            provider,
+            actions: [{ type: 'click', x: input.x, y: input.y, button: input.button, count: input.count }],
+          }),
+        ),
     }),
     defineTool({
       name: 'computer_type',
       description: `Type text into the focused window, then return a screenshot. At most ${String(DESKTOP_TYPE_MAX_CHARS)} characters; for more, write the clipboard and paste with ctrl+v.`,
       schema: TYPE_SCHEMA,
-      handler: input => actThenLook({ provider, actions: [{ type: 'type', text: input.text }] }),
+      handler: input => serial(() => actThenLook({ provider, actions: [{ type: 'type', text: input.text }] })),
     }),
     defineTool({
       name: 'computer_key',
       description: 'Press a key or key chord, then return a screenshot.',
       schema: KEY_SCHEMA,
-      handler: input => actThenLook({ provider, actions: [{ type: 'key', keys: input.keys }] }),
+      handler: input => serial(() => actThenLook({ provider, actions: [{ type: 'key', keys: input.keys }] })),
     }),
     defineTool({
       name: 'computer_scroll',
       description: 'Scroll the mouse wheel at a point, then return a screenshot.',
       schema: SCROLL_SCHEMA,
       handler: input =>
-        actThenLook({
-          provider,
-          actions: [{ type: 'scroll', x: input.x, y: input.y, dx: input.dx, dy: input.dy }],
-        }),
+        serial(() =>
+          actThenLook({
+            provider,
+            actions: [{ type: 'scroll', x: input.x, y: input.y, dx: input.dx, dy: input.dy }],
+          }),
+        ),
     }),
     defineTool({
       name: 'computer_drag',
       description: 'Drag with the left button from one point to another, then return a screenshot.',
       schema: DRAG_SCHEMA,
       handler: input =>
-        actThenLook({
-          provider,
-          actions: [
-            { type: 'mouse_move', x: input.from.x, y: input.from.y },
-            { type: 'mouse_down', button: 'left' },
-            { type: 'mouse_move', x: input.to.x, y: input.to.y },
-            { type: 'mouse_up', button: 'left' },
-          ],
-        }),
+        serial(() =>
+          actThenLook({
+            provider,
+            actions: [
+              { type: 'mouse_move', x: input.from.x, y: input.from.y },
+              { type: 'mouse_down', button: 'left' },
+              { type: 'mouse_move', x: input.to.x, y: input.to.y },
+              { type: 'mouse_up', button: 'left' },
+            ],
+          }),
+        ),
     }),
     defineTool({
       name: 'computer_clipboard_write',
       description: 'Put text on the desktop clipboard (CLIPBOARD and PRIMARY), then return a screenshot.',
       schema: CLIPBOARD_WRITE_SCHEMA,
-      handler: async input => {
-        const written = await provider.desktopClipboardSet(input.text);
-        return written.ok ? screenshot(provider) : failure(written);
-      },
+      handler: input =>
+        serial(async () => {
+          const written = await provider.desktopClipboardSet(input.text);
+          return written.ok ? lookAfterActing(provider) : failure(written);
+        }),
     }),
   ];
 }
 
-function readTools(provider: RemoteComputerProvider): ToolDefinition[] {
+function readTools({ provider, serial }: { provider: RemoteComputerProvider; serial: Serial }): ToolDefinition[] {
   return [
     defineTool({
       name: 'computer_screenshot',
       description: `Take a ${String(DESKTOP_WIDTH)}x${String(DESKTOP_HEIGHT)} screenshot of the desktop.`,
       schema: NO_INPUT_SCHEMA,
-      handler: () => screenshot(provider),
+      handler: () => serial(() => screenshot(provider)),
     }),
     defineTool({
       name: 'computer_clipboard_read',
       description: 'Read the text on the desktop clipboard.',
       schema: NO_INPUT_SCHEMA,
-      handler: async () => {
-        const read = await provider.desktopClipboardGet();
-        return read.ok ? toolResultResponse({ text: read.value.text }) : failure(read);
-      },
+      handler: () =>
+        serial(async () => {
+          const read = await provider.desktopClipboardGet();
+          return read.ok ? toolResultResponse({ text: read.value.text }) : failure(read);
+        }),
     }),
   ];
 }
@@ -215,7 +251,7 @@ const BASE_INSTRUCTIONS = [
   `This computer has a ${String(DESKTOP_WIDTH)}x${String(DESKTOP_HEIGHT)} desktop you can see and drive with the computer_* tools; coordinates are pixels from the top-left corner.`,
   'DISPLAY is already set for exec, so start applications with exec and a trailing &, for example `chromium https://example.com &` or `xterm &`.',
   'Prefer exec and the filesystem over the desktop whenever both can do the job.',
-  'For logins, CAPTCHAs and two-factor prompts, call request_human_takeover instead of guessing or asking for credentials.',
+  'For logins, CAPTCHAs and two-factor prompts, stop and ask the user to do that step instead of guessing or asking for credentials.',
 ].join(' ');
 
 const APPROVAL_INSTRUCTIONS =
@@ -234,8 +270,10 @@ export function desktopProviderTools(provider: RemoteComputerProvider): SandboxP
       instructions: `This agent is set up to use the desktop of this computer, but the desktop is not running${reason === null ? '' : ` (${reason})`}, so no desktop tools are available.`,
     };
   }
-  // request_human_takeover joins this list once takeover is built.
-  const tools = provider.requiresApproval ? readTools(provider) : [...readTools(provider), ...inputTools(provider)];
+  const serial = serialQueue();
+  const tools = provider.requiresApproval
+    ? readTools({ provider, serial })
+    : [...readTools({ provider, serial }), ...inputTools({ provider, serial })];
   return {
     tools,
     instructions: provider.requiresApproval ? `${BASE_INSTRUCTIONS} ${APPROVAL_INSTRUCTIONS}` : BASE_INSTRUCTIONS,

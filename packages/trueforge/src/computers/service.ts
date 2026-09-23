@@ -9,8 +9,8 @@ import type { RateLimiter } from './rateLimit';
 /** The relay calls the API and the provider make, narrowed so a test can stand one in. */
 export interface ComputerRelayPort {
   request(input: RelayRequestInput): Promise<RequestOutcome>;
-  /** Drops the desktop lease when this session holds it; a no-op otherwise. */
-  releaseLease(input: { session_id: string }): Promise<{ released: boolean }>;
+  /** Drops the desktop lease when this turn of this session holds it; a no-op otherwise. */
+  releaseLease(input: { tenant_id: string; session_id: string; turn_id: string }): Promise<{ released: boolean }>;
   /** Marks the machine revoked and closes its socket. Terminal for the client. */
   revoke(): Promise<{ closed: number }>;
   /** Closes the socket without revoking, so a re-enrolled machine can come back. */

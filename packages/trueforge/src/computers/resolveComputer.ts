@@ -7,6 +7,7 @@ import type { SandboxUsability, SandboxUsabilityReason } from '../sandbox/integr
 import type { ComputerRelayStatus } from './protocol';
 import { RemoteComputerProvider } from './RemoteComputerProvider';
 import type { ComputersService } from './service';
+import type { TurnDesktopLeases } from './turnDesktopLeases';
 
 function refuse(reason: SandboxUsability['reason']): SandboxUsability {
   return { usable: false, status: undefined, reason };
@@ -119,6 +120,7 @@ export async function buildRemoteComputerProvider({
   turnId,
   defaultExecTimeoutSeconds,
   fileMaxBytesForDownload,
+  desktopLeases,
   logger,
 }: {
   computers: ComputersService;
@@ -128,6 +130,7 @@ export async function buildRemoteComputerProvider({
   turnId: string | null;
   defaultExecTimeoutSeconds: number;
   fileMaxBytesForDownload: number;
+  desktopLeases: TurnDesktopLeases | undefined;
   logger: Logger;
 }): Promise<RemoteComputerProvider | undefined> {
   const computer = await computers.store.getComputer({ tenant_id: tenantId, computer_id: computerId });
@@ -160,6 +163,7 @@ export async function buildRemoteComputerProvider({
     defaultExecTimeoutSeconds,
     fileMaxBytesForDownload,
     store: computers.store,
+    desktopLeases,
     logger,
   });
 }

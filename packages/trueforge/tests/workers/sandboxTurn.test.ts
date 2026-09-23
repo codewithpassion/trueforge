@@ -63,6 +63,7 @@ function sandboxIntegration(options?: {
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024,
     codeModeRegistry: options?.codeModeRegistry,
+    desktopLeases: undefined,
   });
 }
 
