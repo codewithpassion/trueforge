@@ -79,7 +79,8 @@ function SaveAgentButtonContent({
   const [open, setOpen] = useState(false);
   const [intent, setIntent] = useState<SaveIntent>('create');
   const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  // undefined: an update with no known description that the user has not edited; saving then keeps the stored one.
+  const [description, setDescription] = useState<string | undefined>('');
   const [draftSpec, setDraftSpec] = useState<AgentSpec | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +111,8 @@ function SaveAgentButtonContent({
     const currentName = shell?.mode.status === 'active' ? (shell.mode.agentName ?? shell.mode.agentId ?? '') : '';
     setIntent(isUpdateMode ? 'update' : 'create');
     setName(currentName);
-    setDescription(currentName && shell?.mode.status === 'active' ? (shell.mode.description ?? '') : '');
+    const currentDescription = shell?.mode.status === 'active' ? shell.mode.description : undefined;
+    setDescription(isUpdateMode ? currentDescription : currentName ? (currentDescription ?? '') : '');
     setDraftSpec(cloneAgentSpec(latestAgentSpec));
     setOpen(true);
   };
@@ -120,7 +122,7 @@ function SaveAgentButtonContent({
     if (intent === 'update' ? !canManageAgent : !canCreate) return;
     const normalizedName = name.trim();
     if (!normalizedName || !draftSpec.model.name.trim()) return;
-    const normalizedDescription = description.trim();
+    const normalizedDescription = description?.trim();
     setSaving(true);
     setError(null);
     // An agent that does not exist yet cannot be on a computer's allowlist, so a create never
@@ -129,7 +131,7 @@ function SaveAgentButtonContent({
     try {
       const result = await builder.saveAgent({
         agentName: normalizedName,
-        ...(normalizedDescription ? { description: normalizedDescription } : {}),
+        ...(normalizedDescription === undefined ? {} : { description: normalizedDescription }),
         agentSpec: savedSpec,
         intent,
         sessionId: draftSessionId,
@@ -138,7 +140,7 @@ function SaveAgentButtonContent({
       shell?.bindMutableAgent({
         agentId: result.agentId ?? normalizedName,
         agentName: normalizedName,
-        ...(normalizedDescription ? { description: normalizedDescription } : {}),
+        ...(normalizedDescription === undefined ? {} : { description: normalizedDescription }),
         agentSpec: savedSpec,
       });
       shell?.invalidateAgentsList();
@@ -186,7 +188,7 @@ function SaveAgentButtonContent({
           <SaveAgentForm
             intent={intent}
             name={name}
-            description={description}
+            description={description ?? ''}
             spec={draftSpec}
             saving={saving}
             error={error}

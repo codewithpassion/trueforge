@@ -548,6 +548,40 @@ describe('harnessBuilderServer', () => {
     });
   });
 
+  it('saveAgent update sends an empty description so the stored one is cleared', async () => {
+    const requests: { method: string; url: string; body?: unknown }[] = [];
+    const fetchMock: typeof fetch = async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const method = init?.method ?? 'GET';
+      if (isAgentsCollectionUrl(url) && method === 'GET') {
+        return Response.json({
+          data: [{ id: 'agt_1', name: 'writer', manifest: { model: { name: 'test/model' } } }],
+          pagination: { limit: 25 },
+        });
+      }
+      if (url.endsWith('/api/v1/agents/agt_1') && method === 'PUT' && typeof init?.body === 'string') {
+        requests.push({ method, url, body: JSON.parse(init.body) });
+        return Response.json({
+          data: { id: 'agt_1', name: 'writer', description: '', manifest: { model: { name: 'test/model' } } },
+        });
+      }
+      return new Response(`Unexpected request: ${method} ${url}`, { status: 500 });
+    };
+
+    const builder = createHarnessBuilderServer({ fetch: fetchMock });
+    await builder.saveAgent({
+      agentName: 'writer',
+      description: '',
+      agentSpec: { model: { name: 'test/model' } },
+      intent: 'update',
+    });
+
+    assert.deepEqual(requests.at(-1)?.body, {
+      description: '',
+      manifest: { model: { name: 'test/model' } },
+    });
+  });
+
   it('deleteAgent deletes by name via list + DELETE', async () => {
     const requests: { method: string; url: string }[] = [];
     const fetchMock: typeof fetch = async (input, init) => {

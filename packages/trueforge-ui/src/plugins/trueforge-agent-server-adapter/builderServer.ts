@@ -143,17 +143,16 @@ export function createHarnessBuilderServer(
         if (!existing) {
           return {};
         }
-        // Omit empty description on update: a reloaded draft carries no description, and
-        // sending '' would clear the stored value.
+        // Omitted keeps the stored description; '' clears it.
         await client.agents.update(existing.id, {
-          ...(description ? { description } : {}),
+          ...(description === undefined ? {} : { description }),
           manifest,
         });
         return { agentId: existing.id };
       }
       const created = await client.agents.create({
         name: agentName,
-        ...(description ? { description } : {}),
+        ...(description === undefined ? {} : { description }),
         manifest,
       });
       return { agentId: created.data.id };

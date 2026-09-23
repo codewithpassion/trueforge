@@ -145,6 +145,13 @@ function CloneDraftSaveButton({ agentName, description }: { agentName: string; d
   return <SaveAgentButton />;
 }
 
+function ShellDescriptionProbe() {
+  const { mode } = useShellMode();
+  return (
+    <output aria-label="Shell description">{mode.status === 'active' ? (mode.description ?? 'unknown') : ''}</output>
+  );
+}
+
 function SaveWithInstructionDraft() {
   const { onChange } = useAgentConfigInstructions();
   return (
@@ -532,7 +539,7 @@ describe('SaveAgentButton', () => {
     expect(alert.textContent).toBe('line one\nline two\tindented');
   });
 
-  it('saves a new agent without a description', async () => {
+  it('saves a new agent with an empty description', async () => {
     const saveAgent = vi.fn(async (): Promise<SaveAgentResult> => ({ agentId: 'agent-1' }));
     renderButton({ saveAgent });
     fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }));
@@ -544,8 +551,78 @@ describe('SaveAgentButton', () => {
     fireEvent.click(save);
 
     await waitFor(() => expect(saveAgent).toHaveBeenCalledOnce());
+    expect(saveAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentName: 'writer', description: '', intent: 'create' }),
+    );
+  });
+
+  it('clears the description when an update is saved with a blank one', async () => {
+    const saveAgent = vi.fn(async (): Promise<SaveAgentResult> => ({ agentId: 'writer' }));
+    renderButton({
+      saveAgent,
+      children: (
+        <>
+          <BoundMutableSaveButton agentId="writer" agentName="writer" description="Existing agent summary." />
+          <ShellDescriptionProbe />
+        </>
+      ),
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Update Agent' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Update agent' });
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), { target: { value: '   ' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(saveAgent).toHaveBeenCalledOnce());
+    expect(saveAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentName: 'writer', description: '', intent: 'update' }),
+    );
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Shell description' })).toHaveTextContent(/^$/));
+  });
+
+  it('sends an untouched description unchanged on update', async () => {
+    const saveAgent = vi.fn(async (): Promise<SaveAgentResult> => ({ agentId: 'writer' }));
+    renderButton({
+      saveAgent,
+      children: (
+        <>
+          <BoundMutableSaveButton agentId="writer" agentName="writer" description="Existing agent summary." />
+          <ShellDescriptionProbe />
+        </>
+      ),
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Update Agent' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Update agent' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(saveAgent).toHaveBeenCalledOnce());
+    expect(saveAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ description: 'Existing agent summary.', intent: 'update' }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('status', { name: 'Shell description' })).toHaveTextContent('Existing agent summary.'),
+    );
+  });
+
+  it('keeps the stored description when an update has no known description and the field is untouched', async () => {
+    const saveAgent = vi.fn(async (): Promise<SaveAgentResult> => ({ agentId: 'writer' }));
+    renderButton({
+      saveAgent,
+      children: (
+        <>
+          <BoundMutableSaveButton agentId="writer" agentName="writer" />
+          <ShellDescriptionProbe />
+        </>
+      ),
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Update Agent' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Update agent' });
+    expect(within(dialog).getByLabelText('Description (optional)')).toHaveValue('');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(saveAgent).toHaveBeenCalledOnce());
     expect(saveAgent).toHaveBeenCalledWith(expect.not.objectContaining({ description: expect.anything() }));
-    expect(saveAgent).toHaveBeenCalledWith(expect.objectContaining({ agentName: 'writer', intent: 'create' }));
+    expect(saveAgent).toHaveBeenCalledWith(expect.objectContaining({ agentName: 'writer', intent: 'update' }));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Shell description' })).toHaveTextContent('unknown'));
   });
 
   it('keeps Save enabled on update when description is blank', async () => {
