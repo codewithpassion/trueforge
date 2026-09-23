@@ -757,7 +757,9 @@ describe('the desktop routes over a real relay', () => {
 
     const handedBack = await send({ computerId, method: 'POST', path: '/hand-back', body: {} });
     expect(handedBack.status).toBe(200);
-    await expect(handedBack.json()).resolves.toMatchObject({ data: { controller: { kind: 'none' } } });
+    await expect(handedBack.json()).resolves.toMatchObject({
+      data: { status: { controller: { kind: 'none' } }, takeover: null },
+    });
     expect(clears(client)).toHaveLength(1);
     expect((await agent.screenshot()).ok).toBe(true);
     client.close();
