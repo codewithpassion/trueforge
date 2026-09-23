@@ -4,6 +4,34 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 38 — Phase 9b: desktop on the daemon, agent computer tools, agent lease (2026-09-24)
+
+**Goal:** Ship phase 9b of `docs/remote-desktop-plan.md`: the daemon runs a desktop, and agents drive it through `computer_*` tools while holding a turn-scoped lease.
+
+**What we did:**
+
+- **Daemon (`e761e595..cc244a58`).** `--desktop` supervises Xvfb (with an `-auth` cookie, `-nolisten tcp` and `-nolisten local`) plus openbox. X capture is pure Go via `xgb`, so CGO stays off. Input and clipboard go through `xdotool`/`xclip`, and `DISPLAY`/`XAUTHORITY` are added to the scrubbed exec env. Each op type has a budget semaphore. Keys must match a regex and xdotool command names are rejected. Scroll is capped at 60 clicks per batch.
+- **Packaging.** `Dockerfile.desktop` is Debian-based. A chromium wrapper clears stale Singleton locks left by other container hostnames, and the password manager is off. The Chromium sandbox works in Docker with only `--security-opt seccomp=packages/trueforge-computer/packaging/desktop/seccomp.json`, which is the default profile plus `clone`/`unshare`. `install.sh --desktop` supports Debian only and refuses snap chromium.
+- **Server (`0a8ca397..5a8322e5`).** The protocol gains desktop ops and `capabilities.desktop`. `RemoteComputerDO` keeps a lease with a principal. The agent lease is keyed by `{session_id, turn_id}` and released by a composable `onTurnDrained` hook, which now covers the Node streaming path too. Human lease methods exist, but their routes wait for 9c. While a human holds the lease, every agent op except `cancel` is refused.
+- **Clipboard clearing.** `read_only` and `desktop_unavailable` both count as cleared. After 3 failed clears, non-desktop ops resume.
+- **Tools.** `computer_*` tools return a text stub where images belong until 9a-2 lands. `require_approval` offers only screenshot and clipboard read. Audit rows use op `desktop`.
+- **Reviews.** Daemon: 0 blockers, 3 majors. Server: 0 blockers, 7 majors. The re-review on the merged branch found a typecheck blocker introduced by the merge and a bug where clipboard clearing could wedge forever. Both fixed in `55b16535`.
+- **Shipped.** Landed on `dom/main` at `55b16535` and deployed as Workers version `113696e7` (no migration).
+
+**Lessons learned:**
+
+- vitest doesn't typecheck. Both branches passed their tests, and the merge still broke `pnpm typecheck`.
+- Per-branch reviews missed bugs that only show up once the daemon and server branches are merged. The re-review on the integration branch found the typecheck blocker and the clearing wedge.
+- A relay that folds every reply error into `bad_request` hides error codes the caller needs.
+- Any "retry until cleared" state needs an exit. Without the 3-failure cutoff, one broken clipboard blocked every later op.
+
+**Avoid next time:**
+
+- Don't land an integration merge without running `pnpm typecheck` on it.
+- Don't treat per-branch review approval as approval of the merged result. Re-review the integration branch.
+- Don't collapse distinct daemon error codes at a relay boundary.
+- Still open: SDK regen for `sandbox.desktop` (the UI drops it on save until then; bundled with 9a-2), chat thumbnails, and 9c.
+
 ## Cycle 37 — Phase 9a-1: session file store (2026-09-24)
 
 **Goal:** Build the session file store from `docs/remote-desktop-plan.md` (phase 9a-1), so later phases can persist screenshots and other binary session artifacts.
