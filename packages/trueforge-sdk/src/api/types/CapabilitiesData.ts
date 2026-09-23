@@ -4,6 +4,7 @@ import type * as TrueForge from "../index.js";
 
 export interface CapabilitiesData {
     computers: TrueForge.ComputersCapability;
+    desktop: TrueForge.DesktopCapability;
     sandbox: TrueForge.SandboxCapability;
     settings: TrueForge.SettingsCapability;
     skill: TrueForge.SkillCapability;

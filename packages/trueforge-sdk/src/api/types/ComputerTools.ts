@@ -4,6 +4,8 @@
  * What the machine reported it has; null before it connects.
  */
 export interface ComputerTools {
+    desktop?: boolean;
+    desktopUnavailableReason?: string | null;
     git: boolean;
     python3: boolean;
 }

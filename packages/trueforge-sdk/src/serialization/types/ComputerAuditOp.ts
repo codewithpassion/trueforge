@@ -5,8 +5,8 @@ import * as core from "../../core/index.js";
 import type * as serializers from "../index.js";
 
 export const ComputerAuditOp: core.serialization.Schema<serializers.ComputerAuditOp.Raw, TrueForge.ComputerAuditOp> =
-    core.serialization.enum_(["exec", "file_put", "file_get"]);
+    core.serialization.enum_(["exec", "file_put", "file_get", "desktop"]);
 
 export declare namespace ComputerAuditOp {
-    export type Raw = "exec" | "file_put" | "file_get";
+    export type Raw = "exec" | "file_put" | "file_get" | "desktop";
 }

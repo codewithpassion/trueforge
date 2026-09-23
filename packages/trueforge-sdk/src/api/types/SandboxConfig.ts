@@ -3,6 +3,8 @@
 export interface SandboxConfig {
     /** Run this agent on the named remote computer instead of the tenant sandbox provider. */
     computerId?: string;
+    /** Let the agent see and drive the remote computer's desktop. Needs `computer_id`. Default: false. */
+    desktop?: boolean;
     /** Give the agent a sandbox. Required for skills and Code Mode. */
     enabled: boolean;
     /** Allow downloading agent-produced files via the turn download endpoint. Default: true. */

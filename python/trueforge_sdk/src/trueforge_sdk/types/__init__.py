@@ -77,6 +77,7 @@ if typing.TYPE_CHECKING:
     from .delete_integration_response import DeleteIntegrationResponse
     from .delete_sandbox_provider_response import DeleteSandboxProviderResponse
     from .delete_schedule_response import DeleteScheduleResponse
+    from .desktop_capability import DesktopCapability
     from .dynamic_sub_agents_config import DynamicSubAgentsConfig
     from .extended_chunk_delta_tool_call import ExtendedChunkDeltaToolCall
     from .file_content import FileContent
@@ -355,6 +356,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "DeleteIntegrationResponse": ".delete_integration_response",
     "DeleteSandboxProviderResponse": ".delete_sandbox_provider_response",
     "DeleteScheduleResponse": ".delete_schedule_response",
+    "DesktopCapability": ".desktop_capability",
     "DynamicSubAgentsConfig": ".dynamic_sub_agents_config",
     "ExtendedChunkDeltaToolCall": ".extended_chunk_delta_tool_call",
     "FileContent": ".file_content",
@@ -657,6 +659,7 @@ __all__ = [
     "DeleteIntegrationResponse",
     "DeleteSandboxProviderResponse",
     "DeleteScheduleResponse",
+    "DesktopCapability",
     "DynamicSubAgentsConfig",
     "ExtendedChunkDeltaToolCall",
     "FileContent",

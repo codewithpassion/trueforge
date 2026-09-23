@@ -4,5 +4,6 @@ export const ComputerAuditOp = {
     Exec: "exec",
     FilePut: "file_put",
     FileGet: "file_get",
+    Desktop: "desktop",
 } as const;
 export type ComputerAuditOp = (typeof ComputerAuditOp)[keyof typeof ComputerAuditOp];

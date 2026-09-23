@@ -11,6 +11,7 @@ class ComputerAuditOp(enum.StrEnum):
     EXEC = "exec"
     FILE_PUT = "file_put"
     FILE_GET = "file_get"
+    DESKTOP = "desktop"
     _UNKNOWN = "__COMPUTERAUDITOP_UNKNOWN__"
     """
     This member is used for forward compatibility. If the value is not recognized by the enum, it will be stored here, and the raw value is accessible through `.value`.
@@ -27,6 +28,7 @@ class ComputerAuditOp(enum.StrEnum):
         exec: typing.Callable[[], T_Result],
         file_put: typing.Callable[[], T_Result],
         file_get: typing.Callable[[], T_Result],
+        desktop: typing.Callable[[], T_Result],
         _unknown_member: typing.Callable[[str], T_Result],
     ) -> T_Result:
         if self is ComputerAuditOp.EXEC:
@@ -35,4 +37,6 @@ class ComputerAuditOp(enum.StrEnum):
             return file_put()
         if self is ComputerAuditOp.FILE_GET:
             return file_get()
+        if self is ComputerAuditOp.DESKTOP:
+            return desktop()
         return _unknown_member(self._value_)

@@ -292,7 +292,12 @@ describe("ComputersClient", () => {
                 require_approval: true,
                 run_as_user: "run_as_user",
                 status: "pending",
-                tools: { git: true, python3: true },
+                tools: {
+                    desktop: true,
+                    desktop_unavailable_reason: "desktop_unavailable_reason",
+                    git: true,
+                    python3: true,
+                },
                 updated_at: "updated_at",
             },
         };
@@ -320,6 +325,8 @@ describe("ComputersClient", () => {
                 runAsUser: "run_as_user",
                 status: "pending",
                 tools: {
+                    desktop: true,
+                    desktopUnavailableReason: "desktop_unavailable_reason",
                     git: true,
                     python3: true,
                 },
@@ -496,7 +503,12 @@ describe("ComputersClient", () => {
                 require_approval: true,
                 run_as_user: "run_as_user",
                 status: "pending",
-                tools: { git: true, python3: true },
+                tools: {
+                    desktop: true,
+                    desktop_unavailable_reason: "desktop_unavailable_reason",
+                    git: true,
+                    python3: true,
+                },
                 updated_at: "updated_at",
             },
         };
@@ -525,6 +537,8 @@ describe("ComputersClient", () => {
                 runAsUser: "run_as_user",
                 status: "pending",
                 tools: {
+                    desktop: true,
+                    desktopUnavailableReason: "desktop_unavailable_reason",
                     git: true,
                     python3: true,
                 },
@@ -737,7 +751,12 @@ describe("ComputersClient", () => {
                 require_approval: true,
                 run_as_user: "run_as_user",
                 status: "pending",
-                tools: { git: true, python3: true },
+                tools: {
+                    desktop: true,
+                    desktop_unavailable_reason: "desktop_unavailable_reason",
+                    git: true,
+                    python3: true,
+                },
                 updated_at: "updated_at",
             },
         };
@@ -765,6 +784,8 @@ describe("ComputersClient", () => {
                 runAsUser: "run_as_user",
                 status: "pending",
                 tools: {
+                    desktop: true,
+                    desktopUnavailableReason: "desktop_unavailable_reason",
                     git: true,
                     python3: true,
                 },

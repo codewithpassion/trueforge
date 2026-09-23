@@ -12,6 +12,8 @@ class ComputerTools(UncheckedBaseModel):
     What the machine reported it has; null before it connects.
     """
 
+    desktop: typing.Optional[bool] = False
+    desktop_unavailable_reason: typing.Optional[str] = None
     git: bool
     python3: bool
 

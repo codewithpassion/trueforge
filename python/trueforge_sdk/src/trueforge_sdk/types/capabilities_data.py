@@ -6,6 +6,7 @@ import pydantic
 from ..core.pydantic_utilities import IS_PYDANTIC_V2
 from ..core.unchecked_base_model import UncheckedBaseModel
 from .computers_capability import ComputersCapability
+from .desktop_capability import DesktopCapability
 from .sandbox_capability import SandboxCapability
 from .settings_capability import SettingsCapability
 from .skill_capability import SkillCapability
@@ -14,6 +15,7 @@ from .web_search_capability import WebSearchCapability
 
 class CapabilitiesData(UncheckedBaseModel):
     computers: ComputersCapability
+    desktop: DesktopCapability
     sandbox: SandboxCapability
     settings: SettingsCapability
     skill: SkillCapability

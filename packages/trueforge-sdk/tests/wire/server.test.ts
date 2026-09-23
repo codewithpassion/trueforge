@@ -12,6 +12,7 @@ describe("ServerClient", () => {
         const rawResponseBody = {
             data: {
                 computers: { enabled: true },
+                desktop: { enabled: true },
                 sandbox: { enabled: true },
                 settings: { enabled: true },
                 skill: { enabled: true, reason: "reason" },
@@ -31,6 +32,9 @@ describe("ServerClient", () => {
         expect(response).toEqual({
             data: {
                 computers: {
+                    enabled: true,
+                },
+                desktop: {
                     enabled: true,
                 },
                 sandbox: {

@@ -4,6 +4,7 @@ import type * as TrueForge from "../../api/index.js";
 import * as core from "../../core/index.js";
 import type * as serializers from "../index.js";
 import { ComputersCapability } from "./ComputersCapability.js";
+import { DesktopCapability } from "./DesktopCapability.js";
 import { SandboxCapability } from "./SandboxCapability.js";
 import { SettingsCapability } from "./SettingsCapability.js";
 import { SkillCapability } from "./SkillCapability.js";
@@ -14,6 +15,7 @@ export const CapabilitiesData: core.serialization.ObjectSchema<
     TrueForge.CapabilitiesData
 > = core.serialization.object({
     computers: ComputersCapability,
+    desktop: DesktopCapability,
     sandbox: SandboxCapability,
     settings: SettingsCapability,
     skill: SkillCapability,
@@ -23,6 +25,7 @@ export const CapabilitiesData: core.serialization.ObjectSchema<
 export declare namespace CapabilitiesData {
     export interface Raw {
         computers: ComputersCapability.Raw;
+        desktop: DesktopCapability.Raw;
         sandbox: SandboxCapability.Raw;
         settings: SettingsCapability.Raw;
         skill: SkillCapability.Raw;

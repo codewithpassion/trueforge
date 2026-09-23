@@ -13,6 +13,11 @@ class SandboxConfig(UncheckedBaseModel):
     Run this agent on the named remote computer instead of the tenant sandbox provider.
     """
 
+    desktop: typing.Optional[bool] = pydantic.Field(default=False)
+    """
+    Let the agent see and drive the remote computer's desktop. Needs `computer_id`. Default: false.
+    """
+
     enabled: bool = pydantic.Field()
     """
     Give the agent a sandbox. Required for skills and Code Mode.

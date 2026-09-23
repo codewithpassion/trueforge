@@ -508,6 +508,9 @@
           "computers": {
             "$ref": "#/components/schemas/ComputersCapability"
           },
+          "desktop": {
+            "$ref": "#/components/schemas/DesktopCapability"
+          },
           "sandbox": {
             "$ref": "#/components/schemas/SandboxCapability"
           },
@@ -526,6 +529,7 @@
           "skill",
           "settings",
           "computers",
+          "desktop",
           "web_search"
         ],
         "type": "object"
@@ -1093,7 +1097,8 @@
         "enum": [
           "exec",
           "file_put",
-          "file_get"
+          "file_get",
+          "desktop"
         ],
         "type": "string"
       },
@@ -1136,6 +1141,18 @@
       "ComputerTools": {
         "description": "What the machine reported it has; null before it connects.",
         "properties": {
+          "desktop": {
+            "default": false,
+            "type": "boolean"
+          },
+          "desktop_unavailable_reason": {
+            "default": null,
+            "maxLength": 256,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "git": {
             "type": "boolean"
           },
@@ -1647,6 +1664,18 @@
       },
       "DeleteScheduleResponse": {
         "properties": {},
+        "type": "object"
+      },
+      "DesktopCapability": {
+        "properties": {
+          "enabled": {
+            "description": "Whether agents can see and drive an enrolled machine's desktop.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
         "type": "object"
       },
       "DynamicSubAgentsConfig": {
@@ -4402,6 +4431,7 @@
           },
           "iteration_limit": 100,
           "sandbox": {
+            "desktop": false,
             "enabled": false,
             "file_downloads": true
           },
@@ -4461,6 +4491,7 @@
       },
       "SandboxConfig": {
         "default": {
+          "desktop": false,
           "enabled": false,
           "file_downloads": true
         },
@@ -4469,6 +4500,11 @@
             "description": "Run this agent on the named remote computer instead of the tenant sandbox provider.",
             "minLength": 1,
             "type": "string"
+          },
+          "desktop": {
+            "default": false,
+            "description": "Let the agent see and drive the remote computer's desktop. Needs `computer_id`. Default: false.",
+            "type": "boolean"
           },
           "enabled": {
             "description": "Give the agent a sandbox. Required for skills and Code Mode.",
@@ -11722,7 +11758,7 @@
                 }
               }
             },
-            "description": "The machine backing this sandbox is offline; retry when it reconnects."
+            "description": "The machine backing this sandbox is offline, or a person is using its desktop; retry when it reconnects or they hand it back."
           }
         },
         "summary": "Download a file from the turn sandbox",

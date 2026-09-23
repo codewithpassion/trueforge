@@ -6,12 +6,19 @@ import type * as serializers from "../index.js";
 
 export const ComputerTools: core.serialization.ObjectSchema<serializers.ComputerTools.Raw, TrueForge.ComputerTools> =
     core.serialization.object({
+        desktop: core.serialization.boolean().optional(),
+        desktopUnavailableReason: core.serialization.property(
+            "desktop_unavailable_reason",
+            core.serialization.string().optionalNullable(),
+        ),
         git: core.serialization.boolean(),
         python3: core.serialization.boolean(),
     });
 
 export declare namespace ComputerTools {
     export interface Raw {
+        desktop?: boolean | null;
+        desktop_unavailable_reason?: (string | null | undefined) | null;
         git: boolean;
         python3: boolean;
     }

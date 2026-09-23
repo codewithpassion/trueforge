@@ -69,6 +69,7 @@ export * from "./DeleteComputerResponse.js";
 export * from "./DeleteIntegrationResponse.js";
 export * from "./DeleteSandboxProviderResponse.js";
 export * from "./DeleteScheduleResponse.js";
+export * from "./DesktopCapability.js";
 export * from "./DynamicSubAgentsConfig.js";
 export * from "./ExtendedChunkDeltaToolCall.js";
 export * from "./FileContent.js";
