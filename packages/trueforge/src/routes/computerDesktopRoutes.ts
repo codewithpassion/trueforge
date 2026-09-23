@@ -197,7 +197,7 @@ export const handBackDesktopRoute = createRoute({
     403: forbidden,
     404: notFound,
     409: errorResponse(
-      'Code `takeover_already_answered` or `not_pending`: the takeover was answered elsewhere. Control is still released.',
+      'Code `not_pending`: nothing changed. Code `takeover_already_answered`: answered elsewhere; control is still released.',
     ),
     423: errorResponse('Code `lease_required`: the caller does not control the desktop.'),
     503: errorResponse('Takeovers cannot be answered on this server.'),

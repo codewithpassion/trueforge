@@ -704,6 +704,7 @@ describe('handing back', () => {
     expect(response.status).toBe(409);
     expect((await errorOf(response)).code).toBe('not_pending');
     expect(takeovers.resolved).toHaveLength(0);
+    expect(relay.releasedFor).toHaveLength(0);
   });
 
   it('answers 503 for a session where takeovers cannot be answered, before releasing', async () => {

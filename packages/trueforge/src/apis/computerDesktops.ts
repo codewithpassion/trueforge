@@ -434,6 +434,9 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
     if (sessionId !== undefined && takeovers === undefined) {
       return c.json({ error: { message: 'Takeovers cannot be answered on this server' } }, 503);
     }
+    if (sessionId !== undefined && !(await isScopedTakeover({ access, sessionId }))) {
+      return c.json({ error: { message: 'No takeover is pending for that session', code: 'not_pending' } }, 409);
+    }
     // Released before the answer, so the resumed turn does not find a person still in control.
     const released = await access.relay.releaseHumanLease({
       tenant_id: access.tenantId,
@@ -443,9 +446,6 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
       return c.json({ error: { message: LEASE_REQUIRED_MESSAGE, code: 'lease_required' } }, 423);
     }
     if (sessionId !== undefined && takeovers !== undefined) {
-      if (!(await isScopedTakeover({ access, sessionId }))) {
-        return c.json({ error: { message: 'No takeover is pending for that session', code: 'not_pending' } }, 409);
-      }
       const answered = await takeovers.resolveTakeover({
         tenant_id: access.tenantId,
         computer_id: computerId,
