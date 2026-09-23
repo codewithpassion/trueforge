@@ -140,19 +140,25 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
 
   /**
    * Cookies ride along on a request another site makes the browser send; an explicit bearer header
-   * cannot. So a write without one must come from this server's own origin.
+   * cannot. So a write without one must come from this server's own origin: the one the request was
+   * addressed to (a dev proxy rewrites it and Origin alike), or the public URL when an ingress
+   * addressed the request to an internal host.
    */
   function isForeignOriginWrite(c: Context): boolean {
     if (readBearerToken(c) !== undefined) {
       return false;
     }
     const origin = c.req.header('Origin');
-    const baseUrl = deps.publicBaseUrl();
-    if (origin === undefined || baseUrl === undefined) {
+    if (origin === undefined) {
       return true;
     }
+    const baseUrl = deps.publicBaseUrl();
     try {
-      return new URL(origin).origin !== new URL(baseUrl).origin;
+      const callerOrigin = new URL(origin).origin;
+      return (
+        callerOrigin !== new URL(c.req.url).origin &&
+        (baseUrl === undefined || callerOrigin !== new URL(baseUrl).origin)
+      );
     } catch {
       return true;
     }
