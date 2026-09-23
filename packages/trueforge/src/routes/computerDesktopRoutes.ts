@@ -5,7 +5,6 @@ import {
   ComputerDesktopRequestQuerySchema,
   GetDesktopClipboardResponseSchema,
   GetDesktopStatusResponseSchema,
-  HandBackDesktopConflictResponseSchema,
   HandBackDesktopRequestSchema,
   SendDesktopInputRequestSchema,
   SetDesktopClipboardRequestSchema,
@@ -197,11 +196,9 @@ export const handBackDesktopRoute = createRoute({
     401: unauthorized,
     403: forbidden,
     404: notFound,
-    409: {
-      content: { 'application/json': { schema: HandBackDesktopConflictResponseSchema } },
-      description:
-        'Code `not_pending`: nothing changed. Code `takeover_already_answered`: answered elsewhere, but control is released. Either way `data` is the desktop status after the request.',
-    },
+    409: errorResponse(
+      'Code `not_pending`: nothing changed. Code `takeover_already_answered`: answered elsewhere, but control is released. Either way `data` is the desktop status after the request.',
+    ),
     423: errorResponse('Code `lease_required`: the caller does not control the desktop.'),
     503: errorResponse('Takeovers cannot be answered on this server.'),
   },
