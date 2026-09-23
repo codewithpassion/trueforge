@@ -32,6 +32,9 @@ type Entry struct {
 	Truncated  bool   `json:"truncated,omitempty"`
 	DurationMS int64  `json:"duration_ms,omitempty"`
 	Error      string `json:"error,omitempty"`
+	// Actions lists a desktop_input batch's action types in order. Typed text, key names and
+	// clipboard contents are never recorded, only their types and sizes.
+	Actions []string `json:"actions,omitempty"`
 }
 
 // Outcomes an entry can record.

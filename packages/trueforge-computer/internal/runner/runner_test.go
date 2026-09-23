@@ -314,6 +314,27 @@ func TestEnvironmentIsScrubbed(t *testing.T) {
 	}
 }
 
+// The desktop's DISPLAY and XAUTHORITY come from the daemon, so every command sees them without
+// the server sending anything; a request may still set its own.
+func TestBaseEnvReachesEveryCommand(t *testing.T) {
+	r := newTestRunner(t, runner.Options{BaseEnv: map[string]string{"DISPLAY": ":99", "XAUTHORITY": "/state/desktop/Xauthority"}})
+	plain := run(t, r, "a", "echo $DISPLAY $XAUTHORITY", 5*time.Second)
+	if strings.TrimSpace(plain.Stdout) != ":99 /state/desktop/Xauthority" {
+		t.Fatalf("stdout = %q", plain.Stdout)
+	}
+	completion, err := r.Run("b", protocol.ExecRequest{
+		Command:   "echo $DISPLAY",
+		Env:       map[string]string{"DISPLAY": ":5"},
+		TimeoutMS: 5000,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if strings.TrimSpace(completion.Result.Stdout) != ":5" {
+		t.Fatalf("stdout = %q", completion.Result.Stdout)
+	}
+}
+
 func TestScrubbedEnvIsSortedAndMinimal(t *testing.T) {
 	env := runner.ScrubbedEnv(nil)
 	if len(env) != 4 {

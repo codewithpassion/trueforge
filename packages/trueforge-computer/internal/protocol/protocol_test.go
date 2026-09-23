@@ -271,6 +271,7 @@ func TestErrorCodeFixtureMatchesTheConstants(t *testing.T) {
 	declared := []string{
 		protocol.ErrBadRequest,
 		protocol.ErrDenied,
+		protocol.ErrDesktopUnavailable,
 		protocol.ErrDuplicateID,
 		protocol.ErrFrameTooBig,
 		protocol.ErrIsADirectory,
@@ -301,6 +302,105 @@ func TestErrorCodeFixtureMatchesTheConstants(t *testing.T) {
 			t.Fatalf("error codes are lower snake_case; %q is not", code)
 		}
 	}
+}
+
+// A hello from a client with the desktop requested carries both fields; one without them is
+// what an old client sends, and must still read as "no desktop".
+func TestHelloDesktopFields(t *testing.T) {
+	plain := roundTrip[protocol.Hello](t, "client_to_server_hello.json")
+	if plain.Capabilities.Desktop || plain.Capabilities.DesktopUnavailableReason != nil {
+		t.Fatalf("capabilities = %+v", plain.Capabilities)
+	}
+	desktop := roundTrip[protocol.Hello](t, "client_to_server_hello_desktop.json")
+	if !desktop.Capabilities.Desktop || desktop.Capabilities.DesktopUnavailableReason != nil {
+		t.Fatalf("capabilities = %+v", desktop.Capabilities)
+	}
+	unavailable := roundTrip[protocol.Hello](t, "client_to_server_hello_desktop_unavailable.json")
+	reason := unavailable.Capabilities.DesktopUnavailableReason
+	if unavailable.Capabilities.Desktop || reason == nil || *reason == "" || len([]rune(*reason)) > protocol.DesktopReasonMaxChars {
+		t.Fatalf("capabilities = %+v", unavailable.Capabilities)
+	}
+
+	var old protocol.Hello
+	if err := json.Unmarshal([]byte(`{"type":"hello","capabilities":{"python3":true,"git":true,"skills":true}}`), &old); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if old.Capabilities.Desktop || old.Capabilities.DesktopUnavailableReason != nil {
+		t.Fatalf("an old hello read as %+v", old.Capabilities)
+	}
+}
+
+func TestDesktopScreenshotRoundTrip(t *testing.T) {
+	withQuality := roundTripRequest[protocol.DesktopScreenshotRequest](t, "server_to_client_desktop_screenshot.json", protocol.OpDesktopScreenshot)
+	if withQuality.Quality == nil || *withQuality.Quality != 60 {
+		t.Fatalf("quality = %v", withQuality.Quality)
+	}
+	// null must stay null: it means "the default", which a zero would not.
+	withoutQuality := roundTripRequest[protocol.DesktopScreenshotRequest](t, "server_to_client_desktop_screenshot_null_quality.json", protocol.OpDesktopScreenshot)
+	if withoutQuality.Quality != nil {
+		t.Fatalf("quality = %d, want null", *withoutQuality.Quality)
+	}
+}
+
+// Every action type in one request, each carrying only its own fields: a zero coordinate must
+// survive, and no action may gain another type's keys on the way back out.
+func TestDesktopInputRoundTrip(t *testing.T) {
+	request := roundTripRequest[protocol.DesktopInputRequest](t, "server_to_client_desktop_input.json", protocol.OpDesktopInput)
+	seen := map[string]bool{}
+	for _, action := range request.Actions {
+		seen[action.Type] = true
+	}
+	for _, want := range []string{
+		protocol.ActionMouseMove, protocol.ActionMouseDown, protocol.ActionMouseUp, protocol.ActionClick,
+		protocol.ActionScroll, protocol.ActionKey, protocol.ActionType,
+	} {
+		if !seen[want] {
+			t.Fatalf("the fixture has no %s action", want)
+		}
+	}
+	first := request.Actions[0]
+	if first.X == nil || *first.X != 0 {
+		t.Fatalf("a zero x did not survive: %+v", first)
+	}
+}
+
+func TestDesktopClipboardRoundTrips(t *testing.T) {
+	roundTripRequest[struct{}](t, "server_to_client_desktop_clipboard_get.json", protocol.OpDesktopClipboardGet)
+	set := roundTripRequest[protocol.DesktopClipboardSetRequest](t, "server_to_client_desktop_clipboard_set.json", protocol.OpDesktopClipboardSet)
+	if set.Text == "" || len(set.Selections) != 2 {
+		t.Fatalf("clipboard_set = %+v", set)
+	}
+}
+
+func TestDesktopResultRoundTrips(t *testing.T) {
+	shot := roundTrip[protocol.Reply](t, "client_to_server_reply_desktop_screenshot.json")
+	var shotResult protocol.DesktopScreenshotResult
+	if err := json.Unmarshal(shot.Result, &shotResult); err != nil {
+		t.Fatalf("decode screenshot result: %v", err)
+	}
+	if shotResult.Width != protocol.DesktopWidth || shotResult.Height != protocol.DesktopHeight || shotResult.MediaType != protocol.DesktopMediaType {
+		t.Fatalf("screenshot result = %+v", shotResult)
+	}
+
+	for _, name := range []string{"client_to_server_reply_desktop_input.json", "client_to_server_reply_desktop_clipboard_set.json"} {
+		reply := roundTrip[protocol.Reply](t, name)
+		var ok protocol.DesktopOKResult
+		if err := json.Unmarshal(reply.Result, &ok); err != nil || !ok.OK {
+			t.Fatalf("%s result = %s (%v)", name, reply.Result, err)
+		}
+	}
+
+	get := roundTrip[protocol.Reply](t, "client_to_server_reply_desktop_clipboard_get.json")
+	var getResult protocol.DesktopClipboardGetResult
+	if err := json.Unmarshal(get.Result, &getResult); err != nil {
+		t.Fatalf("decode clipboard_get result: %v", err)
+	}
+
+	encoded, err := protocol.EncodeOK("req-01HR3", protocol.DesktopOKResult{OK: true})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	equalJSON(t, readFixture(t, "client_to_server_reply_desktop_input.json"), encoded)
 }
 
 // The guard has to stay far enough under the platform ceiling that JSON escaping of a capped

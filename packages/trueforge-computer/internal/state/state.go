@@ -48,6 +48,8 @@ type Config struct {
 	// Name is what was reported as the hostname at enrollment, so a later run keeps reporting
 	// the same identity even if the machine is renamed.
 	Name string `json:"name,omitempty"`
+	// Desktop turns the virtual desktop on for every run, as --desktop does for one.
+	Desktop bool `json:"desktop,omitempty"`
 }
 
 // DefaultDir resolves the state directory: the explicit environment variable first, then the

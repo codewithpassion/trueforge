@@ -12,6 +12,7 @@ import (
 	"trueforge.dev/computer/internal/agent"
 	"trueforge.dev/computer/internal/audit"
 	"trueforge.dev/computer/internal/conn"
+	"trueforge.dev/computer/internal/desktop"
 	"trueforge.dev/computer/internal/files"
 	"trueforge.dev/computer/internal/policy"
 	"trueforge.dev/computer/internal/protocol"
@@ -52,6 +53,8 @@ func runServe(args []string) int {
 	logFormat := set.String("log-format", "json", "json or text")
 	auditMaxBytes := set.Int64("audit-max-bytes", audit.DefaultMaxBytes, "size at which the audit log is rotated")
 	auditKeep := set.Int("audit-keep", audit.DefaultKeep, "how many rotated audit logs to keep")
+	withDesktop := set.Bool("desktop", false, "run a virtual X desktop agents can see and drive (Linux only); also enabled by \"desktop\": true in config.json")
+	desktopDisplay := set.Int("desktop-display", desktop.DefaultDisplay, "X display number the desktop takes")
 	var allow, deny, allowEnv nameList
 	set.Var(&allow, "allow", "regular expression a command must match in full; repeatable, and an empty list allows everything")
 	set.Var(&deny, "deny", "regular expression a command must not match; repeatable, and checked before --allow")
@@ -73,7 +76,7 @@ func runServe(args []string) int {
 	ctx, stop := notifyContext()
 	defer stop()
 
-	enrollment := &enrollFlags{url: *url, code: *code, codeStdin: *codeStdin, name: *name, stateDir: *stateDir, logFormat: *logFormat}
+	enrollment := &enrollFlags{url: *url, code: *code, codeStdin: *codeStdin, name: *name, stateDir: *stateDir, logFormat: *logFormat, desktop: *withDesktop}
 	if err := enrollment.resolveCode(os.Stdin); err != nil {
 		logger.Error(err.Error())
 		return exitUsage
@@ -123,6 +126,32 @@ func runServe(args []string) int {
 	}
 	defer func() { _ = log.Close() }()
 
+	capabilities := state.DetectCapabilities()
+	desktopEnabled := *withDesktop || config.Desktop
+	var screen *desktop.Desktop
+	var commandEnv map[string]string
+	if desktopEnabled {
+		// The desktop outlives any one connection but not this function, whatever ends it.
+		desktopCtx, stopDesktop := context.WithCancel(ctx)
+		screen, err = desktop.Start(desktopCtx, desktop.Options{StateDir: *stateDir, Display: *desktopDisplay, Logger: logger})
+		if err == nil {
+			defer func() {
+				stopDesktop()
+				screen.Wait()
+			}()
+			commandEnv = screen.Env()
+			// Checked before hello is built: hello is fixed for a connection, and the server
+			// only sends desktop ops to a computer that said it can take them.
+			err = screen.Check(ctx)
+		} else {
+			stopDesktop()
+		}
+		capabilities.Desktop, capabilities.DesktopUnavailableReason = desktop.Capability(err)
+		if err != nil {
+			logger.Warn("the desktop is not available to agents", "error", err.Error())
+		}
+	}
+
 	// Commands started by a previous run survive a kill, reparented to PID 1, so they are
 	// reaped before this one accepts anything new.
 	if reaped := runner.Sweep(*stateDir, logger); reaped > 0 {
@@ -136,6 +165,7 @@ func runServe(args []string) int {
 		MaxTimeout:    time.Duration(*maxExecSeconds) * time.Second,
 		DefaultCwd:    sessions,
 		StateDir:      *stateDir,
+		BaseEnv:       commandEnv,
 		Logger:        logger,
 	})
 	defer commands.Shutdown()
@@ -144,7 +174,7 @@ func runServe(args []string) int {
 		ResolveWrite: rules.CheckWrite,
 		MaxFileBytes: *maxFileBytes,
 	})
-	worker := agent.New(rules, commands, transfers, log, logger)
+	worker := agent.New(rules, commands, transfers, screen, log, logger)
 	hello := protocol.Hello{
 		Type:            "hello",
 		ProtocolVersion: protocol.Version,
@@ -154,7 +184,7 @@ func runServe(args []string) int {
 		Version:         version,
 		RunAsUser:       state.RunAsUser(),
 		Workdir:         sessions,
-		Capabilities:    state.DetectCapabilities(),
+		Capabilities:    capabilities,
 	}
 
 	client, err := conn.New(conn.Options{
@@ -190,6 +220,7 @@ func runServe(args []string) int {
 		"allow_env", len(allowEnv),
 		"max_exec_seconds", *maxExecSeconds,
 		"max_file_bytes", *maxFileBytes,
+		"desktop", desktopEnabled,
 		"capabilities", hello.Capabilities)
 
 	err = client.Run(ctx)

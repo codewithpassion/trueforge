@@ -1,0 +1,19 @@
+#!/bin/sh
+# Chromium as the desktop's agents and humans start it. The profile sits beside the daemon's
+# Xauthority, so logins survive sessions and restarts; exec'd commands get no TRUEFORGE_STATE_DIR,
+# but they always get XAUTHORITY. The sandbox is never disabled here: if it cannot start, the
+# daemon reports the desktop as unavailable instead.
+set -eu
+
+desktop_dir="/var/lib/trueforge-computer/desktop"
+if [ -n "${XAUTHORITY:-}" ]; then
+  desktop_dir="$(dirname "$XAUTHORITY")"
+fi
+
+exec /usr/bin/chromium \
+  --user-data-dir="$desktop_dir/chromium-profile" \
+  --password-store=basic \
+  --window-size=1280,800 \
+  --window-position=0,0 \
+  --disable-dev-shm-usage \
+  "$@"

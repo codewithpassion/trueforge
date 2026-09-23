@@ -10,6 +10,8 @@
   "capabilities": {
     "python3": true,
     "git": false,
-    "skills": false
+    "skills": false,
+    "desktop": false,
+    "desktop_unavailable_reason": null
   }
 }

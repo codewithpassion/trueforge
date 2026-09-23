@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"trueforge.dev/computer/internal/audit"
+	"trueforge.dev/computer/internal/desktop"
 	"trueforge.dev/computer/internal/files"
 	"trueforge.dev/computer/internal/policy"
 	"trueforge.dev/computer/internal/protocol"
@@ -22,15 +23,17 @@ type Agent struct {
 	policy    *policy.Policy
 	runner    *runner.Runner
 	transfers *files.Transfers
-	log       *audit.Log
-	logger    *slog.Logger
+	// desktop is nil when this computer runs no desktop; its ops then answer desktop_unavailable.
+	desktop *desktop.Desktop
+	log     *audit.Log
+	logger  *slog.Logger
 }
 
-func New(rules *policy.Policy, commands *runner.Runner, transfers *files.Transfers, log *audit.Log, logger *slog.Logger) *Agent {
+func New(rules *policy.Policy, commands *runner.Runner, transfers *files.Transfers, screen *desktop.Desktop, log *audit.Log, logger *slog.Logger) *Agent {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Agent{policy: rules, runner: commands, transfers: transfers, log: log, logger: logger}
+	return &Agent{policy: rules, runner: commands, transfers: transfers, desktop: screen, log: log, logger: logger}
 }
 
 // OnDisconnect drops the uploads that were mid-flight. The server restarts a transfer from
@@ -87,6 +90,14 @@ func (a *Agent) Dispatch(head protocol.Envelope, frame []byte) []byte {
 		return a.filePut(head, frame)
 	case protocol.OpFileGet:
 		return a.fileGet(head, frame)
+	case protocol.OpDesktopScreenshot:
+		return a.desktopScreenshot(head, frame)
+	case protocol.OpDesktopInput:
+		return a.desktopInput(head, frame)
+	case protocol.OpDesktopClipboardGet:
+		return a.desktopClipboardGet(head)
+	case protocol.OpDesktopClipboardSet:
+		return a.desktopClipboardSet(head, frame)
 	default:
 		a.record(audit.Entry{Op: head.Op, RequestID: head.ID, Outcome: audit.OutcomeError, Error: "unknown op"})
 		return protocol.EncodeError(head.ID, protocol.ErrUnknownOp, fmt.Sprintf("this computer does not implement the op %q", head.Op))

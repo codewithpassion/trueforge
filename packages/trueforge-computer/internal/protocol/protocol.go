@@ -1,7 +1,8 @@
 // Package protocol is the v1 wire contract between a computer and the TrueForge relay: one JSON
 // text frame per message, snake_case fields. The golden fixtures under testdata/protocol are the
-// shared reference for the server's schemas. Treat the shapes as frozen; the next change needs a
-// new Version.
+// shared reference for the server's schemas. Treat the shapes as frozen: a change to an existing
+// shape needs a new Version. New ops may be added under v1 only behind a hello capability, which
+// is how the desktop ops arrived.
 package protocol
 
 import "encoding/json"
@@ -54,6 +55,12 @@ const (
 	OpCancel  = "cancel"
 	OpFilePut = "file_put"
 	OpFileGet = "file_get"
+
+	// Desktop ops are only sent to a client whose hello advertised capabilities.desktop.
+	OpDesktopScreenshot   = "desktop_screenshot"
+	OpDesktopInput        = "desktop_input"
+	OpDesktopClipboardGet = "desktop_clipboard_get"
+	OpDesktopClipboardSet = "desktop_clipboard_set"
 )
 
 // Error codes carried back in a reply. The relay forwards them verbatim.
@@ -72,6 +79,8 @@ const (
 	// ErrDuplicateID means the request id names something still running here, which the
 	// server reads as "it is still going", not as a malformed request.
 	ErrDuplicateID = "duplicate_id"
+	// ErrDesktopUnavailable answers a desktop op on a computer whose desktop is not running.
+	ErrDesktopUnavailable = "desktop_unavailable"
 )
 
 // Capabilities are what this machine has. Skills is this client's own verdict on whether the
@@ -80,7 +89,15 @@ type Capabilities struct {
 	Python3 bool `json:"python3"`
 	Git     bool `json:"git"`
 	Skills  bool `json:"skills"`
+	// Desktop is true only once the X server answers, xdotool and xclip resolve and Chromium's
+	// sandbox self-test passed. Both desktop fields are always sent; an old client omits them.
+	Desktop bool `json:"desktop"`
+	// DesktopUnavailableReason says why a requested desktop is not usable, and is null otherwise.
+	DesktopUnavailableReason *string `json:"desktop_unavailable_reason"`
 }
+
+// DesktopReasonMaxChars is the server's cap on desktop_unavailable_reason.
+const DesktopReasonMaxChars = 256
 
 // Hello is the first frame the client sends after the upgrade.
 type Hello struct {
@@ -129,6 +146,92 @@ type FileGetRequest struct {
 	Path     string `json:"path"`
 	Offset   int64  `json:"offset"`
 	MaxBytes int    `json:"max_bytes"`
+}
+
+// DesktopScreenshotRequest asks for one JPEG of the whole display. A null quality means 60.
+type DesktopScreenshotRequest struct {
+	Quality *int `json:"quality"`
+}
+
+// DesktopAction is one input step, discriminated on Type. Every field but Type is a pointer so an
+// action carries exactly its own fields on the wire, and a missing one is told apart from zero.
+type DesktopAction struct {
+	Type   string  `json:"type"`
+	X      *int    `json:"x,omitempty"`
+	Y      *int    `json:"y,omitempty"`
+	Button *string `json:"button,omitempty"`
+	Count  *int    `json:"count,omitempty"`
+	DX     *int    `json:"dx,omitempty"`
+	DY     *int    `json:"dy,omitempty"`
+	Keys   *string `json:"keys,omitempty"`
+	Text   *string `json:"text,omitempty"`
+}
+
+// Desktop action types.
+const (
+	ActionMouseMove = "mouse_move"
+	ActionMouseDown = "mouse_down"
+	ActionMouseUp   = "mouse_up"
+	ActionClick     = "click"
+	ActionScroll    = "scroll"
+	ActionKey       = "key"
+	ActionType      = "type"
+)
+
+// Mouse buttons an action may name.
+const (
+	ButtonLeft   = "left"
+	ButtonMiddle = "middle"
+	ButtonRight  = "right"
+)
+
+// Clipboard selections a set may target.
+const (
+	SelectionClipboard = "clipboard"
+	SelectionPrimary   = "primary"
+)
+
+type DesktopInputRequest struct {
+	Actions []DesktopAction `json:"actions"`
+}
+
+type DesktopClipboardSetRequest struct {
+	Text       string   `json:"text"`
+	Selections []string `json:"selections"`
+}
+
+// Desktop limits. The display is fixed, so coordinates are desktop pixels with no scaling.
+const (
+	DesktopWidth             = 1280
+	DesktopHeight            = 800
+	DesktopMaxActions        = 64
+	DesktopMaxTypeChars      = 512
+	DesktopMaxKeysChars      = 64
+	DesktopMaxClickCount     = 3
+	DesktopMaxScrollClicks   = 50
+	DesktopMaxClipboardBytes = 64 << 10
+	DesktopDefaultQuality    = 60
+	DesktopMaxQuality        = 95
+	// DesktopMaxResultBytes keeps a screenshot well under every relay cap.
+	DesktopMaxResultBytes = 3 << 20
+	// DesktopMediaType is the only format screenshots come in.
+	DesktopMediaType = "image/jpeg"
+)
+
+type DesktopScreenshotResult struct {
+	DataB64   string `json:"data_b64"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	MediaType string `json:"media_type"`
+}
+
+// DesktopOKResult answers desktop_input and desktop_clipboard_set.
+type DesktopOKResult struct {
+	OK bool `json:"ok"`
+}
+
+type DesktopClipboardGetResult struct {
+	Text string `json:"text"`
 }
 
 type ExecResult struct {

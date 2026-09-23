@@ -62,7 +62,7 @@ func newHarnessWithRunner(t *testing.T, options policy.Options, runnerOptions ru
 	runnerOptions.Logger = discardLogger()
 	commands := runner.New(runnerOptions)
 	return &harness{
-		agent:    agent.New(rules, commands, files.NewTransfers(files.Options{ResolveWrite: rules.CheckWrite}), log, discardLogger()),
+		agent:    agent.New(rules, commands, files.NewTransfers(files.Options{ResolveWrite: rules.CheckWrite}), nil, log, discardLogger()),
 		commands: commands,
 		stateDir: stateDir,
 		workdir:  options.Workdir,
