@@ -129,9 +129,9 @@ export const CancelDesktopTakeoverRequestSchema = z
   .openapi('CancelDesktopTakeoverRequest');
 
 export const DesktopTakeoverResultSchema = z
-  .enum(['resumed', 'already_answered', 'not_pending', 'resume_failed'])
+  .enum(['resumed', 'already_answered', 'not_pending', 'resume_failed', 'outcome_unknown'])
   .describe(
-    '`resumed`: the agent continues. `already_answered`: answered elsewhere. `not_pending`: nothing was waiting. `resume_failed`: the session could not continue and is no longer listed.',
+    '`resumed`: the agent continues. `already_answered`: answered elsewhere. `not_pending`: nothing was waiting. `resume_failed`: the session could not continue and is no longer listed. `outcome_unknown`: the agent may have resumed; the request stays listed until the status shows otherwise.',
   )
   .openapi('DesktopTakeoverResult');
 

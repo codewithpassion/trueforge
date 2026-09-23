@@ -5,7 +5,7 @@ import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IComputerStore } from '../db/computerStore';
 import { readPendingAction, type PendingTakeoverRequest } from '../integrations/pendingActions';
-import type { TurnExecutor, TurnStores } from '../runtime/turnExecutor';
+import { WRITE_OUTCOME_UNKNOWN_CODE, type TurnExecutor, type TurnStores } from '../runtime/turnExecutor';
 import { newId } from '../utils/id';
 import { takeoverToolResponseText } from './requestHumanTakeover';
 import type { ComputerRelayPort, ComputersService, TakeoverPointer } from './service';
@@ -37,10 +37,13 @@ export interface HumanTakeoverService {
   }): Promise<TakeoverResolution>;
 }
 
-/** `resume_failed` drops the request from the desktop; the session itself is left waiting. */
+/**
+ * `resume_failed` drops the request from the desktop; the session itself is left waiting.
+ * `outcome_unknown` keeps it listed: the resume may have landed, and the next listing drops it if so.
+ */
 export type TakeoverResolution =
   | { ok: true }
-  | { ok: false; code: 'not_pending' | 'takeover_already_answered' }
+  | { ok: false; code: 'not_pending' | 'takeover_already_answered' | 'outcome_unknown' }
   | { ok: false; code: 'resume_failed'; message: string };
 
 export interface HumanTakeoverServiceDeps {
@@ -243,6 +246,16 @@ export function createHumanTakeoverService(deps: HumanTakeoverServiceDeps): Huma
         // 409: another answer landed, or is running, between the check above and this resume.
         if (started.status === 409) {
           return { ok: false, code: 'takeover_already_answered' };
+        }
+        // The resume may have committed. The pointer stays: if it did, the session tip moved and
+        // the next listing drops the pointer; if not, the request can be answered again.
+        if (started.code === WRITE_OUTCOME_UNKNOWN_CODE) {
+          deps.logger.warn('A desktop takeover resume may or may not have started', {
+            session_id,
+            computer_id,
+            reason: started.message,
+          });
+          return { ok: false, code: 'outcome_unknown' };
         }
         return resumeFailed(started.message);
       }

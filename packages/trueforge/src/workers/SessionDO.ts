@@ -18,6 +18,7 @@ import { createTurnDrainedHook } from '../runtime/turnDrainedHook';
 import {
   freezeTurnIgnoringMissing,
   turnStartFailure,
+  WRITE_OUTCOME_UNKNOWN_CODE,
   type TurnExecutorFailure,
   type TurnStartResult,
 } from '../runtime/turnExecutor';
@@ -99,7 +100,7 @@ type HoldOutcome = 'settled' | 'budget' | 'lost';
 function startFailure(error: unknown): TurnExecutorFailure | undefined {
   if (error instanceof D1WriteOutcomeUnknownError) {
     // The write may have committed; a retry could fork the session a second time.
-    return { ok: false, status: 503, code: 'write_outcome_unknown', message: error.message };
+    return { ok: false, status: 503, code: WRITE_OUTCOME_UNKNOWN_CODE, message: error.message };
   }
   if (error instanceof D1ValueTooLargeError) {
     return { ok: false, status: 413, code: 'value_too_large', message: error.message };
@@ -224,7 +225,7 @@ export class SessionDO extends DurableObject {
       if (failure === undefined) {
         throw error;
       }
-      if (failure.code !== 'write_outcome_unknown') {
+      if (failure.code !== WRITE_OUTCOME_UNKNOWN_CODE) {
         this.ctx.storage.sql.exec('DELETE FROM started_turns WHERE turn_id = ?', turnId);
       }
       return failure;

@@ -1058,7 +1058,8 @@ export type DesktopAction =
   | { type: 'type'; text: string };
 
 /** How answering a pending takeover went; the desktop is released either way. */
-export type DesktopTakeoverResultKind = 'resumed' | 'already_answered' | 'not_pending' | 'resume_failed';
+export type DesktopTakeoverResultKind =
+  'resumed' | 'already_answered' | 'not_pending' | 'resume_failed' | 'outcome_unknown';
 
 export interface DesktopTakeoverResult {
   sessionId: string;

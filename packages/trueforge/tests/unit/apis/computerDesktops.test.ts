@@ -735,6 +735,7 @@ describe('handing back', () => {
   it.each([
     [{ ok: false, code: 'takeover_already_answered' }, 'already_answered'],
     [{ ok: false, code: 'resume_failed', message: 'answer it in the chat' }, 'resume_failed'],
+    [{ ok: false, code: 'outcome_unknown' }, 'outcome_unknown'],
   ] as const)('releases control and says so when the takeover could not be resumed (%j)', async (answer, result) => {
     const { call, relay, takeovers } = setup();
     takeovers.pending = [{ ...PENDING_DESK, agent_id: agents.desk }];
@@ -748,6 +749,9 @@ describe('handing back', () => {
     expect(body.takeover).toMatchObject({ session_id: 'ses_desk', result });
     if (answer.code === 'resume_failed') {
       expect(body.takeover).toMatchObject({ message: answer.message });
+    }
+    if (answer.code === 'outcome_unknown') {
+      expect(body.takeover).toMatchObject({ message: 'The agent may already have resumed; refresh to check' });
     }
     // Control went back, and nobody else recorded that.
     expect(await audited()).toEqual(['computer.desktop.hand_back by alice']);

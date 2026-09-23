@@ -91,6 +91,8 @@ const HTTP_EXCEPTION_CODES = {
 
 /** What a tool response that lost the race to another answer of the same pending call gets. */
 export const ALREADY_ANSWERED_CODE = 'already_answered';
+/** A start whose session write may or may not have committed; retrying could fork the session. */
+export const WRITE_OUTCOME_UNKNOWN_CODE = 'write_outcome_unknown';
 /** What a tool response continuing a session tip that is still running gets. */
 const TIP_RUNNING_CODE = 'tip_running';
 

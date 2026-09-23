@@ -508,7 +508,7 @@ describe('a desktop takeover', () => {
     agent.client.close();
   });
 
-  it('drops the request when the executor refuses the resume with anything but a conflict', async () => {
+  it('drops the request when the executor refuses the resume as invalid', async () => {
     const agent = await desktopAgent();
     const { sessionId } = await waitingSession(agent);
     const refusing: Pick<TurnExecutor, 'start'> = {
@@ -523,6 +523,28 @@ describe('a desktop takeover', () => {
     expect(
       await workersComputersService(env).relay(agent.computerId).listTakeoverPointers({ tenant_id: TENANT_ID }),
     ).toEqual([]);
+    expect(await turnsOf(sessionId)).toHaveLength(1);
+    agent.client.close();
+  });
+
+  it('keeps the request listed when the resume write may or may not have committed', async () => {
+    const agent = await desktopAgent();
+    const { sessionId, turnId } = await waitingSession(agent);
+    const unsure: Pick<TurnExecutor, 'start'> = {
+      start: () =>
+        Promise.resolve({ ok: false, status: 503, code: 'write_outcome_unknown', message: 'D1 did not answer' }),
+    };
+
+    expect(await resolve(takeovers(unsure), { computerId: agent.computerId, sessionId })).toEqual({
+      ok: false,
+      code: 'outcome_unknown',
+    });
+    expect(
+      await workersComputersService(env).relay(agent.computerId).listTakeoverPointers({ tenant_id: TENANT_ID }),
+    ).toMatchObject([{ session_id: sessionId, turn_id: turnId }]);
+    expect(
+      await takeovers().listPendingTakeovers({ tenant_id: TENANT_ID, computer_id: agent.computerId }),
+    ).toMatchObject([{ session_id: sessionId }]);
     expect(await turnsOf(sessionId)).toHaveLength(1);
     agent.client.close();
   });

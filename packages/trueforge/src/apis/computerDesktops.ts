@@ -49,6 +49,7 @@ const NO_SUCH_COMPUTER = 'No such computer';
 const NO_SUCH_AGENT = 'No such agent';
 const LEASE_REQUIRED_MESSAGE = 'Take control of the desktop first';
 const NOT_PENDING_MESSAGE = 'No takeover is pending for that session';
+const OUTCOME_UNKNOWN_MESSAGE = 'The agent may already have resumed; refresh to check';
 
 /** The service's resolution as the caller reads it. */
 function takeoverAnswer({
@@ -68,6 +69,8 @@ function takeoverAnswer({
       return { session_id: sessionId, result: 'already_answered', message: 'The takeover was already answered' };
     case 'resume_failed':
       return { session_id: sessionId, result: 'resume_failed', message: resolution.message };
+    case 'outcome_unknown':
+      return { session_id: sessionId, result: 'outcome_unknown', message: OUTCOME_UNKNOWN_MESSAGE };
   }
 }
 
