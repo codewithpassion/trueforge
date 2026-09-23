@@ -490,6 +490,27 @@ describe('TrueFoundryAgentStore', () => {
     expect(firstInvocationOrder(putRemoteAgent)).toBeLessThan(firstInvocationOrder(updateAgent));
   });
 
+  it('updateAgent clears the local description but sends the name to ServiceFoundry', async () => {
+    const previous = record({ external_id: 'sf-1', description: 'Finds papers' });
+    const updated = record({ external_id: 'sf-1', description: '' });
+    const getAgent = jest.fn(async () => previous);
+    const updateAgent = jest.fn(async () => updated);
+    const putRemoteAgent = jest.fn(async (input: PutRemoteAgentInput) => {
+      expect(input.description).toBe('research');
+      return { externalId: 'sf-1' };
+    });
+    const store = tfStore({
+      inner: mockInner({ getAgent, updateAgent }),
+      client: mockClient({ putRemoteAgent }),
+    });
+
+    await expect(store.updateAgent({ tenant_id: TENANT, id: previous.id, description: '' }, TXN)).resolves.toBe(
+      updated,
+    );
+    expect(putRemoteAgent).toHaveBeenCalledTimes(1);
+    expect(updateAgent).toHaveBeenCalledWith({ tenant_id: TENANT, id: previous.id, description: '' }, TXN);
+  });
+
   it('updateAgent puts remote agent then writes manifest and external_id when it changes', async () => {
     const previous = record({ external_id: 'sf-old' });
     const updatedManifest = manifest({ instructions: 'Updated.' });

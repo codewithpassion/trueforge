@@ -95,6 +95,34 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
     expect(await store.getAgent({ tenant_id: TENANT, name: 'research' })).toEqual(updated);
   });
 
+  it('round-trips an empty description and keeps it when update omits description', async () => {
+    const store = getStore();
+    const created = await store.createAgent({
+      tenant_id: TENANT,
+      created_by_subject: CREATED_BY_SUBJECT,
+      name: 'research',
+      description: '',
+      manifest: manifest(),
+      external_id: null,
+    });
+    expect(created.description).toBe('');
+    expect((await store.getAgent({ tenant_id: TENANT, id: created.id }))?.description).toBe('');
+
+    const described = await store.updateAgent({ tenant_id: TENANT, id: created.id, description: 'Now described.' });
+    expect(described?.description).toBe('Now described.');
+
+    const manifestOnly = await store.updateAgent({
+      tenant_id: TENANT,
+      id: created.id,
+      manifest: manifest({ instructions: 'Updated instructions.' }),
+    });
+    expect(manifestOnly?.description).toBe('Now described.');
+
+    const cleared = await store.updateAgent({ tenant_id: TENANT, id: created.id, description: '' });
+    expect(cleared?.description).toBe('');
+    expect((await store.getAgent({ tenant_id: TENANT, id: created.id }))?.description).toBe('');
+  });
+
   it('updateAgent returns undefined for unknown ids', async () => {
     const store = getStore();
     expect(

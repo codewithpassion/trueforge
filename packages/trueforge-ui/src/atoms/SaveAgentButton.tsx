@@ -121,7 +121,6 @@ function SaveAgentButtonContent({
     const normalizedName = name.trim();
     if (!normalizedName || !draftSpec.model.name.trim()) return;
     const normalizedDescription = description.trim();
-    if (!normalizedDescription) return;
     setSaving(true);
     setError(null);
     // An agent that does not exist yet cannot be on a computer's allowlist, so a create never

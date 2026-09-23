@@ -234,7 +234,7 @@ describe('SaveAgentButton', () => {
       'text-text-primary',
       'focus-visible:ring-focus-ring/40',
     );
-    expect(within(dialog).getByLabelText('Description')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Description (optional)')).toBeInTheDocument();
     expect(within(dialog).queryByRole('button', { name: 'Edit Model' })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole('button', { name: 'Edit Runtime Config' })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole('button', { name: 'Edit Connectors' })).not.toBeInTheDocument();
@@ -248,7 +248,7 @@ describe('SaveAgentButton', () => {
 
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
     fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'writer' } });
-    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Writes docs.' } });
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), { target: { value: 'Writes docs.' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() =>
@@ -285,7 +285,9 @@ describe('SaveAgentButton', () => {
 
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
     fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'latest-agent' } });
-    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Latest agent description.' } });
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), {
+      target: { value: 'Latest agent description.' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() =>
@@ -312,7 +314,7 @@ describe('SaveAgentButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
     fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'writer' } });
-    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Writes docs.' } });
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), { target: { value: 'Writes docs.' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() =>
@@ -339,7 +341,7 @@ describe('SaveAgentButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
     fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'writer' } });
-    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Writes docs.' } });
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), { target: { value: 'Writes docs.' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
 
     expect(updateAgentSpec).toHaveBeenCalledWith({
@@ -385,7 +387,7 @@ describe('SaveAgentButton', () => {
     fireEvent.click(trigger);
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
     expect(within(dialog).getByLabelText('Agent name')).toHaveValue('writer-clone');
-    expect(within(dialog).getByLabelText('Description')).toHaveValue('Writes docs.');
+    expect(within(dialog).getByLabelText('Description (optional)')).toHaveValue('Writes docs.');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() =>
@@ -414,7 +416,9 @@ describe('SaveAgentButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
     fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'my-agent' } });
-    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'My agent description.' } });
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), {
+      target: { value: 'My agent description.' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(saveAgent).toHaveBeenCalledOnce());
@@ -452,7 +456,7 @@ describe('SaveAgentButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }));
     const saveDialog = await screen.findByRole('dialog', { name: 'Save agent' });
     fireEvent.change(within(saveDialog).getByLabelText('Agent name'), { target: { value: 'preserved-agent' } });
-    fireEvent.change(within(saveDialog).getByLabelText('Description'), {
+    fireEvent.change(within(saveDialog).getByLabelText('Description (optional)'), {
       target: { value: 'Preserved agent description.' },
     });
     fireEvent.click(within(saveDialog).getByRole('button', { name: 'Save changes' }));
@@ -474,7 +478,9 @@ describe('SaveAgentButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
     fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'pending-agent' } });
-    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Pending agent description.' } });
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), {
+      target: { value: 'Pending agent description.' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
 
     expect(within(dialog).getByLabelText('Agent name')).toBeDisabled();
@@ -493,7 +499,7 @@ describe('SaveAgentButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
     fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'duplicate' } });
-    fireEvent.change(within(dialog).getByLabelText('Description'), {
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), {
       target: { value: 'Duplicate agent description.' },
     });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
@@ -516,7 +522,7 @@ describe('SaveAgentButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
     fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'bad name' } });
-    fireEvent.change(within(dialog).getByLabelText('Description'), {
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), {
       target: { value: 'Bad name agent description.' },
     });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
@@ -526,26 +532,30 @@ describe('SaveAgentButton', () => {
     expect(alert.textContent).toBe('line one\nline two\tindented');
   });
 
-  it('disables Save on create when description is empty', async () => {
-    renderButton();
+  it('saves a new agent without a description', async () => {
+    const saveAgent = vi.fn(async (): Promise<SaveAgentResult> => ({ agentId: 'agent-1' }));
+    renderButton({ saveAgent });
     fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save agent' });
-    fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'writer' } });
     expect(within(dialog).getByRole('button', { name: 'Save changes' })).toBeDisabled();
-    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Writes docs.' } });
-    expect(within(dialog).getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    fireEvent.change(within(dialog).getByLabelText('Agent name'), { target: { value: 'writer' } });
+    const save = within(dialog).getByRole('button', { name: 'Save changes' });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+
+    await waitFor(() => expect(saveAgent).toHaveBeenCalledOnce());
+    expect(saveAgent).toHaveBeenCalledWith(expect.not.objectContaining({ description: expect.anything() }));
+    expect(saveAgent).toHaveBeenCalledWith(expect.objectContaining({ agentName: 'writer', intent: 'create' }));
   });
 
-  it('disables Save on update when description is empty', async () => {
+  it('keeps Save enabled on update when description is blank', async () => {
     renderButton({
       children: <BoundMutableSaveButton agentId="writer" agentName="writer" description="Existing agent summary." />,
     });
     fireEvent.click(await screen.findByRole('button', { name: 'Update Agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'Update agent' });
     expect(within(dialog).getByRole('button', { name: 'Save changes' })).toBeEnabled();
-    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: '   ' } });
-    expect(within(dialog).getByRole('button', { name: 'Save changes' })).toBeDisabled();
-    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Updated summary.' } });
+    fireEvent.change(within(dialog).getByLabelText('Description (optional)'), { target: { value: '   ' } });
     expect(within(dialog).getByRole('button', { name: 'Save changes' })).toBeEnabled();
   });
 
@@ -560,7 +570,7 @@ describe('SaveAgentButton', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Update Agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'Update agent' });
     expect(within(dialog).getByLabelText('Agent name')).toHaveValue('writer');
-    expect(within(dialog).getByLabelText('Description')).toHaveValue('Existing agent summary.');
+    expect(within(dialog).getByLabelText('Description (optional)')).toHaveValue('Existing agent summary.');
   });
 
   it('enables Save Agent when tenant CREATE is granted', async () => {

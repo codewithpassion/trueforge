@@ -454,7 +454,6 @@ describe('harnessBuilderServer', () => {
     assert.deepEqual(result, { agentId: 'agt_new' });
     assert.deepEqual(requests.at(-1)?.body, {
       name: 'saved-agent',
-      description: 'saved-agent',
       manifest: {
         model: { name: 'test/model' },
         skills: [{ name: 'review', preload: false }],

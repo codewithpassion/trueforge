@@ -89,7 +89,7 @@ export function AgentOverflowMenu({
   const openClone = () => {
     if (agentSpec == null || !canCreate) return;
     setCloneName(cloneAgentName(agentName));
-    setCloneDescription(description?.trim() || agentName);
+    setCloneDescription(description?.trim() ?? '');
     setCloneSpec(cloneAgentSpec(agentSpec));
     setCloneError(null);
     setCloneOpen(true);
@@ -99,7 +99,7 @@ export function AgentOverflowMenu({
     if (!canCreate || builder == null || cloneSpec == null) return;
     const normalizedName = cloneName.trim();
     const normalizedDescription = cloneDescription.trim();
-    if (!normalizedName || !normalizedDescription || !cloneSpec.model.name.trim()) return;
+    if (!normalizedName || !cloneSpec.model.name.trim()) return;
     setBusy(true);
     setCloneError(null);
     try {

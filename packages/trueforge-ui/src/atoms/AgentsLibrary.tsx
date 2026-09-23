@@ -190,7 +190,7 @@ export function AgentLibraryRow({
   const hasConfiguration = modelLabel != null || skillsCount > 0 || mcpCount > 0;
   const hasNoSchedules = scheduleSummary != null && scheduleSummary.count === 0;
   const storedDescription = agent.description?.trim() || null;
-  // Create falls back to name when description is missing; don't echo it under the title.
+  // Older creates and imports stored the name as description; don't echo it under the title.
   const description = storedDescription != null && storedDescription !== agent.name ? storedDescription : null;
 
   return (

@@ -331,7 +331,7 @@ describe('AgentsLibrary', () => {
 
     const drawer = await screen.findByRole('dialog', { name: 'Clone Agent' });
     expect(within(drawer).getByLabelText('Agent name')).toHaveValue('writer-clone');
-    expect(within(drawer).getByLabelText('Description')).toHaveValue('Writes release notes.');
+    expect(within(drawer).getByLabelText('Description (optional)')).toHaveValue('Writes release notes.');
     expect(saveAgent).not.toHaveBeenCalled();
 
     fireEvent.click(within(drawer).getByRole('button', { name: 'Save changes' }));

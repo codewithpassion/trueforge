@@ -143,7 +143,7 @@ export function createAgentsRouter<TTransaction>(deps: AgentsRouterDeps<TTransac
       const record = await deps.resolveAgentStore(c).createAgent({
         tenant_id: requestContext.tenant_id,
         name: body.name,
-        description: body.description,
+        description: body.description ?? '',
         manifest,
         external_id: null,
         created_by_subject: createdBySubjectFromRequestContext(requestContext),

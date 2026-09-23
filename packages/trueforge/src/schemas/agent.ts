@@ -14,15 +14,16 @@ const RESERVED_AGENT_NAMES = new Set(['tfg', 'trueforge']);
 
 export const AGENT_DESCRIPTION_MAX_LENGTH = 1024;
 
-export const AgentDescriptionSchema = z.string().trim().min(1).max(AGENT_DESCRIPTION_MAX_LENGTH);
+/** Optional free text; empty string means no description. */
+export const AgentDescriptionSchema = z.string().trim().max(AGENT_DESCRIPTION_MAX_LENGTH);
 
-/** Create body: unique immutable `name` plus manifest. `id` is never client-supplied. */
+/** Create body: unique immutable `name` plus manifest; `description` optional. `id` is never client-supplied. */
 export const CreateAgentRequestSchema = z
   .object({
     name: NameSchema.refine(name => !RESERVED_AGENT_NAMES.has(name), {
       message: 'Agent name is reserved, cannot be used',
     }),
-    description: AgentDescriptionSchema,
+    description: AgentDescriptionSchema.optional(),
     manifest: AgentSpecSchema,
   })
   .strict()

@@ -17,7 +17,10 @@ beforeAll(() => {
   };
 });
 
-function renderMenu(agentSpec: AgentSpec) {
+function renderMenu(
+  agentSpec: AgentSpec,
+  { description }: { description?: string } = { description: 'runs the release' },
+) {
   const saved: SaveAgentRequest[] = [];
   const saveAgent = vi.fn(async (request: SaveAgentRequest): Promise<SaveAgentResult> => {
     saved.push(request);
@@ -27,7 +30,7 @@ function renderMenu(agentSpec: AgentSpec) {
     <ServerProvider server={createMockAgentUIServer({ saveAgent })}>
       <AgentOverflowMenu
         agentName="release-bot"
-        description="runs the release"
+        {...(description === undefined ? {} : { description })}
         agentSpec={agentSpec}
         canMutate
         canManageSchedules={false}
@@ -80,5 +83,16 @@ describe('AgentOverflowMenu clone', () => {
       expect(saved).toHaveLength(1);
     });
     expect(saved[0]?.agentSpec.config).toEqual({ sandbox: { enabled: true } });
+  });
+
+  it('clones an agent that has no description without inventing one', async () => {
+    const saved = renderMenu({ model: { name: 'openai-main/gpt-4.1' } }, {});
+
+    await clone();
+
+    await waitFor(() => {
+      expect(saved).toHaveLength(1);
+    });
+    expect(saved[0]?.description).toBe('');
   });
 });

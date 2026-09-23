@@ -143,18 +143,17 @@ export function createHarnessBuilderServer(
         if (!existing) {
           return {};
         }
-        // Omit empty description on update so a reloaded draft (no description in session
-        // manifest) preserves the stored value instead of failing min(1).
+        // Omit empty description on update: a reloaded draft carries no description, and
+        // sending '' would clear the stored value.
         await client.agents.update(existing.id, {
           ...(description ? { description } : {}),
           manifest,
         });
         return { agentId: existing.id };
       }
-      // Create requires description; fall back to name for clone of pre-description agents.
       const created = await client.agents.create({
         name: agentName,
-        description: description || agentName,
+        ...(description ? { description } : {}),
         manifest,
       });
       return { agentId: created.data.id };

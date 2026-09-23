@@ -39,7 +39,7 @@ export function SaveAgentForm({
     errorRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
   }, [error]);
 
-  const canSave = name.trim() !== '' && spec.model.name.trim() !== '' && description.trim() !== '';
+  const canSave = name.trim() !== '' && spec.model.name.trim() !== '';
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -56,7 +56,9 @@ export function SaveAgentForm({
         </label>
 
         <label className="mb-3 block">
-          <span className="mb-1.5 block text-sm font-medium">Description</span>
+          <span className="mb-1.5 block text-sm font-medium">
+            Description <span className="font-normal text-text-secondary">(optional)</span>
+          </span>
           <textarea
             value={description}
             disabled={saving}

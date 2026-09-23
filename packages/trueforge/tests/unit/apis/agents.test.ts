@@ -11,7 +11,7 @@ import { SqliteModelProviderStore } from '../../../src/db/sqlite/model-provider-
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
 import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkillStore';
 import { createNodeSandboxIntegration } from '../../../src/sandbox/nodeSandboxIntegration';
-import { ListAgentsResponseSchema } from '../../../src/schemas/agent';
+import { AGENT_DESCRIPTION_MAX_LENGTH, ListAgentsResponseSchema } from '../../../src/schemas/agent';
 
 const modelProvider = {
   type: 'anthropic' as const,
@@ -176,6 +176,43 @@ describe('agents router', () => {
     expect(updatedJson.data.manifest.instructions).toBe('Updated instructions.');
   });
 
+  it('POST without a description stores an empty one', async () => {
+    const missing = await router.request('/', jsonInit('POST', { name: 'no-desc', manifest }));
+    expect(missing.status).toBe(201);
+    const missingJson = (await missing.json()) as { data: WireAgent };
+    expect(missingJson.data.description).toBe('');
+
+    const fetched = await router.request(`/${missingJson.data.id}`);
+    expect(fetched.status).toBe(200);
+    expect(((await fetched.json()) as { data: WireAgent }).data.description).toBe('');
+
+    const blank = await router.request('/', jsonInit('POST', { ...writeBody, name: 'blank-desc', description: '   ' }));
+    expect(blank.status).toBe(201);
+    expect(((await blank.json()) as { data: WireAgent }).data.description).toBe('');
+  });
+
+  it('PUT with an empty description clears the stored one', async () => {
+    const created = await router.request(
+      '/',
+      jsonInit('POST', { ...writeBody, name: 'clear-desc', description: 'Clear me.' }),
+    );
+    expect(created.status).toBe(201);
+    const createdJson = (await created.json()) as { data: WireAgent };
+
+    const cleared = await router.request(
+      `/${createdJson.data.id}`,
+      jsonInit('PUT', { description: '', manifest: updateBody.manifest }),
+    );
+    expect(cleared.status).toBe(200);
+    expect(((await cleared.json()) as { data: WireAgent }).data.description).toBe('');
+
+    const tooLong = await router.request(
+      `/${createdJson.data.id}`,
+      jsonInit('PUT', { description: 'x'.repeat(AGENT_DESCRIPTION_MAX_LENGTH + 1), manifest: updateBody.manifest }),
+    );
+    expect(tooLong.status).toBe(400);
+  });
+
   it('PUT rejects metadata in the request body', async () => {
     const created = await router.request('/', jsonInit('POST', { ...writeBody, name: 'no-meta' }));
     expect(created.status).toBe(201);
@@ -274,14 +311,11 @@ describe('agents router', () => {
     );
     expect(unknownModel.status).toBe(422);
 
-    const blankDescription = await router.request(
+    const longDescription = await router.request(
       '/',
-      jsonInit('POST', { ...writeBody, name: 'blank-desc', description: '   ' }),
+      jsonInit('POST', { ...writeBody, name: 'long-desc', description: 'x'.repeat(AGENT_DESCRIPTION_MAX_LENGTH + 1) }),
     );
-    expect(blankDescription.status).toBe(400);
-
-    const missingDescription = await router.request('/', jsonInit('POST', { name: 'no-desc', manifest }));
-    expect(missingDescription.status).toBe(400);
+    expect(longDescription.status).toBe(400);
 
     const first = await router.request('/', jsonInit('POST', { ...writeBody, name: 'alpha' }));
     expect(first.status).toBe(201);
