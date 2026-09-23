@@ -94,7 +94,7 @@ function decisionSummary(input: { interaction: InboundInteraction }): string {
 
 /**
  * Turns a verified inbound event into a turn: dedupe, get-or-create the conversation's
- * session, start a non-streaming turn as the admin who connected the integration, and
+ * session, start a non-streaming turn as the person who connected the integration, and
  * record the reply owed in the outbox.
  */
 export class IntegrationRouter<TTransaction> {

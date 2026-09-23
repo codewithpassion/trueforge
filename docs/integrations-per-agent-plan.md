@@ -48,9 +48,10 @@ One migration per backend, paired as the port plan requires: Kysely SQLite, Kyse
 3. Remove the key: `json_remove(manifest, '$.default_agent_name')` on SQLite/D1, `manifest - 'default_agent_name'` on Postgres.
 4. Make both columns `NOT NULL`, add the FK, and swap the unique index. On SQLite/D1 this is the usual table rebuild.
 
-**An integration whose agent no longer exists stops the migration.** Step 4 fails on the `NOT NULL` for that row and the whole migration rolls back. That is intended: an admin decides whether to recreate the agent or delete the integration. The migration does not guess.
+**An integration whose agent no longer exists stops the migration.** That is intended: an admin decides whether to recreate the agent or delete the integration. The migration does not guess.
 
-- The raw constraint error does not say which integration is at fault. Before step 4, each migration runs a check that throws a readable error listing the orphaned integration ids and the agent names they point at (Kysely) or, on D1 where a `.sql` file cannot branch, the release notes carry the query that lists them.
+- On Kysely (SQLite and Postgres) the migration checks for orphans before changing anything and throws a readable error listing the orphaned integration ids and the agent names they point at.
+- On D1, where a `.sql` file cannot branch, the `NOT NULL` insert into the rebuilt table fails and the whole batch rolls back. The raw constraint error does not say which integration is at fault, so the migration file's header and the release notes carry the query that lists them.
 - The fix is done on the old version, before upgrading, from Settings → Integrations, which still exists there.
 
 ### 2.3 Schemas
@@ -147,4 +148,4 @@ P1 and P2 land together in one release. P1 alone would leave the Settings sectio
 - **Upgrade blocked by an orphan.** Intended, but it stops a deploy until an admin acts. The release notes must lead with the check query and the two fixes (recreate the agent or delete the integration).
 - **Wider set of people holding Slack credentials.** Agent managers can now paste bot tokens and see redacted credentials. Nothing is shown unredacted, same as before.
 - **Workspace admins may see several TrueForge apps.** Each agent's bot is a separate Slack app to install and approve. That is the cost of per-agent bot identities.
-- **No tenant-wide view.** Admins lose the single list of every Slack connection. Whether an admin sees every integration through `GET /api/v1/integrations` depends on whether the `Authorizer` treats admins as managers of every agent; check that in P1 and add an admin bypass on the list if it does not.
+- **No tenant-wide view.** Admins lose the single list of every Slack connection in Settings. Resolved: an admin still sees every integration through `GET /api/v1/integrations`, because the list skips the creator/manager filter for admins, and may open, update, delete, and fetch the app manifest and decisions of any integration.

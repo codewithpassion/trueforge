@@ -122,7 +122,7 @@ export function createIntegrationEventsRouter<TTransaction>(deps: IntegrationEve
       return c.body(null, 200);
     }
 
-    // Turns run as the admin who connected the integration, like schedule runs.
+    // Turns run as the person who connected the integration, like schedule runs.
     c.set(
       'request_context',
       requestContextFromCreatedBySubject({

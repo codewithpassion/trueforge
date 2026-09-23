@@ -23,7 +23,7 @@ Non-goals:
 - Built-in capabilities are a fixed list in `trueforge-core/src/agent-session/builtinsFromSpec.ts`.
 - MCP servers and skills are configuration, not code.
 
-**Sessions keyed by an outside id.** `POST /api/internal/sessions/get-or-create-by-external-id` returns the session for an `external_id` that is unique per tenant, or creates it. `external_id` is at most 128 characters. Session `source` is a discriminated schema, `SessionSourceSchema` in `trueforge-core/src/agent-session/schemas/session.ts`, and today its only variant is `{ type: "schedule", id, run_id }`.
+**Sessions keyed by an outside id.** `POST /api/internal/sessions/get-or-create-by-external-id` returns the session for an `external_id` that is unique per tenant, or creates it. `external_id` is at most 128 characters. Session `source` is a discriminated schema, `SessionSourceSchema` in `trueforge-core/src/agent-session/schemas/session.ts`, with two variants: `{ type: "schedule", id, run_id }` and `{ type: "integration", id, conversation_key }`.
 
 **Running as a user without a request.** Schedules store `created_by_subject` and rebuild a request context with `requestContextFromCreatedBySubject` in `src/auth/identity.ts`. An integration runs turns the same way, as the person who connected it.
 
@@ -190,7 +190,7 @@ Each phase follows the port process:
 1. Schemas: `IntegrationManifestSchema` with its Slack variant (schema only; the adapter lands in I2), plus the `integration` session source.
 2. Stores and migrations on SQLite, Postgres, and D1, with contract tests in the shared store suite.
 3. `IntegrationRouter`, the outbox, and `TurnCompletionNotifier`, wired into Node `turnRunner` and Workers `SessionDO`.
-4. Settings routes and the ingress route, which returns `404` for unknown integrations and `501` for types without an adapter.
+4. CRUD routes (now at `/api/v1/integrations`) and the ingress route, which returns `404` for unknown integrations and `501` for types without an adapter.
 5. Tests:
    - router idempotency (the same `event_id` twice gives one turn),
    - one outbox row per turn,
@@ -201,7 +201,7 @@ Each phase follows the port process:
 ### Phase I2: Slack messaging
 
 1. The Slack adapter: signature verification, parsing, filtering, mention stripping, mrkdwn conversion, chunking, and `chat.postMessage` over `fetch`. No Slack SDK is needed.
-2. A settings UI section to connect Slack. It shipped first as a host page in `packages/frontend`, and moved into `SettingsBuilder` in I2.5 once `CatalogServer` gained an `integrationCatalog` slot through a types-only `pnpm patch`; the host page, its route helper and its nav override were deleted in the same change. The per-agent change later moved it to the agent's Integrations tab and removed the Settings section.
+2. A settings UI section to connect Slack. It shipped first as a host page in `packages/frontend`, moved into `SettingsBuilder` through an `integrationCatalog` port in I2.5, and was later replaced by the agent's Integrations tab.
 3. Tests:
    - signature fixtures (valid, bad signature, stale timestamp, wrong secret),
    - `url_verification`,
@@ -238,7 +238,7 @@ Each phase follows the port process:
 - **A rule never posts buttons.** A click on a channel post derives `slack:<team>:<channel>:<message_ts>`, which is not the run session's `external_id`, so the resume could never find the turn — and the layer deliberately does not take session identity from the button. A held run is reported as a status line instead, and the decision is taken in TrueForge.
 - **One delivery per rule per turn**, collapsed per channel: two rules naming the same channel both match, and the unique `(turn_id, conversation_key)` key lets only the first row land, so nobody is told twice. That collapse is the definition of "one per rule".
 - **Rule channels are separate from `allowed_channel_ids`** — one is where the bot posts, the other where it listens — and the bot must be invited to the posting channel, because `chat:write` alone does not reach a channel it is not in. Adding `chat:write.public` would be a scope change requiring a reinstall, so the guide says "invite the bot" instead.
-- **Added D1 statements per finished schedule turn:** 1 (`listIntegrations`). If no connected integration carries a rule, that is the whole cost. Otherwise +1 `getSchedule` (the session source carries the schedule id; rules name it), +1 turn read, and per matching channel 3 (enqueue, claim, settle) — so `2 + 1 + 3N`. A turn from any other source costs nothing new. Since the per-agent change the schedule is read first and only its agent's integrations are listed, so the base cost is always 2; a rule no longer matches another agent's schedule of the same name.
+- **Added D1 statements per finished schedule turn:** 2 — `getSchedule` (the session source carries the schedule id; rules name it), then `listIntegrations` for that schedule's agent only, so a rule never matches another agent's schedule of the same name. If no connected integration carries a rule, that is the whole cost. Otherwise +1 turn read, and per matching channel 3 (enqueue, claim, settle) — so `2 + 1 + 3N`. A turn from any other source costs nothing new.
 - **Why not MCP.** Posting stays out of the agent's tool set, so results arrive even when the agent does not call a Slack tool.
 
 ## 5. Rules
