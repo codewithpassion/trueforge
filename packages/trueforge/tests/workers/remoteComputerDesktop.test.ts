@@ -6,6 +6,7 @@
 import {
   AgentSpecSchema,
   CancellationReason,
+  createInMemoryFileStore,
   Sessions,
   type TurnStreamingEvent,
 } from '@truefoundry/trueforge-core/agent-session';
@@ -532,6 +533,73 @@ describe('the desktop relay', () => {
     client.close();
   });
 
+  it('ends clearing when the machine answers the clear with read_only or desktop_unavailable', async () => {
+    for (const code of ['read_only', 'desktop_unavailable']) {
+      const { computerId, client } = await desktopComputer();
+      await takeControl({ computerId, userId: 'u-1' });
+      client.answerWith(holding('desktop_clipboard_set'));
+      const handedBack = handBack({ computerId, userId: 'u-1' });
+      await waitFor(() => client.held.length === 1);
+      for (const id of client.held.splice(0)) {
+        client.sendRaw(JSON.stringify({ id, error: { code, message: 'refused' } }));
+      }
+      // Nothing is left to clear: a read-only machine never set it, and a restarted X dropped it.
+      await expect(handedBack).resolves.toEqual({ released: true, clipboard_cleared: true });
+      await settle();
+      expect({ code, lease: await readStoredLease(computerId) }).toEqual({ code, lease: undefined });
+      client.answerWith(answer);
+      expect((await agentOn({ computerId, sessionId: 's-a' }).screenshot()).ok).toBe(true);
+      expect(clears(client)).toHaveLength(1);
+      client.close();
+    }
+  });
+
+  it('lets commands and file transfers through after three failed clears, but not the desktop until one succeeds', async () => {
+    const { computerId, client } = await desktopComputer();
+    await takeControl({ computerId, userId: 'u-1' });
+    client.answerWith(holding('desktop_clipboard_set'));
+    const failHeldClear = async () => {
+      await waitFor(() => client.held.length === 1);
+      for (const id of client.held.splice(0)) {
+        client.sendRaw(JSON.stringify({ id, error: { code: 'op_failed', message: 'xclip exited' } }));
+      }
+      await settle();
+    };
+    const handedBack = handBack({ computerId, userId: 'u-1' });
+    await failHeldClear();
+    await expect(handedBack).resolves.toEqual({ released: true, clipboard_cleared: false });
+    const agent = agentOn({ computerId, sessionId: 's-a' });
+    expect(refusedWith(await agent.screenshot())).toBe('desktop_busy');
+    await failHeldClear();
+    expect(refusedWith(await agent.exec())).toBe('desktop_busy');
+    await failHeldClear();
+    expect(await readStoredLease(computerId)).toEqual({ kind: 'clearing', failed_clears: 3 });
+
+    // The count is stored, so a woken object lets commands through too.
+    await evictDurableObject(relayStub(computerId));
+    for (const op of ['exec', 'fileGet', 'filePut'] as const) {
+      expect({ op, ok: (await agent[op]()).ok }).toEqual({ op, ok: true });
+    }
+    for (const op of ['screenshot', 'input', 'clipboardGet'] as const) {
+      expect({ op, reason: refusedWith(await agent[op]()) }).toEqual({ op, reason: 'desktop_busy' });
+    }
+
+    // Those ops sent the clear again; once the machine confirms it, the desktop is back.
+    client.answerWith(answer);
+    client.releaseHeld({ ok: true });
+    await settle();
+    expect(await readStoredLease(computerId)).toBeUndefined();
+    expect((await agent.screenshot()).ok).toBe(true);
+    client.close();
+  });
+
+  it('refuses a person on a computer that never connected, so it has no tenant', async () => {
+    await expect(takeControl({ computerId: unique('never-connected'), userId: 'u-1' })).resolves.toMatchObject({
+      ok: false,
+      reason: 'forbidden',
+    });
+  });
+
   it('expires an idle agent lease after ten minutes, and an idle person after five with the clipboard cleared', async () => {
     const { computerId, client } = await desktopComputer();
     const realNow = Date.now.bind(Date);
@@ -653,6 +721,7 @@ async function startDesktopTurn({
       eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
       logger,
       sandboxIntegration: computerIntegration(desktopLeases),
+      fileStore: createInMemoryFileStore(),
       onTurnDrained: withHook
         ? createTurnDrainedHook({
             deliver: () => Promise.resolve(),

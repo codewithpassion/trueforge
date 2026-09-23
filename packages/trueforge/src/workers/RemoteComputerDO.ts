@@ -22,6 +22,7 @@ import {
   type RelayPrincipal,
   RelayPrincipalSchema,
   type RelayRequestInput,
+  type ReplyError,
   type RequestFailureReason,
   type RequestOutcome,
   STALE_AFTER_MS,
@@ -50,6 +51,8 @@ interface SocketAttachment {
 
 interface PendingEntry {
   readonly settle: (outcome: RequestOutcome) => void;
+  /** Sees the machine's own error code, which the outcome folds into `bad_request`. */
+  readonly onReplyError: ((error: ReplyError) => void) | undefined;
   readonly generation: number;
   readonly startedAt: number;
   readonly isExec: boolean;
@@ -150,12 +153,12 @@ type HeldDesktop = z.infer<typeof HeldDesktopSchema>;
 
 /**
  * Who controls the desktop; absent means nobody. `clearing` is the gap after a person's control
- * ends and before the machine confirms both clipboard selections are empty. It is stored, so a
- * clear that failed is not forgotten when the object hibernates.
+ * ends and before the machine confirms both clipboard selections are empty. It is stored, with the
+ * run of clears the machine failed, so neither is forgotten when the object hibernates.
  */
 const DesktopControlSchema = z.discriminatedUnion('kind', [
   HeldDesktopSchema,
-  z.object({ kind: z.literal('clearing') }),
+  z.object({ kind: z.literal('clearing'), failed_clears: z.number().int().nonnegative() }),
 ]);
 type DesktopControl = z.infer<typeof DesktopControlSchema>;
 
@@ -190,6 +193,18 @@ const CLEAR_CLIPBOARD_OP: Record<string, unknown> = {
   text: '',
   selections: ['clipboard', 'primary'],
 };
+
+/**
+ * Answers to a clear that mean there is nothing left to clear: a read-only machine never let anyone
+ * set the clipboard, and a desktop that went down took both selections with its X server.
+ */
+const NOTHING_TO_CLEAR_CODES: ReadonlySet<string> = new Set(['read_only', 'desktop_unavailable']);
+
+/**
+ * After this many failed clears in a row, agent commands and file transfers run again, so a broken
+ * clipboard tool cannot stop an agent for good. Desktop ops stay refused until a clear succeeds.
+ */
+const FAILED_CLEARS_BEFORE_COMMANDS = 3;
 
 /** What the lease decided about one op: send it, send it and renew, or refuse it. */
 type LeaseDecision =
@@ -405,6 +420,7 @@ export class RemoteComputerDO extends DurableObject {
     this.#pending.delete(reply.id);
     this.#release(entry);
     if (!reply.ok) {
+      entry.onReplyError?.(reply.error);
       entry.settle({
         ok: false,
         reason: 'bad_request',
@@ -573,7 +589,8 @@ export class RemoteComputerDO extends DurableObject {
   /**
    * The per-op check against the one desktop controller. Under a person's control, and while their
    * clipboard is being cleared, every agent op but `cancel` is refused: `exec` runs with DISPLAY
-   * set, so it could read the screen or clipboard behind the tools.
+   * set, so it could read the screen or clipboard behind the tools. Once the machine has failed
+   * enough clears in a row, that risk is accepted for commands and file transfers.
    */
   #decide({ op, principal, now }: { op: string; principal: RelayPrincipal; now: number }): LeaseDecision {
     const control = this.#currentControl(now);
@@ -583,6 +600,9 @@ export class RemoteComputerDO extends DurableObject {
         return { kind: 'send' };
       }
       if (control?.kind === 'clearing') {
+        if (!desktop && control.failed_clears >= FAILED_CLEARS_BEFORE_COMMANDS) {
+          return { kind: 'send' };
+        }
         return { kind: 'refuse', reason: 'desktop_busy', message: CLEARING_MESSAGE };
       }
       if (control?.holder.kind === 'human') {
@@ -647,7 +667,7 @@ export class RemoteComputerDO extends DurableObject {
 
   /** A person's control ends here; nobody drives or reads the desktop until the clear is confirmed. */
   #startClearing(): DesktopControl {
-    const clearing: DesktopControl = { kind: 'clearing' };
+    const clearing: DesktopControl = { kind: 'clearing', failed_clears: 0 };
     this.#setControl(clearing);
     void this.#clearClipboard();
     return clearing;
@@ -680,22 +700,32 @@ export class RemoteComputerDO extends DurableObject {
   /**
    * Ends the clearing state once the machine confirms both selections are empty. A clear that fails,
    * most often because the machine is offline, leaves the desktop clearing on purpose: the next op,
-   * alarm or reconnect sends it again, and until one succeeds nobody gets the desktop.
+   * alarm or reconnect sends it again, and until one succeeds nobody gets the desktop. Only failures
+   * from a machine that was reached count towards letting commands through; an offline one says
+   * nothing about whether its clipboard can be cleared.
    */
   async #sendClear(): Promise<boolean> {
     // With no desktop running there is no X server, and so no selection left for anyone to read.
     if (this.#hello?.capabilities.desktop === true) {
+      let replyCode: string | undefined;
       const outcome = await this.#dispatch({
         op: CLEAR_CLIPBOARD_OP,
         timeoutMs: DESKTOP_CLIPBOARD_TIMEOUT_MS,
         isExec: false,
         startedAt: Date.now(),
+        onReplyError: error => {
+          replyCode = error.code;
+        },
       });
-      if (!outcome.ok) {
+      if (!outcome.ok && (replyCode === undefined || !NOTHING_TO_CLEAR_CODES.has(replyCode))) {
         this.#logger.warn('Could not clear a remote desktop clipboard', {
           computer_id: this.ctx.id.name,
           reason: outcome.reason,
+          reply_code: replyCode,
         });
+        if (replyCode !== undefined || outcome.reason === 'timeout') {
+          this.#countFailedClear();
+        }
         return false;
       }
     }
@@ -703,6 +733,21 @@ export class RemoteComputerDO extends DurableObject {
       this.#setControl(undefined);
     }
     return true;
+  }
+
+  #countFailedClear(): void {
+    const control = this.#control;
+    if (control?.kind !== 'clearing') {
+      return;
+    }
+    const failedClears = control.failed_clears + 1;
+    this.#setControl({ kind: 'clearing', failed_clears: failedClears });
+    if (failedClears === FAILED_CLEARS_BEFORE_COMMANDS) {
+      this.#logger.error('Remote desktop clipboard clears keep failing; commands run again, desktop ops stay refused', {
+        computer_id: this.ctx.id.name,
+        failed_clears: failedClears,
+      });
+    }
   }
 
   /** Whether the caller's tenant owns this computer, as `request()` decides it. */
@@ -742,7 +787,7 @@ export class RemoteComputerDO extends DurableObject {
     if (this.#meta.revoked) {
       return { ok: false, reason: 'revoked', message: `Computer ${this.#name()} has been revoked` };
     }
-    if (this.#meta.tenant_id !== null && this.#meta.tenant_id !== tenant_id) {
+    if (!this.#ownedBy(tenant_id)) {
       return { ok: false, reason: 'forbidden', message: 'This computer belongs to another tenant' };
     }
     if (this.#hello?.capabilities.desktop !== true) {
@@ -795,11 +840,13 @@ export class RemoteComputerDO extends DurableObject {
     timeoutMs,
     isExec,
     startedAt,
+    onReplyError,
   }: {
     op: Record<string, unknown>;
     timeoutMs: number;
     isExec: boolean;
     startedAt: number;
+    onReplyError?: (error: ReplyError) => void;
   }): Promise<RequestOutcome> {
     const socket = this.#currentSocket();
     if (socket === undefined) {
@@ -829,7 +876,7 @@ export class RemoteComputerDO extends DurableObject {
       settle = resolve;
     });
     // Registered before the write, so a reply that arrives first is never dropped.
-    this.#pending.set(id, { settle, generation, startedAt, isExec });
+    this.#pending.set(id, { settle, onReplyError, generation, startedAt, isExec });
     const frame = JSON.stringify({ id, ...op });
     if (frame.length > MAX_FRAME_BYTES) {
       this.#discard(id);
