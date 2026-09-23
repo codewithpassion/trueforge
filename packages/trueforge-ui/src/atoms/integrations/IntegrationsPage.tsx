@@ -124,6 +124,8 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
     setLoading(true);
     setError(null);
     setFormError(null);
+    setBusy(false);
+    setScheduleNames([]);
     setSelectedId(null);
     setDetailForm(EMPTY_INTEGRATION_FORM);
     setBotToken('');
@@ -213,16 +215,19 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
     setFormError(null);
   };
 
-  const runMutation = async (fn: () => Promise<void>, setMutationError = setError) => {
+  const runMutation = async (fn: (stale: () => boolean) => Promise<void>, setMutationError = setError) => {
+    // A request for an agent the page has since left must not touch the new one.
+    const requestedFor = agentName;
+    const stale = () => agentNameRef.current !== requestedFor;
     setBusy(true);
     setError(null);
     try {
-      await fn();
+      await fn(stale);
       await refresh();
     } catch (err) {
-      setMutationError(getErrorMessage(err, 'Request failed'));
+      if (!stale()) setMutationError(getErrorMessage(err, 'Request failed'));
     } finally {
-      setBusy(false);
+      if (!stale()) setBusy(false);
     }
   };
 
@@ -235,7 +240,7 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
       return;
     }
     setFormError(null);
-    void runMutation(async () => {
+    void runMutation(async stale => {
       const created = await integrationServer.createIntegration({
         type: 'slack',
         agentName,
@@ -245,7 +250,7 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
         approverUserIds: parseApproverUserIds(addForm.approverUserIds),
         notificationRules: completedNotificationRules(addForm.notificationRules),
       });
-      if (agentNameRef.current !== agentName) return;
+      if (stale()) return;
       setAddOpen(false);
       setAddForm(EMPTY_INTEGRATION_FORM);
       openDetail(created);
@@ -260,10 +265,11 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
       setError(problem);
       return;
     }
-    void runMutation(async () => {
+    void runMutation(async stale => {
       const saved = await integrationServer.updateIntegration(
         toUpdateIntegrationRequest({ id: selected.id, form: detailForm, botToken, signingSecret }),
       );
+      if (stale()) return;
       setBotToken('');
       setSigningSecret('');
       toaster?.showSuccess({ title: saved.status === 'connected' ? 'Slack connected' : 'Saved' });
@@ -272,9 +278,9 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
 
   const handleDisconnect = () => {
     if (selected === null) return;
-    void runMutation(async () => {
+    void runMutation(async stale => {
       await integrationServer.deleteIntegration({ id: selected.id });
-      setSelectedId(null);
+      if (!stale()) setSelectedId(null);
     });
   };
 

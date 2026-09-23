@@ -458,9 +458,13 @@ describe('IntegrationsPage agent switch', () => {
   const FOR_B: IntegrationBase = { ...PENDING, id: 'int-b', agentName: 'agent-b', botDisplayName: 'b-bot' };
 
   /** One server across rerenders, so only the page's agent changes between them. */
-  function switchableServer(listIntegrations: IntegrationServer['listIntegrations']) {
+  function switchableServer(
+    listIntegrations: IntegrationServer['listIntegrations'],
+    overrides: { port?: Partial<IntegrationServer>; server?: Partial<AgentUIServer> } = {},
+  ) {
     return createMockAgentUIServer({
-      integrations: createMockIntegrationServer({ listIntegrations }),
+      integrations: createMockIntegrationServer({ listIntegrations, ...overrides.port }),
+      ...overrides.server,
       sessions: createMockAgentSessionsServer({
         getAgent: async ({ agentId }) => ({
           agentId,
@@ -551,5 +555,79 @@ describe('IntegrationsPage agent switch', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /b-bot/ }));
     expect(await screen.findByLabelText('Bot user OAuth token')).toHaveValue('');
+  });
+
+  it("keeps a failed save for the previous agent off the next agent's page", async () => {
+    let rejectSave: (err: Error) => void = () => undefined;
+    const server = switchableServer(async ({ agentNames }) => (agentNames?.[0] === 'agent-a' ? [FOR_A] : [FOR_B]), {
+      port: {
+        updateIntegration: () =>
+          new Promise((_resolve, reject) => {
+            rejectSave = reject;
+          }),
+        getIntegrationSetupManifest: async () => ({
+          requestUrl: 'https://trueforge.test/api/v1/integrations/int-b/events',
+          interactionsRequestUrl: 'https://trueforge.test/api/v1/integrations/int-b/interactions',
+          manifestJson: MANIFEST_JSON,
+          createAppUrl: 'https://api.slack.com/apps?new_app=1',
+        }),
+      },
+    });
+    const { rerender } = render(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-a" />
+      </ServerProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /a-bot/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+
+    rerender(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-b" />
+      </ServerProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /b-bot/ }));
+    await screen.findByText(/display_information/);
+
+    await act(async () => {
+      rejectSave(new Error('a-save-failed'));
+    });
+
+    expect(screen.queryByText(/a-save-failed/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  });
+
+  it("does not offer the previous agent's schedule names when the next agent's list fails", async () => {
+    const listSchedules = vi.fn(async ({ agentIds }: { agentIds?: string[] }) => {
+      if (agentIds?.[0] === 'id-a') return { data: [schedule('a-nightly')] };
+      throw new Error('schedules unavailable');
+    });
+    const server = switchableServer(async ({ agentNames }) => (agentNames?.[0] === 'agent-a' ? [FOR_A] : [FOR_B]), {
+      server: { schedules: createMockScheduleServer({ listSchedules }) },
+    });
+    const { rerender } = render(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-a" />
+      </ServerProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /a-bot/ }));
+    await waitFor(() => {
+      expect(screen.getAllByRole('option', { hidden: true }).map(option => option.getAttribute('value'))).toContain(
+        'a-nightly',
+      );
+    });
+
+    rerender(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-b" />
+      </ServerProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /b-bot/ }));
+    await waitFor(() => {
+      expect(listSchedules).toHaveBeenCalledWith(expect.objectContaining({ agentIds: ['id-b'] }));
+    });
+
+    const offered = screen.queryAllByRole('option', { hidden: true }).map(option => option.getAttribute('value'));
+    expect(offered).not.toContain('a-nightly');
   });
 });
