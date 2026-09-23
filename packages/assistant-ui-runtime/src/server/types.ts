@@ -893,6 +893,10 @@ export type ComputerAuditOp = 'exec' | 'file_put' | 'file_get' | 'desktop';
 export interface ComputerTools {
   python3: boolean;
   git: boolean;
+  /** Whether the machine runs a desktop agents can drive. */
+  desktop: boolean;
+  /** Why a desktop the machine was asked to run is not running, or null. */
+  desktopUnavailableReason: string | null;
 }
 
 /** One enrolled machine. Everything the machine reports stays null until it first connects. */

@@ -19,7 +19,7 @@ const ONLINE: ComputerBase = {
   os: 'linux',
   arch: 'amd64',
   agentVersion: '0.1.0',
-  tools: { python3: true, git: true },
+  tools: { python3: true, git: true, desktop: true, desktopUnavailableReason: null },
   runAsUser: 'trueforge',
   requireApproval: true,
   lastSeenAt: '2026-09-21T10:00:00.000Z',
@@ -133,8 +133,20 @@ describe('ComputerSettings', () => {
 
     expect(await screen.findByText('Online')).toBeInTheDocument();
     expect(screen.getByText('Waiting to enroll')).toBeInTheDocument();
-    expect(screen.getByText(/office\.local · linux · 0\.1\.0 · as trueforge · python3, git/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/office\.local · linux · 0\.1\.0 · as trueforge · python3, git, desktop/),
+    ).toBeInTheDocument();
     expect(screen.getByText(/no hostname yet · unknown OS/)).toBeInTheDocument();
+  });
+
+  it('says why a desktop is not running when the machine reported a reason', async () => {
+    renderSection({
+      listComputers: async () => [
+        { ...ONLINE, tools: { python3: true, git: false, desktop: false, desktopUnavailableReason: 'Xvfb exited' } },
+      ],
+    });
+
+    expect(await screen.findByText(/python3, desktop not running \(Xvfb exited\)/)).toBeInTheDocument();
   });
 
   it('keeps the one-time enrollment on screen across a re-render and the list refresh', async () => {

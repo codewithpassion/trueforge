@@ -20,7 +20,7 @@ function computer(overrides: Partial<ComputerBase> & { id: string; name: string 
     os: 'linux',
     arch: 'amd64',
     agentVersion: '0.1.0',
-    tools: { python3: true, git: true },
+    tools: { python3: true, git: true, desktop: false, desktopUnavailableReason: null },
     runAsUser: 'trueforge',
     requireApproval: true,
     lastSeenAt: '2026-09-21T10:00:00.000Z',

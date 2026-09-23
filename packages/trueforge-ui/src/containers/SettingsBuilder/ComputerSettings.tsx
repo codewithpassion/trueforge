@@ -64,10 +64,18 @@ function reported(value: string | null, fallback: string): string {
 
 function toolsLabel(tools: ComputerBase['tools']): string {
   if (tools === null) return 'not reported yet';
-  const present = [tools.python3 ? 'python3' : undefined, tools.git ? 'git' : undefined].filter(
+  const present = [tools.python3 ? 'python3' : undefined, tools.git ? 'git' : undefined, desktopLabel(tools)].filter(
     (name): name is string => name !== undefined,
   );
   return present.length === 0 ? 'none detected' : present.join(', ');
+}
+
+/** A desktop that is not running is only worth naming when the machine said why. */
+function desktopLabel(tools: NonNullable<ComputerBase['tools']>): string | undefined {
+  if (tools.desktop) return 'desktop';
+  return tools.desktopUnavailableReason === null
+    ? undefined
+    : `desktop not running (${clientReportedText(tools.desktopUnavailableReason)})`;
 }
 
 function SecurityNote() {

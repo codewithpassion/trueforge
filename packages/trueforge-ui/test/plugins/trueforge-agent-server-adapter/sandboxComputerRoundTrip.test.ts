@@ -85,3 +85,30 @@ describe('sandbox.computerId on the wire', () => {
     assert.equal(reloaded.config?.sandbox?.computerId, 'cmp-1');
   });
 });
+
+describe('sandbox.desktop on the wire', () => {
+  it('survives a save, so editing a desktop agent in the builder keeps its desktop', async () => {
+    const { bodies, builder } = recordingBuilder();
+
+    await builder.saveAgent({
+      agentName: 'release-bot',
+      description: 'runs the release',
+      agentSpec: {
+        model: { name: 'openai-main/gpt-4.1' },
+        config: { sandbox: { enabled: true, computerId: 'cmp-1', desktop: true } },
+      },
+      intent: 'create',
+    });
+
+    assert.equal(sentSandbox(bodies.at(-1)).desktop, true);
+  });
+
+  it('comes back from the server', () => {
+    const reloaded = toUiAgentSpec({
+      model: { name: 'openai-main/gpt-4.1' },
+      config: { sandbox: { enabled: true, computerId: 'cmp-1', desktop: true } },
+    });
+
+    assert.equal(reloaded.config?.sandbox?.desktop, true);
+  });
+});

@@ -22,7 +22,16 @@ export function toUiComputer(computer: TrueForgeApi.Computer): ComputerBase {
     os: computer.os,
     arch: computer.arch,
     agentVersion: computer.agentVersion,
-    tools: computer.tools === null ? null : { python3: computer.tools.python3, git: computer.tools.git },
+    tools:
+      computer.tools === null
+        ? null
+        : {
+            python3: computer.tools.python3,
+            git: computer.tools.git,
+            // Always sent; the SDK types them optional only because the server gives them defaults.
+            desktop: computer.tools.desktop ?? false,
+            desktopUnavailableReason: computer.tools.desktopUnavailableReason ?? null,
+          },
     runAsUser: computer.runAsUser,
     requireApproval: computer.requireApproval,
     lastSeenAt: computer.lastSeenAt,

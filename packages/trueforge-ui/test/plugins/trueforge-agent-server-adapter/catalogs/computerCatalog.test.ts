@@ -74,8 +74,27 @@ describe('computerCatalog mappers', () => {
     );
   });
 
-  it('carries both detected tools through', () => {
-    assert.deepEqual(toUiComputer(HARNESS_COMPUTER).tools, { python3: true, git: false });
+  it('carries both detected tools through, and no desktop when none was reported', () => {
+    assert.deepEqual(toUiComputer(HARNESS_COMPUTER).tools, {
+      python3: true,
+      git: false,
+      desktop: false,
+      desktopUnavailableReason: null,
+    });
+  });
+
+  it('carries the desktop and why it is not running', () => {
+    assert.deepEqual(
+      toUiComputer({
+        ...HARNESS_COMPUTER,
+        tools: { python3: true, git: true, desktop: false, desktopUnavailableReason: 'Xvfb exited' },
+      }).tools,
+      { python3: true, git: true, desktop: false, desktopUnavailableReason: 'Xvfb exited' },
+    );
+    assert.equal(
+      toUiComputer({ ...HARNESS_COMPUTER, tools: { python3: true, git: true, desktop: true } }).tools?.desktop,
+      true,
+    );
   });
 
   it('keeps a null docker command rather than inventing one', () => {
