@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DesktopScreen } from '@/atoms/desktop/DesktopScreen.js';
 import type {
   ComputerDesktopServer,
+  DesktopAction,
   DesktopController,
   DesktopStatus,
   DesktopTakeoverAnswer,
@@ -336,7 +337,7 @@ describe('DesktopScreen', () => {
   it('releases a held button before handing back', async () => {
     const calls: string[] = [];
     const server = createServer({
-      sendDesktopInput: vi.fn(async ({ actions }) => {
+      sendDesktopInput: vi.fn(async ({ actions }: { actions: DesktopAction[] }) => {
         calls.push(`input:${actions.map(action => action.type).join(',')}`);
         return new Blob(['after-input']);
       }),
