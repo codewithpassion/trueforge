@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type ComponentType, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentType, type FormEvent } from 'react';
 import { z } from 'zod';
 
 import { cn } from '@/atoms/lib/cn.js';
@@ -8,9 +8,11 @@ import { auiInputClass } from '@/atoms/lib/inputClasses.js';
 import { Button } from '@/atoms/primitives/Button.js';
 import { CenteredModal } from '@/atoms/primitives/CenteredModal.js';
 import { useToasterOptional } from '@/containers/ToasterContainer.js';
+import { useResourcePermissions } from '@/hooks/useResourcePermissions.js';
 import { Icon } from '@/icons/Icon.js';
 import { useAgentSessionsServer, useIntegrationServer, useOptionalScheduleServer } from '@/server/ServerContext.js';
 import type { IntegrationBase, IntegrationNotificationRule, IntegrationSetupManifest } from '@/server/types.js';
+import { useSlot } from '@/theme/SlotsProvider.js';
 import { getErrorMessage } from '@/utils/getErrorMessage.js';
 import {
   completedNotificationRules,
@@ -86,9 +88,15 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
   const sessionsServer = useAgentSessionsServer();
   const scheduleServer = useOptionalScheduleServer();
   const toaster = useToasterOptional();
+  const PermissionGuard = useSlot('PermissionGuard');
+  // Every write is gated on managing the agent, so the controls are too.
+  const { allows } = useResourcePermissions({ resourceType: 'agent', resourceIds: [agentId] });
+  const canManage = allows(agentId, 'MANAGE');
   const [scheduleNames, setScheduleNames] = useState<string[]>([]);
   // Integrations are bound by agent name; the page is addressed by id.
   const [agentName, setAgentName] = useState<string | null>(null);
+  // Mirrors agentName for async work that outlives a switch to another agent.
+  const agentNameRef = useRef<string | null>(null);
 
   const [integrations, setIntegrations] = useState<IntegrationBase[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,13 +118,24 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
 
   useEffect(() => {
     let cancelled = false;
+    agentNameRef.current = null;
     setAgentName(null);
     setIntegrations([]);
     setLoading(true);
+    setError(null);
+    setFormError(null);
+    setSelectedId(null);
+    setDetailForm(EMPTY_INTEGRATION_FORM);
+    setBotToken('');
+    setSigningSecret('');
+    setAddOpen(false);
+    setAddForm(EMPTY_INTEGRATION_FORM);
     void sessionsServer
       .getAgent({ agentId })
       .then(detail => {
-        if (!cancelled) setAgentName(detail.name);
+        if (cancelled) return;
+        agentNameRef.current = detail.name;
+        setAgentName(detail.name);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -129,15 +148,18 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
   }, [agentId, sessionsServer]);
 
   const refresh = useCallback(async () => {
-    if (agentName === null) return;
+    // A list for an agent the page has since left must not land on the new one.
+    const stale = () => agentNameRef.current !== agentName;
+    if (agentName === null || stale()) return;
     setLoading(true);
     setError(null);
     try {
-      setIntegrations(await integrationServer.listIntegrations({ agentNames: [agentName] }));
+      const listed = await integrationServer.listIntegrations({ agentNames: [agentName] });
+      if (!stale()) setIntegrations(listed);
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not load integrations'));
+      if (!stale()) setError(getErrorMessage(err, 'Could not load integrations'));
     } finally {
-      setLoading(false);
+      if (!stale()) setLoading(false);
     }
   }, [agentName, integrationServer]);
 
@@ -223,6 +245,7 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
         approverUserIds: parseApproverUserIds(addForm.approverUserIds),
         notificationRules: completedNotificationRules(addForm.notificationRules),
       });
+      if (agentNameRef.current !== agentName) return;
       setAddOpen(false);
       setAddForm(EMPTY_INTEGRATION_FORM);
       openDetail(created);
@@ -585,12 +608,16 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
               </section>
 
               <div className="flex justify-between gap-2 pb-2">
-                <Button.Ghost type="button" onClick={handleDisconnect} disabled={busy}>
-                  Disconnect
-                </Button.Ghost>
-                <Button.Primary type="submit" disabled={busy}>
-                  Save
-                </Button.Primary>
+                <PermissionGuard allowed={canManage}>
+                  <Button.Ghost type="button" onClick={handleDisconnect} disabled={busy}>
+                    Disconnect
+                  </Button.Ghost>
+                </PermissionGuard>
+                <PermissionGuard allowed={canManage}>
+                  <Button.Primary type="submit" disabled={busy}>
+                    Save
+                  </Button.Primary>
+                </PermissionGuard>
               </div>
             </form>
           </div>
@@ -612,18 +639,20 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
         <div className="mt-4 flex-1 overflow-y-hidden">
           <div className="flex h-full flex-col gap-3">
             <div className="flex justify-end">
-              <Button.Secondary
-                type="button"
-                disabled={agentName === null}
-                onClick={() => {
-                  setFormError(null);
-                  setAddForm(EMPTY_INTEGRATION_FORM);
-                  setAddOpen(true);
-                }}
-              >
-                <Icon name="plus" size="1rem" className="mr-1" />
-                Add Slack workspace
-              </Button.Secondary>
+              <PermissionGuard allowed={canManage}>
+                <Button.Secondary
+                  type="button"
+                  disabled={agentName === null}
+                  onClick={() => {
+                    setFormError(null);
+                    setAddForm(EMPTY_INTEGRATION_FORM);
+                    setAddOpen(true);
+                  }}
+                >
+                  <Icon name="plus" size="1rem" className="mr-1" />
+                  Add Slack workspace
+                </Button.Secondary>
+              </PermissionGuard>
             </div>
 
             <div className="flex flex-1 flex-col gap-5 overflow-y-auto pb-1">

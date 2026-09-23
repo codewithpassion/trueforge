@@ -52,12 +52,20 @@ describe('createIntegrationServer', () => {
     assert.equal(listed[0]?.botDisplayName, 'release-bot');
   });
 
-  it('sends no filter when no agent is named', async () => {
+  it('sends no filter when agent names are omitted', async () => {
     const { calls, server } = recordingServer(() => ({ data: [] }));
 
-    await server.listIntegrations({ agentNames: [] });
+    await server.listIntegrations({});
 
     assert.equal(calls[0]?.url.searchParams.has('agent_names'), false);
+  });
+
+  it('returns nothing without calling the API when every named agent is blank', async () => {
+    const { calls, server } = recordingServer(() => ({ data: [WIRE_INTEGRATION] }));
+
+    assert.deepEqual(await server.listIntegrations({ agentNames: [] }), []);
+    assert.deepEqual(await server.listIntegrations({ agentNames: ['', '  '] }), []);
+    assert.equal(calls.length, 0);
   });
 
   it('creates with the agent beside the manifest, not inside it', async () => {

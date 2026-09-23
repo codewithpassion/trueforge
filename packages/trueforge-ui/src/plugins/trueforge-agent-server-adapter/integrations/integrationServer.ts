@@ -71,9 +71,10 @@ export function createIntegrationServer(options: { client: TrueForge }): Integra
   const { client } = options;
   return {
     listIntegrations: async req => {
-      const agentNames = (req.agentNames ?? []).filter(name => name !== '');
-      // The wire refuses an empty filter, so no names means no filter.
-      const body = await client.integrations.list(agentNames.length === 0 ? {} : { agentNames: agentNames.join(',') });
+      const agentNames = req.agentNames?.map(name => name.trim()).filter(name => name !== '');
+      // A filter that names no agent matches nothing; sending none would widen it to every agent.
+      if (agentNames?.length === 0) return [];
+      const body = await client.integrations.list(agentNames === undefined ? {} : { agentNames: agentNames.join(',') });
       return body.data.map(toUiIntegration);
     },
     createIntegration: async req => {

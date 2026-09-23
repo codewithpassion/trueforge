@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IntegrationsPage } from '@/atoms/integrations/IntegrationsPage.js';
@@ -9,6 +9,7 @@ import type {
   IntegrationBase,
   IntegrationServer,
   ListIntegrationsParams,
+  ListPermissionsResponse,
   Schedule,
 } from '@/server/types.js';
 import {
@@ -416,5 +417,139 @@ describe('IntegrationsPage approvals and notifications', () => {
     expect(listSchedules).toHaveBeenCalledWith(expect.objectContaining({ agentIds: ['agent-1'] }));
     // Still a text box, so a schedule the host cannot list can be named by hand.
     expect(screen.getByLabelText('Schedule')).toHaveAttribute('list', 'integration-schedule-names');
+  });
+});
+
+describe('IntegrationsPage permissions', () => {
+  function permissionsFor(permissions: ('MANAGE' | 'USE')[]) {
+    return {
+      permissions: {
+        listPermissions: vi.fn(async (): Promise<ListPermissionsResponse> => ({
+          data: { type: 'agent', permissions: { 'agent-1': permissions } },
+        })),
+      },
+    };
+  }
+
+  it('lets a manager add, save and disconnect', async () => {
+    renderSection({ listIntegrations: async () => [CONNECTED] }, permissionsFor(['USE', 'MANAGE']));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Add Slack workspace/ })).toBeEnabled();
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeEnabled();
+  });
+
+  it('keeps add, save and disconnect disabled for a caller who only uses the agent', async () => {
+    renderSection({ listIntegrations: async () => [CONNECTED] }, permissionsFor(['USE']));
+
+    fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /Back/ }));
+    expect(await screen.findByRole('button', { name: /Add Slack workspace/ })).toBeDisabled();
+  });
+});
+
+describe('IntegrationsPage agent switch', () => {
+  const FOR_A: IntegrationBase = { ...PENDING, id: 'int-a', agentName: 'agent-a', botDisplayName: 'a-bot' };
+  const FOR_B: IntegrationBase = { ...PENDING, id: 'int-b', agentName: 'agent-b', botDisplayName: 'b-bot' };
+
+  /** One server across rerenders, so only the page's agent changes between them. */
+  function switchableServer(listIntegrations: IntegrationServer['listIntegrations']) {
+    return createMockAgentUIServer({
+      integrations: createMockIntegrationServer({ listIntegrations }),
+      sessions: createMockAgentSessionsServer({
+        getAgent: async ({ agentId }) => ({
+          agentId,
+          name: agentId === 'id-a' ? 'agent-a' : 'agent-b',
+          agentSpec: { model: { name: 'm' } },
+        }),
+      }),
+    });
+  }
+
+  it("keeps the next agent's integrations when the previous agent's list resolves last", async () => {
+    const pending = new Map<string, (rows: IntegrationBase[]) => void>();
+    const server = switchableServer(
+      ({ agentNames }) =>
+        new Promise(resolve => {
+          pending.set(agentNames?.[0] ?? '', resolve);
+        }),
+    );
+    const { rerender } = render(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-a" />
+      </ServerProvider>,
+    );
+    await waitFor(() => {
+      expect(pending.has('agent-a')).toBe(true);
+    });
+
+    rerender(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-b" />
+      </ServerProvider>,
+    );
+    await waitFor(() => {
+      expect(pending.has('agent-b')).toBe(true);
+    });
+    act(() => {
+      pending.get('agent-b')?.([FOR_B]);
+    });
+    expect(await screen.findByRole('button', { name: /b-bot/ })).toBeInTheDocument();
+
+    await act(async () => {
+      pending.get('agent-a')?.([FOR_A]);
+    });
+
+    expect(screen.getByRole('button', { name: /b-bot/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /a-bot/ })).not.toBeInTheDocument();
+  });
+
+  it('closes an open Add dialog and drops what was typed when the agent changes', async () => {
+    const server = switchableServer(async () => []);
+    const { rerender } = render(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-a" />
+      </ServerProvider>,
+    );
+    await openAddDialog();
+    fireEvent.change(screen.getByLabelText('Bot name'), { target: { value: 'a-bot' } });
+
+    rerender(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-b" />
+      </ServerProvider>,
+    );
+
+    // The native dialog stays mounted; closed means it has lost its `open` attribute.
+    await waitFor(() => {
+      expect(screen.getByLabelText('Bot name').closest('dialog')).not.toHaveAttribute('open');
+    });
+    await openAddDialog();
+    expect(screen.getByLabelText('Bot name')).toHaveValue('');
+  });
+
+  it('leaves the open integration and its typed credentials behind when the agent changes', async () => {
+    const server = switchableServer(async ({ agentNames }) => (agentNames?.[0] === 'agent-a' ? [FOR_A] : [FOR_B]));
+    const { rerender } = render(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-a" />
+      </ServerProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /a-bot/ }));
+    fireEvent.change(await screen.findByLabelText('Bot user OAuth token'), { target: { value: 'xoxb-a' } });
+
+    rerender(
+      <ServerProvider server={server}>
+        <IntegrationsPage agentId="id-b" />
+      </ServerProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /b-bot/ }));
+    expect(await screen.findByLabelText('Bot user OAuth token')).toHaveValue('');
   });
 });
