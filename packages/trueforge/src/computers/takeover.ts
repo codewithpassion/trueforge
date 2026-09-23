@@ -213,12 +213,8 @@ export function createHumanTakeoverService(deps: HumanTakeoverServiceDeps): Huma
         stores: deps.resolveTurnStores({ session, agent }),
       });
       if (!started.ok) {
+        // 409: another answer landed between the check above and this resume.
         if (started.status === 409) {
-          return { ok: false, code: 'takeover_already_answered' };
-        }
-        // An answer that landed between the check and the start leaves nothing this response fits.
-        const now = await deps.sessions.get({ tenant_id, session_id });
-        if (now?.record.last_turn_id !== pointer.turn_id) {
           return { ok: false, code: 'takeover_already_answered' };
         }
         throw new HTTPException(started.status, { message: started.message });
