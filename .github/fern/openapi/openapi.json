@@ -2096,12 +2096,13 @@
         "type": "object"
       },
       "DesktopTakeoverResult": {
-        "description": "`resumed`: the agent continues. `already_answered`: answered elsewhere. `not_pending`: nothing was waiting. `resume_failed`: the session could not continue and is no longer listed.",
+        "description": "`resumed`: the agent continues. `already_answered`: answered elsewhere. `not_pending`: nothing was waiting. `resume_failed`: the session could not continue and is no longer listed. `outcome_unknown`: the agent may have resumed; the request stays listed until the status shows otherwise.",
         "enum": [
           "resumed",
           "already_answered",
           "not_pending",
-          "resume_failed"
+          "resume_failed",
+          "outcome_unknown"
         ],
         "type": "string"
       },

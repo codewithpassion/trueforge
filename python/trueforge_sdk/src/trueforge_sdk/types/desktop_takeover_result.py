@@ -9,13 +9,14 @@ T_Result = typing.TypeVar("T_Result")
 
 class DesktopTakeoverResult(enum.StrEnum):
     """
-    `resumed`: the agent continues. `already_answered`: answered elsewhere. `not_pending`: nothing was waiting. `resume_failed`: the session could not continue and is no longer listed.
+    `resumed`: the agent continues. `already_answered`: answered elsewhere. `not_pending`: nothing was waiting. `resume_failed`: the session could not continue and is no longer listed. `outcome_unknown`: the agent may have resumed; the request stays listed until the status shows otherwise.
     """
 
     RESUMED = "resumed"
     ALREADY_ANSWERED = "already_answered"
     NOT_PENDING = "not_pending"
     RESUME_FAILED = "resume_failed"
+    OUTCOME_UNKNOWN = "outcome_unknown"
     _UNKNOWN = "__DESKTOPTAKEOVERRESULT_UNKNOWN__"
     """
     This member is used for forward compatibility. If the value is not recognized by the enum, it will be stored here, and the raw value is accessible through `.value`.
@@ -33,6 +34,7 @@ class DesktopTakeoverResult(enum.StrEnum):
         already_answered: typing.Callable[[], T_Result],
         not_pending: typing.Callable[[], T_Result],
         resume_failed: typing.Callable[[], T_Result],
+        outcome_unknown: typing.Callable[[], T_Result],
         _unknown_member: typing.Callable[[str], T_Result],
     ) -> T_Result:
         if self is DesktopTakeoverResult.RESUMED:
@@ -43,4 +45,6 @@ class DesktopTakeoverResult(enum.StrEnum):
             return not_pending()
         if self is DesktopTakeoverResult.RESUME_FAILED:
             return resume_failed()
+        if self is DesktopTakeoverResult.OUTCOME_UNKNOWN:
+            return outcome_unknown()
         return _unknown_member(self._value_)

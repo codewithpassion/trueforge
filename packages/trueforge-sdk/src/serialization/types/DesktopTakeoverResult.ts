@@ -7,8 +7,8 @@ import type * as serializers from "../index.js";
 export const DesktopTakeoverResult: core.serialization.Schema<
     serializers.DesktopTakeoverResult.Raw,
     TrueForge.DesktopTakeoverResult
-> = core.serialization.enum_(["resumed", "already_answered", "not_pending", "resume_failed"]);
+> = core.serialization.enum_(["resumed", "already_answered", "not_pending", "resume_failed", "outcome_unknown"]);
 
 export declare namespace DesktopTakeoverResult {
-    export type Raw = "resumed" | "already_answered" | "not_pending" | "resume_failed";
+    export type Raw = "resumed" | "already_answered" | "not_pending" | "resume_failed" | "outcome_unknown";
 }
