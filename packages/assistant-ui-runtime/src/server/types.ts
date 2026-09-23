@@ -1001,18 +1001,25 @@ export interface ComputerCatalogServer<
 // ComputerDesktop — optional live view and control of a computer's desktop
 // ---------------------------------------------------------------------------
 
-export type DesktopControllerNone = { kind: 'none' };
-export type DesktopControllerAgent = { kind: 'agent'; sessionId: string };
-export type DesktopControllerHuman = {
+export interface DesktopControllerNone {
+  kind: 'none';
+}
+export interface DesktopControllerAgent {
+  kind: 'agent';
+  sessionId: string;
+}
+export interface DesktopControllerHuman {
   kind: 'human';
   userId: string;
   /** Whether the caller is the person in control. */
   isMe: boolean;
   /** ISO-8601 instant control lapses without further input. */
   expiresAt: string;
-};
+}
 /** The last person's clipboard is being cleared; nobody may drive the desktop yet. */
-export type DesktopControllerClearing = { kind: 'clearing' };
+export interface DesktopControllerClearing {
+  kind: 'clearing';
+}
 
 export type DesktopController =
   DesktopControllerNone | DesktopControllerAgent | DesktopControllerHuman | DesktopControllerClearing;

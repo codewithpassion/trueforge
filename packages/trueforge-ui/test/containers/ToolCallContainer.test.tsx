@@ -4,6 +4,8 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AskUserPromptProps } from '@/atoms/adapters/AskUserPromptAdapter.js';
+import type { ComputerToolCallCardProps } from '@/atoms/ComputerToolCallCard.js';
+import type { HumanTakeoverCardProps } from '@/atoms/HumanTakeoverCard.js';
 import type { SandboxToolCallCardProps } from '@/atoms/SandboxToolCallCard.js';
 import type { SubAgentCardProps } from '@/atoms/SubAgentCard.js';
 import type { ToolCallCardProps } from '@/atoms/ToolCallCard.js';
@@ -11,8 +13,9 @@ import { AssistantMessageContainer } from '@/containers/AssistantMessageContaine
 import { SlotsProvider, type SlotOverrides } from '@/theme/SlotsProvider.js';
 import { RuntimeHarness } from './RuntimeHarness.js';
 
-const { respondToNestedApproval } = vi.hoisted(() => ({
+const { respondToNestedApproval, loadSessionFile } = vi.hoisted(() => ({
   respondToNestedApproval: vi.fn(),
+  loadSessionFile: vi.fn(async (_fileId: string) => new Blob(['jpeg'])),
 }));
 
 vi.mock('@truefoundry/trueforge-assistant-ui-runtime', async importOriginal => {
@@ -20,6 +23,7 @@ vi.mock('@truefoundry/trueforge-assistant-ui-runtime', async importOriginal => {
   return {
     ...actual,
     useTrueForgeRespondToToolApproval: () => respondToNestedApproval,
+    useTrueForgeSessionFile: () => loadSessionFile,
   };
 });
 
@@ -496,5 +500,108 @@ describe('ToolCallContainer', () => {
     const [call] = ToolCallCard.mock.calls;
     if (!call) throw new Error('Expected ToolCallCard to render');
     expect(call[0].mcpServerName).toBeUndefined();
+  });
+
+  describe('desktop tools', () => {
+    const screenshot = { type: 'image', fileId: 'file-1', mediaType: 'image/jpeg', width: 1280, height: 800 };
+
+    it('shows a computer action with its screenshot thumbnail without expanding', async () => {
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:thumb') });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+      HTMLDialogElement.prototype.showModal = function showModal() {
+        this.setAttribute('open', '');
+      };
+      renderToolCallMessage([
+        {
+          type: 'tool-call',
+          toolCallId: '1',
+          toolName: 'computer_click',
+          args: { x: 640, y: 400 },
+          argsText: '{"x":640,"y":400}',
+          result: 'Clicked',
+          artifact: { toolImages: [screenshot] },
+        },
+      ]);
+
+      expect(screen.getByText('Click at (640, 400)')).toBeInTheDocument();
+      expect(await screen.findByRole('img', { name: 'Screenshot 1 (1280×800)' })).toHaveAttribute('src', 'blob:thumb');
+      expect(loadSessionFile).toHaveBeenCalledWith('file-1');
+      // Click to zoom.
+      fireEvent.click(screen.getByRole('button', { name: 'Open attachment preview' }));
+      expect(await screen.findByRole('img', { name: 'Attachment preview' })).toHaveAttribute('src', 'blob:thumb');
+    });
+
+    it('routes every computer tool to the computer card', () => {
+      const ComputerToolCallCard = vi.fn(({ action }: ComputerToolCallCardProps) => <div>{action}</div>);
+      renderToolCallMessage(
+        [
+          { type: 'tool-call', toolCallId: '1', toolName: 'computer_screenshot', args: {}, argsText: '{}' },
+          {
+            type: 'tool-call',
+            toolCallId: '2',
+            toolName: 'computer_key',
+            args: { keys: 'ctrl+l' },
+            argsText: '{"keys":"ctrl+l"}',
+          },
+        ],
+        { ComputerToolCallCard },
+      );
+      expect(screen.getByText('Screenshot')).toBeInTheDocument();
+      expect(screen.getByText('Press ctrl+l')).toBeInTheDocument();
+    });
+
+    it('gives other tools image thumbnails too', async () => {
+      const ToolCallCard = vi.fn(({ toolName, attachmentsSlot }: ToolCallCardProps) => (
+        <div>
+          {toolName}
+          {attachmentsSlot}
+        </div>
+      ));
+      renderToolCallMessage(
+        [
+          {
+            type: 'tool-call',
+            toolCallId: '1',
+            toolName: 'render_chart',
+            args: {},
+            result: 'done',
+            artifact: { toolImages: [screenshot] },
+          },
+        ],
+        { ToolCallCard },
+      );
+      expect(screen.getByTestId('tool-result-thumbnails')).toBeInTheDocument();
+    });
+
+    it('shows a takeover request with its reason while it waits', () => {
+      const HumanTakeoverCard = vi.fn(({ reason, answer }: HumanTakeoverCardProps) => (
+        <div>
+          {reason}
+          {answer === undefined ? ' (waiting)' : ` (${answer.outcome})`}
+        </div>
+      ));
+      renderToolCallMessage(
+        [
+          {
+            type: 'tool-call',
+            toolCallId: '1',
+            toolName: 'request_human_takeover',
+            args: { reason: 'Log into the portal' },
+            argsText: '{"reason":"Log into the portal"}',
+          },
+          {
+            type: 'tool-call',
+            toolCallId: '2',
+            toolName: 'request_human_takeover',
+            args: { reason: 'Solve the CAPTCHA' },
+            argsText: '{"reason":"Solve the CAPTCHA"}',
+            result: '{"outcome":"cancelled","note":null}',
+          },
+        ],
+        { HumanTakeoverCard },
+      );
+      expect(screen.getByText('Log into the portal (waiting)')).toBeInTheDocument();
+      expect(screen.getByText('Solve the CAPTCHA (cancelled)')).toBeInTheDocument();
+    });
   });
 });

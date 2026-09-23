@@ -18,6 +18,7 @@ export type HumanTakeoverCardProps = {
 };
 
 function answerText(answer: TakeoverAnswer): string {
+  if (answer.outcome === 'answered') return `Answered in chat: “${answer.note ?? ''}”`;
   const who = answer.answeredBy === 'another_user' ? 'Another person' : 'A person';
   const what = answer.outcome === 'completed' ? `${who} handed the desktop back` : `${who} cancelled the request`;
   return answer.note === null ? `${what}.` : `${what}: “${answer.note}”`;

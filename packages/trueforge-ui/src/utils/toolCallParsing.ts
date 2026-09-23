@@ -351,7 +351,8 @@ export function parseTakeoverReason(argsText: string | undefined): string | unde
 }
 
 export type TakeoverAnswer = {
-  outcome: 'completed' | 'cancelled';
+  /** `answered`: a reply typed in chat rather than a hand-back or cancel; `note` holds it. */
+  outcome: 'completed' | 'cancelled' | 'answered';
   note: string | null;
   /** Absent from answers recorded before the answering person was named. */
   answeredBy?: 'session_creator' | 'another_user';
@@ -362,9 +363,10 @@ export function parseTakeoverAnswer(result: unknown): TakeoverAnswer | undefined
   const text = getAskUserAnswerResult(result);
   if (text === undefined) return undefined;
   const parsed = parseJsonIncrementally(text);
-  if (!parsed.success || parsed.isPartial || !isUnknownRecord(parsed.value)) return undefined;
+  const reply: TakeoverAnswer = { outcome: 'answered', note: text };
+  if (!parsed.success || parsed.isPartial || !isUnknownRecord(parsed.value)) return reply;
   const { outcome, note, answered_by: answeredBy } = parsed.value;
-  if (outcome !== 'completed' && outcome !== 'cancelled') return undefined;
+  if (outcome !== 'completed' && outcome !== 'cancelled') return reply;
   return {
     outcome,
     note: typeof note === 'string' && note !== '' ? note : null,

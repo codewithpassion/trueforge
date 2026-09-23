@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildApprovalOptions,
+  COMPUTER_TOOL_NAMES,
+  describeComputerAction,
   formatDuration,
   getAskUserAnswerResult,
   getJsonDisplayValue,
@@ -11,6 +13,8 @@ import {
   parseMcpToolArgs,
   parseSandboxArgs,
   parseSandboxResult,
+  parseTakeoverAnswer,
+  parseTakeoverReason,
   toStatus,
 } from '@/utils/toolCallParsing.js';
 
@@ -112,5 +116,53 @@ describe('toolCallParsing', () => {
       { id: '__allow', label: 'Allow', isAllow: true },
       { id: '__deny', label: 'Deny', isAllow: false, confirm: {} },
     ]);
+  });
+});
+
+describe('desktop tools', () => {
+  it('knows every computer tool', () => {
+    expect([...COMPUTER_TOOL_NAMES].sort()).toEqual([
+      'computer_click',
+      'computer_clipboard_read',
+      'computer_clipboard_write',
+      'computer_drag',
+      'computer_key',
+      'computer_screenshot',
+      'computer_scroll',
+      'computer_type',
+    ]);
+  });
+
+  it('describes each action in a line', () => {
+    expect(describeComputerAction('computer_screenshot', '{}')).toBe('Screenshot');
+    expect(describeComputerAction('computer_click', '{"x":10,"y":20}')).toBe('Click at (10, 20)');
+    expect(describeComputerAction('computer_click', '{"x":10,"y":20,"button":"right","count":2}')).toBe(
+      'Double-click (right) at (10, 20)',
+    );
+    expect(describeComputerAction('computer_type', '{"text":"hello"}')).toBe('Type “hello”');
+    expect(describeComputerAction('computer_type', JSON.stringify({ text: 'x'.repeat(50) }))).toBe(
+      `Type “${'x'.repeat(40)}…”`,
+    );
+    expect(describeComputerAction('computer_key', '{"keys":"ctrl+l"}')).toBe('Press ctrl+l');
+    expect(describeComputerAction('computer_scroll', '{"x":1,"y":2,"dx":0,"dy":3}')).toBe('Scroll at (1, 2)');
+    expect(describeComputerAction('computer_drag', '{"from":{"x":1,"y":2},"to":{"x":3,"y":4}}')).toBe(
+      'Drag from (1, 2) to (3, 4)',
+    );
+    expect(describeComputerAction('computer_clipboard_read', undefined)).toBe('Read the clipboard');
+    // Streaming arguments are still partial JSON.
+    expect(describeComputerAction('computer_click', '{"x":10')).toBe('Click');
+  });
+
+  it('reads a takeover reason and its answer', () => {
+    expect(parseTakeoverReason('{"reason":"Log in"}')).toBe('Log in');
+    expect(parseTakeoverReason('{}')).toBeUndefined();
+    expect(parseTakeoverAnswer(undefined)).toBeUndefined();
+    expect(parseTakeoverAnswer('{"outcome":"completed","note":null}')).toEqual({ outcome: 'completed', note: null });
+    expect(parseTakeoverAnswer('{"outcome":"cancelled","note":"later","answered_by":"session_creator"}')).toEqual({
+      outcome: 'cancelled',
+      note: 'later',
+      answeredBy: 'session_creator',
+    });
+    expect(parseTakeoverAnswer('done')).toEqual({ outcome: 'answered', note: 'done' });
   });
 });

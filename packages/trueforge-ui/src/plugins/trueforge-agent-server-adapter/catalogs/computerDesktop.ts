@@ -2,7 +2,7 @@
  * Maps the desktop port onto Harness `/api/v1/computer-desktops`. Refusals become
  * `ComputerDesktopError`, so the UI branches on status and code without knowing the SDK.
  */
-import { TrueForgeError, type TrueForge } from '@truefoundry/trueforge-sdk';
+import type { TrueForge } from '@truefoundry/trueforge-sdk';
 import type {
   ComputerDesktopServer,
   DesktopRequestFailure,
@@ -46,13 +46,16 @@ function readErrorEnvelope(body: unknown): { code: string | null; message: strin
   };
 }
 
+/**
+ * The SDK's status errors carry `statusCode` and the parsed `body`. Read structurally: the SDK's
+ * error classes are re-exported through `export *`, which some ESM loaders cannot see by name.
+ */
 function toDesktopError(caught: unknown): unknown {
-  if (!(caught instanceof TrueForgeError) || caught.statusCode === undefined) return caught;
-  const { code, message } = readErrorEnvelope(caught.body);
-  return new ComputerDesktopError(
-    { statusCode: caught.statusCode, code, message: message ?? caught.message },
-    { cause: caught },
-  );
+  if (!(caught instanceof Error)) return caught;
+  const statusCode: unknown = Reflect.get(caught, 'statusCode');
+  if (typeof statusCode !== 'number') return caught;
+  const { code, message } = readErrorEnvelope(Reflect.get(caught, 'body'));
+  return new ComputerDesktopError({ statusCode, code, message: message ?? caught.message }, { cause: caught });
 }
 
 async function refusalsAsDesktopErrors<T>(call: () => Promise<T>): Promise<T> {

@@ -4,7 +4,14 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ComputerSettings from '@/containers/SettingsBuilder/ComputerSettings.js';
 import { ServerProvider } from '@/server/ServerContext.js';
-import type { AgentUIServer, ComputerAuditEntry, ComputerBase, ComputerCatalogServer } from '@/server/types.js';
+import type {
+  AgentUIServer,
+  ComputerAuditEntry,
+  ComputerBase,
+  ComputerCatalogServer,
+  ComputerDesktopServer,
+  DesktopStatus,
+} from '@/server/types.js';
 import { createMockAgentUIServer, createMockCatalog } from '../../server/mockServer.js';
 
 async function unavailable(): Promise<never> {
@@ -421,5 +428,59 @@ describe('ComputerSettings', () => {
     expect(screen.getByText('offline')).toBeInTheDocument();
     expect(screen.getByText('exit unknown')).toBeInTheDocument();
     expect(listComputerAudit).toHaveBeenLastCalledWith({ computerId: 'cmp-1', limit: 25, pageToken: 'page-2' });
+  });
+});
+
+describe('ComputerSettings desktop tab', () => {
+  function desktopServer(): ComputerDesktopServer {
+    return {
+      getDesktopStatus: vi.fn(async (): Promise<DesktopStatus> => ({
+        computerId: 'cmp-1',
+        online: true,
+        desktop: true,
+        controller: { kind: 'none' },
+        pendingTakeovers: [],
+      })),
+      getDesktopScreenshot: vi.fn(() => new Promise<Blob>(() => undefined)),
+      sendDesktopInput: unavailable,
+      getDesktopClipboard: unavailable,
+      setDesktopClipboard: unavailable,
+      takeDesktopControl: unavailable,
+      handBackDesktop: unavailable,
+      cancelDesktopTakeover: unavailable,
+    };
+  }
+
+  it('warns about the shared screen and shows the desktop without an agent', async () => {
+    const computerDesktop = desktopServer();
+    renderSection({ listComputers: async () => [ONLINE] }, { computerDesktop });
+    fireEvent.click(await screen.findByText('office-box'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Desktop' }));
+
+    expect(screen.getByText(/This screen is shared/)).toBeInTheDocument();
+    expect(screen.getByText(/no agent on this computer can run commands/)).toBeInTheDocument();
+    expect(screen.getByText(/Processes an agent started earlier keep running/)).toBeInTheDocument();
+    await waitFor(() => expect(computerDesktop.getDesktopStatus).toHaveBeenCalledWith({ computerId: 'cmp-1' }));
+    expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
+  });
+
+  it('explains a machine that runs no desktop', async () => {
+    renderSection(
+      {
+        listComputers: async () => [
+          { ...ONLINE, tools: { python3: true, git: true, desktop: false, desktopUnavailableReason: 'no Xvfb' } },
+        ],
+      },
+      { computerDesktop: desktopServer() },
+    );
+    fireEvent.click(await screen.findByText('office-box'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Desktop' }));
+    expect(screen.getByText('The desktop is not running: no Xvfb')).toBeInTheDocument();
+  });
+
+  it('has no Desktop tab without the desktop port', async () => {
+    renderSection({ listComputers: async () => [ONLINE] });
+    fireEvent.click(await screen.findByText('office-box'));
+    expect(screen.queryByRole('tab', { name: 'Desktop' })).toBeNull();
   });
 });
