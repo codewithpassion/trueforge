@@ -128,6 +128,27 @@ describe('S3FileObjectStore', () => {
     expect(s3.objects.size).toBe(0);
   });
 
+  it('fails every operation on a missing bucket instead of reading it as a missing file', async () => {
+    const s3 = new FakeS3();
+    const store = new S3FileObjectStore({
+      endpoint: ENDPOINT,
+      bucket: 'no-such-bucket',
+      region: 'us-east-1',
+      access_key_id: 'k',
+      secret_access_key: 's',
+      fetch: s3.fetch,
+    });
+    await expect(store.get('a/b')).rejects.toThrow('S3 GetObject failed with 404: <Error><Code>NoSuchBucket');
+    await expect(store.put({ key: 'a/b', media_type: 'image/png', bytes: Uint8Array.of(1) })).rejects.toThrow(
+      'NoSuchBucket',
+    );
+    await expect(store.deletePrefix('a/')).rejects.toThrow('NoSuchBucket');
+  });
+
+  it('reads a missing key as undefined', async () => {
+    expect(await storeOver(new FakeS3()).get('absent')).toBeUndefined();
+  });
+
   it('reports a failed request with its status', async () => {
     const store = new S3FileObjectStore({
       endpoint: ENDPOINT,

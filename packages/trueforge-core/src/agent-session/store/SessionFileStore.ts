@@ -14,6 +14,9 @@ const FILE_ID_BYTES = 16;
 /** File ids are 128 random bits as lowercase hex. */
 export const FILE_ID_PATTERN = /^[0-9a-f]{32}$/;
 
+/** Raster images only: the read route serves the stored type, so nothing scriptable (SVG, HTML) goes in. */
+const ALLOWED_MEDIA_TYPE = /^image\/(png|jpeg|webp|gif)$/;
+
 function newFileId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(FILE_ID_BYTES));
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
@@ -48,6 +51,11 @@ export class SessionFileStore implements IFileStore {
   }
 
   async put(input: PutFileInput): Promise<PutFileResult> {
+    if (!ALLOWED_MEDIA_TYPE.test(input.media_type)) {
+      throw new Error(
+        `Unsupported session file media type ${JSON.stringify(input.media_type)}; allowed: image/png, image/jpeg, image/webp, image/gif`,
+      );
+    }
     const fileId = newFileId();
     const key = sessionFileKey({ tenant_id: input.tenant_id, session_id: input.session_id, file_id: fileId });
     const sizeBytes = input.bytes.byteLength;

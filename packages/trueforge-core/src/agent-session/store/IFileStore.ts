@@ -28,6 +28,7 @@ export interface StoredFile {
  * A file lives until its session is deleted.
  */
 export interface IFileStore {
+  /** Rejects any media type other than image/png, image/jpeg, image/webp and image/gif. */
   put(input: PutFileInput): Promise<PutFileResult>;
   /** Undefined when the file does not exist in that tenant's session. */
   get(input: GetFileInput): Promise<StoredFile | undefined>;

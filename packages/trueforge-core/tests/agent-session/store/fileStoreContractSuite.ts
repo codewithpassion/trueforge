@@ -101,6 +101,61 @@ export function runFileStoreContractSuite(createObjects: () => IFileObjectStore 
     ).toBeDefined();
   });
 
+  it('deleteSession leaves a session whose id extends this one past a slash', async () => {
+    const plain = await put({ session_id: SESSION });
+    const nested = await put({ session_id: `${SESSION}/files/x` });
+    await store.deleteSession({ tenant_id: TENANT, session_id: SESSION });
+    expect(await store.get({ tenant_id: TENANT, session_id: SESSION, file_id: plain.file_id })).toBeUndefined();
+    const survivor = await store.get({ tenant_id: TENANT, session_id: `${SESSION}/files/x`, file_id: nested.file_id });
+    expect(survivor?.bytes.byteLength).toBe(256);
+
+    const again = await put({ session_id: SESSION });
+    await store.deleteSession({ tenant_id: TENANT, session_id: `${SESSION}/files/x` });
+    expect(await store.get({ tenant_id: TENANT, session_id: SESSION, file_id: again.file_id })).toBeDefined();
+  });
+
+  it('get is undefined when the object exists but its row does not', async () => {
+    const fileId = 'c'.repeat(32);
+    await objects.put({
+      key: `tenants/${TENANT}/sessions/${SESSION}/files/${fileId}`,
+      media_type: 'image/png',
+      bytes: ALL_BYTE_VALUES,
+    });
+    expect(await store.get({ tenant_id: TENANT, session_id: SESSION, file_id: fileId })).toBeUndefined();
+  });
+
+  it.each(['image/svg+xml', 'text/html', 'text/plain', 'image/png; charset=binary', 'IMAGE/PNG'])(
+    'put rejects media type %s and writes nothing',
+    async mediaType => {
+      const putKeys: string[] = [];
+      const recording = new SessionFileStore({
+        objects: {
+          put: input => {
+            putKeys.push(input.key);
+            return objects.put(input);
+          },
+          get: key => objects.get(key),
+          delete: key => objects.delete(key),
+          deletePrefix: prefix => objects.deletePrefix(prefix),
+        },
+        metadata: new InMemorySessionFileMetadataStore(),
+      });
+      await expect(
+        recording.put({ tenant_id: TENANT, session_id: SESSION, media_type: mediaType, bytes: ALL_BYTE_VALUES }),
+      ).rejects.toThrow('Unsupported session file media type');
+      expect(putKeys).toEqual([]);
+    },
+  );
+
+  it('put accepts png, jpeg, webp and gif', async () => {
+    for (const mediaType of ['image/png', 'image/jpeg', 'image/webp', 'image/gif']) {
+      const { file_id } = await put({ media_type: mediaType });
+      expect(mustGet(await store.get({ tenant_id: TENANT, session_id: SESSION, file_id }), mediaType).media_type).toBe(
+        mediaType,
+      );
+    }
+  });
+
   it('keeps ids with slashes and dots inside their own session', async () => {
     const tricky = await put({ tenant_id: 'a/b', session_id: '../s1/files' });
     const plain = await put({ tenant_id: 'a', session_id: 'b' });

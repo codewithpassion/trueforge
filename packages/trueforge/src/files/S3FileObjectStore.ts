@@ -55,13 +55,20 @@ export class S3FileObjectStore implements IFileObjectStore {
     this.#fetch = options.fetch;
   }
 
+  /**
+   * Throws on every failure except a 404 naming a missing key, so a missing bucket or a misrouted
+   * endpoint never reads as "no such file".
+   */
   async #send({ url, init, operation }: { url: string; init: RequestInit; operation: string }): Promise<Response> {
     const response = await this.#fetch(await this.#client.sign(url, init));
-    if (!response.ok && response.status !== 404) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`S3 ${operation} failed with ${String(response.status)}: ${body.slice(0, 500)}`);
+    if (response.ok) {
+      return response;
     }
-    return response;
+    const body = await response.text().catch(() => '');
+    if (response.status === 404 && body.includes('<Code>NoSuchKey</Code>')) {
+      return new Response(null, { status: 404 });
+    }
+    throw new Error(`S3 ${operation} failed with ${String(response.status)}: ${body.slice(0, 500)}`);
   }
 
   #objectUrl(key: string): string {
@@ -69,14 +76,11 @@ export class S3FileObjectStore implements IFileObjectStore {
   }
 
   async put({ key, media_type, bytes }: { key: string; media_type: string; bytes: Uint8Array }): Promise<void> {
-    const response = await this.#send({
+    await this.#send({
       url: this.#objectUrl(key),
       init: { method: 'PUT', body: bytes, headers: { 'Content-Type': media_type } },
       operation: 'PutObject',
     });
-    if (response.status === 404) {
-      throw new Error(`S3 PutObject failed with 404: bucket not found`);
-    }
   }
 
   async get(key: string): Promise<Uint8Array | undefined> {
@@ -103,9 +107,6 @@ export class S3FileObjectStore implements IFileObjectStore {
         init: { method: 'GET' },
         operation: 'ListObjectsV2',
       });
-      if (response.status === 404) {
-        throw new Error('S3 ListObjectsV2 failed with 404: bucket not found');
-      }
       const listing = await response.text();
       await this.#deleteKeys(xmlValues({ xml: listing, tag: 'Key' }));
       continuationToken =

@@ -4,11 +4,12 @@ import {
   InMemoryFileObjectStore,
   SessionFileStore,
   Sessions,
+  type IFileStore,
 } from '@truefoundry/trueforge-core/agent-session';
 import type { Kysely } from 'kysely';
 import { createLogger } from 'winston';
 import { createSessionsRouter } from '../../../src/apis/sessions';
-import { TrueForgeAuthorizer } from '../../../src/auth/authorizer';
+import { TrueForgeAuthorizer, type Authorizer } from '../../../src/auth/authorizer';
 import { STANDALONE_REQUEST_CONTEXT, type RequestContext } from '../../../src/auth/identity';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
@@ -29,14 +30,33 @@ const OTHER_USER: RequestContext = {
 };
 const FOREIGN_TENANT: RequestContext = { ...CREATOR, tenant_id: 'other-tenant' };
 const SESSION_ID = 'ses_files';
+const MANAGED_SESSION_ID = 'ses_managed';
+const MANAGED_AGENT_EXTERNAL_ID = 'managed-agent-external';
 const PNG_BYTES = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0, 255);
+const INLINE_SPEC = AgentSpecSchema.parse({ model: { name: 'anthropic/claude-sonnet-4-6' }, instructions: 'files' });
+
+/** Grants `manage` on the managed agent only, as an explicit grant (not `all`). */
+const managerAuthorizer: Authorizer = {
+  listAgentAccess: input =>
+    Promise.resolve({
+      kind: 'agent_external_ids',
+      agent_external_ids: input.action === 'manage' ? [MANAGED_AGENT_EXTERNAL_ID] : [],
+    }),
+  canAccessAgent: () => Promise.resolve(false),
+  getPermissions: async ({ resourceType, resourceIds }) => ({
+    type: resourceType,
+    permissions: Object.fromEntries(resourceIds.map(id => [id, []])),
+  }),
+};
 
 describe('GET /{session_id}/files/{file_id}', () => {
   let db: Kysely<Database>;
   let app: OpenAPIHono;
   let objects: InMemoryFileObjectStore;
   let fileStore: SessionFileStore;
+  let routeFileStore: IFileStore;
   let caller: RequestContext;
+  let authorizer: Authorizer;
 
   beforeEach(async () => {
     db = createSqliteDb(':memory:');
@@ -44,14 +64,20 @@ describe('GET /{session_id}/files/{file_id}', () => {
     const sessionStore = new SqliteSessionStore(db, new BetterSqliteAtomicRunner(db));
     objects = new InMemoryFileObjectStore();
     fileStore = new SessionFileStore({ objects, metadata: new SqliteSessionFileMetadataStore(db) });
+    routeFileStore = fileStore;
     caller = CREATOR;
+    authorizer = new TrueForgeAuthorizer();
     app = new OpenAPIHono();
     app.route(
       '/',
       createSessionsRouter({
         sessions: new Sessions({ sessionStore }),
         sessionStore,
-        fileStore,
+        fileStore: {
+          put: input => routeFileStore.put(input),
+          get: input => routeFileStore.get(input),
+          deleteSession: input => routeFileStore.deleteSession(input),
+        },
         resolveModelProviderStore: () => new SqliteModelProviderStore(db),
         resolveMcpServerStore: () => new SqliteMcpServerStore(db, new BetterSqliteAtomicRunner(db)),
         resolveSkillStore: () => new SqliteSkillStore(db),
@@ -60,7 +86,11 @@ describe('GET /{session_id}/files/{file_id}', () => {
         sandboxIntegration: undefined,
         turnExecutor: testNodeTurnExecutor({ sessionStore }),
         resolveRequestContext: () => caller,
-        authorizer: new TrueForgeAuthorizer(),
+        authorizer: {
+          listAgentAccess: input => authorizer.listAgentAccess(input),
+          canAccessAgent: input => authorizer.canAccessAgent(input),
+          getPermissions: input => authorizer.getPermissions(input),
+        },
         logger: createLogger({ silent: true }),
       }),
     );
@@ -72,10 +102,29 @@ describe('GET /{session_id}/files/{file_id}', () => {
         subject_type: CREATOR.subject.type,
         subject_display_name: CREATOR.subject.display_name,
       },
-      agent: {
-        type: 'inline',
-        spec: AgentSpecSchema.parse({ model: { name: 'anthropic/claude-sonnet-4-6' }, instructions: 'files' }),
+      agent: { type: 'inline', spec: INLINE_SPEC },
+      custom: null,
+      metadata: {},
+      external_id: null,
+      source: null,
+    });
+    const agent = await new SqliteAgentStore(db).createAgent({
+      tenant_id: CREATOR.tenant_id,
+      created_by_subject: { subject_id: 'agent-owner', subject_type: 'user', subject_display_name: 'Agent owner' },
+      name: 'managed-agent',
+      description: 'Test agent.',
+      manifest: INLINE_SPEC,
+      external_id: MANAGED_AGENT_EXTERNAL_ID,
+    });
+    await sessionStore.createSession({
+      tenant_id: CREATOR.tenant_id,
+      session_id: MANAGED_SESSION_ID,
+      created_by_subject: {
+        subject_id: CREATOR.subject.id,
+        subject_type: CREATOR.subject.type,
+        subject_display_name: CREATOR.subject.display_name,
       },
+      agent: { type: 'reference', id: agent.id, name: agent.name },
       custom: null,
       metadata: {},
       external_id: null,
@@ -87,10 +136,10 @@ describe('GET /{session_id}/files/{file_id}', () => {
     await db.destroy();
   });
 
-  async function putFile(): Promise<string> {
+  async function putFile(sessionId = SESSION_ID): Promise<string> {
     const { file_id } = await fileStore.put({
       tenant_id: CREATOR.tenant_id,
-      session_id: SESSION_ID,
+      session_id: sessionId,
       media_type: 'image/png',
       bytes: PNG_BYTES,
     });
@@ -104,7 +153,32 @@ describe('GET /{session_id}/files/{file_id}', () => {
     expect(res.headers.get('content-type')).toBe('image/png');
     expect(res.headers.get('cache-control')).toBe('private');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG_BYTES);
+  });
+
+  it('serves a manager of the session’s named agent, and 404s another user without the grant', async () => {
+    const fileId = await putFile(MANAGED_SESSION_ID);
+    caller = OTHER_USER;
+    expect((await app.request(`/${MANAGED_SESSION_ID}/files/${fileId}`)).status).toBe(404);
+    authorizer = managerAuthorizer;
+    const res = await app.request(`/${MANAGED_SESSION_ID}/files/${fileId}`);
+    expect(res.status).toBe(200);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG_BYTES);
+  });
+
+  it('answers 404 to a manager of that agent in another tenant', async () => {
+    const fileId = await putFile(MANAGED_SESSION_ID);
+    caller = { ...OTHER_USER, tenant_id: 'other-tenant' };
+    authorizer = managerAuthorizer;
+    expect((await app.request(`/${MANAGED_SESSION_ID}/files/${fileId}`)).status).toBe(404);
+  });
+
+  it('answers 404 to a manager of that agent for an inline-agent session', async () => {
+    const fileId = await putFile();
+    caller = OTHER_USER;
+    authorizer = managerAuthorizer;
+    expect((await app.request(`/${SESSION_ID}/files/${fileId}`)).status).toBe(404);
   });
 
   it('answers 404 to another user of the same tenant', async () => {
@@ -147,5 +221,43 @@ describe('GET /{session_id}/files/{file_id}', () => {
     }
     const rows = await db.selectFrom('session_file').selectAll().execute();
     expect(rows).toEqual([]);
+  });
+
+  it('deleting the session also removes an object a racing put left after the first sweep', async () => {
+    const orphanKey = `tenants/${CREATOR.tenant_id}/sessions/${SESSION_ID}/files/${'d'.repeat(32)}`;
+    let sweeps = 0;
+    routeFileStore = {
+      put: input => fileStore.put(input),
+      get: input => fileStore.get(input),
+      deleteSession: async input => {
+        await fileStore.deleteSession(input);
+        sweeps += 1;
+        if (sweeps === 1) {
+          await objects.put({ key: orphanKey, media_type: 'image/png', bytes: PNG_BYTES });
+        }
+      },
+    };
+    const res = await app.request(`/${SESSION_ID}`, { method: 'DELETE' });
+    expect(res.status).toBe(204);
+    expect(sweeps).toBe(2);
+    expect(await objects.get(orphanKey)).toBeUndefined();
+  });
+
+  it('still answers 204 when the sweep after the session is gone fails', async () => {
+    let sweeps = 0;
+    routeFileStore = {
+      put: input => fileStore.put(input),
+      get: input => fileStore.get(input),
+      deleteSession: async input => {
+        sweeps += 1;
+        if (sweeps === 2) {
+          throw new Error('object store down');
+        }
+        await fileStore.deleteSession(input);
+      },
+    };
+    const res = await app.request(`/${SESSION_ID}`, { method: 'DELETE' });
+    expect(res.status).toBe(204);
+    expect((await app.request(`/${SESSION_ID}/files/${'0'.repeat(32)}`)).status).toBe(404);
   });
 });

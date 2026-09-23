@@ -146,7 +146,7 @@ export const getSessionFileRoute = createRoute({
   tags: [OpenApiTag.AGENT_SESSIONS],
   summary: 'Get a session file',
   description:
-    'Download a file the session produced, such as a tool-result screenshot, with its stored media type. Only the session creator may read it; anyone else gets 404.',
+    "Download a file the session produced, such as a tool-result screenshot, with its stored media type. Readable by whoever may read the session's turns; anyone else gets 404.",
   'x-fern-sdk-group-name': ['sessions'],
   'x-fern-sdk-method-name': 'get_file',
   request: {
@@ -159,7 +159,7 @@ export const getSessionFileRoute = createRoute({
     },
     404: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
-      description: 'Session or file not found, or the caller is not the session creator.',
+      description: 'Session or file not found, or the caller may not read the session.',
     },
   },
 });

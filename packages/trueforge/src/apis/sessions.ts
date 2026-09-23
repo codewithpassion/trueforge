@@ -9,6 +9,7 @@ import {
   SessionStoreInvariantError,
   SessionStoreNotFoundError,
 } from '@truefoundry/trueforge-core/agent-session';
+import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -34,10 +35,10 @@ import type { TurnExecutor } from '../runtime/turnExecutor';
 import type { SandboxIntegration } from '../sandbox/integration';
 import { honoQueriesToRecord } from '../schemas/deepObjectQuery';
 import { isSessionAgentNameRef, parseListSessionsQuery, type Session } from '../schemas/session';
+import { toArrayBuffer } from '../utils/bytes';
 import { newId } from '../utils/id';
 import { agentIfAccessible, canReadAgentBoundResource, resolveManagedAgentIds } from './agentAccess';
 import type { ResolveSkillStore } from './skills';
-import { toArrayBuffer } from './turns';
 
 export function toWireSession(record: SessionRecord): Session {
   return {
@@ -287,14 +288,25 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
       tenant_id: requestContext.tenant_id,
       session_id: sessionId,
     });
+    // A put whose object landed after the first sweep but whose row landed before the session went
+    // leaves an object with no row; sweep again. A put whose row comes later fails and removes its own
+    // object. The session is gone now, so a failed sweep only leaves orphan objects: log, still 204.
+    await deps.fileStore
+      .deleteSession({ tenant_id: requestContext.tenant_id, session_id: sessionId })
+      .catch((error: unknown) => {
+        deps.logger.warn('Second file sweep after session delete failed; orphan objects may remain', {
+          session_id: sessionId,
+          ...extractErrorLogFields(error),
+        });
+      });
     return c.body(null, 204);
   };
 
   const getSessionFileHandler: RouteHandler<typeof getSessionFileRoute> = async c => {
     const { session_id: sessionId, file_id: fileId } = c.req.valid('param');
     const requestContext = deps.resolveRequestContext(c);
-    // One answer for a missing session, someone else's session and a missing file, so a caller
-    // learns nothing about sessions they cannot read.
+    // Same readers as the session's turns, but one answer for a missing session, a session the caller
+    // may not read and a missing file, so a caller learns nothing about sessions they cannot read.
     const notFound = () => c.json({ error: { message: `File not found: ${fileId}` } }, 404);
     const record = await deps.sessionStore.getSession({
       tenant_id: requestContext.tenant_id,
@@ -302,7 +314,13 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
     });
     if (
       record === undefined ||
-      !isSessionOwner({ subject_id: requestContext.subject.id, created_by_subject: record.created_by_subject })
+      !(await canReadAgentBoundResource({
+        store: deps.resolveAgentStore(c),
+        context: requestContext,
+        authorizer: deps.authorizer,
+        agent_id: record.agent.type === 'reference' ? record.agent.id : undefined,
+        created_by_subject_id: record.created_by_subject.subject_id,
+      }))
     ) {
       return notFound();
     }
