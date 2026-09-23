@@ -4,6 +4,33 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 40 — Phase 9c: live view, human takeover, clipboard, chat cards (2026-09-24)
+
+**Goal:** Ship phase 9c of `docs/remote-desktop-plan.md`: users can watch the agent's desktop, take over control, and hand it back, and chat shows computer tool calls with thumbnails.
+
+**What we did:**
+
+- **Takeover server.** New `request_human_takeover` ClientSideTool (root thread only). A turn-end hook reads the session's `sandbox_info` and records a per-session takeover pointer on the computer. The pointers live in `RemoteComputerDO` storage, so no migration was needed. `HumanTakeoverService` lists and resolves takeovers. Resume goes through `turnExecutor` with `'auto'`, behind a tip check. Results are typed as `resumed` / `already_answered` / `not_pending` / `resume_failed` / `outcome_unknown`, and the tool response sets `answered_by` to `session_creator` or `another_user`.
+- **Race safety.** `store.createTurn` takes a compare-and-set `require_tip` on Postgres, SQLite, D1 and InMemory. A lost race returns 409 `already_answered` or `tip_running` and never forks the thread.
+- **Desktop router.** `/api/v1/computer-desktops` checks use permission, the current spec and the allowlist, with an admin bypass. Writes need an Origin that matches the request's own origin or `PUBLIC_BASE_URL`. A blocked write returns 423 `human_in_control` or `lease_required`. Hand-back and cancel always return 200 `{status, takeover}`. Audit rows use op `desktop`, and Slack messages link to `/agents/<id>/screen`.
+- **UI.** Added a `ComputerDesktopServer` port and `DesktopScreen`. `DesktopScreen` polls frames with one frame request in flight at a time. Input also has one request in flight, and the whole queue drains when it finishes. It maps pointer events and keysyms, has a release chord, and hands control back on unmount. Also added: a Screen tab on the agent, a Screen panel on the session, a Desktop tab in Settings, and `ComputerToolCallCard` / `HumanTakeoverCard` with thumbnails.
+- **Reviews.** Server review: 0 blockers and 4 majors, all fixed. The majors were non-creator steering, a pointer left stuck after a failed resume, untyped error data, and a text-rewrite hint that broke easily. UI review: 1 blocker (input requests piling up) and 4 majors, all fixed. Both re-reviews said LAND.
+- **Local e2e harness.** Untracked, in `.claude/phase9/e2e`. It runs wrangler dev with a mock OIDC server (navikt `mock-oauth2-server` over https, with a throwaway CA passed through `NODE_EXTRA_CA_CERTS`) and the desktop image with its seccomp profile. The agent is Claude Sonnet on the owner's local Anthropic key, and a Sonnet agent ran the browser QA through agent-browser. Final QA passed 8 of 10: non-creator takeover, resume, race without a fork, `human_in_control` lockout, thumbnails and masking all worked.
+- **Shipped.** Landed on `dom/main` at `cb540593` and deployed as Workers version `b2e7643d` (no migration). Polish still in progress: tab order for the keyboard escape, the wording of the race 409, the xterm ctrl+v paste binding, and console noise from 423s.
+
+**Lessons learned:**
+
+- QA found a P0 that no unit test caught. wrangler dev rewrites the request URL and the Origin header to the route host in `wrangler.jsonc`, so an Origin check against `PUBLIC_BASE_URL` refused every cookie-authenticated write locally. Prod was not affected. The unit tests injected the deps, so they never went through the rewrite. The fix (`0d25b578`) also accepts the origin the request was addressed to.
+- Deploy builds read the SDK from `dist`, not `src`. After an SDK regen, run `pnpm --filter @truefoundry/trueforge-sdk build` before `workers:deploy`, or the deploy ships the stale SDK.
+- The disk filled to 100% overnight from Docker build cache and leftover worktrees. `docker builder prune` freed 30 GB.
+
+**Avoid next time:**
+
+- Don't sign off on security checks (Origin, CSRF, auth) from tests that inject deps. Run them at least once through the real runtime (wrangler dev or the deployed Worker).
+- Don't run `workers:deploy` after an SDK regen without rebuilding the SDK dist first.
+- Don't start a new phase without clearing Docker build cache and merged worktrees.
+- Don't call phase 9c done yet. The production live test still needs the owner (Google login plus a machine enrolled with `--desktop`).
+
 ## Cycle 39 — Phase 9a-2: images in tool results, plus integration with 9b (2026-09-24)
 
 **Goal:** Ship phase 9a-2 of `docs/remote-desktop-plan.md` (§5.2) so tools can return images, and wire the 9b `computer_*` tools to return real screenshots.
