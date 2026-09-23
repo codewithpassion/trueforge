@@ -11234,7 +11234,7 @@
     },
     "/api/v1/sessions/{session_id}/files/{file_id}": {
       "get": {
-        "description": "Download a file the session produced, such as a tool-result screenshot, with its stored media type. Only the session creator may read it; anyone else gets 404.",
+        "description": "Download a file the session produced, such as a tool-result screenshot, with its stored media type. Readable by whoever may read the session's turns; anyone else gets 404.",
         "parameters": [
           {
             "description": "Session identifier.",
@@ -11280,7 +11280,7 @@
                 }
               }
             },
-            "description": "Session or file not found, or the caller is not the session creator."
+            "description": "Session or file not found, or the caller may not read the session."
           }
         },
         "summary": "Get a session file",

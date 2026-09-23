@@ -690,7 +690,7 @@ class RawSessionsClient:
         self, *, session_id: str, file_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> typing.Iterator[HttpResponse[typing.Iterator[bytes]]]:
         """
-        Download a file the session produced, such as a tool-result screenshot, with its stored media type. Only the session creator may read it; anyone else gets 404.
+        Download a file the session produced, such as a tool-result screenshot, with its stored media type. Readable by whoever may read the session's turns; anyone else gets 404.
 
         Parameters
         ----------
@@ -2293,7 +2293,7 @@ class AsyncRawSessionsClient:
         self, *, session_id: str, file_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> typing.AsyncIterator[AsyncHttpResponse[typing.AsyncIterator[bytes]]]:
         """
-        Download a file the session produced, such as a tool-result screenshot, with its stored media type. Only the session creator may read it; anyone else gets 404.
+        Download a file the session produced, such as a tool-result screenshot, with its stored media type. Readable by whoever may read the session's turns; anyone else gets 404.
 
         Parameters
         ----------

@@ -2811,7 +2811,7 @@ const response = page.response;
 <dl>
 <dd>
 
-Download a file the session produced, such as a tool-result screenshot, with its stored media type. Only the session creator may read it; anyone else gets 404.
+Download a file the session produced, such as a tool-result screenshot, with its stored media type. Readable by whoever may read the session's turns; anyone else gets 404.
 </dd>
 </dl>
 </dd>
