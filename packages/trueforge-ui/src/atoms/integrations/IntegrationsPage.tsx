@@ -111,6 +111,8 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
   useEffect(() => {
     let cancelled = false;
     setAgentName(null);
+    setIntegrations([]);
+    setLoading(true);
     void sessionsServer
       .getAgent({ agentId })
       .then(detail => {
