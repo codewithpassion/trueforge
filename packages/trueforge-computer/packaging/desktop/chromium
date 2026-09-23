@@ -9,9 +9,17 @@ desktop_dir="/var/lib/trueforge-computer/desktop"
 if [ -n "${XAUTHORITY:-}" ]; then
   desktop_dir="$(dirname "$XAUTHORITY")"
 fi
+profile="$desktop_dir/chromium-profile"
+
+# Chromium's profile lock names the hostname and pid that took it. A container recreated on the
+# same volume gets a new hostname, and Chromium then treats the lock as held by another computer
+# and never opens the profile. With no Chromium running on this profile, any lock is stale.
+if ! pgrep -f -- "--user-data-dir=$profile( |\$)" >/dev/null 2>&1; then
+  rm -f "$profile/SingletonLock" "$profile/SingletonCookie" "$profile/SingletonSocket"
+fi
 
 exec /usr/bin/chromium \
-  --user-data-dir="$desktop_dir/chromium-profile" \
+  --user-data-dir="$profile" \
   --password-store=basic \
   --window-size=1280,800 \
   --window-position=0,0 \

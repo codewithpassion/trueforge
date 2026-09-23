@@ -128,15 +128,23 @@ collect them.
 
 With `--desktop`, or after `enroll --desktop`, the daemon runs a virtual X display that agents can
 screenshot and drive and that a human can take over. It runs Xvfb at 1280×800 on `:99` with
-`-nolisten tcp` and a fresh cookie in `<state-dir>/desktop/Xauthority`, plus openbox, and
-restarts either with backoff. Every command gets `DISPLAY` and `XAUTHORITY`, so an agent starts
-`xterm &` or `chromium <url> &` itself. The desktop is Linux only.
+`-nolisten tcp -nolisten local`, so the filesystem socket is the only way in, and a fresh cookie in
+`<state-dir>/desktop/Xauthority`, plus openbox, and restarts either with backoff. The daemon refuses
+to start the desktop on a display another live process holds, and never drives a display its own
+Xvfb does not hold. Every command gets `DISPLAY` and `XAUTHORITY`, so an agent starts `xterm &` or
+`chromium <url> &` itself.
 
-On bare metal it needs Xvfb, openbox, xterm, Chromium, xdotool and xclip
-(`sudo apt-get install -y xvfb openbox xterm chromium xdotool xclip`); `install.sh --desktop`
-checks for them. The hello tells the server `desktop: true` only once the display answers, the
-tools resolve and Chromium's sandbox self-test passes. Otherwise it sends `desktop: false` and a
-reason. Chromium's sandbox is never switched off.
+The hello tells the server `desktop: true` only once the display answers, the tools resolve and
+Chromium's sandbox self-test passes. Otherwise it sends `desktop: false` and a reason, stops the
+display, and gives commands no `DISPLAY`. Chromium's sandbox is never switched off.
+
+On bare metal the desktop is supported on Debian only. It needs Xvfb, openbox, xterm, Chromium,
+xdotool and xclip (`sudo apt-get install -y xvfb openbox xterm chromium xdotool xclip`), and
+`install.sh --desktop` checks for them. It refuses Ubuntu's chromium, which is a snap whose
+confinement keeps it away from the cookie and the profile. The `chromium` wrapper and the
+password-manager policy described below ship only in the desktop image: installing them on a host
+would change the browser for every user of that machine, so on bare metal `chromium` is Debian's
+own, with its usual profile in the run-as user's home.
 
 The desktop image adds all of that to the same binary. Chromium's sandbox needs user namespaces,
 which Docker's default seccomp profile refuses, so run it with the committed profile:
@@ -144,6 +152,7 @@ which Docker's default seccomp profile refuses, so run it with the committed pro
 ```sh
 docker run -d --restart unless-stopped \
   --name trueforge-computer-desktop \
+  --hostname trueforge-desktop \
   --security-opt seccomp=packaging/desktop/seccomp.json \
   -e TRUEFORGE_URL=https://trueforge.example.com \
   -e TRUEFORGE_ENROLL_CODE=<code> \
@@ -156,6 +165,10 @@ daemon still runs commands, but reports the desktop as unavailable. The image's 
 wrapper that keeps one profile in `<state-dir>/desktop/chromium-profile`, so logins survive
 restarts, and a managed policy turns the password manager off. Anything running as this user can
 read that profile, including every agent's `exec`.
+
+Chromium's profile lock names the hostname that took it, and a container recreated without
+`--hostname` gets a new one. The wrapper clears a lock no running Chromium holds, so the profile
+opens either way; a fixed `--hostname` also keeps the name the daemon reports stable.
 
 `pnpm --filter @truefoundry/trueforge-computer docker:build:desktop` builds the image, and
 `test:desktop-image` runs the desktop tests inside it.

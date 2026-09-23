@@ -202,16 +202,18 @@ type DesktopClipboardSetRequest struct {
 
 // Desktop limits. The display is fixed, so coordinates are desktop pixels with no scaling.
 const (
-	DesktopWidth             = 1280
-	DesktopHeight            = 800
-	DesktopMaxActions        = 64
-	DesktopMaxTypeChars      = 512
-	DesktopMaxKeysChars      = 64
-	DesktopMaxClickCount     = 3
-	DesktopMaxScrollClicks   = 50
-	DesktopMaxClipboardBytes = 64 << 10
-	DesktopDefaultQuality    = 60
-	DesktopMaxQuality        = 95
+	DesktopWidth           = 1280
+	DesktopHeight          = 800
+	DesktopMaxActions      = 64
+	DesktopMaxTypeChars    = 512
+	DesktopMaxKeysChars    = 64
+	DesktopMaxClickCount   = 3
+	DesktopMaxScrollClicks = 50
+	// DesktopMaxScrollClicksPerBatch caps |dx|+|dy| summed over a batch's scrolls.
+	DesktopMaxScrollClicksPerBatch = 60
+	DesktopMaxClipboardBytes       = 64 << 10
+	DesktopDefaultQuality          = 60
+	DesktopMaxQuality              = 95
 	// DesktopMaxResultBytes keeps a screenshot well under every relay cap.
 	DesktopMaxResultBytes = 3 << 20
 	// DesktopMediaType is the only format screenshots come in.

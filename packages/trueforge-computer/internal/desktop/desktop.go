@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"trueforge.dev/computer/internal/protocol"
@@ -39,6 +40,9 @@ var (
 	ErrBadRequest = errors.New("bad desktop request")
 	// ErrTooLarge means a result would be over the protocol's cap.
 	ErrTooLarge = errors.New("desktop result too large")
+	// ErrBusy means the op could not start inside its budget because other desktop ops held
+	// the desktop. It did not run.
+	ErrBusy = errors.New("the desktop is busy")
 )
 
 // Timings. Readiness and the Chromium self-test run once, at startup, before hello is sent.
@@ -53,28 +57,67 @@ const (
 	stopGrace = 5 * time.Second
 )
 
+// screenshotSlots bounds concurrent captures, each of which holds two full frames in memory.
+const screenshotSlots = 2
+
 type Options struct {
 	StateDir string
 	Display  int
 	Logger   *slog.Logger
 }
 
-// Desktop is a running display. Its methods are safe for concurrent use; input and clipboard
-// writes are serialised, because two interleaved batches would type into each other.
+// Desktop is a running display. Its methods are safe for concurrent use; input and clipboard ops
+// take turns, because two interleaved batches would type into each other.
 type Desktop struct {
 	display    int
 	socket     string
+	lockPath   string
 	dir        string
 	xauthority string
 	cookieHex  string
 	logger     *slog.Logger
 
-	mu         sync.Mutex
+	// turn is the one slot input and clipboard ops share; shots holds the capture slots.
+	turn  chan struct{}
+	shots chan struct{}
+	// xvfbPID is the Xvfb this desktop started, 0 while none runs. The display is only used
+	// while its lock file names this process.
+	xvfbPID    atomic.Int64
+	stop       context.CancelFunc
 	supervised sync.WaitGroup
 }
 
-// Start brings up Xvfb and openbox under supervision until ctx ends. An error means there is no
-// desktop at all; a desktop that started may still fail Check.
+func newDesktop(options Options, dir string, cookie []byte) *Desktop {
+	return &Desktop{
+		display:    options.Display,
+		socket:     fmt.Sprintf("/tmp/.X11-unix/X%d", options.Display),
+		lockPath:   displayLockPath(options.Display),
+		dir:        dir,
+		xauthority: filepath.Join(dir, XauthorityFileName),
+		cookieHex:  hex.EncodeToString(cookie),
+		logger:     options.Logger,
+		turn:       make(chan struct{}, 1),
+		shots:      make(chan struct{}, screenshotSlots),
+		stop:       func() {},
+	}
+}
+
+// Launch starts the desktop and checks it. On any failure nothing is left running, so there is no
+// desktop to hand to agents and no display to put in their environment.
+func Launch(ctx context.Context, options Options) (*Desktop, error) {
+	desktop, err := Start(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	if err := desktop.Check(ctx); err != nil {
+		desktop.Stop()
+		return nil, err
+	}
+	return desktop, nil
+}
+
+// Start brings up Xvfb and openbox under supervision until ctx ends or Stop is called. An error
+// means there is no desktop at all; a desktop that started may still fail Check.
 func Start(ctx context.Context, options Options) (*Desktop, error) {
 	if runtime.GOOS != "linux" {
 		return nil, fmt.Errorf("the desktop is only supported on Linux, not %s", runtime.GOOS)
@@ -90,12 +133,12 @@ func Start(ctx context.Context, options Options) (*Desktop, error) {
 			return nil, fmt.Errorf("%s is not installed; see install.sh --desktop for the packages the desktop needs", binary)
 		}
 	}
-	dir := filepath.Join(options.StateDir, DirName)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create %s: %w", dir, err)
+	if err := checkDisplayFree(displayLockPath(options.Display), options.Display); err != nil {
+		return nil, err
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("restrict %s: %w", dir, err)
+	dir, err := prepareDir(options.StateDir)
+	if err != nil {
+		return nil, err
 	}
 
 	// A fresh cookie per start: anything still holding the last one belongs to a dead server.
@@ -104,29 +147,41 @@ func Start(ctx context.Context, options Options) (*Desktop, error) {
 		return nil, fmt.Errorf("generate the X cookie: %w", err)
 	}
 	displayNumber := strconv.Itoa(options.Display)
-	xauthority := filepath.Join(dir, XauthorityFileName)
-	if err := WriteXauthority(xauthority, displayNumber, cookie); err != nil {
+	desktop := newDesktop(options, dir, cookie)
+	if err := WriteXauthority(desktop.xauthority, displayNumber, cookie); err != nil {
 		return nil, err
 	}
 
-	desktop := &Desktop{
-		display:    options.Display,
-		socket:     fmt.Sprintf("/tmp/.X11-unix/X%d", options.Display),
-		dir:        dir,
-		xauthority: xauthority,
-		cookieHex:  hex.EncodeToString(cookie),
-		logger:     options.Logger,
-	}
-	desktop.supervise(ctx, "Xvfb", []string{
-		"Xvfb", ":" + displayNumber,
-		"-screen", "0", fmt.Sprintf("%dx%dx24", protocol.DesktopWidth, protocol.DesktopHeight),
-		"-nolisten", "tcp",
-		"-auth", xauthority,
-	}, nil)
+	ctx, desktop.stop = context.WithCancel(ctx)
+	// No TCP and no abstract socket: the filesystem socket and the cookie are the only way in.
+	desktop.supervise(ctx, process{
+		name: "Xvfb",
+		argv: []string{
+			"Xvfb", ":" + displayNumber,
+			"-screen", "0", fmt.Sprintf("%dx%dx24", protocol.DesktopWidth, protocol.DesktopHeight),
+			"-nolisten", "tcp",
+			"-nolisten", "local",
+			"-auth", desktop.xauthority,
+		},
+		running: func(pid int) { desktop.xvfbPID.Store(int64(pid)) },
+	})
 	// openbox is started only once the display answers; when Xvfb restarts it loses its
 	// connection, exits, and comes back through the same wait.
-	desktop.supervise(ctx, "openbox", []string{"openbox"}, desktop.waitReady)
+	desktop.supervise(ctx, process{name: "openbox", argv: []string{"openbox"}, before: desktop.waitReady})
 	return desktop, nil
+}
+
+// prepareDir makes the desktop directory private: it holds the X cookie and the Chromium profile.
+func prepareDir(stateDir string) (string, error) {
+	dir := filepath.Join(stateDir, DirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create %s: %w", dir, err)
+	}
+	// MkdirAll leaves an existing directory's mode alone.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", fmt.Errorf("restrict %s: %w", dir, err)
+	}
+	return dir, nil
 }
 
 // Env is what every command on this computer needs to reach the display.
@@ -137,8 +192,9 @@ func (d *Desktop) Env() map[string]string {
 	}
 }
 
-// Wait returns once every supervised process has stopped, after the context given to Start ends.
-func (d *Desktop) Wait() {
+// Stop stops every supervised process and returns once they have all exited.
+func (d *Desktop) Stop() {
+	d.stop()
 	d.supervised.Wait()
 }
 
@@ -177,12 +233,23 @@ func (d *Desktop) waitReady(ctx context.Context) error {
 	}
 }
 
+// acquire takes a slot before ctx ends or not at all: an op that cannot start inside its budget
+// is refused rather than run after the server has given up on it.
+func acquire(ctx context.Context, slots chan struct{}) (release func(), err error) {
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: other desktop operations held it for this one's whole budget", ErrBusy)
+	}
+}
+
 // commandEnv is the scrubbed environment every helper runs with, the same one exec'd commands get.
 func (d *Desktop) commandEnv() []string {
 	return runner.ScrubbedEnv(d.Env())
 }
 
-// Capability turns the outcome of Start and Check into hello's two desktop fields.
+// Capability turns the outcome of Launch into hello's two desktop fields.
 func Capability(err error) (bool, *string) {
 	if err == nil {
 		return true, nil

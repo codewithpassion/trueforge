@@ -7,28 +7,36 @@ import (
 	"time"
 )
 
-// supervise keeps one process running until ctx ends, restarting it with backoff. before, when
-// set, gates every start, so a client of the display waits for the display.
-func (d *Desktop) supervise(ctx context.Context, name string, argv []string, before func(context.Context) error) {
+// process is one supervised program. before, when set, gates every start, so a client of the
+// display waits for the display; running, when set, hears the pid while it runs and 0 after.
+type process struct {
+	name    string
+	argv    []string
+	before  func(context.Context) error
+	running func(pid int)
+}
+
+// supervise keeps one process running until ctx ends, restarting it with backoff.
+func (d *Desktop) supervise(ctx context.Context, p process) {
 	d.supervised.Add(1)
 	go func() {
 		defer d.supervised.Done()
 		delay := restartMin
 		for ctx.Err() == nil {
-			if before != nil {
-				if err := before(ctx); err != nil {
+			if p.before != nil {
+				if err := p.before(ctx); err != nil {
 					return
 				}
 			}
 			startedAt := time.Now()
-			err := d.runOnce(ctx, argv)
+			err := d.runOnce(ctx, p)
 			if ctx.Err() != nil {
 				return
 			}
 			if time.Since(startedAt) >= stableAfter {
 				delay = restartMin
 			}
-			d.logger.Warn("a desktop process exited; restarting it", "process", name, "error", errorText(err), "restart_in", delay.String())
+			d.logger.Warn("a desktop process exited; restarting it", "process", p.name, "error", errorText(err), "restart_in", delay.String())
 			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
@@ -42,8 +50,8 @@ func (d *Desktop) supervise(ctx context.Context, name string, argv []string, bef
 }
 
 // runOnce runs the process in its own group, so stopping it also stops whatever it started.
-func (d *Desktop) runOnce(ctx context.Context, argv []string) error {
-	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
+func (d *Desktop) runOnce(ctx context.Context, p process) error {
+	command := exec.CommandContext(ctx, p.argv[0], p.argv[1:]...)
 	command.Env = d.commandEnv()
 	command.Dir = d.dir
 	command.SysProcAttr = processAttributes()
@@ -51,7 +59,14 @@ func (d *Desktop) runOnce(ctx context.Context, argv []string) error {
 		return syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
 	}
 	command.WaitDelay = stopGrace
-	return command.Run()
+	if err := command.Start(); err != nil {
+		return err
+	}
+	if p.running != nil {
+		p.running(command.Process.Pid)
+		defer p.running(0)
+	}
+	return command.Wait()
 }
 
 func errorText(err error) string {

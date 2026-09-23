@@ -273,9 +273,11 @@ one-liner is served by the server at `GET /install.sh`.
 
 A Linux client started with `--desktop`, or enrolled with `enroll --desktop` (stored as
 `"desktop": true` in its `config.json`), runs a virtual X display: `Xvfb :<n> -screen 0 1280x800x24
--nolisten tcp -auth <state-dir>/desktop/Xauthority` and `openbox`, each restarted with backoff. `<n>` is
-`--desktop-display`, 99 by default. Every `exec` gets `DISPLAY=:<n>` and
-`XAUTHORITY=<state-dir>/desktop/Xauthority` in its base environment; the server does not send them.
+-nolisten tcp -nolisten local -auth <state-dir>/desktop/Xauthority` and `openbox`, each restarted with
+backoff. `<n>` is `--desktop-display`, 99 by default. The client refuses a display whose
+`/tmp/.X<n>-lock` names a live process, and only connects to the display while that lock names its own
+Xvfb. Every `exec` gets `DISPLAY=:<n>` and `XAUTHORITY=<state-dir>/desktop/Xauthority` in its base
+environment; the server does not send them.
 
 ### Capability
 
@@ -284,7 +286,9 @@ A Linux client started with `--desktop`, or enrolled with `enroll --desktop` (st
 `false` and `desktop_unavailable_reason` (at most 256 characters) says why; otherwise the reason is
 `null`. Both default to "no desktop" when absent. The server sends the four ops below **only** to a
 computer whose hello said `desktop: true`. The capability is decided once, before `hello`; a display that
-dies later answers `desktop_unavailable` until the client restarts it.
+dies later answers `desktop_unavailable` until the client restarts it. A client whose check failed stops
+the display, answers every desktop op with `desktop_unavailable`, and gives `exec` no `DISPLAY` or
+`XAUTHORITY`.
 
 ### Ops
 
@@ -303,8 +307,11 @@ dies later answers `desktop_unavailable` until the client restarts it.
 
 - `mouse_move {x, y}`; `mouse_down {button}` and `mouse_up {button}` at the current pointer position;
 - `click {x, y, button, count}`, count 1–3;
-- `scroll {x, y, dx, dy}` in wheel clicks, `dy > 0` down and `dx > 0` right, each within ±50;
-- `key {keys}`, one xdotool chord such as `ctrl+l` or `Return`, 1–64 characters and no whitespace;
+- `scroll {x, y, dx, dy}` in wheel clicks, `dy > 0` down and `dx > 0` right, each within ±50; across
+  one batch, the sum of `|dx| + |dy|` over every scroll is at most 60, so the batch fits its timeout;
+- `key {keys}`, one xdotool chord such as `ctrl+l` or `Return`, 1–64 characters matching
+  `^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$`, and not an xdotool command name in any case (`exec`,
+  `getmouselocation`, `windowkill`, `help` and the rest), because xdotool would run it as a command;
 - `type {text}`, 1–512 characters, typed with `xdotool type --delay 2`.
 
 `button` is `left`, `middle` or `right`; `x` is 0–1279 and `y` 0–799, the fixed display in its own
@@ -318,7 +325,10 @@ pixels. `selections` entries are `clipboard` and `primary`. The clipboard is rea
 - A `--read-only` client refuses `desktop_input` and `desktop_clipboard_set` with `read_only`. It still
   serves `desktop_screenshot` and `desktop_clipboard_get`.
 - The server's timeouts are 5,000 ms for a screenshot, 3,000 ms for either clipboard op, and 2,000 ms
-  plus 5 ms per typed character for `desktop_input`. The client bounds its own work to the same budgets.
+  plus 5 ms per typed character for `desktop_input`. The client bounds its own work to the same budgets,
+  and each budget starts when the request arrives, not when the op gets its turn.
+- `desktop_input` and both clipboard ops take turns; at most two screenshots run at once. An op that
+  cannot start within its budget is answered `op_failed` and does not run.
 - The client's audit log records a batch's action types and the clipboard's size, never typed text,
   key names or clipboard contents.
 

@@ -51,7 +51,7 @@ function clientCalls(): string[] {
 
 beforeEach(() => {
   bin = mkdtempSync(path.join(tmpdir(), 'install-sh-'));
-  for (const tool of ['chmod', 'mkdir', 'mktemp', 'mv', 'rm']) {
+  for (const tool of ['chmod', 'grep', 'mkdir', 'mktemp', 'mv', 'readlink', 'rm']) {
     linkRealTool(tool);
   }
   stub('id', 'case "$1" in -u) echo 1000 ;; *) echo tester ;; esac');
@@ -88,6 +88,7 @@ describe('install.sh', () => {
     const run = install({ args: ['--desktop'], tools: ['Xvfb', 'openbox', 'xterm'] });
     expect(run.status).toBe(1);
     expect(run.stderr).toContain('does not have: chromium xdotool xclip');
+    expect(run.stderr).toContain('supported on Debian only');
     expect(run.stderr).toContain(DESKTOP_APT_LINE);
     expect(DESKTOP_APT_LINE).toBe('sudo apt-get install -y xvfb openbox xterm chromium xdotool xclip');
     expect(clientCalls()).toEqual([]);
@@ -98,6 +99,24 @@ describe('install.sh', () => {
     expect(run.status).toBe(0);
     expect(run.stderr).not.toContain('apt-get');
     expect(clientCalls()).toEqual(['enroll --url https://trueforge.example.com --desktop', 'run']);
+  });
+
+  it("with --desktop refuses Ubuntu's chromium stub, which only asks for the snap", () => {
+    stub('chromium', `echo "Command '$0' requires the chromium snap to be installed." >&2\nexit 1`);
+    const run = install({ args: ['--desktop'], tools: DESKTOP_TOOLS.filter(tool => tool !== 'chromium') });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("is Ubuntu's snap");
+    expect(run.stderr).toContain('supported on Debian only');
+    expect(clientCalls()).toEqual([]);
+  });
+
+  it('with --desktop refuses a chromium that resolves to the snap launcher', () => {
+    stub('snap', 'exit 0');
+    symlinkSync(path.join(bin, 'snap'), path.join(bin, 'chromium'));
+    const run = install({ args: ['--desktop'], tools: DESKTOP_TOOLS.filter(tool => tool !== 'chromium') });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("is Ubuntu's snap");
+    expect(clientCalls()).toEqual([]);
   });
 
   it('with --desktop refuses a machine that is not Linux', () => {

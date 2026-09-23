@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -28,8 +29,12 @@ func init() {
 }
 
 // connect opens a fresh connection with the cookie. One per capture costs about a millisecond
-// on the unix socket and never outlives an Xvfb restart.
+// on the unix socket and never outlives an Xvfb restart. A display this desktop's Xvfb does not
+// hold is never dialled.
 func (d *Desktop) connect(budget time.Duration) (*xgb.Conn, error) {
+	if err := d.ownsDisplay(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
 	socket, err := net.DialTimeout("unix", d.socket, budget)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
@@ -60,7 +65,15 @@ func ScreenshotQuality(requested *int) (int, error) {
 
 // Screenshot captures the whole root window in-process and encodes it as JPEG.
 func (d *Desktop) Screenshot(quality int) (protocol.DesktopScreenshotResult, error) {
-	conn, err := d.connect(screenshotBudget)
+	ctx, cancel := context.WithTimeout(context.Background(), screenshotBudget)
+	defer cancel()
+	release, err := acquire(ctx, d.shots)
+	if err != nil {
+		return protocol.DesktopScreenshotResult{}, err
+	}
+	defer release()
+	deadline, _ := ctx.Deadline()
+	conn, err := d.connect(time.Until(deadline))
 	if err != nil {
 		return protocol.DesktopScreenshotResult{}, err
 	}
@@ -68,7 +81,6 @@ func (d *Desktop) Screenshot(quality int) (protocol.DesktopScreenshotResult, err
 
 	setup := xproto.Setup(conn)
 	screen := setup.DefaultScreen(conn)
-	width, height := int(screen.WidthInPixels), int(screen.HeightInPixels)
 	reply, err := xproto.GetImage(conn, xproto.ImageFormatZPixmap, xproto.Drawable(screen.Root),
 		0, 0, screen.WidthInPixels, screen.HeightInPixels, 0xffffffff).Reply()
 	if err != nil {
@@ -78,11 +90,16 @@ func (d *Desktop) Screenshot(quality int) (protocol.DesktopScreenshotResult, err
 	if err != nil {
 		return protocol.DesktopScreenshotResult{}, err
 	}
-	frame, err := layout.decode(reply.Data, width, height)
+	frame, err := layout.decode(reply.Data, int(screen.WidthInPixels), int(screen.HeightInPixels))
 	if err != nil {
 		return protocol.DesktopScreenshotResult{}, err
 	}
+	return encodeScreenshot(frame, quality)
+}
 
+// encodeScreenshot turns a frame into the op's result, refusing one over the size cap rather
+// than sending a frame the relay would drop.
+func encodeScreenshot(frame image.Image, quality int) (protocol.DesktopScreenshotResult, error) {
 	var encoded bytes.Buffer
 	if err := jpeg.Encode(&encoded, frame, &jpeg.Options{Quality: quality}); err != nil {
 		return protocol.DesktopScreenshotResult{}, fmt.Errorf("encode the screenshot: %w", err)
@@ -92,10 +109,11 @@ func (d *Desktop) Screenshot(quality int) (protocol.DesktopScreenshotResult, err
 		return protocol.DesktopScreenshotResult{}, fmt.Errorf("%w: the screenshot is %d bytes encoded, over the %d limit; ask for a lower quality",
 			ErrTooLarge, len(data), protocol.DesktopMaxResultBytes)
 	}
+	bounds := frame.Bounds()
 	return protocol.DesktopScreenshotResult{
 		DataB64:   data,
-		Width:     width,
-		Height:    height,
+		Width:     bounds.Dx(),
+		Height:    bounds.Dy(),
 		MediaType: protocol.DesktopMediaType,
 	}, nil
 }
