@@ -121,20 +121,9 @@ function Placeholder({ problem, status }: { problem: DesktopFrameProblem | null;
   );
 }
 
-function takeoverOutcomeText({
-  takeover,
-  action,
-}: {
-  takeover: DesktopTakeoverResult;
-  action: 'hand_back' | 'cancel';
-}): { tone: 'success' | 'warning'; text: string } {
-  if (takeover.result === 'resumed') {
-    return {
-      tone: 'success',
-      text: action === 'hand_back' ? 'Handed back. The agent continues.' : 'Request cancelled. The agent continues.',
-    };
-  }
-  return { tone: 'warning', text: takeover.message || 'The agent was not resumed.' };
+/** The server words the outcome; only the tone is decided here. */
+function takeoverOutcomeText(takeover: DesktopTakeoverResult): { tone: 'success' | 'warning'; text: string } {
+  return { tone: takeover.result === 'resumed' ? 'success' : 'warning', text: takeover.message };
 }
 
 function PendingTakeovers({
@@ -340,7 +329,7 @@ export function DesktopScreen({
       setNotice(
         answer.takeover === null
           ? { tone: 'success', text: 'Control handed back.' }
-          : takeoverOutcomeText({ takeover: answer.takeover, action: 'hand_back' }),
+          : takeoverOutcomeText(answer.takeover),
       );
     });
 
@@ -357,7 +346,7 @@ export function DesktopScreen({
       setNotice(
         answer.takeover === null
           ? { tone: 'success', text: 'Request cancelled.' }
-          : takeoverOutcomeText({ takeover: answer.takeover, action: 'cancel' }),
+          : takeoverOutcomeText(answer.takeover),
       );
     });
 

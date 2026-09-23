@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   ComputerDesktopError,
   createComputerDesktopServer,
-  toTakeoverAnswer,
 } from '@/plugins/trueforge-agent-server-adapter/catalogs/computerDesktop.js';
 import { createTrueForgeClient } from '@/plugins/trueforge-agent-server-adapter/client.js';
 import type { DesktopStatus } from '@/server/types.js';
@@ -121,45 +120,34 @@ describe('createComputerDesktopServer', () => {
     expect(requests).toHaveLength(1);
   });
 
-  it('hands back naming the takeover and note', async () => {
-    const { server, requests } = serverWith(() => Response.json({ data: wireStatus }));
+  it('hands back naming the takeover and note, and reads the outcome', async () => {
+    const { server, requests } = serverWith(() =>
+      Response.json({
+        data: {
+          status: wireStatus,
+          takeover: { session_id: 'session-1', result: 'resumed', message: 'The agent continues' },
+        },
+      }),
+    );
     const answer = await server.handBackDesktop({
       computerId: 'computer-1',
       agentId: 'agent-1',
       sessionId: 'session-1',
       note: 'done',
     });
-    expect(answer.status.computerId).toBe('computer-1');
+    expect(answer).toEqual({
+      status: uiStatus,
+      takeover: { sessionId: 'session-1', result: 'resumed', message: 'The agent continues' },
+    });
     expect(requests[0]?.url.pathname).toBe('/api/v1/computer-desktops/computer-1/hand-back');
     expect(JSON.parse(requests[0]?.body ?? '{}')).toEqual({ session_id: 'session-1', note: 'done' });
   });
-});
 
-describe('toTakeoverAnswer', () => {
-  it('reads the status and takeover outcome', () => {
-    expect(
-      toTakeoverAnswer({
-        status: uiStatus,
-        takeover: { sessionId: 'session-1', result: 'already_answered', message: 'Answered in chat' },
-      }),
-    ).toEqual({
-      status: uiStatus,
-      takeover: { sessionId: 'session-1', result: 'already_answered', message: 'Answered in chat' },
-    });
-  });
-
-  it('reads a bare status as nothing to report', () => {
-    expect(toTakeoverAnswer(uiStatus)).toEqual({ status: uiStatus, takeover: null });
-  });
-
-  it('ignores an outcome it does not know', () => {
-    expect(toTakeoverAnswer({ status: uiStatus, takeover: { sessionId: 's', result: 'later', message: '' } })).toEqual({
-      status: uiStatus,
-      takeover: null,
-    });
-  });
-
-  it('refuses an answer without a status', () => {
-    expect(() => toTakeoverAnswer({ takeover: null })).toThrow('cannot read');
+  it('cancels a takeover and reads a null outcome', async () => {
+    const { server, requests } = serverWith(() => Response.json({ data: { status: wireStatus, takeover: null } }));
+    const answer = await server.cancelDesktopTakeover({ computerId: 'computer-1', sessionId: 'session-1' });
+    expect(answer).toEqual({ status: uiStatus, takeover: null });
+    expect(requests[0]?.url.pathname).toBe('/api/v1/computer-desktops/computer-1/cancel-takeover');
+    expect(JSON.parse(requests[0]?.body ?? '{}')).toEqual({ session_id: 'session-1' });
   });
 });

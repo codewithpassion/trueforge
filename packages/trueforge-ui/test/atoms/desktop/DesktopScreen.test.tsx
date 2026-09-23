@@ -205,7 +205,7 @@ describe('DesktopScreen', () => {
   it('lets a viewer cancel a pending request without taking control', async () => {
     const cancelDesktopTakeover = vi.fn(async (): Promise<DesktopTakeoverAnswer> => ({
       status: status({ kind: 'none' }),
-      takeover: { sessionId: 'session-1', result: 'resumed', message: '' },
+      takeover: { sessionId: 'session-1', result: 'resumed', message: 'The agent continues' },
     }));
     const server = createServer({
       getDesktopStatus: vi.fn(async () => status({ kind: 'agent', sessionId: 'session-2' }, [takeover])),
@@ -221,7 +221,7 @@ describe('DesktopScreen', () => {
       agentId: 'agent-1',
       sessionId: 'session-1',
     });
-    expect(screen.getByText('Request cancelled. The agent continues.')).toBeInTheDocument();
+    expect(screen.getByText('The agent continues')).toBeInTheDocument();
   });
 
   it('warns in the last minute of control', async () => {

@@ -3,14 +3,7 @@
  * `ComputerDesktopError`, so the UI branches on status and code without knowing the SDK.
  */
 import type { TrueForge } from '@truefoundry/trueforge-sdk';
-import type {
-  ComputerDesktopServer,
-  DesktopRequestFailure,
-  DesktopStatus,
-  DesktopTakeoverAnswer,
-  DesktopTakeoverResult,
-  DesktopTakeoverResultKind,
-} from '../../../server/types.js';
+import type { ComputerDesktopServer, DesktopRequestFailure } from '../../../server/types.js';
 
 /** Frames are polled; a retried frame is a stale one, so the UI's next poll is the retry. */
 const DESKTOP_REQUEST_OPTIONS: { maxRetries: number; timeoutInSeconds: number } = {
@@ -66,53 +59,6 @@ async function refusalsAsDesktopErrors<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
-const CONTROLLER_KINDS = new Set(['none', 'agent', 'human', 'clearing']);
-
-function isDesktopStatus(value: unknown): value is DesktopStatus {
-  if (!isRecord(value)) return false;
-  const controller = value['controller'];
-  return (
-    typeof value['computerId'] === 'string' &&
-    typeof value['online'] === 'boolean' &&
-    typeof value['desktop'] === 'boolean' &&
-    isRecord(controller) &&
-    CONTROLLER_KINDS.has(String(controller['kind'])) &&
-    Array.isArray(value['pendingTakeovers'])
-  );
-}
-
-const TAKEOVER_RESULTS: ReadonlySet<string> = new Set<DesktopTakeoverResultKind>([
-  'resumed',
-  'already_answered',
-  'not_pending',
-  'resume_failed',
-]);
-
-function isTakeoverResultKind(value: unknown): value is DesktopTakeoverResultKind {
-  return typeof value === 'string' && TAKEOVER_RESULTS.has(value);
-}
-
-function toTakeoverResult(value: unknown): DesktopTakeoverResult | null {
-  if (!isRecord(value)) return null;
-  const { sessionId, result, message } = value;
-  if (typeof sessionId !== 'string' || !isTakeoverResultKind(result)) return null;
-  return { sessionId, result, message: typeof message === 'string' ? message : '' };
-}
-
-/**
- * Hand-back and cancel answer `{ status, takeover }`; a server that predates the takeover outcome
- * answers the bare status, which reads as "nothing to report".
- */
-export function toTakeoverAnswer(data: unknown): DesktopTakeoverAnswer {
-  if (isRecord(data) && isDesktopStatus(data['status'])) {
-    return { status: data['status'], takeover: toTakeoverResult(data['takeover']) };
-  }
-  if (isDesktopStatus(data)) {
-    return { status: data, takeover: null };
-  }
-  throw new Error('The server sent a desktop answer this client cannot read');
-}
-
 export function createComputerDesktopServer(client: TrueForge): ComputerDesktopServer {
   const desktops = client.computerDesktops;
   const scope = (agentId: string | undefined) => (agentId === undefined ? {} : { agentId });
@@ -160,7 +106,7 @@ export function createComputerDesktopServer(client: TrueForge): ComputerDesktopS
           },
           DESKTOP_REQUEST_OPTIONS,
         );
-        return toTakeoverAnswer(body.data);
+        return body.data;
       }),
     cancelDesktopTakeover: ({ computerId, agentId, sessionId, note }) =>
       refusalsAsDesktopErrors(async () => {
@@ -169,7 +115,7 @@ export function createComputerDesktopServer(client: TrueForge): ComputerDesktopS
           { ...scope(agentId), sessionId, ...(note === undefined ? {} : { note }) },
           DESKTOP_REQUEST_OPTIONS,
         );
-        return toTakeoverAnswer(body.data);
+        return body.data;
       }),
   };
 }
