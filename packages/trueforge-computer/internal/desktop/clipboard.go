@@ -46,13 +46,16 @@ func ValidateClipboardSet(request protocol.DesktopClipboardSetRequest) error {
 // ClipboardGet reads CLIPBOARD as text. A clipboard nobody owns, or one holding no text, reads as
 // "". Anything over the protocol's clipboard cap is refused rather than cut.
 func (d *Desktop) ClipboardGet() (string, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardBudget)
+	defer cancel()
+	release, err := acquire(ctx, d.turn)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	if err := d.ensureRunning(); err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), clipboardBudget)
-	defer cancel()
 	command := exec.CommandContext(ctx, "xclip", "-selection", protocol.SelectionClipboard, "-o", "-t", "UTF8_STRING")
 	command.Env = d.commandEnv()
 	command.Dir = d.dir
@@ -60,7 +63,7 @@ func (d *Desktop) ClipboardGet() (string, error) {
 	var stderr bytes.Buffer
 	command.Stdout = stdout
 	command.Stderr = &stderr
-	err := command.Run()
+	err = command.Run()
 	if stdout.overflow {
 		return "", fmt.Errorf("%w: the clipboard holds more than %d bytes", ErrTooLarge, protocol.DesktopMaxClipboardBytes)
 	}
@@ -82,13 +85,16 @@ func noSelection(stderr string) bool {
 // ClipboardSet makes the text the content of each named selection. xclip stays behind as the
 // selection owner until something else takes the selection.
 func (d *Desktop) ClipboardSet(text string, selections []string) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardBudget)
+	defer cancel()
+	release, err := acquire(ctx, d.turn)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := d.ensureRunning(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), clipboardBudget)
-	defer cancel()
 	for _, selection := range selections {
 		command := exec.CommandContext(ctx, "xclip", "-selection", selection, "-i")
 		command.Env = d.commandEnv()

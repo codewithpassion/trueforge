@@ -9,13 +9,19 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/jezek/xgb"
+	"github.com/jezek/xgb/xproto"
 
 	"trueforge.dev/computer/internal/agent"
 	"trueforge.dev/computer/internal/audit"
@@ -26,22 +32,20 @@ import (
 	"trueforge.dev/computer/internal/runner"
 )
 
-// startDesktop brings a desktop up in a fresh state directory and returns the result of Check,
-// which is what the daemon puts in hello.
-func startDesktop(t *testing.T) (*desktop.Desktop, string, error) {
+// launchDesktop brings a desktop up in a fresh state directory the way the daemon does, and
+// returns what the daemon hands to its agent and puts in hello.
+func launchDesktop(t *testing.T) (*desktop.Desktop, string, error) {
 	t.Helper()
 	stateDir := t.TempDir()
-	ctx, cancel := context.WithCancel(context.Background())
-	screen, err := desktop.Start(ctx, desktop.Options{StateDir: stateDir, Logger: discardLogger()})
-	if err != nil {
-		cancel()
-		t.Fatalf("start: %v", err)
+	screen, err := desktop.Launch(context.Background(), desktop.Options{StateDir: stateDir, Logger: discardLogger()})
+	if screen != nil {
+		t.Cleanup(screen.Stop)
 	}
-	t.Cleanup(func() {
-		cancel()
-		screen.Wait()
-	})
-	return screen, stateDir, screen.Check(ctx)
+	return screen, stateDir, err
+}
+
+func processRunning(name string) bool {
+	return exec.Command("pgrep", "-x", name).Run() == nil
 }
 
 func newDesktopHarness(t *testing.T, screen *desktop.Desktop, stateDir string) *harness {
@@ -151,6 +155,112 @@ func distance(a uint32, b uint32) uint32 {
 	return b - a
 }
 
+// pointer is where xdotool, a client independent of the daemon, says the pointer is.
+func (h *harness) pointer(t *testing.T) string {
+	t.Helper()
+	result := h.exec(t, "pointer", `xdotool getmouselocation --shell | grep -E '^(X|Y)=' | tr '\n' ' '`)
+	if result.ExitCode != 0 {
+		t.Fatalf("getmouselocation: %+v", result)
+	}
+	return strings.TrimSpace(result.Stdout)
+}
+
+// buttonRecorder is an X client of its own: a full-screen override-redirect window that logs
+// every button press and release the server delivers, by X button number.
+type buttonRecorder struct {
+	conn   *xgb.Conn
+	window xproto.Window
+	mu     sync.Mutex
+	events []string
+}
+
+func recordButtons(t *testing.T, env map[string]string) *buttonRecorder {
+	t.Helper()
+	t.Setenv("DISPLAY", env["DISPLAY"])
+	t.Setenv("XAUTHORITY", env["XAUTHORITY"])
+	conn, err := xgb.NewConn()
+	if err != nil {
+		t.Fatalf("connect the recorder: %v", err)
+	}
+	screen := xproto.Setup(conn).DefaultScreen(conn)
+	window, err := xproto.NewWindowId(conn)
+	if err != nil {
+		t.Fatalf("window id: %v", err)
+	}
+	err = xproto.CreateWindowChecked(conn, screen.RootDepth, window, screen.Root, 0, 0,
+		protocol.DesktopWidth, protocol.DesktopHeight, 0, xproto.WindowClassInputOutput, screen.RootVisual,
+		xproto.CwOverrideRedirect|xproto.CwEventMask,
+		[]uint32{1, xproto.EventMaskButtonPress | xproto.EventMaskButtonRelease}).Check()
+	if err != nil {
+		t.Fatalf("create the recorder window: %v", err)
+	}
+	if err := xproto.MapWindowChecked(conn, window).Check(); err != nil {
+		t.Fatalf("map the recorder window: %v", err)
+	}
+	recorder := &buttonRecorder{conn: conn, window: window}
+	go func() {
+		for {
+			event, err := conn.WaitForEvent()
+			if event == nil && err == nil {
+				return
+			}
+			recorder.mu.Lock()
+			switch e := event.(type) {
+			case xproto.ButtonPressEvent:
+				recorder.events = append(recorder.events, fmt.Sprintf("press %d", e.Detail))
+			case xproto.ButtonReleaseEvent:
+				recorder.events = append(recorder.events, fmt.Sprintf("release %d", e.Detail))
+			}
+			recorder.mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = xproto.DestroyWindowChecked(conn, window).Check()
+		conn.Close()
+	})
+	return recorder
+}
+
+func (r *buttonRecorder) take() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	events := r.events
+	r.events = nil
+	return events
+}
+
+// expect waits for exactly the given events, in order.
+func (r *buttonRecorder) expect(t *testing.T, want ...string) {
+	t.Helper()
+	var got []string
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && len(got) < len(want) {
+		time.Sleep(50 * time.Millisecond)
+		got = append(got, r.take()...)
+	}
+	time.Sleep(100 * time.Millisecond)
+	got = append(got, r.take()...)
+	if strings.Join(got, ", ") != strings.Join(want, ", ") {
+		t.Fatalf("X saw   %v\n want %v", got, want)
+	}
+}
+
+// colourAt averages a 9x9 block, which smooths JPEG noise on a flat area.
+func colourAt(frame image.Image, x int, y int) (int, int, int) {
+	var red, green, blue uint32
+	for dy := -4; dy <= 4; dy++ {
+		for dx := -4; dx <= 4; dx++ {
+			r, g, b, _ := frame.At(x+dx, y+dy).RGBA()
+			red, green, blue = red+r>>8, green+g>>8, blue+b>>8
+		}
+	}
+	return int(red / 81), int(green / 81), int(blue / 81)
+}
+
+func near(got int, want int) bool {
+	return got >= want-24 && got <= want+24
+}
+
 func waitUntil(t *testing.T, what string, timeout time.Duration, check func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -166,8 +276,8 @@ func TestDesktopEndToEnd(t *testing.T) {
 	if os.Getenv("TRUEFORGE_DESKTOP_EXPECT_SANDBOX") == "refused" {
 		t.Skip("this run checks the refusal only")
 	}
-	screen, stateDir, err := startDesktop(t)
-	// Check covers the X server answering, xdotool and xclip resolving, and Chromium's sandbox
+	screen, stateDir, err := launchDesktop(t)
+	// Launch covers the X server answering, xdotool and xclip resolving, and Chromium's sandbox
 	// self-test: this is the capability the daemon reports.
 	if ok, reason := desktop.Capability(err); !ok {
 		t.Fatalf("the desktop is not available: %s", *reason)
@@ -175,15 +285,25 @@ func TestDesktopEndToEnd(t *testing.T) {
 	h := newDesktopHarness(t, screen, stateDir)
 	xauthority := screen.Env()["XAUTHORITY"]
 
-	t.Run("Xvfb runs with -auth and without TCP", func(t *testing.T) {
+	t.Run("Xvfb runs with -auth and only its filesystem socket", func(t *testing.T) {
 		result := h.exec(t, "ps", "ps -eo args | grep '^Xvfb'")
-		want := "Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -auth " + xauthority
+		want := "Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -nolisten local -auth " + xauthority
 		if !strings.Contains(result.Stdout, want) {
 			t.Fatalf("Xvfb command line = %q, want %q", result.Stdout, want)
+		}
+		// The abstract socket ignores file permissions and is shared by everything in the
+		// network namespace; only the filesystem socket may listen.
+		sockets := h.exec(t, "sockets", "grep X11-unix/X99 /proc/net/unix")
+		if strings.Contains(sockets.Stdout, "@/tmp/.X11-unix/X99") || !strings.Contains(sockets.Stdout, " /tmp/.X11-unix/X99") {
+			t.Fatalf("X sockets:\n%s", sockets.Stdout)
 		}
 		info, err := os.Stat(xauthority)
 		if err != nil || info.Mode().Perm() != 0o600 {
 			t.Fatalf("Xauthority = %v, %v", info, err)
+		}
+		dir, err := os.Stat(filepath.Dir(xauthority))
+		if err != nil || dir.Mode().Perm() != 0o700 {
+			t.Fatalf("desktop directory = %v, %v; want 0700", dir, err)
 		}
 		// Without the cookie the display refuses the client.
 		refused := h.exec(t, "nocookie", "XAUTHORITY=/dev/null xdotool getmouselocation")
@@ -193,6 +313,69 @@ func TestDesktopEndToEnd(t *testing.T) {
 		allowed := h.exec(t, "cookie", "xdotool getmouselocation")
 		if allowed.ExitCode != 0 {
 			t.Fatalf("a client with the cookie was refused: %+v", allowed)
+		}
+	})
+
+	// First, while no other window is up. xterm asks the server for the colour through Xlib, so
+	// the screenshot's decoding is checked against a client that shares none of its code.
+	t.Run("screenshot colours match what an X client drew", func(t *testing.T) {
+		h.exec(t, "xterm-colour", "xterm -class TFColour -bg '#c83210' -fg '#c83210' -geometry 40x12+100+100 >/dev/null 2>&1 &")
+		t.Cleanup(func() { h.exec(t, "xterm-colour-kill", "pkill -f TFColour") })
+		var geometry string
+		waitUntil(t, "the coloured xterm", 10*time.Second, func() bool {
+			result := h.exec(t, "geometry", "xdotool search --onlyvisible --class TFColour getwindowgeometry --shell | grep -E '^(X|Y|WIDTH|HEIGHT)=' | tr '\\n' ' '")
+			geometry = result.Stdout
+			return result.ExitCode == 0 && strings.Contains(geometry, "WIDTH=")
+		})
+		var x, y, width, height int
+		if _, err := fmt.Sscanf(geometry, "X=%d Y=%d WIDTH=%d HEIGHT=%d", &x, &y, &width, &height); err != nil {
+			t.Fatalf("geometry %q: %v", geometry, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+		red, green, blue := colourAt(h.screenshot(t), x+width/2, y+height/2)
+		if !near(red, 0xc8) || !near(green, 0x32) || !near(blue, 0x10) {
+			t.Fatalf("the middle of the xterm reads as rgb(%d, %d, %d), want about rgb(200, 50, 16)", red, green, blue)
+		}
+	})
+
+	t.Run("input reaches X as the contract says", func(t *testing.T) {
+		before := h.pointer(t)
+		if before == "X=100 Y=150" {
+			t.Fatalf("the pointer already starts where the click goes")
+		}
+		recorder := recordButtons(t, screen.Env())
+
+		h.input(t, map[string]any{"type": "click", "x": 100, "y": 150, "button": "left", "count": 2})
+		if after := h.pointer(t); after != "X=100 Y=150" {
+			t.Fatalf("pointer after the click = %q (was %q), want X=100 Y=150", after, before)
+		}
+		recorder.expect(t, "press 1", "release 1", "press 1", "release 1")
+
+		h.input(t, map[string]any{"type": "click", "x": 700, "y": 500, "button": "middle", "count": 3})
+		recorder.expect(t, "press 2", "release 2", "press 2", "release 2", "press 2", "release 2")
+
+		// dy > 0 is down (button 5) and dx > 0 is right (button 7).
+		h.input(t,
+			map[string]any{"type": "scroll", "x": 200, "y": 200, "dx": 0, "dy": 2},
+			map[string]any{"type": "scroll", "x": 200, "y": 200, "dx": 0, "dy": -1},
+			map[string]any{"type": "scroll", "x": 200, "y": 200, "dx": 1, "dy": 0},
+			map[string]any{"type": "scroll", "x": 200, "y": 200, "dx": -1, "dy": 0},
+		)
+		recorder.expect(t, "press 5", "release 5", "press 5", "release 5", "press 4", "release 4",
+			"press 7", "release 7", "press 6", "release 6")
+
+		h.input(t,
+			map[string]any{"type": "mouse_move", "x": 300, "y": 300},
+			map[string]any{"type": "mouse_down", "button": "right"},
+		)
+		recorder.expect(t, "press 3")
+		h.input(t,
+			map[string]any{"type": "mouse_move", "x": 400, "y": 350},
+			map[string]any{"type": "mouse_up", "button": "right"},
+		)
+		recorder.expect(t, "release 3")
+		if after := h.pointer(t); after != "X=400 Y=350" {
+			t.Fatalf("pointer after the drag = %q, want X=400 Y=350", after)
 		}
 	})
 
@@ -250,6 +433,21 @@ func TestDesktopEndToEnd(t *testing.T) {
 		}
 	})
 
+	t.Run("a clipboard over 64 KiB is too_large, not cut", func(t *testing.T) {
+		set := h.exec(t, "big-clipboard", `head -c 70000 /dev/zero | tr '\0' a | xclip -selection clipboard -i >/dev/null 2>&1`)
+		if set.ExitCode != 0 {
+			t.Fatalf("xclip: %+v", set)
+		}
+		reply := h.dispatch(t, "get-big", protocol.OpDesktopClipboardGet, map[string]any{})
+		if code := errorCode(t, reply); code != protocol.ErrTooLarge {
+			t.Fatalf("code = %s", code)
+		}
+		clear := h.dispatch(t, "clear-big", protocol.OpDesktopClipboardSet, map[string]any{"text": "", "selections": []string{"clipboard"}})
+		if clear.Error != nil {
+			t.Fatalf("clear: %+v", clear.Error)
+		}
+	})
+
 	t.Run("chromium started with exec keeps running", func(t *testing.T) {
 		result := h.exec(t, "chromium", "chromium about:blank &")
 		if result.ExitCode != 0 || result.DurationMS >= 3000 {
@@ -298,10 +496,43 @@ func TestDesktopSandboxRefusedByDefaultProfile(t *testing.T) {
 	if os.Getenv("TRUEFORGE_DESKTOP_EXPECT_SANDBOX") != "refused" {
 		t.Skip("set TRUEFORGE_DESKTOP_EXPECT_SANDBOX=refused and run without the desktop seccomp profile")
 	}
-	_, _, err := startDesktop(t)
+	screen, _, err := launchDesktop(t)
 	ok, reason := desktop.Capability(err)
 	if ok || reason == nil || !strings.Contains(*reason, "sandbox") {
 		t.Fatalf("capability = %v, reason %v", ok, reason)
 	}
 	t.Logf("reported reason: %s", *reason)
+	// Nothing is left for the agent or for exec'd commands to reach.
+	if screen != nil {
+		t.Fatal("a desktop that failed its check was handed on")
+	}
+	for _, name := range []string{"Xvfb", "openbox"} {
+		if processRunning(name) {
+			t.Fatalf("%s still runs after the desktop failed its check", name)
+		}
+	}
+}
+
+// An X server this desktop did not start is someone else's display: the desktop refuses it
+// rather than typing into it.
+func TestDesktopRefusesADisplayItDoesNotOwn(t *testing.T) {
+	const display = 98
+	foreign := exec.Command("Xvfb", fmt.Sprintf(":%d", display), "-nolisten", "tcp")
+	if err := foreign.Start(); err != nil {
+		t.Fatalf("start the other X server: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = foreign.Process.Kill()
+		_ = foreign.Wait()
+	})
+	lock := fmt.Sprintf("/tmp/.X%d-lock", display)
+	waitUntil(t, "the other X server's lock", 5*time.Second, func() bool {
+		_, err := os.Stat(lock)
+		return err == nil
+	})
+
+	_, err := desktop.Start(context.Background(), desktop.Options{StateDir: t.TempDir(), Display: display, Logger: discardLogger()})
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("process %d", foreign.Process.Pid)) {
+		t.Fatalf("start on a taken display: err = %v", err)
+	}
 }

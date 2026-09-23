@@ -131,20 +131,14 @@ func runServe(args []string) int {
 	var screen *desktop.Desktop
 	var commandEnv map[string]string
 	if desktopEnabled {
-		// The desktop outlives any one connection but not this function, whatever ends it.
-		desktopCtx, stopDesktop := context.WithCancel(ctx)
-		screen, err = desktop.Start(desktopCtx, desktop.Options{StateDir: *stateDir, Display: *desktopDisplay, Logger: logger})
-		if err == nil {
-			defer func() {
-				stopDesktop()
-				screen.Wait()
-			}()
+		// Checked before hello is built: hello is fixed for a connection, and the server only
+		// sends desktop ops to a computer that said it can take them. A desktop that fails the
+		// check is stopped, so commands get no DISPLAY that nothing is serving.
+		screen, err = desktop.Launch(ctx, desktop.Options{StateDir: *stateDir, Display: *desktopDisplay, Logger: logger})
+		if screen != nil {
+			// The desktop outlives any one connection but not this function, whatever ends it.
+			defer screen.Stop()
 			commandEnv = screen.Env()
-			// Checked before hello is built: hello is fixed for a connection, and the server
-			// only sends desktop ops to a computer that said it can take them.
-			err = screen.Check(ctx)
-		} else {
-			stopDesktop()
 		}
 		capabilities.Desktop, capabilities.DesktopUnavailableReason = desktop.Capability(err)
 		if err != nil {

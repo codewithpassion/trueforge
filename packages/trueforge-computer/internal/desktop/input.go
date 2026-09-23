@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"trueforge.dev/computer/internal/protocol"
@@ -27,17 +27,52 @@ var buttonNumbers = map[string]string{
 	protocol.ButtonRight:  "3",
 }
 
+// keyChord is the contract's shape for key.keys: key names joined by "+", nothing else.
+var keyChord = regexp.MustCompile(`^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$`)
+
+// xdotoolCommands are xdotool's command names. xdotool reads an argument that matches one,
+// in any case, as the next command even after "key --", so a chord must never be one.
+var xdotoolCommands = map[string]bool{
+	"behave": true, "behave_screen_edge": true, "click": true, "exec": true,
+	"get_desktop": true, "get_desktop_for_window": true, "get_desktop_viewport": true, "get_num_desktops": true,
+	"getactivewindow": true, "getdisplaygeometry": true, "getmouselocation": true, "getwindowclassname": true,
+	"getwindowfocus": true, "getwindowgeometry": true, "getwindowname": true, "getwindowpid": true,
+	"help": true, "key": true, "keydown": true, "keyup": true,
+	"mousedown": true, "mousemove": true, "mousemove_relative": true, "mouseup": true,
+	"search": true, "selectwindow": true, "set_desktop": true, "set_desktop_for_window": true,
+	"set_desktop_viewport": true, "set_num_desktops": true, "set_window": true, "sleep": true,
+	"type": true, "version": true, "windowactivate": true, "windowclose": true,
+	"windowfocus": true, "windowkill": true, "windowlower": true, "windowmap": true,
+	"windowminimize": true, "windowmove": true, "windowquit": true, "windowraise": true,
+	"windowreparent": true, "windowsize": true, "windowstate": true, "windowunmap": true,
+}
+
 // ValidateActions enforces every limit the protocol puts on desktop_input.
 func ValidateActions(actions []protocol.DesktopAction) error {
 	if len(actions) < 1 || len(actions) > protocol.DesktopMaxActions {
 		return fmt.Errorf("%w: actions must hold 1 to %d entries, not %d", ErrBadRequest, protocol.DesktopMaxActions, len(actions))
 	}
+	wheelClicks := 0
 	for index, action := range actions {
 		if err := validateAction(action); err != nil {
 			return fmt.Errorf("%w: action %d (%s): %w", ErrBadRequest, index, action.Type, err)
 		}
+		if action.Type == protocol.ActionScroll {
+			wheelClicks += abs(*action.DX) + abs(*action.DY)
+		}
+	}
+	// Each wheel click is paced, so an unbounded batch would outlast its timeout.
+	if wheelClicks > protocol.DesktopMaxScrollClicksPerBatch {
+		return fmt.Errorf("%w: the batch scrolls %d wheel clicks, over the %d limit", ErrBadRequest, wheelClicks, protocol.DesktopMaxScrollClicksPerBatch)
 	}
 	return nil
+}
+
+func abs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func validateAction(action protocol.DesktopAction) error {
@@ -75,10 +110,11 @@ func validateAction(action protocol.DesktopAction) error {
 		if length < 1 || length > protocol.DesktopMaxKeysChars {
 			return fmt.Errorf("keys must be 1 to %d characters", protocol.DesktopMaxKeysChars)
 		}
-		// One chord per action: whitespace would make xdotool read several, a control
-		// character is never a key name.
-		if strings.IndexFunc(*action.Keys, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
-			return errors.New("keys must be a single chord without whitespace")
+		if !keyChord.MatchString(*action.Keys) {
+			return errors.New("keys must be key names of letters, digits and _ joined by +")
+		}
+		if xdotoolCommands[strings.ToLower(*action.Keys)] {
+			return errors.New("keys must be a key name, not an xdotool command")
 		}
 		return nil
 	case protocol.ActionType:
@@ -180,13 +216,16 @@ func InputBudget(actions []protocol.DesktopAction) time.Duration {
 // Input runs a validated batch in order. The error names the failing action by index and type
 // only: typed text and key names are never repeated back into logs.
 func (d *Desktop) Input(actions []protocol.DesktopAction) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), InputBudget(actions))
+	defer cancel()
+	release, err := acquire(ctx, d.turn)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := d.ensureRunning(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), InputBudget(actions))
-	defer cancel()
 	for index, action := range actions {
 		for _, step := range stepsFor(action) {
 			command := exec.CommandContext(ctx, "xdotool", step.args...)
