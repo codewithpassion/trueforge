@@ -303,7 +303,6 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
   const createHandler: RouteHandler<typeof createIntegrationRoute> = async c => {
     const body: CreateIntegrationRequest = c.req.valid('json');
     const requestContext = deps.resolveRequestContext(c);
-    // Turns run as the creator, so connecting a channel is managing the agent, not just using it.
     const agent = await agentIfAccessible({
       authorizer: deps.authorizer,
       context: requestContext,
@@ -313,6 +312,7 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
     if (agent === undefined) {
       return c.json({ error: { message: `Agent not found: ${body.agent_name}` } }, 404);
     }
+    // Turns run as the creator, so connecting a channel is managing the agent, not just using it.
     if (!(await deps.authorizer.canAccessAgent({ context: requestContext, action: 'manage', agent }))) {
       return c.json({ error: { message: `Only a manager of agent ${agent.name} can connect it to a channel` } }, 403);
     }

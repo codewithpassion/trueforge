@@ -19,7 +19,9 @@
 
 PRAGMA defer_foreign_keys = true;
 
-CREATE TABLE integration_new (
+-- If a failed run was not rolled back, the copy it left is cleared so a retry can proceed. Once
+-- `integration` is gone that copy holds the only rows, so the guard keeps it.
+CREATE TABLE IF NOT EXISTS integration_new (
   id TEXT NOT NULL,
   tenant_id TEXT NOT NULL,
   agent_id TEXT NOT NULL,
@@ -33,6 +35,9 @@ CREATE TABLE integration_new (
   PRIMARY KEY (id),
   FOREIGN KEY (agent_id) REFERENCES agent (id) ON DELETE CASCADE
 ) STRICT;
+
+DELETE FROM integration_new
+WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'integration');
 
 INSERT INTO integration_new (
   id,
