@@ -5620,6 +5620,60 @@
         ],
         "type": "object"
       },
+      "ToolContentPart": {
+        "discriminator": {
+          "mapping": {
+            "image": "#/components/schemas/ToolImageContentPart",
+            "text": "#/components/schemas/ChatCompletionContentPartText"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ChatCompletionContentPartText"
+          },
+          {
+            "$ref": "#/components/schemas/ToolImageContentPart"
+          }
+        ]
+      },
+      "ToolImageContentPart": {
+        "properties": {
+          "file_id": {
+            "description": "Session file id; the bytes are served by the session file route.",
+            "type": "string"
+          },
+          "height": {
+            "description": "Image height in pixels.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "media_type": {
+            "description": "Image media type, for example image/jpeg.",
+            "type": "string"
+          },
+          "type": {
+            "description": "Image content part.",
+            "enum": [
+              "image"
+            ],
+            "type": "string"
+          },
+          "width": {
+            "description": "Image width in pixels.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type",
+          "file_id",
+          "media_type",
+          "width",
+          "height"
+        ],
+        "type": "object"
+      },
       "ToolInfo": {
         "discriminator": {
           "mapping": {
@@ -5640,7 +5694,11 @@
       "ToolResponseEvent": {
         "properties": {
           "content": {
-            "type": "string"
+            "description": "Tool result as text and image parts.",
+            "items": {
+              "$ref": "#/components/schemas/ToolContentPart"
+            },
+            "type": "array"
           },
           "created_at": {
             "description": "ISO 8601 event timestamp.",
@@ -11172,6 +11230,67 @@
           "sessions"
         ],
         "x-fern-sdk-method-name": "list_events"
+      }
+    },
+    "/api/v1/sessions/{session_id}/files/{file_id}": {
+      "get": {
+        "description": "Download a file the session produced, such as a tool-result screenshot, with its stored media type. Only the session creator may read it; anyone else gets 404.",
+        "parameters": [
+          {
+            "description": "Session identifier.",
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "description": "Session identifier.",
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "File identifier.",
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "description": "File identifier.",
+              "pattern": "^[0-9a-f]{32}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "File contents, served with the stored media type."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Session or file not found, or the caller is not the session creator."
+          }
+        },
+        "summary": "Get a session file",
+        "tags": [
+          "Agent Sessions"
+        ],
+        "x-fern-sdk-group-name": [
+          "sessions"
+        ],
+        "x-fern-sdk-method-name": "get_file"
       }
     },
     "/api/v1/sessions/{session_id}/turns": {

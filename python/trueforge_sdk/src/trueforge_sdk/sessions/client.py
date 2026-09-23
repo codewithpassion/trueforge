@@ -381,6 +381,44 @@ class SessionsClient:
             request_options=request_options,
         )
 
+    def get_file(
+        self, *, session_id: str, file_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> typing.Iterator[bytes]:
+        """
+        Download a file the session produced, such as a tool-result screenshot, with its stored media type. Only the session creator may read it; anyone else gets 404.
+
+        Parameters
+        ----------
+        session_id : str
+            Session identifier.
+
+        file_id : str
+            File identifier.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
+
+        Returns
+        -------
+        typing.Iterator[bytes]
+            File contents, served with the stored media type.
+
+        Examples
+        --------
+        from trueforge_sdk import TrueForge
+
+        client = TrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+        client.sessions.get_file(
+            session_id="session_id",
+            file_id="file_id",
+        )
+        """
+        with self._raw_client.get_file(session_id=session_id, file_id=file_id, request_options=request_options) as r:
+            yield from r.data
+
     def list_turns(
         self,
         *,
@@ -1150,6 +1188,55 @@ class AsyncSessionsClient:
             limit=limit,
             request_options=request_options,
         )
+
+    async def get_file(
+        self, *, session_id: str, file_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> typing.AsyncIterator[bytes]:
+        """
+        Download a file the session produced, such as a tool-result screenshot, with its stored media type. Only the session creator may read it; anyone else gets 404.
+
+        Parameters
+        ----------
+        session_id : str
+            Session identifier.
+
+        file_id : str
+            File identifier.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
+
+        Returns
+        -------
+        typing.AsyncIterator[bytes]
+            File contents, served with the stored media type.
+
+        Examples
+        --------
+        import asyncio
+
+        from trueforge_sdk import AsyncTrueForge
+
+        client = AsyncTrueForge(
+            token="YOUR_TOKEN",
+            base_url="https://yourhost.com/path/to/api",
+        )
+
+
+        async def main() -> None:
+            await client.sessions.get_file(
+                session_id="session_id",
+                file_id="file_id",
+            )
+
+
+        asyncio.run(main())
+        """
+        async with self._raw_client.get_file(
+            session_id=session_id, file_id=file_id, request_options=request_options
+        ) as r:
+            async for _chunk in r.data:
+                yield _chunk
 
     async def list_turns(
         self,
