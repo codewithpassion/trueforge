@@ -1,10 +1,19 @@
-import type { ISessionStore, SessionHandle, TurnRecord, TurnState } from '@truefoundry/trueforge-core/agent-session';
-import { CancellationReason, TurnNotFoundError } from '@truefoundry/trueforge-core/agent-session';
+import type {
+  ISessionStore,
+  SessionHandle,
+  TurnRecord,
+  TurnState,
+  TurnStreamingEvent,
+} from '@truefoundry/trueforge-core/agent-session';
+import { CancellationReason, EventType, TurnNotFoundError } from '@truefoundry/trueforge-core/agent-session';
 import { NoResponderError, redisRequest, RequestTimeoutError } from '@truefoundry/trueforge-core/request-reply';
 import type { RedisClientType } from 'redis';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
+import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
 import { cancelSessionTurn, type CancelTurnDeps } from '../../../src/runtime/nodeTurnExecutor';
+import { turnStreamId } from '../../../src/runtime/turnRunner';
 import { newId } from '../../../src/utils/id';
+import { testNodeTurnExecutor } from './testNodeTurnExecutor';
 
 const EXECUTOR_ID = 'local';
 
@@ -290,5 +299,42 @@ describe('cancelSessionTurn', () => {
         },
       ),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('NodeTurnExecutor.subscribe', () => {
+  it('replays a tool.response an older release wrote with string content as text parts', async () => {
+    const eventSubscriptions = new EventSubscriptionRegistry<TurnStreamingEvent>(undefined);
+    const turnId = newId();
+    const legacy: TurnStreamingEvent = {
+      type: EventType.TOOL_RESPONSE,
+      id: 'evt_tool',
+      thread_id: 'main',
+      tool_call_id: 'c1',
+      content: [],
+      created_at: '2026-09-24T00:00:00.000Z',
+    };
+    // Releases before tool content became parts wrote a plain string here.
+    Reflect.set(legacy, 'content', 'legacy result');
+    await eventSubscriptions.get(turnStreamId('t1', SESSION_ID, turnId)).put(legacy, { streamTTLSeconds: 600 });
+    const abort = new AbortController();
+
+    const result = await testNodeTurnExecutor({ eventSubscriptions }).subscribe({
+      tenant_id: 't1',
+      session_id: SESSION_ID,
+      turn_id: turnId,
+      after_sequence_number: undefined,
+      signal: abort.signal,
+    });
+    if (!result.ok) throw new Error('expected a subscription');
+    const first = await result.events.next();
+    abort.abort();
+    await result.events.return(undefined);
+
+    expect(first.value).toEqual({
+      ...legacy,
+      content: [{ type: 'text', text: 'legacy result' }],
+      sequence_number: 1,
+    });
   });
 });

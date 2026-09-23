@@ -5,6 +5,7 @@ import {
   type SessionHandle,
   type TurnStreamingEvent,
 } from '@truefoundry/trueforge-core/agent-session';
+import { normalizeTurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session/schemas/events';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import {
@@ -190,6 +191,15 @@ export interface NodeTurnExecutorDeps {
   onTurnDrained: TurnDrainedHook | undefined;
 }
 
+/** A subscription can replay events an older release wrote, for a turn that ran across a deploy. */
+async function* normalizedTurnEvents(
+  events: AsyncGenerator<SequencedEvent<TurnStreamingEvent>, void, unknown>,
+): AsyncGenerator<SequencedEvent<TurnStreamingEvent>, void, unknown> {
+  for await (const event of events) {
+    yield { ...normalizeTurnStreamingEvent(event), sequence_number: event.sequence_number };
+  }
+}
+
 /** Runs turns in this process; cancels reach the owning replica over Redis request-reply. */
 export class NodeTurnExecutor implements TurnExecutor {
   readonly #deps: NodeTurnExecutorDeps;
@@ -252,7 +262,10 @@ export class NodeTurnExecutor implements TurnExecutor {
       }
       throw error;
     }
-    return { ok: true, events: turnEventStream.poll(input.after_sequence_number, { signal: input.signal }) };
+    return {
+      ok: true,
+      events: normalizedTurnEvents(turnEventStream.poll(input.after_sequence_number, { signal: input.signal })),
+    };
   }
 
   async cancel(input: {

@@ -1,7 +1,7 @@
 import { EventType, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
 import { runInDurableObject } from 'cloudflare:test';
 import { DurableObjectEventSubscriptions } from '../../src/workers/durableObjectEventSubscriptions';
-import { encodeTurnEvents, isSequencedTurnStreamingEvent } from '../../src/workers/turnEventWire';
+import { decodeTurnEvents, encodeTurnEvents, isSequencedTurnStreamingEvent } from '../../src/workers/turnEventWire';
 import { sessionStub } from './harness';
 
 const turnCreated: TurnStreamingEvent = {
@@ -45,5 +45,28 @@ describe('encodeTurnEvents', () => {
       expect((await parked).done).toBe(true);
       expect(poll).toEqual({ finished: true, aborted: true });
     });
+  });
+});
+
+describe('decodeTurnEvents', () => {
+  it('turns a tool.response an older release stored with string content into text parts', async () => {
+    // As a Durable Object's log holds it when the turn ran across a deploy.
+    const legacy = {
+      type: EventType.TOOL_RESPONSE,
+      id: 'evt_tool',
+      thread_id: 'main',
+      tool_call_id: 'c1',
+      content: 'legacy result',
+      created_at: '2026-09-24T00:00:00.000Z',
+      sequence_number: 2,
+    };
+    const stream = new Blob([`${JSON.stringify(legacy)}\n`]).stream();
+
+    const events = [];
+    for await (const event of decodeTurnEvents({ stream, signal: new AbortController().signal })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([{ ...legacy, content: [{ type: 'text', text: 'legacy result' }] }]);
   });
 });

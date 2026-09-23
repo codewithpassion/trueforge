@@ -20,6 +20,7 @@ import {
   ToolResponseRequiredEventSchema,
 } from '../../core/events/schema';
 import { normalizeToolContent } from '../../core/llm/LLMTypes';
+import type { TurnStreamingEvent } from '../TurnHandle';
 import {
   TurnInputItemSchema,
   TurnStateCancelledSchema,
@@ -150,4 +151,9 @@ export function normalizePersistedTurnEvent(event: PersistedTurnEvent): Persiste
     return event;
   }
   return { ...event, content: normalizeToolContent(event.content) };
+}
+
+/** For live streams, which can replay events an older release wrote. */
+export function normalizeTurnStreamingEvent(event: TurnStreamingEvent): TurnStreamingEvent {
+  return event.type === HarnessEventType.MODEL_MESSAGE_DELTA ? event : normalizePersistedTurnEvent(event);
 }
