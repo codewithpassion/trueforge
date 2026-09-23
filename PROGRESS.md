@@ -4,6 +4,33 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 34 — Per-agent integrations P3 (docs), deploy and prod testing (2026-09-23)
+
+**Goal:** Finish the per-agent integrations work: bring the Slack plan docs in line (P3), deploy to Workers, and verify the feature in a browser locally and on prod.
+
+**What we did:**
+
+- **P3 docs (`ffef4d19`).** `docs/integrations-slack-plan.md` now says integrations belong to one agent, live at `/api/v1/integrations`, and run as the person who connected them; stale `pnpm patch` notes dropped; P1/P2 recorded as deployed and the D1 migration number fixed in `docs/integrations-per-agent-plan.md`.
+- **Fable review, one forge fix round (`bf2859f4`).** Resolved the admin-list open question (the list skips the creator/manager filter for admins), split the orphan-migration note by backend (Kysely throws a readable error, D1 fails on `NOT NULL` and carries the listing query in the file header), corrected the per-turn D1 cost to a base of 2 statements, added the `integration` variant to the `SessionSourceSchema` description, and changed "admin who connected" to "person who connected" in `integrationEvents.ts` and `integrations/router.ts` comments.
+- **Deploys.** P1+P2 went out earlier as Workers version `69e8103c` with D1 migration `0008`; prod had 0 integrations, so no orphans could block it. P3 deployed as `7ad5b186`.
+- **Local browser test.** A Sonnet agent passed 9/9 browser tests against a local standalone build, reached over Tailscale through the T3 preview browser.
+- **Prod checks without auth pass.** `GET /api/v1/integrations` returns 401; the Slack ingress `/events` and `/interactions` paths are reachable without auth and return 404 for an unknown integration id.
+- **Signed-in prod browser test not completed.** A partial run left agent `qa-slack-alpha` on prod; it was deleted through D1 after checking it had no integrations, schedules or sessions.
+- **Still open:** the live Slack workspace test (upgrade with an existing integration, two agents on one workspace, agent delete stops its bot) needs a real Slack app. Side finding from QA: the Save agent dialog keeps Save disabled until Description is filled; this predates the change and is not documented.
+
+**Lessons learned:**
+
+- The T3 preview automation host is not reliable for long signed-in runs: it kept disappearing with the Electron sandboxed renderer error `Cannot destructure property 'preloadScripts' of binding.startupData`, and each restart lost the run partway through.
+- A QA run that dies partway leaves its fixtures on prod. Cleanup had to go through D1 by hand, after checking dependent rows (integrations, schedules, sessions) first.
+- Unauthenticated probes (401 on CRUD, ingress reachable, 404 on unknown id) cover the auth split between CRUD and Slack ingress cheaply, but they say nothing about the agent-page UI or the per-agent access rules.
+- Deploying the schema change while prod held 0 integrations meant the orphan guard in migration `0008` never ran against real data; it is still untested outside fixtures.
+
+**Avoid next time:**
+
+- Don't rely on the T3 preview browser for signed-in prod runs; have a fallback browser path ready (a saved Browser Run session, or a local Chrome with a persisted login) before starting.
+- Keep the `qa-` prefix on prod QA fixtures and have the test agent record each one it creates, so an aborted run leaves a known list to remove.
+- Don't mark a Slack feature done on API probes and a local run alone; the live workspace test with a real Slack app is still owed.
+
 ## Cycle 33 — Per-agent integrations, P1 backend and P2 UI (2026-09-23)
 
 **Goal:** Bind each integration to one agent so one Slack workspace can hold one bot per agent, and manage integrations from the agent's page instead of Settings (phases P1 and P2 of `docs/integrations-per-agent-plan.md`, landed together on `dom/main` at `6bca1c85`).
