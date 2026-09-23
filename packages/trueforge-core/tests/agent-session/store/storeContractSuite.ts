@@ -1565,11 +1565,11 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
         ]);
 
         const fulfilled = results.filter(r => r.status === 'fulfilled');
-        const rejected = results.flatMap(r => (r.status === 'rejected' ? [r.reason] : []));
+        const rejected = results.flatMap((r): unknown[] => (r.status === 'rejected' ? [r.reason] : []));
         expect(fulfilled).toHaveLength(1);
         expect(rejected).toHaveLength(1);
         expect(rejected[0]).toBeInstanceOf(SessionTipMovedError);
-        const winner = results[0]?.status === 'fulfilled' ? 'answer-a' : 'answer-b';
+        const winner = results[0].status === 'fulfilled' ? 'answer-a' : 'answer-b';
         const session = mustGet(await store.getSession({ tenant_id: tenant, session_id: sessionId }));
         expect(session.last_turn_id).toBe(winner);
         expect(session.metrics.total_turns).toBe(2);

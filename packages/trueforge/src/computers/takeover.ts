@@ -11,14 +11,14 @@ import { newId } from '../utils/id';
 import { takeoverToolResponseText } from './requestHumanTakeover';
 import type { ComputerRelayPort, ComputersService, TakeoverPointer } from './service';
 
-export type PendingTakeover = {
+export interface PendingTakeover {
   session_id: string;
   turn_id: string;
   tool_call_id: string;
   reason: string;
   requested_at: string;
   agent_id: string;
-};
+}
 
 export interface HumanTakeoverService {
   /** Reads RemoteComputerDO pointers, drops stale ones lazily, and resolves payload from turn state. */
@@ -82,7 +82,7 @@ export function createHumanTakeoverService(deps: HumanTakeoverServiceDeps): Huma
       return { kind };
     };
     const session = await deps.sessions.get({ tenant_id, session_id: pointer.session_id });
-    if (session === undefined || session.agent.type !== 'reference') {
+    if (session?.agent.type !== 'reference') {
       return drop('gone');
     }
     if (onlyAgentId !== undefined && session.agent.id !== onlyAgentId) {
