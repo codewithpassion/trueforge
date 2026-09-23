@@ -8,6 +8,7 @@ import type {
   AgentSkill,
   AgentSpec,
   CatalogServer,
+  ComputerDesktopServer,
   ConnectorState,
   IntegrationServer,
   ModelSelection,
@@ -56,6 +57,8 @@ export type CreateTrueForgeServerOptions<
   permissions?: TPermissions;
   /** Per-agent channel integrations. Optional. */
   integrations?: TIntegrations;
+  /** Live view and control of computer desktops. Optional. */
+  computerDesktop?: ComputerDesktopServer;
 };
 
 export type TrueForgeServer<
@@ -80,6 +83,7 @@ export type TrueForgeServer<
     schedules?: TSchedules;
     permissions?: TPermissions;
     integrations?: TIntegrations;
+    computerDesktop?: ComputerDesktopServer;
   };
 
 /**
@@ -173,6 +177,7 @@ export function createTrueForgeServer<
     ...(opts.schedules != null ? { schedules: opts.schedules } : {}),
     ...(opts.permissions != null ? { permissions: opts.permissions } : {}),
     ...(opts.integrations != null ? { integrations: opts.integrations } : {}),
+    ...(opts.computerDesktop != null ? { computerDesktop: opts.computerDesktop } : {}),
   };
   return server;
 }

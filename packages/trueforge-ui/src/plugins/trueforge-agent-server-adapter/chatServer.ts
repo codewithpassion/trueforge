@@ -179,6 +179,11 @@ export function createHarnessChatServer(
       return response.blob();
     },
 
+    async getSessionFile({ sessionId, fileId }) {
+      const response = await client.sessions.getFile(sessionId, fileId);
+      return response.blob();
+    },
+
     async createSession(request) {
       const metadata = createSessionMetadata(request);
       if (request.agentName !== undefined && request.agentName.length > 0) {

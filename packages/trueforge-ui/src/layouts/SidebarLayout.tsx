@@ -20,6 +20,7 @@ import { PageHeader } from '../atoms/PageHeader.js';
 import { Spinner } from '../atoms/primitives/Spinner.js';
 import { ShellActions } from '../atoms/ShellActions.js';
 import { AgentConfigDrawerContainer } from '../containers/AgentConfigDrawerContainer.js';
+import { SessionScreenPanel, SessionScreenToggle, useSessionScreen } from '../containers/SessionScreenPanel.js';
 import { Thread } from '../containers/Thread.js';
 import { ThreadListContainer } from '../containers/ThreadListContainer.js';
 import { useChatHeaderContentVisible } from '../hooks/useChatChromeActionsVisible.js';
@@ -195,6 +196,9 @@ export function SidebarLayout({ className }: { className?: string }) {
     shell != null && shellIsCreateAgent(shell.mode) && !overlayOpen && (!isMobile || shell.agentConfigOpen);
   const showRecentHistory = isRecentHistoryVisible({ overlayOpen, mode: shell?.mode });
   const hasChatHeaderContent = useChatHeaderContentVisible();
+  const sessionScreen = useSessionScreen();
+  const [screenOpen, setScreenOpen] = useState(false);
+  const screenAvailable = !overlayOpen && !isIdle && sessionScreen !== null;
 
   useEffect(() => {
     if (!mobileNavOpen) return;
@@ -264,6 +268,9 @@ export function SidebarLayout({ className }: { className?: string }) {
           end={
             !overlayOpen ? (
               <>
+                {screenAvailable ? (
+                  <SessionScreenToggle open={screenOpen} onToggle={() => setScreenOpen(open => !open)} />
+                ) : null}
                 <ClearChatButton />
                 <SaveAgentButton />
               </>
@@ -326,6 +333,9 @@ export function SidebarLayout({ className }: { className?: string }) {
               <Thread />
             )}
           </div>
+          {screenAvailable && screenOpen ? (
+            <SessionScreenPanel screen={sessionScreen} onClose={() => setScreenOpen(false)} />
+          ) : null}
         </div>
       </div>
 

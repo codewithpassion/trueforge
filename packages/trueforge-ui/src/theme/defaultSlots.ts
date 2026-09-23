@@ -42,6 +42,8 @@ import { ClearChatButton } from '../atoms/ClearChatButton.js';
 import { CodeEditor } from '../atoms/CodeEditor.js';
 import { ComposerLeftSection, ComposerRightSection, ComposerSendButton } from '../atoms/ComposerSections.js';
 import { ComposerShell } from '../atoms/ComposerShell.js';
+import { ComputerToolCallCard } from '../atoms/ComputerToolCallCard.js';
+import type { AgentScreenProps } from '../atoms/desktop/AgentScreen.js';
 import { AgentConfigEditors } from '../atoms/draft/AgentConfigEditors.js';
 import { AgentConfigPanel, AgentConfigSection } from '../atoms/draft/AgentConfigPanel.js';
 import { AgentCustomParametersEditor } from '../atoms/draft/AgentCustomParametersEditor.js';
@@ -64,6 +66,7 @@ import { DraftComposerLeftSection, DraftComposerRightSection } from '../atoms/dr
 import { CatalogRow, ConnectorConnectButton, DraftCompositeSelector } from '../atoms/draft/DraftCompositeSelector.js';
 import { DraftModelSelector } from '../atoms/draft/DraftModelSelector.js';
 import { HistoryLoader } from '../atoms/HistoryLoader.js';
+import { HumanTakeoverCard } from '../atoms/HumanTakeoverCard.js';
 import type { IntegrationsPageProps } from '../atoms/integrations/IntegrationsPage.js';
 import { Markdown } from '../atoms/Markdown.js';
 import { MessageActionBar } from '../atoms/MessageActionBar.js';
@@ -99,6 +102,7 @@ import { ToolApprovalBar } from '../atoms/ToolApprovalBar.js';
 import { ToolCallCard } from '../atoms/ToolCallCard.js';
 import { ToolCallContentBlock } from '../atoms/ToolCallContentBlock.js';
 import { ToolGroupCard } from '../atoms/ToolGroupCard.js';
+import { ToolResultThumbnails } from '../atoms/ToolResultThumbnails.js';
 import { UserAvatar } from '../atoms/UserAvatar.js';
 import { UserMessageActionBar } from '../atoms/UserMessageActionBar.js';
 import { UserMessageBubble } from '../atoms/UserMessageBubble.js';
@@ -124,6 +128,10 @@ const SchedulesPage: ComponentType<SchedulesPageProps> = lazy(async () => {
 const IntegrationsPage: ComponentType<IntegrationsPageProps> = lazy(async () => {
   const mod = await import('../atoms/integrations/IntegrationsPage.js');
   return { default: mod.IntegrationsPage };
+});
+const AgentScreen: ComponentType<AgentScreenProps> = lazy(async () => {
+  const mod = await import('../atoms/desktop/AgentScreen.js');
+  return { default: mod.AgentScreen };
 });
 const AgentSessionEventTimeline: ComponentType<AgentSessionEventTimelineProps> = lazy(async () => {
   const mod = await import('../atoms/agent-details/AgentSessionEventTimeline.js');
@@ -204,6 +212,9 @@ export const defaultSlots = {
   ToolGroupCard,
   SubAgentCard,
   SandboxToolCallCard,
+  ComputerToolCallCard,
+  HumanTakeoverCard,
+  ToolResultThumbnails,
   AgentStepsCard,
   ReasoningCard,
   AskUserPrompt,
@@ -247,6 +258,7 @@ export const defaultSlots = {
   SchedulesPage,
   SchedulesButton,
   IntegrationsPage,
+  AgentScreen,
   SaveAgentButton,
   SaveAgentForm,
   SelectAgentEmptyState,

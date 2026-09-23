@@ -18,6 +18,7 @@ describe('resolveRoutesConfig', () => {
       settings: '/settings',
       library: '/library',
       libraryAgent: '/library/:agentId',
+      agentScreen: '/agents/:agentId/screen',
       schedules: '/schedules',
       buildAgent: '/build-agent',
       agent: '/agents/:agentName',
@@ -203,5 +204,32 @@ describe('placesEqual', () => {
     expect(placesEqual({ type: 'agent', agentName: 'a' }, { type: 'agent', agentName: 'b' })).toBe(false);
     expect(placesEqual({ type: 'libraryAgent', agentId: 'a' }, { type: 'libraryAgent', agentId: 'a' })).toBe(true);
     expect(placesEqual({ type: 'session', sessionId: '1' }, { type: 'root' })).toBe(false);
+  });
+});
+
+describe('agent Screen deep link', () => {
+  const routes = resolveRoutesConfig();
+
+  it('opens the agent page on its Screen tab', () => {
+    expect(matchPath('/agents/agent-1/screen', routes)).toEqual({
+      type: 'libraryAgent',
+      agentId: 'agent-1',
+      tab: 'screen',
+    });
+    // The Try chat keeps its own two-segment path.
+    expect(matchPath('/agents/agent-1', routes)).toEqual({ type: 'agent', agentName: 'agent-1' });
+  });
+
+  it('lands on the library path with the tab in the query', () => {
+    const place = matchPath('/agents/agent-1/screen', routes);
+    expect(place).not.toBeNull();
+    if (place === null) return;
+    expect(buildPath(place, routes)).toBe('/library/agent-1');
+    expect(sanitizeSearchForPlace(place, '?theme=dark')).toBe('?theme=dark&tab=screen');
+  });
+
+  it('is off when agent details are', () => {
+    const disabled = resolveRoutesConfig({ paths: { libraryAgent: false } });
+    expect(matchPath('/agents/agent-1/screen', disabled)).toBeNull();
   });
 });

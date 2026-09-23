@@ -8,16 +8,23 @@ import {
   type ToolCallMessagePartComponent,
   type ToolCallMessagePartProps,
 } from '@assistant-ui/react';
-import { useTrueForgeRespondToToolApproval } from '@truefoundry/trueforge-assistant-ui-runtime';
+import {
+  getToolResultImages,
+  useTrueForgeRespondToToolApproval,
+  useTrueForgeSessionFile,
+} from '@truefoundry/trueforge-assistant-ui-runtime';
 import { useCallback, useState } from 'react';
 
 import { useSlot } from '../theme/SlotsProvider.js';
 import {
   ASK_USER_TOOL_NAME,
+  COMPUTER_TOOL_NAMES,
   MCP_META_TOOLS,
+  REQUEST_HUMAN_TAKEOVER_TOOL_NAME,
   SANDBOX_TOOL_NAMES,
   SUB_AGENT_TOOL_NAME,
   buildApprovalOptions,
+  describeComputerAction,
   formatDuration,
   getAskUserAnswerResult,
   getJsonDisplayValue,
@@ -34,6 +41,7 @@ import {
 } from '../utils/toolCallParsing.js';
 import { useRegisterApprovalExpand } from './approvalFocus.js';
 import { AssistantTextContainer } from './AssistantTextContainer.js';
+import { HumanTakeoverContainer } from './HumanTakeoverContainer.js';
 import { NestedApprovalBridgeContext, useNestedApprovalBridge } from './nestedApprovalBridge.js';
 import { SandboxToolCallContainer } from './SandboxToolCallContainer.js';
 import { ToolApprovalContainer } from './ToolApprovalContainer.js';
@@ -138,6 +146,9 @@ export const ToolCallContainer: ToolCallMessagePartComponent = part => {
   const ToolCallCard = useSlot('ToolCallCard');
   const SubAgentCard = useSlot('SubAgentCard');
   const AskUserPrompt = useSlot('AskUserPrompt');
+  const ComputerToolCallCard = useSlot('ComputerToolCallCard');
+  const ToolResultThumbnails = useSlot('ToolResultThumbnails');
+  const loadSessionFile = useTrueForgeSessionFile();
   const elapsedMs = useToolCallElapsed();
   const isRequiresAction = part.status?.type === 'requires-action';
   const isSubAgent = part.toolName === SUB_AGENT_TOOL_NAME;
@@ -156,6 +167,19 @@ export const ToolCallContainer: ToolCallMessagePartComponent = part => {
   const onToggle = () => setExpanded(prev => !prev);
   const expandSubAgent = useCallback(() => setExpanded(true), []);
   useRegisterApprovalExpand(isSubAgent ? part.toolCallId : '', expandSubAgent);
+
+  const images = getToolResultImages(part);
+  const thumbnails =
+    images.length > 0 ? (
+      <ToolResultThumbnails
+        images={images}
+        {...(loadSessionFile === undefined ? {} : { loadImage: loadSessionFile })}
+      />
+    ) : undefined;
+
+  if (part.toolName === REQUEST_HUMAN_TAKEOVER_TOOL_NAME) {
+    return <HumanTakeoverContainer argsText={part.argsText} result={part.result} />;
+  }
 
   if (part.toolName === ASK_USER_TOOL_NAME) {
     if (hasPendingAskUserResponse(part)) {
@@ -241,6 +265,26 @@ export const ToolCallContainer: ToolCallMessagePartComponent = part => {
     );
   }
 
+  if (COMPUTER_TOOL_NAMES.has(part.toolName)) {
+    const argsDisplay = getJsonDisplayValue(part.argsText);
+    const resultDisplay = getToolResultContent(part.result);
+    const slots = RequestResponseSlots({ request: argsDisplay, response: resultDisplay });
+    return (
+      <ComputerToolCallCard
+        action={describeComputerAction(part.toolName, part.argsText)}
+        status={status}
+        expanded={expanded}
+        onToggle={onToggle}
+        {...(durationText === undefined ? {} : { durationText })}
+        thumbnailsSlot={thumbnails}
+        requestSlot={slots.requestSlot}
+        responseSlot={slots.responseSlot}
+        approvalSlot={showApproval ? <ToolApprovalSlot part={part} /> : undefined}
+        approvalId={showApproval ? part.approval?.id : undefined}
+      />
+    );
+  }
+
   if (MCP_META_TOOLS.has(part.toolName)) {
     const { mcpServer, innerToolName, input } = parseMcpToolArgs(part.argsText);
     const argsDisplay = getJsonDisplayValue(part.argsText);
@@ -285,6 +329,7 @@ export const ToolCallContainer: ToolCallMessagePartComponent = part => {
         showResponseLine={status !== 'running' && resultDisplay.data !== undefined}
         mcpServerName={mcpServer}
         {...slots}
+        attachmentsSlot={thumbnails}
         approvalSlot={showApproval ? <ToolApprovalSlot part={part} /> : undefined}
         approvalId={showApproval ? part.approval?.id : undefined}
       />
@@ -307,6 +352,7 @@ export const ToolCallContainer: ToolCallMessagePartComponent = part => {
       awaitingText={durationText ?? 'Awaiting Response…'}
       showResponseLine={status !== 'running' && resultDisplay.data !== undefined}
       {...slots}
+      attachmentsSlot={thumbnails}
       approvalSlot={showApproval ? <ToolApprovalSlot part={part} /> : undefined}
       approvalId={showApproval ? part.approval?.id : undefined}
     />

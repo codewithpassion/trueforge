@@ -10,7 +10,8 @@ export type RoutePlace =
   | { type: 'session'; sessionId: string }
   | { type: 'settings' }
   | { type: 'library' }
-  | { type: 'libraryAgent'; agentId: string }
+  /** `tab` opens a specific agent tab, as the agent Screen deep link does. */
+  | { type: 'libraryAgent'; agentId: string; tab?: 'screen' }
   | { type: 'sessionsBrowser' }
   | { type: 'schedules' }
   | { type: 'buildAgent' };
@@ -32,6 +33,8 @@ export type RoutesConfig = {
     library?: string | false;
     /** Agent detail under the library. Default `'/library/:agentId'`. */
     libraryAgent?: string | false;
+    /** The agent's Screen tab, as takeover links name it. Default `'/agents/:agentId/screen'`. */
+    agentScreen?: string | false;
     /** Schedules page. `false` keeps schedules overlay-only (no URL). Default `'/schedules'`. */
     schedules?: string | false;
     /** Agent builder. `false` disables its dedicated URL. Default `'/build-agent'`. */
@@ -52,6 +55,7 @@ export type ResolvedRoutes = {
   settings: string | null;
   library: string | null;
   libraryAgent: string | null;
+  agentScreen: string | null;
   schedules: string | null;
   buildAgent: string | null;
   agent: string | null;

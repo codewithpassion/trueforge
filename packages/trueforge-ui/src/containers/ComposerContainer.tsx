@@ -15,6 +15,7 @@ import { AskUserContainer } from './AskUserContainer.js';
 import { ComposerAttachmentsContainer } from './AttachmentsContainer.js';
 import { CustomActionContainer } from './CustomActionContainer.js';
 import { McpAuthContainer } from './McpAuthContainer.js';
+import { TakeoverPauseContainer } from './TakeoverPauseContainer.js';
 
 export type ComposerContainerProps = {
   placeholder?: string;
@@ -185,6 +186,9 @@ export function ComposerContainer({
   }
   if (pauseView.kind === 'ask-user') {
     return <AskUserContainer disabled={!canManageSession} />;
+  }
+  if (pauseView.kind === 'takeover') {
+    return <TakeoverPauseContainer disabled={!canManageSession} />;
   }
   if (pauseView.kind === 'approval') {
     return (

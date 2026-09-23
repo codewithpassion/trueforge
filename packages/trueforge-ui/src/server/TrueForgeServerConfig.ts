@@ -14,6 +14,8 @@ export type TrueForgeBuiltInServerConfig = {
   fetch?: typeof fetch;
   catalog?: CatalogServer;
   permissions?: PermissionsServer;
+  /** Attach the desktop port; pass the server's `capabilities.desktop.enabled`. */
+  desktop?: boolean;
 };
 
 /**

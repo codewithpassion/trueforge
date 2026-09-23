@@ -8,6 +8,7 @@ import type {
   AgentSessionsServer,
   AgentUIServer,
   CatalogServer,
+  ComputerDesktopServer,
   IntegrationServer,
   PermissionsServer,
   ScheduleServer,
@@ -150,4 +151,8 @@ export function useOptionalIntegrationServer(): IntegrationServer | null {
 
 export function useOptionalPermissionsServer(): PermissionsServer | null {
   return useOptionalServer()?.permissions ?? null;
+}
+
+export function useOptionalComputerDesktopServer(): ComputerDesktopServer | null {
+  return useOptionalServer()?.computerDesktop ?? null;
 }

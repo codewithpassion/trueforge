@@ -68,6 +68,7 @@ export function toEffectiveRoutes({
     settings: isSettingsChromeEnabled({ catalog, capabilities }) ? routes.settings : null,
     sessionsBrowser: sessionsEnabled ? routes.sessionsBrowser : null,
     libraryAgent: sessionsEnabled ? routes.libraryAgent : null,
+    agentScreen: sessionsEnabled ? routes.agentScreen : null,
     schedules: isSchedulesChromeEnabled({ schedules }) ? routes.schedules : null,
   };
 }

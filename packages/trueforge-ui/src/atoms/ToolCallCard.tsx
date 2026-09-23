@@ -27,6 +27,8 @@ export type ToolCallCardProps = {
   approvalId?: string;
   requestSlot?: ReactNode;
   responseSlot?: ReactNode;
+  /** Shown whether or not the card is expanded, e.g. screenshot thumbnails. */
+  attachmentsSlot?: ReactNode;
   highlightCard?: boolean;
   className?: string;
   mcpServerName?: string;
@@ -52,6 +54,7 @@ export function ToolCallCard({
   approvalId,
   requestSlot,
   responseSlot,
+  attachmentsSlot,
   highlightCard = false,
   className,
   mcpServerName: _mcpServerName,
@@ -64,7 +67,8 @@ export function ToolCallCard({
   const hasApproval = !!approvalSlot;
   const hasRequest = !!requestSlot;
   const hasResponse = !!responseSlot;
-  const showConnector = hasApproval || hasRequest || hasResponse;
+  const hasAttachments = !!attachmentsSlot;
+  const showConnector = hasApproval || hasRequest || hasResponse || hasAttachments;
   const isExpandable = showExpandChevron && (hasRequest || hasResponse);
   const isFlashing = approvalId != null && focusApi?.flashingApprovalId === approvalId;
 
@@ -110,6 +114,7 @@ export function ToolCallCard({
         persistentChildren={
           <>
             {approvalSlot}
+            {attachmentsSlot}
             {expanded && showResponseLine && responseSlot && (
               <div data-testid={dataTestPrefix ? `${dataTestPrefix}-response` : undefined}>{responseSlot}</div>
             )}

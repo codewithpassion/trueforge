@@ -59,7 +59,13 @@ function Loader() {
 type BootState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; defaultAgentSpec: HarnessAgentSpec; openSettings: boolean; computersEnabled: boolean };
+  | {
+      status: 'ready';
+      defaultAgentSpec: HarnessAgentSpec;
+      openSettings: boolean;
+      computersEnabled: boolean;
+      desktopEnabled: boolean;
+    };
 
 export function App() {
   const authError = parseAuthErrorReason(window.location.search);
@@ -118,6 +124,7 @@ export function App() {
             status: 'ready',
             openSettings: capabilities.settings.enabled,
             computersEnabled: capabilities.computers.enabled,
+            desktopEnabled: capabilities.desktop.enabled,
             defaultAgentSpec: {
               model: { name: '' },
               config: sandboxConfig,
@@ -132,6 +139,7 @@ export function App() {
           status: 'ready',
           openSettings: false,
           computersEnabled: capabilities.computers.enabled,
+          desktopEnabled: capabilities.desktop.enabled,
           defaultAgentSpec: {
             model: {
               name: first.name,
@@ -213,7 +221,13 @@ export function App() {
   return (
     <div className="app-root">
       <TrueForgeUI
-        server={{ type: 'trueforge', baseUrl: API_BASE_URL, fetch: authAwareFetch, catalog }}
+        server={{
+          type: 'trueforge',
+          baseUrl: API_BASE_URL,
+          fetch: authAwareFetch,
+          catalog,
+          desktop: boot.desktopEnabled,
+        }}
         layout="sidebar"
         withRouter
         {...(routerBasename ? { routes: { basename: routerBasename } } : {})}

@@ -14,6 +14,21 @@ export type ApprovalOptionView = {
 export const SUB_AGENT_TOOL_NAME = 'create_sub_agent';
 export const ASK_USER_TOOL_NAME = 'ask_user_question';
 
+/** A client-side tool: the agent asks a person to do a step on its computer's desktop. */
+export const REQUEST_HUMAN_TAKEOVER_TOOL_NAME = 'request_human_takeover';
+
+/** Desktop tools of an agent that drives a computer's screen. */
+export const COMPUTER_TOOL_NAMES = new Set([
+  'computer_screenshot',
+  'computer_click',
+  'computer_type',
+  'computer_key',
+  'computer_scroll',
+  'computer_drag',
+  'computer_clipboard_read',
+  'computer_clipboard_write',
+]);
+
 /** Tool names that should be rendered as a sandbox execution card. */
 export const SANDBOX_TOOL_NAMES = new Set(['exec', 'sandbox_exec']);
 
@@ -278,4 +293,81 @@ export function mcpDisplayName(
     return `${toolName}: ${innerToolName} (${mcpServer})`;
   }
   return toolName;
+}
+
+function parseArgsRecord(argsText: string | undefined): Record<string, unknown> {
+  if (!argsText) return {};
+  const parsed = parseJsonIncrementally(argsText);
+  return parsed.success && isUnknownRecord(parsed.value) ? parsed.value : {};
+}
+
+function readPoint(value: unknown): string | undefined {
+  if (!isUnknownRecord(value)) return undefined;
+  const { x, y } = value;
+  return typeof x === 'number' && typeof y === 'number' ? `(${String(x)}, ${String(y)})` : undefined;
+}
+
+const TYPED_PREVIEW_LENGTH = 40;
+
+/** One line saying what a desktop tool call did, for its card title. */
+export function describeComputerAction(toolName: string, argsText: string | undefined): string {
+  const args = parseArgsRecord(argsText);
+  const at = readPoint(args);
+  switch (toolName) {
+    case 'computer_screenshot':
+      return 'Screenshot';
+    case 'computer_click': {
+      const count =
+        typeof args.count === 'number' && args.count > 1 ? `${args.count === 2 ? 'Double' : 'Triple'}-click` : 'Click';
+      const button = typeof args.button === 'string' && args.button !== 'left' ? ` (${args.button})` : '';
+      return at === undefined ? `${count}${button}` : `${count}${button} at ${at}`;
+    }
+    case 'computer_type': {
+      if (typeof args.text !== 'string') return 'Type';
+      const text = args.text.length > TYPED_PREVIEW_LENGTH ? `${args.text.slice(0, TYPED_PREVIEW_LENGTH)}…` : args.text;
+      return `Type “${text}”`;
+    }
+    case 'computer_key':
+      return typeof args.keys === 'string' ? `Press ${args.keys}` : 'Press a key';
+    case 'computer_scroll':
+      return at === undefined ? 'Scroll' : `Scroll at ${at}`;
+    case 'computer_drag': {
+      const from = readPoint(args.from);
+      const to = readPoint(args.to);
+      return from !== undefined && to !== undefined ? `Drag from ${from} to ${to}` : 'Drag';
+    }
+    case 'computer_clipboard_read':
+      return 'Read the clipboard';
+    case 'computer_clipboard_write':
+      return 'Write the clipboard';
+    default:
+      return toolName;
+  }
+}
+
+export function parseTakeoverReason(argsText: string | undefined): string | undefined {
+  const { reason } = parseArgsRecord(argsText);
+  return typeof reason === 'string' && reason.trim() !== '' ? reason : undefined;
+}
+
+export type TakeoverAnswer = {
+  outcome: 'completed' | 'cancelled';
+  note: string | null;
+  /** Absent from answers recorded before the answering person was named. */
+  answeredBy?: 'session_creator' | 'another_user';
+};
+
+/** The answer a takeover got, read from its tool result; undefined while it is still waiting. */
+export function parseTakeoverAnswer(result: unknown): TakeoverAnswer | undefined {
+  const text = getAskUserAnswerResult(result);
+  if (text === undefined) return undefined;
+  const parsed = parseJsonIncrementally(text);
+  if (!parsed.success || parsed.isPartial || !isUnknownRecord(parsed.value)) return undefined;
+  const { outcome, note, answered_by: answeredBy } = parsed.value;
+  if (outcome !== 'completed' && outcome !== 'cancelled') return undefined;
+  return {
+    outcome,
+    note: typeof note === 'string' && note !== '' ? note : null,
+    ...(answeredBy === 'session_creator' || answeredBy === 'another_user' ? { answeredBy } : {}),
+  };
 }

@@ -8,6 +8,7 @@ import { createHarnessAgentMetricsServer } from './agentMetricsServer.js';
 import { createHarnessAgentSessionsServer } from './agentSessionsServer.js';
 import { createHarnessBuilderServer } from './builderServer.js';
 import { createComputerCatalog } from './catalogs/computerCatalog.js';
+import { createComputerDesktopServer } from './catalogs/computerDesktop.js';
 import { createConnectorCatalog } from './catalogs/connectorCatalog.js';
 import { createModelProviderCatalog } from './catalogs/modelProviderCatalog.js';
 import { createSandboxProviderCatalog } from './catalogs/sandboxProviderCatalog.js';
@@ -36,6 +37,7 @@ export {
   toUiComputerAuditEntry,
   toUiEnrollment,
 } from './catalogs/computerCatalog.js';
+export { ComputerDesktopError, createComputerDesktopServer } from './catalogs/computerDesktop.js';
 export {
   createConnectorCatalog,
   toHarnessAuth,
@@ -77,6 +79,8 @@ export type CreateTrueForgeAgentUIServerOptions = CreateTrueForgeClientOptions &
   catalog?: CatalogServer;
   /** Optional host-provided resource permissions port. */
   permissions?: PermissionsServer;
+  /** Attach the desktop port; only a host that read `capabilities.desktop.enabled` knows to. */
+  desktop?: boolean;
 };
 
 /**
@@ -103,7 +107,7 @@ export function createTrueForgeCatalog({
  * Compose chat + builder + agent sessions + default settings catalogs into an `AgentUIServer`.
  */
 export function createTrueForgeAgentUIServer(options: CreateTrueForgeAgentUIServerOptions = {}) {
-  const { catalog: catalogOverride, permissions, ...clientOptions } = options;
+  const { catalog: catalogOverride, permissions, desktop = false, ...clientOptions } = options;
   const client = createTrueForgeClient(clientOptions);
   const catalog = catalogOverride ?? createTrueForgeCatalog({ client });
 
@@ -116,5 +120,6 @@ export function createTrueForgeAgentUIServer(options: CreateTrueForgeAgentUIServ
     schedules: createScheduleServer({ client }),
     integrations: createIntegrationServer({ client }),
     permissions: permissions ?? createHarnessPermissionsServer({ client }),
+    ...(desktop ? { computerDesktop: createComputerDesktopServer(client) } : {}),
   });
 }

@@ -7,6 +7,7 @@ import type { AgentDetailsTab, AgentDetailsTabsProps } from './types.js';
 const tabs: Array<{ id: AgentDetailsTab; label: string; icon: string }> = [
   { id: 'overview', label: 'Overview', icon: 'info' },
   { id: 'sessions', label: 'Sessions', icon: 'message-square-text' },
+  { id: 'screen', label: 'Screen', icon: 'monitor' },
   { id: 'schedules', label: 'Schedules', icon: 'calendar-clock' },
   { id: 'integrations', label: 'Integrations', icon: 'link' },
   { id: 'code', label: 'Use In Code', icon: 'code' },
@@ -19,6 +20,7 @@ export function AgentDetailsTabs({
   showMetrics = false,
   showSchedules = false,
   showIntegrations = false,
+  showScreen = false,
   end,
 }: AgentDetailsTabsProps) {
   return (
@@ -29,7 +31,8 @@ export function AgentDetailsTabs({
             tab =>
               (tab.id !== 'metrics' || showMetrics) &&
               (tab.id !== 'schedules' || showSchedules) &&
-              (tab.id !== 'integrations' || showIntegrations),
+              (tab.id !== 'integrations' || showIntegrations) &&
+              (tab.id !== 'screen' || showScreen),
           )
           .map(tab => (
             <button
