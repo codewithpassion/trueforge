@@ -204,7 +204,7 @@ export class SessionHandle<
     const requireTip = previousTurnId !== null && isTipAnswer(input);
     const previous = previousTurnId
       ? requireTip
-        ? await this.answeredTip(previousTurnId)
+        ? await this.answeredTip({ turn_id: previousTurnId, input: input.input ?? [] })
         : await this.freezeTurn({
             turn_id: previousTurnId,
             reason: CancellationReason.CancelledForNextTurn,
@@ -360,15 +360,32 @@ export class SessionHandle<
    */
   /**
    * The tip a tool response answers. It is never frozen: a running tip means someone already
-   * answered and that run must not be cancelled by the late answer.
+   * answered and that run must not be cancelled by the late answer. A finished tip that is not
+   * waiting on the call being answered means that answer already landed and the run moved on.
    */
-  private async answeredTip(turnId: string): Promise<TurnRecord<TTurnCustom>> {
+  private async answeredTip({
+    turn_id: turnId,
+    input,
+  }: {
+    turn_id: string;
+    input: TurnInputItem[];
+  }): Promise<TurnRecord<TTurnCustom>> {
     const tip = await this.store.getTurn({ session_id: this.session.session_id, turn_id: turnId });
     if (tip === undefined) {
       throw new TurnNotFoundError(turnId);
     }
     if (tip.state.status === 'running') {
       throw new SessionTipMovedError(turnId);
+    }
+    if (tip.state.status === 'done') {
+      const awaited = new Set(
+        tip.state.required_actions.flatMap(action =>
+          action.type === EventType.TOOL_RESPONSE_REQUIRED ? action.tool_calls.map(call => call.id) : [],
+        ),
+      );
+      if (input.filter(isClientSideToolResponseMessage).some(answer => !awaited.has(answer.tool_call_id))) {
+        throw new SessionTipMovedError(turnId);
+      }
     }
     return tip;
   }
