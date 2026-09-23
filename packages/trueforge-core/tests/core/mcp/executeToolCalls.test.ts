@@ -151,6 +151,28 @@ describe('executeToolCalls image results', () => {
     expect(put).not.toHaveBeenCalled();
   });
 
+  it('turns an image wider or taller than 8000 px into a note without storing it', async () => {
+    const files = sessionFiles();
+    const put = jest.spyOn(files, 'put');
+
+    const content = await run({
+      response: contentResponse([image(toBase64(pngBytes({ width: 8001, height: 600 })))]),
+      toolImages: settings(files),
+    });
+
+    expect(content).toEqual([{ type: 'text', text: '[image omitted: 8001x600 is wider or taller than 8000 px]' }]);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('keeps an image of exactly 8000 px on a side', async () => {
+    const content = await run({
+      response: contentResponse([image(toBase64(pngBytes({ width: 8000, height: 8000 })))]),
+      toolImages: settings(),
+    });
+
+    expect(content).toEqual([{ ...IMAGE_PART, width: 8000, height: 8000 }]);
+  });
+
   it('turns data that is no known image format into a note', async () => {
     const files = sessionFiles();
     const put = jest.spyOn(files, 'put');

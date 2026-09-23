@@ -20,7 +20,7 @@ import { createSqliteStores } from '../../../src/db/sqlite/stores';
 import { ActiveTurnRegistry } from '../../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../../src/runtime/event-subscription';
 import type { TurnStores } from '../../../src/runtime/turnExecutor';
-import { startTurnInProcess } from '../../../src/runtime/turnRunner';
+import { modelAcceptsToolImages, startTurnInProcess } from '../../../src/runtime/turnRunner';
 import { newId } from '../../../src/utils/id';
 
 /**
@@ -337,5 +337,38 @@ describe('turn runner with tool-result images', () => {
     const [request] = modelRequests;
     expect(request?.raw).toContain('[screenshot 64x48 omitted: the image file could not be loaded]');
     expect(request?.raw).not.toContain(PNG_B64);
+  });
+
+  describe('modelAcceptsToolImages', () => {
+    function ask(name: string): Promise<boolean> {
+      return modelAcceptsToolImages({
+        tenant_id: TENANT_ID,
+        name,
+        store: stores.modelProviderStore,
+        logger: silentLogger(),
+      });
+    }
+
+    it('answers from the model provider type', async () => {
+      await stores.modelProviderStore.upsertProvider({
+        tenant_id: TENANT_ID,
+        name: 'fireworks',
+        manifest: {
+          type: 'fireworks',
+          base_url: 'https://llm.test/v1',
+          auth: { api_key: 'fw-test' },
+          models: [{ model_id: 'fw-test', name: 'fw-test', properties: { context_length: 8_000 } }],
+        },
+      });
+
+      await expect(ask('anthropic/claude-test')).resolves.toBe(true);
+      await expect(ask('fireworks/fw-test')).resolves.toBe(false);
+    });
+
+    it('assumes the model accepts images when the lookup fails, rather than failing the turn', async () => {
+      jest.spyOn(stores.modelProviderStore, 'getProvider').mockRejectedValueOnce(new Error('database is down'));
+
+      await expect(ask('anthropic/claude-test')).resolves.toBe(true);
+    });
   });
 });

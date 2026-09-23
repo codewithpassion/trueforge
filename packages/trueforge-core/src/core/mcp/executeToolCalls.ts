@@ -53,6 +53,9 @@ function metaDimension(meta: ImageContent['_meta'], key: 'width' | 'height'): nu
   return typeof value === 'number' ? value : undefined;
 }
 
+/** Anthropic refuses an image wider or taller than this, and so fails the whole request. */
+const MAX_IMAGE_DIMENSION_PX = 8000;
+
 function imageNote(reason: string): ToolContentPart {
   return { type: 'text', text: `[image omitted: ${reason}]` };
 }
@@ -105,6 +108,14 @@ async function toImagePart({
     return imageNote(`the data is not ${declared}`);
   }
   const { width, height } = header;
+  if (width > MAX_IMAGE_DIMENSION_PX || height > MAX_IMAGE_DIMENSION_PX) {
+    logger.warn('Tool-result image is too large in pixels; sending a note', {
+      width,
+      height,
+      max_dimension_px: MAX_IMAGE_DIMENSION_PX,
+    });
+    return imageNote(`${String(width)}x${String(height)} is wider or taller than ${String(MAX_IMAGE_DIMENSION_PX)} px`);
+  }
   const metaWidth = metaDimension(image._meta, 'width');
   const metaHeight = metaDimension(image._meta, 'height');
   if ((metaWidth !== undefined && metaWidth !== width) || (metaHeight !== undefined && metaHeight !== height)) {

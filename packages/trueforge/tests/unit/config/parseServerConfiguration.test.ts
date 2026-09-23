@@ -16,6 +16,7 @@ const MANAGED_KEYS = [
   'SANDBOX_EXEC_TIMEOUT_SECONDS',
   'TRUEFORGE_MTLS_ENABLED',
   'TRUEFORGE_MTLS_CERTS_DIR',
+  'TOOL_RESULT_IMAGE_MAX_BYTES',
 ] as const;
 
 type ManagedEnv = Partial<Record<(typeof MANAGED_KEYS)[number], string>>;
@@ -181,6 +182,12 @@ describe('parseServerConfiguration', () => {
 
   it('rejects an unknown TRUEFORGE_RUNTIME', () => {
     expect(() => parseWithEnv({ TRUEFORGE_RUNTIME: 'lambda' })).toThrow(/TRUEFORGE_RUNTIME must be/);
+  });
+
+  it('caps one tool-result image at 3.75 MiB, which is 5 MiB as base64', () => {
+    const maxBytes = parseWithEnv({}).TOOL_RESULT_IMAGE_MAX_BYTES;
+    expect(maxBytes).toBe(3.75 * 1024 * 1024);
+    expect(Math.ceil(maxBytes / 3) * 4).toBe(5 * 1024 * 1024);
   });
 
   describe('SANDBOX_EXEC_TIMEOUT_SECONDS', () => {

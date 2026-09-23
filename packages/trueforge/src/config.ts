@@ -616,7 +616,7 @@ export interface SharedServerConfiguration {
    * down to this many. Stored history keeps them all. Env: `TOOL_RESULT_IMAGES_KEEP`. Default 5.
    */
   TOOL_RESULT_IMAGES_KEEP: number;
-  /** Max bytes for one tool-result image; larger ones reach the model as a text note. Env: `TOOL_RESULT_IMAGE_MAX_BYTES`. Default 5 MiB. */
+  /** Max bytes for one tool-result image; larger ones reach the model as a text note. Env: `TOOL_RESULT_IMAGE_MAX_BYTES`. Default 3.75 MiB. */
   TOOL_RESULT_IMAGE_MAX_BYTES: number;
   /**
    * Client name used for Dynamic Client Registration (DCR) of MCP servers.
@@ -963,7 +963,8 @@ export function parseServerConfiguration(): ServerConfiguration {
     TOOL_RESULT_IMAGE_MAX_BYTES: parsePositiveInt({
       envKey: 'TOOL_RESULT_IMAGE_MAX_BYTES',
       raw: getEnv('TOOL_RESULT_IMAGE_MAX_BYTES'),
-      defaultValue: 5 * 1024 * 1024,
+      // 3.75 MiB, whose base64 is 5 MiB: Anthropic's limit for one image.
+      defaultValue: 3_932_160,
     }),
     MCP_DCR_OAUTH_CLIENT_NAME:
       getEnv('MCP_DCR_OAUTH_CLIENT_NAME', { defaultValue: 'truefoundry-harness' }) ?? 'truefoundry-harness',

@@ -8,7 +8,12 @@ import { scopeFileStore } from '../../../src/agent-session/store/SessionFileStor
 import type { SessionFiles, StoredFile } from '../../../src/core/files/SessionFiles';
 import type { LLMRequestMessage } from '../../../src/core/llm/ILLM';
 import type { ToolContentPart } from '../../../src/core/llm/LLMTypes';
-import { convertMessages, VercelAILLM, type VercelAIProviderName } from '../../../src/core/llm/VercelAILLM';
+import {
+  convertMessages,
+  loadToolImages,
+  VercelAILLM,
+  type VercelAIProviderName,
+} from '../../../src/core/llm/VercelAILLM';
 import { setOutboundPolicy } from '../../../src/core/util/outboundFetch';
 import { makeSilentLogger } from '../harnessMocks';
 
@@ -184,5 +189,40 @@ describe('VercelAILLM sends tool-result images through each adapter', () => {
     const { body } = await sendScreenshot(provider);
     expect(body).toContain(STUB);
     expect(body).not.toContain(JPEG_B64);
+  });
+});
+
+describe('loadToolImages', () => {
+  function toolMessage(fileId: string): LLMRequestMessage {
+    return {
+      role: 'tool',
+      tool_call_id: fileId,
+      content: [{ type: 'image', file_id: fileId, media_type: 'image/png', width: 1, height: 1 }],
+    };
+  }
+
+  it('keeps the newest images within the request budget and never reads the ones past it', async () => {
+    const files = scopeFileStore({ fileStore: createInMemoryFileStore(), tenant_id: 't1', session_id: 's1' });
+    // 6 MiB each is 8 MiB of base64, so two fit the 20 MiB budget and the third is where it cuts.
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const { file_id } = await files.put({ media_type: 'image/png', bytes: new Uint8Array(6 * 1024 * 1024) });
+      ids.push(file_id);
+    }
+    const [oldest, , middle, newest] = ids;
+    if (oldest === undefined || middle === undefined || newest === undefined) throw new Error('expected four files');
+    const get = jest.spyOn(files, 'get');
+
+    const loaded = await loadToolImages({
+      messages: ids.map(toolMessage),
+      provider: 'anthropic',
+      files,
+      cached: new Map(),
+      logger: makeSilentLogger(),
+    });
+
+    expect([...loaded.keys()]).toEqual([newest, middle]);
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(get).not.toHaveBeenCalledWith(oldest);
   });
 });

@@ -238,10 +238,22 @@ export function providerAcceptsToolImages(providerType: VercelAIProviderName): b
 }
 
 /**
- * Loads every tool-result image the provider will be shown, keyed by file id, reusing `cached`
- * ones. A file that is gone or fails to load is left out, and the converted request stubs it.
+ * Base64 bytes of tool-result images one request may carry; Anthropic refuses a request over 32 MB.
+ * Normally trimming by count keeps a request far below this.
  */
-async function loadToolImages({
+const TOOL_IMAGES_REQUEST_BUDGET_BASE64_BYTES = 20 * 1024 * 1024;
+
+function base64Length(byteLength: number): number {
+  return Math.ceil(byteLength / 3) * 4;
+}
+
+/**
+ * Loads the tool-result images the provider will be shown, keyed by file id, reusing `cached` ones.
+ * Newest first, until one would take the request past the image budget; it and all older ones are
+ * left out, and the older ones are never read. A file that is gone or fails to load is left out too.
+ * The converted request stubs whatever is left out.
+ */
+export async function loadToolImages({
   messages,
   provider,
   files,
@@ -258,33 +270,45 @@ async function loadToolImages({
   if (files === undefined || !providerAcceptsToolImages(provider)) {
     return loaded;
   }
-  const fileIds = new Set(
-    messages.flatMap(msg =>
-      msg.role === 'tool' ? msg.content.flatMap(part => (part.type === 'image' ? [part.file_id] : [])) : [],
+  const newestFirst = [
+    ...new Set(
+      messages
+        .flatMap(msg =>
+          msg.role === 'tool' ? msg.content.flatMap(part => (part.type === 'image' ? [part.file_id] : [])) : [],
+        )
+        .reverse(),
     ),
-  );
-  await Promise.all(
-    [...fileIds].map(async fileId => {
-      const hit = cached.get(fileId);
-      if (hit !== undefined) {
-        loaded.set(fileId, hit);
-        return;
-      }
+  ];
+  let total = 0;
+  // Sequential so images older than the cut are never read; most come from `cached` anyway.
+  for (const [index, fileId] of newestFirst.entries()) {
+    let file = cached.get(fileId);
+    if (file === undefined) {
       try {
-        const file = await files.get(fileId);
-        if (file === undefined) {
-          logger.warn('Tool-result image not found; sending a stub', { file_id: fileId });
-          return;
-        }
-        loaded.set(fileId, file);
+        file = await files.get(fileId);
       } catch (error) {
         logger.warn('Tool-result image could not be loaded; sending a stub', {
           file_id: fileId,
           ...extractErrorLogFields(error),
         });
+        continue;
       }
-    }),
-  );
+      if (file === undefined) {
+        logger.warn('Tool-result image not found; sending a stub', { file_id: fileId });
+        continue;
+      }
+    }
+    const size = base64Length(file.bytes.byteLength);
+    if (total + size > TOOL_IMAGES_REQUEST_BUDGET_BASE64_BYTES) {
+      logger.warn('Tool-result images exceed the request budget; sending stubs for the oldest', {
+        stubbed: newestFirst.length - index,
+        budget_bytes: TOOL_IMAGES_REQUEST_BUDGET_BASE64_BYTES,
+      });
+      break;
+    }
+    total += size;
+    loaded.set(fileId, file);
+  }
   return loaded;
 }
 

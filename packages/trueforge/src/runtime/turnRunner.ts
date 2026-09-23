@@ -23,6 +23,7 @@ import { HTTPException } from 'hono/http-exception';
 import { REMOTE_COMPUTER_PROVIDER_TYPE, RemoteComputerProvider } from '../computers/RemoteComputerProvider';
 import { computerNotUsableMessage } from '../computers/resolveComputer';
 import configuration from '../config';
+import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { SandboxIntegration } from '../sandbox/integration';
 import { MAX_SESSION_TITLE_LENGTH } from '../schemas/session';
 import { resolveWebSearchProvider } from '../websearch/providers';
@@ -223,9 +224,10 @@ function createTurnResolver(
               skills,
             });
       // Only the desktop instructions ask whether the model takes images, so only they pay for the lookup.
-      const model = spec.config.sandbox.desktop
-        ? await getModelDetails({ tenant_id, name: spec.model.name, store: modelProviderStore })
-        : undefined;
+      // Sub-agents on another model get the main model's answer; their requests still stub per provider.
+      const acceptsToolImages = spec.config.sandbox.desktop
+        ? await modelAcceptsToolImages({ tenant_id, name: spec.model.name, store: modelProviderStore, logger })
+        : false;
       return sandboxIntegration.buildTurnSandbox({
         provider,
         logger,
@@ -233,7 +235,7 @@ function createTurnResolver(
         fileDownloadEnabled: spec.config.sandbox.file_downloads,
         existingSandboxId: carriedSandboxId,
         desktop: spec.config.sandbox.desktop,
-        modelAcceptsToolImages: model !== undefined && providerAcceptsToolImages(model.providerConfig.provider.type),
+        modelAcceptsToolImages: acceptsToolImages,
         tracing,
       });
     },
@@ -252,6 +254,33 @@ function createTurnResolver(
     },
     logger,
   });
+}
+
+/**
+ * Whether the model is shown images in tool results. A failed lookup must not fail the turn, so it
+ * assumes yes: each model request still stubs the images its provider cannot take.
+ */
+export async function modelAcceptsToolImages({
+  tenant_id,
+  name,
+  store,
+  logger,
+}: {
+  tenant_id: string;
+  name: string;
+  store: IModelProviderStore;
+  logger: Logger;
+}): Promise<boolean> {
+  try {
+    const model = await getModelDetails({ tenant_id, name, store });
+    return providerAcceptsToolImages(model.providerConfig.provider.type);
+  } catch (error) {
+    logger.warn('Could not look up whether the model accepts tool-result images; assuming it does', {
+      model: name,
+      ...extractErrorLogFields(error),
+    });
+    return true;
+  }
 }
 
 /**
