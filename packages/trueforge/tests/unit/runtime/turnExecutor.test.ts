@@ -1,4 +1,4 @@
-import { CancellationReason, TurnNotFoundError } from '@truefoundry/trueforge-core/agent-session';
+import { CancellationReason, SessionTipMovedError, TurnNotFoundError } from '@truefoundry/trueforge-core/agent-session';
 import { AgentHarnessError, McpConnectionError } from '@truefoundry/trueforge-core/core/errors';
 import { HTTPException } from 'hono/http-exception';
 import { freezeTurnIgnoringMissing, turnStartFailure } from '../../../src/runtime/turnExecutor';
@@ -25,6 +25,16 @@ describe('turnStartFailure', () => {
   it('maps a missing session or turn to 404', () => {
     const error = new TurnNotFoundError('t1');
     expect(turnStartFailure(error)).toEqual({ ok: false, status: 404, code: 'not_found', message: error.message });
+  });
+
+  it('maps an answer that lost to another answer of the same call to 409 already_answered', () => {
+    const error = new SessionTipMovedError('t1');
+    expect(turnStartFailure(error)).toEqual({
+      ok: false,
+      status: 409,
+      code: 'already_answered',
+      message: error.message,
+    });
   });
 
   it.each([
