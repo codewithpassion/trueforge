@@ -77,7 +77,25 @@ if typing.TYPE_CHECKING:
     from .delete_integration_response import DeleteIntegrationResponse
     from .delete_sandbox_provider_response import DeleteSandboxProviderResponse
     from .delete_schedule_response import DeleteScheduleResponse
+    from .desktop_action import DesktopAction
     from .desktop_capability import DesktopCapability
+    from .desktop_click_action import DesktopClickAction
+    from .desktop_click_action_button import DesktopClickActionButton
+    from .desktop_clipboard import DesktopClipboard
+    from .desktop_controller import DesktopController
+    from .desktop_controller_agent import DesktopControllerAgent
+    from .desktop_controller_clearing import DesktopControllerClearing
+    from .desktop_controller_human import DesktopControllerHuman
+    from .desktop_controller_none import DesktopControllerNone
+    from .desktop_key_action import DesktopKeyAction
+    from .desktop_mouse_down_action import DesktopMouseDownAction
+    from .desktop_mouse_down_action_button import DesktopMouseDownActionButton
+    from .desktop_mouse_move_action import DesktopMouseMoveAction
+    from .desktop_mouse_up_action import DesktopMouseUpAction
+    from .desktop_mouse_up_action_button import DesktopMouseUpActionButton
+    from .desktop_scroll_action import DesktopScrollAction
+    from .desktop_status import DesktopStatus
+    from .desktop_type_action import DesktopTypeAction
     from .dynamic_sub_agents_config import DynamicSubAgentsConfig
     from .extended_chunk_delta_tool_call import ExtendedChunkDeltaToolCall
     from .file_content import FileContent
@@ -90,6 +108,8 @@ if typing.TYPE_CHECKING:
     from .get_capabilities_response import GetCapabilitiesResponse
     from .get_computer_agent_access_response import GetComputerAgentAccessResponse
     from .get_computer_response import GetComputerResponse
+    from .get_desktop_clipboard_response import GetDesktopClipboardResponse
+    from .get_desktop_status_response import GetDesktopStatusResponse
     from .get_integration_app_manifest_response import GetIntegrationAppManifestResponse
     from .get_integration_response import GetIntegrationResponse
     from .get_mcp_server_catalog_response import GetMcpServerCatalogResponse
@@ -179,6 +199,7 @@ if typing.TYPE_CHECKING:
     from .model_provider_manifest import ModelProviderManifest
     from .moonshot_model_provider import MoonshotModelProvider
     from .open_ai_model_provider import OpenAiModelProvider
+    from .pending_desktop_takeover import PendingDesktopTakeover
     from .permission_resource_type import PermissionResourceType
     from .previous_turn_id_input import PreviousTurnIdInput
     from .raw_tool_call import RawToolCall
@@ -356,7 +377,25 @@ _dynamic_imports: typing.Dict[str, str] = {
     "DeleteIntegrationResponse": ".delete_integration_response",
     "DeleteSandboxProviderResponse": ".delete_sandbox_provider_response",
     "DeleteScheduleResponse": ".delete_schedule_response",
+    "DesktopAction": ".desktop_action",
     "DesktopCapability": ".desktop_capability",
+    "DesktopClickAction": ".desktop_click_action",
+    "DesktopClickActionButton": ".desktop_click_action_button",
+    "DesktopClipboard": ".desktop_clipboard",
+    "DesktopController": ".desktop_controller",
+    "DesktopControllerAgent": ".desktop_controller_agent",
+    "DesktopControllerClearing": ".desktop_controller_clearing",
+    "DesktopControllerHuman": ".desktop_controller_human",
+    "DesktopControllerNone": ".desktop_controller_none",
+    "DesktopKeyAction": ".desktop_key_action",
+    "DesktopMouseDownAction": ".desktop_mouse_down_action",
+    "DesktopMouseDownActionButton": ".desktop_mouse_down_action_button",
+    "DesktopMouseMoveAction": ".desktop_mouse_move_action",
+    "DesktopMouseUpAction": ".desktop_mouse_up_action",
+    "DesktopMouseUpActionButton": ".desktop_mouse_up_action_button",
+    "DesktopScrollAction": ".desktop_scroll_action",
+    "DesktopStatus": ".desktop_status",
+    "DesktopTypeAction": ".desktop_type_action",
     "DynamicSubAgentsConfig": ".dynamic_sub_agents_config",
     "ExtendedChunkDeltaToolCall": ".extended_chunk_delta_tool_call",
     "FileContent": ".file_content",
@@ -369,6 +408,8 @@ _dynamic_imports: typing.Dict[str, str] = {
     "GetCapabilitiesResponse": ".get_capabilities_response",
     "GetComputerAgentAccessResponse": ".get_computer_agent_access_response",
     "GetComputerResponse": ".get_computer_response",
+    "GetDesktopClipboardResponse": ".get_desktop_clipboard_response",
+    "GetDesktopStatusResponse": ".get_desktop_status_response",
     "GetIntegrationAppManifestResponse": ".get_integration_app_manifest_response",
     "GetIntegrationResponse": ".get_integration_response",
     "GetMcpServerCatalogResponse": ".get_mcp_server_catalog_response",
@@ -458,6 +499,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "ModelProviderManifest": ".model_provider_manifest",
     "MoonshotModelProvider": ".moonshot_model_provider",
     "OpenAiModelProvider": ".open_ai_model_provider",
+    "PendingDesktopTakeover": ".pending_desktop_takeover",
     "PermissionResourceType": ".permission_resource_type",
     "PreviousTurnIdInput": ".previous_turn_id_input",
     "RawToolCall": ".raw_tool_call",
@@ -659,7 +701,25 @@ __all__ = [
     "DeleteIntegrationResponse",
     "DeleteSandboxProviderResponse",
     "DeleteScheduleResponse",
+    "DesktopAction",
     "DesktopCapability",
+    "DesktopClickAction",
+    "DesktopClickActionButton",
+    "DesktopClipboard",
+    "DesktopController",
+    "DesktopControllerAgent",
+    "DesktopControllerClearing",
+    "DesktopControllerHuman",
+    "DesktopControllerNone",
+    "DesktopKeyAction",
+    "DesktopMouseDownAction",
+    "DesktopMouseDownActionButton",
+    "DesktopMouseMoveAction",
+    "DesktopMouseUpAction",
+    "DesktopMouseUpActionButton",
+    "DesktopScrollAction",
+    "DesktopStatus",
+    "DesktopTypeAction",
     "DynamicSubAgentsConfig",
     "ExtendedChunkDeltaToolCall",
     "FileContent",
@@ -672,6 +732,8 @@ __all__ = [
     "GetCapabilitiesResponse",
     "GetComputerAgentAccessResponse",
     "GetComputerResponse",
+    "GetDesktopClipboardResponse",
+    "GetDesktopStatusResponse",
     "GetIntegrationAppManifestResponse",
     "GetIntegrationResponse",
     "GetMcpServerCatalogResponse",
@@ -761,6 +823,7 @@ __all__ = [
     "ModelProviderManifest",
     "MoonshotModelProvider",
     "OpenAiModelProvider",
+    "PendingDesktopTakeover",
     "PermissionResourceType",
     "PreviousTurnIdInput",
     "RawToolCall",

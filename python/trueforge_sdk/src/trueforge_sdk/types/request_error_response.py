@@ -9,6 +9,11 @@ from .request_error_response_error import RequestErrorResponseError
 
 
 class RequestErrorResponse(UncheckedBaseModel):
+    data: typing.Optional[typing.Any] = pydantic.Field(default=None)
+    """
+    State after a refused request, on the routes that document it; absent otherwise.
+    """
+
     error: RequestErrorResponseError
 
     if IS_PYDANTIC_V2:

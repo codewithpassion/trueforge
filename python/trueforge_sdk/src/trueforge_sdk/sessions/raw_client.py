@@ -20,6 +20,7 @@ from ..core.serialization import convert_and_respect_annotation_metadata
 from ..core.stream import AsyncStream, Stream, StreamEvent
 from ..core.unchecked_base_model import construct_type
 from ..errors.bad_request_error import BadRequestError
+from ..errors.conflict_error import ConflictError
 from ..errors.content_too_large_error import ContentTooLargeError
 from ..errors.failed_dependency_error import FailedDependencyError
 from ..errors.forbidden_error import ForbiddenError
@@ -987,6 +988,17 @@ class RawSessionsClient:
                                 ),
                             ),
                         )
+                    if _response.status_code == 409:
+                        raise ConflictError(
+                            headers=dict(_response.headers),
+                            body=typing.cast(
+                                RequestErrorResponse,
+                                construct_type(
+                                    type_=RequestErrorResponse,  # type: ignore
+                                    object_=_response.json(),
+                                ),
+                            ),
+                        )
                     if _response.status_code == 412:
                         raise PreconditionFailedError(
                             headers=dict(_response.headers),
@@ -1132,6 +1144,17 @@ class RawSessionsClient:
                 )
             if _response.status_code == 404:
                 raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 409:
+                raise ConflictError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -2594,6 +2617,17 @@ class AsyncRawSessionsClient:
                                 ),
                             ),
                         )
+                    if _response.status_code == 409:
+                        raise ConflictError(
+                            headers=dict(_response.headers),
+                            body=typing.cast(
+                                RequestErrorResponse,
+                                construct_type(
+                                    type_=RequestErrorResponse,  # type: ignore
+                                    object_=_response.json(),
+                                ),
+                            ),
+                        )
                     if _response.status_code == 412:
                         raise PreconditionFailedError(
                             headers=dict(_response.headers),
@@ -2739,6 +2773,17 @@ class AsyncRawSessionsClient:
                 )
             if _response.status_code == 404:
                 raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 409:
+                raise ConflictError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,

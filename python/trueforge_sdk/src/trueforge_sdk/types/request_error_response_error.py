@@ -10,7 +10,7 @@ from ..core.unchecked_base_model import UncheckedBaseModel
 class RequestErrorResponseError(UncheckedBaseModel):
     code: typing.Optional[str] = pydantic.Field(default=None)
     """
-    Optional machine-readable error code; null when not applicable.
+    Optional machine-readable error code, such as `human_in_control` on a 423; null when not applicable.
     """
 
     message: str = pydantic.Field()

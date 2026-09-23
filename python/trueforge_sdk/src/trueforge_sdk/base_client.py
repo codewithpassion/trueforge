@@ -12,6 +12,7 @@ if typing.TYPE_CHECKING:
     from .agents.client import AgentsClient, AsyncAgentsClient
     from .auth.client import AsyncAuthClient, AuthClient
     from .catalogs.client import AsyncCatalogsClient, CatalogsClient
+    from .computer_desktops.client import AsyncComputerDesktopsClient, ComputerDesktopsClient
     from .computers.client import AsyncComputersClient, ComputersClient
     from .integrations.client import AsyncIntegrationsClient, IntegrationsClient
     from .internal.client import AsyncInternalClient, InternalClient
@@ -103,6 +104,7 @@ class BaseTrueForge:
         self._agents: typing.Optional[AgentsClient] = None
         self._auth: typing.Optional[AuthClient] = None
         self._server: typing.Optional[ServerClient] = None
+        self._computer_desktops: typing.Optional[ComputerDesktopsClient] = None
         self._computers: typing.Optional[ComputersClient] = None
         self._integrations: typing.Optional[IntegrationsClient] = None
         self._mcp_servers: typing.Optional[McpServersClient] = None
@@ -144,6 +146,14 @@ class BaseTrueForge:
 
             self._server = ServerClient(client_wrapper=self._client_wrapper)
         return self._server
+
+    @property
+    def computer_desktops(self):
+        if self._computer_desktops is None:
+            from .computer_desktops.client import ComputerDesktopsClient  # noqa: E402
+
+            self._computer_desktops = ComputerDesktopsClient(client_wrapper=self._client_wrapper)
+        return self._computer_desktops
 
     @property
     def computers(self):
@@ -318,6 +328,7 @@ class AsyncBaseTrueForge:
         self._agents: typing.Optional[AsyncAgentsClient] = None
         self._auth: typing.Optional[AsyncAuthClient] = None
         self._server: typing.Optional[AsyncServerClient] = None
+        self._computer_desktops: typing.Optional[AsyncComputerDesktopsClient] = None
         self._computers: typing.Optional[AsyncComputersClient] = None
         self._integrations: typing.Optional[AsyncIntegrationsClient] = None
         self._mcp_servers: typing.Optional[AsyncMcpServersClient] = None
@@ -359,6 +370,14 @@ class AsyncBaseTrueForge:
 
             self._server = AsyncServerClient(client_wrapper=self._client_wrapper)
         return self._server
+
+    @property
+    def computer_desktops(self):
+        if self._computer_desktops is None:
+            from .computer_desktops.client import AsyncComputerDesktopsClient  # noqa: E402
+
+            self._computer_desktops = AsyncComputerDesktopsClient(client_wrapper=self._client_wrapper)
+        return self._computer_desktops
 
     @property
     def computers(self):

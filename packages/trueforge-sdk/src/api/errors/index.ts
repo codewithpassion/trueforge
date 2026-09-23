@@ -6,6 +6,7 @@ export * from "./FailedDependencyError.js";
 export * from "./ForbiddenError.js";
 export * from "./GoneError.js";
 export * from "./InternalServerError.js";
+export * from "./LockedError.js";
 export * from "./NotFoundError.js";
 export * from "./PreconditionFailedError.js";
 export * from "./ServiceUnavailableError.js";

@@ -3,5 +3,7 @@
 import type * as TrueForge from "../index.js";
 
 export interface RequestErrorResponse {
+    /** State after a refused request, on the routes that document it; absent otherwise. */
+    data?: unknown;
     error: TrueForge.RequestErrorResponseError;
 }

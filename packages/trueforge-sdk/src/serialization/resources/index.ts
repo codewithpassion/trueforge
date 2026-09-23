@@ -1,5 +1,7 @@
 export * from "./agents/client/requests/index.js";
 export * as agents from "./agents/index.js";
+export * from "./computerDesktops/client/requests/index.js";
+export * as computerDesktops from "./computerDesktops/index.js";
 export * from "./computers/client/requests/index.js";
 export * as computers from "./computers/index.js";
 export * from "./integrations/client/requests/index.js";

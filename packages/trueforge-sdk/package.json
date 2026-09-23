@@ -77,6 +77,17 @@
             },
             "default": "./dist/cjs/api/resources/server/exports.js"
         },
+        "./computerDesktops": {
+            "import": {
+                "types": "./dist/esm/api/resources/computerDesktops/exports.d.mts",
+                "default": "./dist/esm/api/resources/computerDesktops/exports.mjs"
+            },
+            "require": {
+                "types": "./dist/cjs/api/resources/computerDesktops/exports.d.ts",
+                "default": "./dist/cjs/api/resources/computerDesktops/exports.js"
+            },
+            "default": "./dist/cjs/api/resources/computerDesktops/exports.js"
+        },
         "./computers": {
             "import": {
                 "types": "./dist/esm/api/resources/computers/exports.d.mts",

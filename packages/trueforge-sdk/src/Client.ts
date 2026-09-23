@@ -3,6 +3,7 @@
 import { AgentsClient } from "./api/resources/agents/client/Client.js";
 import { AuthClient } from "./api/resources/auth/client/Client.js";
 import { CatalogsClient } from "./api/resources/catalogs/client/Client.js";
+import { ComputerDesktopsClient } from "./api/resources/computerDesktops/client/Client.js";
 import { ComputersClient } from "./api/resources/computers/client/Client.js";
 import { IntegrationsClient } from "./api/resources/integrations/client/Client.js";
 import { InternalClient } from "./api/resources/internal/client/Client.js";
@@ -29,6 +30,7 @@ export class TrueForge {
     protected _agents: AgentsClient | undefined;
     protected _auth: AuthClient | undefined;
     protected _server: ServerClient | undefined;
+    protected _computerDesktops: ComputerDesktopsClient | undefined;
     protected _computers: ComputersClient | undefined;
     protected _integrations: IntegrationsClient | undefined;
     protected _mcpServers: McpServersClient | undefined;
@@ -57,6 +59,10 @@ export class TrueForge {
 
     public get server(): ServerClient {
         return (this._server ??= new ServerClient(this._options));
+    }
+
+    public get computerDesktops(): ComputerDesktopsClient {
+        return (this._computerDesktops ??= new ComputerDesktopsClient(this._options));
     }
 
     public get computers(): ComputersClient {

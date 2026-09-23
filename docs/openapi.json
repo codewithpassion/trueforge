@@ -493,6 +493,25 @@
         ],
         "type": "object"
       },
+      "CancelDesktopTakeoverRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "description": "Passed to the agent with the answer.",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "session_id": {
+            "description": "The pending takeover to answer as cancelled.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
       "CancelSessionRequest": {
         "description": "Empty request body. Cancel identifies the session via the path only.",
         "properties": {},
@@ -1666,6 +1685,43 @@
         "properties": {},
         "type": "object"
       },
+      "DesktopAction": {
+        "discriminator": {
+          "mapping": {
+            "click": "#/components/schemas/DesktopClickAction",
+            "key": "#/components/schemas/DesktopKeyAction",
+            "mouse_down": "#/components/schemas/DesktopMouseDownAction",
+            "mouse_move": "#/components/schemas/DesktopMouseMoveAction",
+            "mouse_up": "#/components/schemas/DesktopMouseUpAction",
+            "scroll": "#/components/schemas/DesktopScrollAction",
+            "type": "#/components/schemas/DesktopTypeAction"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DesktopMouseMoveAction"
+          },
+          {
+            "$ref": "#/components/schemas/DesktopMouseDownAction"
+          },
+          {
+            "$ref": "#/components/schemas/DesktopMouseUpAction"
+          },
+          {
+            "$ref": "#/components/schemas/DesktopClickAction"
+          },
+          {
+            "$ref": "#/components/schemas/DesktopScrollAction"
+          },
+          {
+            "$ref": "#/components/schemas/DesktopKeyAction"
+          },
+          {
+            "$ref": "#/components/schemas/DesktopTypeAction"
+          }
+        ]
+      },
       "DesktopCapability": {
         "properties": {
           "enabled": {
@@ -1675,6 +1731,338 @@
         },
         "required": [
           "enabled"
+        ],
+        "type": "object"
+      },
+      "DesktopClickAction": {
+        "properties": {
+          "button": {
+            "enum": [
+              "left",
+              "middle",
+              "right"
+            ],
+            "type": "string"
+          },
+          "count": {
+            "maximum": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "type": {
+            "enum": [
+              "click"
+            ],
+            "type": "string"
+          },
+          "x": {
+            "maximum": 1279,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "y": {
+            "maximum": 799,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type",
+          "x",
+          "y",
+          "button",
+          "count"
+        ],
+        "type": "object"
+      },
+      "DesktopClipboard": {
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "DesktopController": {
+        "discriminator": {
+          "mapping": {
+            "agent": "#/components/schemas/DesktopControllerAgent",
+            "clearing": "#/components/schemas/DesktopControllerClearing",
+            "human": "#/components/schemas/DesktopControllerHuman",
+            "none": "#/components/schemas/DesktopControllerNone"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DesktopControllerNone"
+          },
+          {
+            "$ref": "#/components/schemas/DesktopControllerAgent"
+          },
+          {
+            "$ref": "#/components/schemas/DesktopControllerHuman"
+          },
+          {
+            "$ref": "#/components/schemas/DesktopControllerClearing"
+          }
+        ]
+      },
+      "DesktopControllerAgent": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "agent"
+            ],
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "DesktopControllerClearing": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "clearing"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "DesktopControllerHuman": {
+        "properties": {
+          "expires_at": {
+            "description": "ISO-8601 instant control lapses without further input.",
+            "type": "string"
+          },
+          "is_me": {
+            "description": "Whether the caller is the person in control.",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "human"
+            ],
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "user_id",
+          "is_me",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "DesktopControllerNone": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "none"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "DesktopKeyAction": {
+        "properties": {
+          "keys": {
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_]+(\\+[A-Za-z0-9_]+)*$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "key"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "keys"
+        ],
+        "type": "object"
+      },
+      "DesktopMouseDownAction": {
+        "properties": {
+          "button": {
+            "enum": [
+              "left",
+              "middle",
+              "right"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "mouse_down"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "button"
+        ],
+        "type": "object"
+      },
+      "DesktopMouseMoveAction": {
+        "properties": {
+          "type": {
+            "enum": [
+              "mouse_move"
+            ],
+            "type": "string"
+          },
+          "x": {
+            "maximum": 1279,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "y": {
+            "maximum": 799,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type",
+          "x",
+          "y"
+        ],
+        "type": "object"
+      },
+      "DesktopMouseUpAction": {
+        "properties": {
+          "button": {
+            "enum": [
+              "left",
+              "middle",
+              "right"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "mouse_up"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "button"
+        ],
+        "type": "object"
+      },
+      "DesktopScrollAction": {
+        "properties": {
+          "dx": {
+            "maximum": 50,
+            "minimum": -50,
+            "type": "integer"
+          },
+          "dy": {
+            "maximum": 50,
+            "minimum": -50,
+            "type": "integer"
+          },
+          "type": {
+            "enum": [
+              "scroll"
+            ],
+            "type": "string"
+          },
+          "x": {
+            "maximum": 1279,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "y": {
+            "maximum": 799,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type",
+          "x",
+          "y",
+          "dx",
+          "dy"
+        ],
+        "type": "object"
+      },
+      "DesktopStatus": {
+        "properties": {
+          "computer_id": {
+            "type": "string"
+          },
+          "controller": {
+            "$ref": "#/components/schemas/DesktopController"
+          },
+          "desktop": {
+            "description": "Whether the computer reports a running desktop.",
+            "type": "boolean"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "pending_takeovers": {
+            "items": {
+              "$ref": "#/components/schemas/PendingDesktopTakeover"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "computer_id",
+          "online",
+          "desktop",
+          "controller",
+          "pending_takeovers"
+        ],
+        "type": "object"
+      },
+      "DesktopTypeAction": {
+        "properties": {
+          "text": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "type"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
         ],
         "type": "object"
       },
@@ -1934,6 +2322,28 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/Computer"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "GetDesktopClipboardResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DesktopClipboard"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "GetDesktopStatusResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DesktopStatus"
           }
         },
         "required": [
@@ -2261,6 +2671,22 @@
           "models",
           "type"
         ],
+        "type": "object"
+      },
+      "HandBackDesktopRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "description": "Passed to the agent with the answer.",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "session_id": {
+            "description": "The pending takeover to answer as completed.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "ImportAgentItem": {
@@ -4159,6 +4585,38 @@
         ],
         "type": "object"
       },
+      "PendingDesktopTakeover": {
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the agent asked for a person.",
+            "type": "string"
+          },
+          "requested_at": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "tool_call_id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "turn_id",
+          "tool_call_id",
+          "reason",
+          "requested_at",
+          "agent_id"
+        ],
+        "type": "object"
+      },
       "PermissionResourceType": {
         "description": "Resource type to evaluate permissions for.",
         "enum": [
@@ -4255,10 +4713,13 @@
       },
       "RequestErrorResponse": {
         "properties": {
+          "data": {
+            "description": "State after a refused request, on the routes that document it; absent otherwise."
+          },
           "error": {
             "properties": {
               "code": {
-                "description": "Optional machine-readable error code; null when not applicable.",
+                "description": "Optional machine-readable error code, such as `human_in_control` on a 423; null when not applicable.",
                 "type": [
                   "string",
                   "null"
@@ -4711,6 +5172,23 @@
           "paused"
         ],
         "type": "string"
+      },
+      "SendDesktopInputRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/DesktopAction"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "actions"
+        ],
+        "type": "object"
       },
       "Session": {
         "properties": {
@@ -5234,6 +5712,18 @@
           "integration"
         ],
         "type": "string"
+      },
+      "SetDesktopClipboardRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
       },
       "SettingsCapability": {
         "properties": {
@@ -8035,6 +8525,941 @@
           "skills"
         ],
         "x-fern-sdk-method-name": "list"
+      }
+    },
+    "/api/v1/computer-desktops/{computer_id}": {
+      "get": {
+        "description": "Whether the desktop is up, who controls it, and the takeovers agents are waiting on.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetDesktopStatusResponse"
+                }
+              }
+            },
+            "description": "The desktop status."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The agent does not use this desktop, no saved agent was named, or a browser write came from another origin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer or agent, or this server does not serve remote computers."
+          }
+        },
+        "summary": "Get a desktop status",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computerDesktops"
+        ],
+        "x-fern-sdk-method-name": "get"
+      }
+    },
+    "/api/v1/computer-desktops/{computer_id}/cancel-takeover": {
+      "post": {
+        "description": "Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelDesktopTakeoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetDesktopStatusResponse"
+                }
+              }
+            },
+            "description": "The desktop status."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The agent does not use this desktop, no saved agent was named, or a browser write came from another origin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer or agent, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `takeover_already_answered` or `not_pending`: the takeover was answered elsewhere."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Takeovers cannot be answered on this server."
+          }
+        },
+        "summary": "Cancel a desktop takeover",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computerDesktops"
+        ],
+        "x-fern-sdk-method-name": "cancel_takeover"
+      }
+    },
+    "/api/v1/computer-desktops/{computer_id}/clipboard": {
+      "get": {
+        "description": "The clipboard text, empty when nothing was copied. Only the person in control may read it.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetDesktopClipboardResponse"
+                }
+              }
+            },
+            "description": "The clipboard."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The agent does not use this desktop, no saved agent was named, or a browser write came from another origin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer or agent, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `clearing`: the clipboard of the last person in control is still being cleared."
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `human_in_control`: another person controls the desktop. Code `lease_required`: take control first."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The computer answered with an error or a reply this server cannot read."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `offline` or `desktop_unavailable`: the computer or its desktop is not running."
+          }
+        },
+        "summary": "Read the desktop clipboard",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computerDesktops"
+        ],
+        "x-fern-sdk-method-name": "get_clipboard"
+      },
+      "put": {
+        "description": "Sets the clipboard and primary selection. Only the person in control may set it. At most 64 KiB.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDesktopClipboardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The clipboard is set."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The agent does not use this desktop, no saved agent was named, or a browser write came from another origin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer or agent, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `clearing`: the clipboard of the last person in control is still being cleared."
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `human_in_control`: another person controls the desktop. Code `lease_required`: take control first."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The computer answered with an error or a reply this server cannot read."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `offline` or `desktop_unavailable`: the computer or its desktop is not running."
+          }
+        },
+        "summary": "Set the desktop clipboard",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computerDesktops"
+        ],
+        "x-fern-sdk-method-name": "set_clipboard"
+      }
+    },
+    "/api/v1/computer-desktops/{computer_id}/hand-back": {
+      "post": {
+        "description": "Ends the control the caller holds and clears the clipboard. With `session_id`, also answers that pending takeover as completed so the agent continues.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandBackDesktopRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetDesktopStatusResponse"
+                }
+              }
+            },
+            "description": "The desktop status."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The agent does not use this desktop, no saved agent was named, or a browser write came from another origin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer or agent, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `not_pending`: nothing changed. Code `takeover_already_answered`: answered elsewhere, but control is released. Either way `data` is the desktop status after the request."
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `lease_required`: the caller does not control the desktop."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Takeovers cannot be answered on this server."
+          }
+        },
+        "summary": "Hand a desktop back",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computerDesktops"
+        ],
+        "x-fern-sdk-method-name": "hand_back"
+      }
+    },
+    "/api/v1/computer-desktops/{computer_id}/input": {
+      "post": {
+        "description": "Runs mouse and keyboard actions in order and returns a fresh frame. Needs control; renews it.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendDesktopInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A JPEG frame of the desktop."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The agent does not use this desktop, no saved agent was named, or a browser write came from another origin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer or agent, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `clearing`: the clipboard of the last person in control is still being cleared."
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `human_in_control`: another person controls the desktop. Code `lease_required`: take control first."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The computer answered with an error or a reply this server cannot read."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `offline` or `desktop_unavailable`: the computer or its desktop is not running."
+          }
+        },
+        "summary": "Send desktop input",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computerDesktops"
+        ],
+        "x-fern-sdk-method-name": "send_input"
+      }
+    },
+    "/api/v1/computer-desktops/{computer_id}/screenshot": {
+      "get": {
+        "description": "A live JPEG frame, never stored. Refused with 423 while another person controls the desktop.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A JPEG frame of the desktop."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The agent does not use this desktop, no saved agent was named, or a browser write came from another origin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer or agent, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `clearing`: the clipboard of the last person in control is still being cleared."
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `human_in_control`: another person controls the desktop. Code `lease_required`: take control first."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The computer answered with an error or a reply this server cannot read."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `offline` or `desktop_unavailable`: the computer or its desktop is not running."
+          }
+        },
+        "summary": "Get a desktop frame",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computerDesktops"
+        ],
+        "x-fern-sdk-method-name": "get_screenshot"
+      }
+    },
+    "/api/v1/computer-desktops/{computer_id}/take-control": {
+      "post": {
+        "description": "Makes the caller the only one who may drive the desktop, preempting an agent or another person. Agent work on the computer pauses until control is handed back.",
+        "parameters": [
+          {
+            "description": "Computer id.",
+            "in": "path",
+            "name": "computer_id",
+            "required": true,
+            "schema": {
+              "description": "Computer id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "description": "The saved agent whose desktop this is. Required unless the caller is a tenant admin.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetDesktopStatusResponse"
+                }
+              }
+            },
+            "description": "The desktop status."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The agent does not use this desktop, no saved agent was named, or a browser write came from another origin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "No such computer or agent, or this server does not serve remote computers."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `clearing`: the clipboard of the last person in control is still being cleared."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `offline` or `desktop_unavailable`: the computer or its desktop is not running."
+          }
+        },
+        "summary": "Take control of a desktop",
+        "tags": [
+          "Computers"
+        ],
+        "x-fern-sdk-group-name": [
+          "computerDesktops"
+        ],
+        "x-fern-sdk-method-name": "take_control"
       }
     },
     "/api/v1/computers": {
@@ -11506,6 +12931,16 @@
               }
             },
             "description": "Session, prior turn, or referenced agent not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Code `already_answered`: a tool response continuing the session tip lost to another answer of the same pending call, or the tip is still running."
           },
           "412": {
             "content": {

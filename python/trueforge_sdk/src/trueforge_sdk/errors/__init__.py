@@ -14,6 +14,7 @@ if typing.TYPE_CHECKING:
     from .forbidden_error import ForbiddenError
     from .gone_error import GoneError
     from .internal_server_error import InternalServerError
+    from .locked_error import LockedError
     from .not_found_error import NotFoundError
     from .precondition_failed_error import PreconditionFailedError
     from .service_unavailable_error import ServiceUnavailableError
@@ -28,6 +29,7 @@ _dynamic_imports: typing.Dict[str, str] = {
     "ForbiddenError": ".forbidden_error",
     "GoneError": ".gone_error",
     "InternalServerError": ".internal_server_error",
+    "LockedError": ".locked_error",
     "NotFoundError": ".not_found_error",
     "PreconditionFailedError": ".precondition_failed_error",
     "ServiceUnavailableError": ".service_unavailable_error",
@@ -66,6 +68,7 @@ __all__ = [
     "ForbiddenError",
     "GoneError",
     "InternalServerError",
+    "LockedError",
     "NotFoundError",
     "PreconditionFailedError",
     "ServiceUnavailableError",

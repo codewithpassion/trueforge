@@ -1181,6 +1181,17 @@ export class SessionsClient {
                         }),
                         _response.rawResponse,
                     );
+                case 409:
+                    throw new TrueForge.ConflictError(
+                        serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
+                            unrecognizedObjectKeys: "passthrough",
+                            allowUnrecognizedUnionMembers: true,
+                            allowUnrecognizedEnumValues: true,
+                            skipValidation: true,
+                            breadcrumbsPrefix: ["response"],
+                        }),
+                        _response.rawResponse,
+                    );
                 case 412:
                     throw new TrueForge.PreconditionFailedError(
                         serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
@@ -1246,6 +1257,7 @@ export class SessionsClient {
      * @throws {@link TrueForge.UnauthorizedError}
      * @throws {@link TrueForge.ForbiddenError}
      * @throws {@link TrueForge.NotFoundError}
+     * @throws {@link TrueForge.ConflictError}
      * @throws {@link TrueForge.PreconditionFailedError}
      * @throws {@link TrueForge.ContentTooLargeError}
      * @throws {@link TrueForge.UnprocessableEntityError}
@@ -1353,6 +1365,17 @@ export class SessionsClient {
                     );
                 case 404:
                     throw new TrueForge.NotFoundError(
+                        serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
+                            unrecognizedObjectKeys: "passthrough",
+                            allowUnrecognizedUnionMembers: true,
+                            allowUnrecognizedEnumValues: true,
+                            skipValidation: true,
+                            breadcrumbsPrefix: ["response"],
+                        }),
+                        _response.rawResponse,
+                    );
+                case 409:
+                    throw new TrueForge.ConflictError(
                         serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
                             unrecognizedObjectKeys: "passthrough",
                             allowUnrecognizedUnionMembers: true,
