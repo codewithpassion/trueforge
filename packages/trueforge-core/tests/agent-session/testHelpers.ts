@@ -171,6 +171,7 @@ export function makeCreateTurnInput(input: {
   new_context_appends?: TurnContextAppend[];
   capability_states?: CreateTurnInput['capability_states'];
   update_session_title_if_not_exist?: string;
+  require_tip?: boolean;
 }): CreateTurnInput {
   const turn = makeRunningTurnRecord({
     sessionId: input.sessionId,
@@ -188,6 +189,7 @@ export function makeCreateTurnInput(input: {
     new_context_appends: input.new_context_appends ?? [],
     capability_states: input.capability_states ?? [{ thread_id: MAIN_THREAD_ID, capability_state: null }],
     update_session_title_if_not_exist: input.update_session_title_if_not_exist ?? null,
+    require_tip: input.require_tip ?? false,
   };
 }
 

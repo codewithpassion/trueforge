@@ -17,6 +17,7 @@ import {
   SessionStoreConflictError,
   SessionStoreInvariantError,
   SessionStoreNotFoundError,
+  SessionTipMovedError,
   TurnAlreadyExistsError,
   TurnNotFoundError,
   TurnNotRunningError,
@@ -89,6 +90,8 @@ export interface CreateTurnInput {
   }[];
   last_activity_timestamp_ms: number;
   update_session_title_if_not_exist: string | null;
+  /** Checked under the session row lock: `session.last_turn_id` must still be `turn.previous_turn_id`. */
+  require_tip: boolean;
   mcp_servers: Record<string, MCPServerInitInfo> | null;
   sandbox_info: SandboxInfo | null;
 }
@@ -418,6 +421,15 @@ export async function createTurn(db: Kysely<Database>, input: CreateTurnInput): 
 
       if (!locked) {
         throw new SessionNotFoundError(input.session_id);
+      }
+      if (input.require_tip) {
+        const expectedTip = input.turn.previous_turn_id;
+        if (expectedTip === null) {
+          throw new SessionStoreInvariantError('require_tip needs a previous turn');
+        }
+        if (locked.last_turn_id !== expectedTip) {
+          throw new SessionTipMovedError(expectedTip);
+        }
       }
 
       await trx

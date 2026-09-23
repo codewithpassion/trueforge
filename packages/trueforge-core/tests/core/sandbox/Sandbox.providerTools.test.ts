@@ -47,6 +47,7 @@ function makeSandbox(input: { provider: SandboxProvider; existingSandboxId?: str
         }),
       ],
       instructions: 'You can look.',
+      clientSideToolSets: [],
     },
     logger: makeSilentLogger(),
     tracing: NOOP_AGENT_TRACING,

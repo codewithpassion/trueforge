@@ -30,6 +30,7 @@ import type { SessionAgent } from './schemas/session';
 import type { TurnInputItem } from './schemas/turn';
 import { CancellationReason } from './schemas/turn';
 import type { ISessionStore, NewThreadInit, TurnContextAppend, TurnRecordWithoutSnapshot } from './store/ISessionStore';
+import { SessionTipMovedError, TurnNotFoundError } from './store/SessionStoreErrors';
 import { TurnHandle } from './TurnHandle';
 
 /** How many recent ancestors SessionHandle persists on each turn. Store-local. */
@@ -43,6 +44,15 @@ function resolvePreviousTurnId(requested: string | undefined, lastTurnId: string
     return lastTurnId ?? null;
   }
   return requested;
+}
+
+/**
+ * A tool response that continues the tip answers the call that tip is waiting on, so only the
+ * first answer may land. An explicit `previous_turn_id` is a deliberate fork and stays unchecked.
+ */
+function isTipAnswer(input: { previous_turn_id?: string | undefined; input?: TurnInputItem[] | undefined }): boolean {
+  const continuesTip = input.previous_turn_id === undefined || input.previous_turn_id === 'auto';
+  return continuesTip && (input.input ?? []).some(isClientSideToolResponseMessage);
 }
 
 function toSendBatch(input: TurnInputItem[] | undefined): AgentThreadSendBatch {
@@ -170,7 +180,8 @@ export class SessionHandle<
    *
    * `previous_turn_id`: omitted/`'auto'` → session tip; `'none'` → new root
    * (no parent, even on a non-empty session); string → fork from that turn
-   * (must exist). Concurrent `'auto'` forks both succeed.
+   * (must exist). Concurrent `'auto'` forks both succeed, except tool-response answers: those
+   * commit only while the tip they resolved is still the finished tip, else `SessionTipMovedError`.
    */
   async createTurn(input: {
     turn_id: string;
@@ -190,11 +201,14 @@ export class SessionHandle<
     update_session_title_if_not_exist?: string | undefined;
   }): Promise<TurnHandle<TTurnCustom>> {
     const previousTurnId = resolvePreviousTurnId(input.previous_turn_id, this.session.last_turn_id);
+    const requireTip = previousTurnId !== null && isTipAnswer(input);
     const previous = previousTurnId
-      ? await this.freezeTurn({
-          turn_id: previousTurnId,
-          reason: CancellationReason.CancelledForNextTurn,
-        })
+      ? requireTip
+        ? await this.answeredTip(previousTurnId)
+        : await this.freezeTurn({
+            turn_id: previousTurnId,
+            reason: CancellationReason.CancelledForNextTurn,
+          })
       : undefined;
 
     const custom = typeof input.custom === 'function' ? input.custom(previous?.custom ?? undefined) : input.custom;
@@ -311,6 +325,7 @@ export class SessionHandle<
           capability_state: thread.toSnapshot().capability_state,
         })),
         update_session_title_if_not_exist: input.update_session_title_if_not_exist ?? null,
+        require_tip: requireTip,
       });
 
       const refreshed = await this.store.getSession({
@@ -343,6 +358,21 @@ export class SessionHandle<
    * now-immutable record. Already-terminal turns are returned unchanged.
    * Missing turn → {@link TurnNotFoundError}.
    */
+  /**
+   * The tip a tool response answers. It is never frozen: a running tip means someone already
+   * answered and that run must not be cancelled by the late answer.
+   */
+  private async answeredTip(turnId: string): Promise<TurnRecord<TTurnCustom>> {
+    const tip = await this.store.getTurn({ session_id: this.session.session_id, turn_id: turnId });
+    if (tip === undefined) {
+      throw new TurnNotFoundError(turnId);
+    }
+    if (tip.state.status === 'running') {
+      throw new SessionTipMovedError(turnId);
+    }
+    return tip;
+  }
+
   async freezeTurn(input: { turn_id: string; reason: CancellationReason }): Promise<TurnRecord<TTurnCustom>> {
     return this.store.freezeAndGetTurn({
       session_id: this.session.session_id,
@@ -473,6 +503,10 @@ export class SessionHandle<
         logger: input.resolver.logger,
       }),
       ...(extraCapabilities ?? []),
+      // Like the question builtin, only the root thread can pause for a person.
+      ...(!isChild && input.sandbox !== undefined && input.sandbox.providerClientSideToolSets.length > 0
+        ? [{ systemToolSets: input.sandbox.providerClientSideToolSets }]
+        : []),
     ];
     return new AgentThread({
       definition,

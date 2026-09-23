@@ -112,6 +112,12 @@ export interface SandboxOptions {
 export interface SandboxProviderTools {
   tools: readonly ToolDefinition[];
   instructions: string;
+  /**
+   * Client-side tools that belong with `tools`, such as asking a person to take over. They are
+   * their own tool sets because a client-side tool never runs here, and only the root thread,
+   * which can pause for a person, is given them.
+   */
+  clientSideToolSets: readonly IToolSet[];
 }
 
 export const SANDBOX_EXEC_TOOL_NAME = 'exec';
@@ -220,6 +226,7 @@ export class Sandbox extends LocalToolMCP {
   /** Cached from transport.getClientInstall after sandbox init (when Code Mode is configured). */
   private mcpClientInstall: CodeModeClientInstall | undefined;
   private readonly providerToolsInstructions: string | undefined;
+  readonly providerClientSideToolSets: readonly IToolSet[];
 
   private tools: ToolDefinition[] = [
     defineTool({
@@ -245,6 +252,7 @@ export class Sandbox extends LocalToolMCP {
       this.existingSandboxInfo = { sandbox_id: this.existingSandboxId };
     }
     this.providerToolsInstructions = options.providerTools?.instructions;
+    this.providerClientSideToolSets = options.providerTools?.clientSideToolSets ?? [];
     for (const tool of options.providerTools?.tools ?? []) {
       this.tools.push(this.withSandbox(tool));
     }
