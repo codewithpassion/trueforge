@@ -92,6 +92,33 @@ export function toolResultResponse(params: {
   };
 }
 
+/**
+ * An image result, for example a screenshot. The harness stores the bytes in the session's files
+ * and hands the model a reference; `_meta` carries the size MCP image content has no field for.
+ */
+export function toolImageResultResponse(params: {
+  data_b64: string;
+  width: number;
+  height: number;
+  media_type: string;
+  overrides?: Partial<CallToolResultMetadata> | undefined;
+}): CallToolResolvedResponse {
+  return {
+    result: {
+      content: [
+        {
+          type: 'image',
+          data: params.data_b64,
+          mimeType: params.media_type,
+          _meta: { width: params.width, height: params.height },
+        },
+      ],
+    },
+    ...EMPTY_METADATA,
+    ...params.overrides,
+  };
+}
+
 /** Narrow public MCP server contract. Private implementations may expose additional members. */
 export interface IToolSet {
   readonly name: string;

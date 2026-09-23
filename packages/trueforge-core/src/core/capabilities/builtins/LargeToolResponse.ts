@@ -1,4 +1,5 @@
 import dedent from 'dedent';
+import { toolContentText } from '../../llm/LLMTypes';
 import { estimateTokensForString } from '../../llm/usage';
 import type { ToolCallResult } from '../../mcp/executeToolCalls';
 import type { Sandbox, SandboxInfo } from '../../sandbox/Sandbox';
@@ -22,6 +23,7 @@ type ResultCategory = 'failure' | 'sandbox' | 'mcp';
 
 interface ToolResultWithInfo {
   toolCallResult: ToolCallResult;
+  /** The text parts only: images are file references and never count toward the thresholds. */
   originalContent: string;
   originalTokens: number;
   category: ResultCategory;
@@ -38,6 +40,11 @@ function categorize(result: ToolCallResult, sandbox: Sandbox | undefined): Resul
     return 'sandbox';
   }
   return 'mcp';
+}
+
+/** Swaps the result's text for `text`, keeping its image parts. */
+function replaceResultText({ result, text }: { result: ToolCallResult; text: string }): void {
+  result.message.content = [{ type: 'text', text }, ...result.message.content.filter(part => part.type === 'image')];
 }
 
 function createContentPreview(content: string, previewChars: number): string {
@@ -110,12 +117,15 @@ export class LargeToolResponseProcessor implements ToolResponseProcessor {
   }
 
   private buildResultsWithInfo(results: ToolCallResult[], sandbox: Sandbox | undefined): ToolResultWithInfo[] {
-    return results.map(toolCallResult => ({
-      toolCallResult,
-      originalContent: toolCallResult.message.content,
-      originalTokens: estimateTokensForString(toolCallResult.message.content),
-      category: categorize(toolCallResult, sandbox),
-    }));
+    return results.map(toolCallResult => {
+      const originalContent = toolContentText(toolCallResult.message.content);
+      return {
+        toolCallResult,
+        originalContent,
+        originalTokens: estimateTokensForString(originalContent),
+        category: categorize(toolCallResult, sandbox),
+      };
+    });
   }
 
   private blockResult(
@@ -141,7 +151,7 @@ export class LargeToolResponseProcessor implements ToolResponseProcessor {
         break;
     }
 
-    entry.toolCallResult.message.content = newContent;
+    replaceResultText({ result: entry.toolCallResult, text: newContent });
     entry.toolCallResult.isStructuredContent = false;
     return Math.max(0, entry.originalTokens - estimateTokensForString(newContent));
   }
@@ -164,7 +174,10 @@ export class LargeToolResponseProcessor implements ToolResponseProcessor {
         sourceTool: entry.toolCallResult.info,
       });
       const preview = createContentPreview(entry.originalContent, this.previewNumberOfCharacters);
-      entry.toolCallResult.message.content = this.createFileDumpMessage({ filePath: stored.filePath, preview });
+      replaceResultText({
+        result: entry.toolCallResult,
+        text: this.createFileDumpMessage({ filePath: stored.filePath, preview }),
+      });
       entry.toolCallResult.isStructuredContent = false;
       return stored.sandboxCreated;
     } catch (error) {

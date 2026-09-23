@@ -367,7 +367,7 @@ export class AgentThreadOrchestrator {
               created_at: new Date().toISOString(),
               thread_id: chunk.parent.thread_id,
               tool_call_id: chunk.send_to_parent.tool_call_id,
-              content: '',
+              content: [],
             };
             yield parentToolResponse;
             yield* this.sendToThread(chunk.parent.thread_id, [chunk.send_to_parent]);

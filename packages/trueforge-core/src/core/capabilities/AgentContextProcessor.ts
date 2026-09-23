@@ -1,5 +1,5 @@
-import type { ChatCompletionMessageParam } from 'openai/resources/chat';
 import type { ThreadOverwriteContextEvent } from '../events/schema';
+import type { LLMRequestMessage } from '../llm/ILLM';
 import type {
   AgentThreadAppendContext,
   ContextMessage,
@@ -45,5 +45,5 @@ export interface PostToolCallAgentContextProcessor {
 
 // NOTE: Not saved in Redis, Not saved in AgentThread in memory. Not persisted accross Agent Loop.
 export interface PreLLMEphemeralAgentContextProcessor {
-  processPreLLMEphemeral(input: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] | undefined;
+  processPreLLMEphemeral(input: LLMRequestMessage[]): LLMRequestMessage[] | undefined;
 }

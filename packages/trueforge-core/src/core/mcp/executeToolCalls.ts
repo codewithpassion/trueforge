@@ -1,10 +1,19 @@
+import type { ContentBlock, ImageContent } from '@modelcontextprotocol/sdk/types.js';
 import type { RegisteredPassthroughEvent } from '../events/PassthroughEvents';
 import type { ApprovalDecision, MCPServerInitInfo } from '../events/schema';
-import type { InternalEnrichedAssistantMessage, InternalEnrichedToolCall, LLMToolMessage } from '../llm/LLMTypes';
+import type { SessionFiles } from '../files/SessionFiles';
+import {
+  textToolContent,
+  type InternalEnrichedAssistantMessage,
+  type InternalEnrichedToolCall,
+  type LLMToolMessage,
+  type ToolContentPart,
+} from '../llm/LLMTypes';
 import type { MCPAuthRequired } from '../mcp/IMCPServer';
 import type { AgentThreadCreateSubAgent } from '../runtime/AgentThread.types';
 import { InternalEventType } from '../runtime/AgentThread.types';
 import type { SandboxInfo } from '../sandbox/Sandbox';
+import { describeUnknownError } from '../util/errorLogFields';
 import type { MappedMCPTool } from './convertMCPServers';
 import {
   isApprovalRequiredResponse,
@@ -37,16 +46,72 @@ export interface ExecuteToolCallsResult {
   events: RegisteredPassthroughEvent[];
 }
 
+function imageDimension(meta: ImageContent['_meta'], key: 'width' | 'height'): number | undefined {
+  const value = meta?.[key];
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+/** Stores the bytes in the session's files; the model and the event log only see the reference. */
+async function toImagePart({
+  image,
+  files,
+}: {
+  image: ImageContent;
+  files: SessionFiles | undefined;
+}): Promise<ToolContentPart> {
+  const width = imageDimension(image._meta, 'width');
+  const height = imageDimension(image._meta, 'height');
+  if (width === undefined || height === undefined) {
+    return { type: 'text', text: '[image omitted: the tool did not report its size]' };
+  }
+  if (files === undefined) {
+    return { type: 'text', text: `[image ${String(width)}x${String(height)} omitted: no file store]` };
+  }
+  try {
+    const { file_id } = await files.put({ media_type: image.mimeType, bytes: Buffer.from(image.data, 'base64') });
+    return { type: 'image', file_id, media_type: image.mimeType, width, height };
+  } catch (error) {
+    return {
+      type: 'text',
+      text: `[image ${String(width)}x${String(height)} omitted: storing it failed (${describeUnknownError(error)})]`,
+    };
+  }
+}
+
+/** The text blocks joined into one part, as before images were kept, followed by the images. */
+async function toToolContent({
+  blocks,
+  files,
+}: {
+  blocks: ContentBlock[];
+  files: SessionFiles | undefined;
+}): Promise<ToolContentPart[]> {
+  const text = blocks
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('\n');
+  const images = await Promise.all(
+    blocks.filter(block => block.type === 'image').map(image => toImagePart({ image, files })),
+  );
+  if (text === '' && images.length === 0) {
+    return textToolContent(JSON.stringify(blocks));
+  }
+  return [...(text === '' ? [] : textToolContent(text)), ...images];
+}
+
 export async function executeToolCalls({
   assistantMessage,
   toolMapping,
   threadId,
   approvalDecisions,
+  files,
 }: {
   assistantMessage: InternalEnrichedAssistantMessage;
   toolMapping: Map<string, MappedMCPTool>;
   threadId: string;
   approvalDecisions: Map<string, ApprovalDecision>;
+  /** Where image results are stored; without it they reach the model as a text note. */
+  files: SessionFiles | undefined;
 }): Promise<ExecuteToolCallsResult> {
   const toolMessages: ToolCallResult[] = [];
   const initializationInfo: MCPServerInitInfo[] = [];
@@ -126,7 +191,7 @@ export async function executeToolCalls({
         message: {
           role: 'tool',
           tool_call_id: toolCall.id,
-          content: 'Waiting for user to authenticate. Please try again 1 time.',
+          content: textToolContent('Waiting for user to authenticate. Please try again 1 time.'),
         },
         failure: true,
         info: toolInfo,
@@ -148,21 +213,21 @@ export async function executeToolCalls({
 
     const { result, wasInitialized } = response;
 
-    let content: string;
+    let content: ToolContentPart[];
     let isStructuredContent = false;
     if (result.isError) {
-      content = JSON.stringify({ error: result.content });
+      // Image bytes would only bloat the error text.
+      const blocks = Array.isArray(result.content)
+        ? result.content.filter(block => block.type !== 'image')
+        : result.content;
+      content = textToolContent(JSON.stringify({ error: blocks }));
     } else if (result.structuredContent) {
       isStructuredContent = true;
-      content = JSON.stringify(result.structuredContent);
+      content = textToolContent(JSON.stringify(result.structuredContent));
     } else if (Array.isArray(result.content)) {
-      const textContent = result.content
-        .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-        .map(c => c.text)
-        .join('\n');
-      content = textContent || JSON.stringify(result.content);
+      content = await toToolContent({ blocks: result.content, files });
     } else {
-      content = JSON.stringify(result.content);
+      content = textToolContent(JSON.stringify(result.content));
     }
 
     toolMessages.push({

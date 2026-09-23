@@ -1,4 +1,5 @@
 import { largeToolResponse } from '../../../../src/core/capabilities/builtins/LargeToolResponse';
+import { toolContentText, type ToolContentPart } from '../../../../src/core/llm/LLMTypes';
 import type { IToolSet } from '../../../../src/core/mcp/IMCPServer';
 import type { ToolCallResult } from '../../../../src/core/mcp/executeToolCalls';
 import { getEmptyCurrentContextUsage } from '../../../../src/core/runtime/contextUsage';
@@ -8,12 +9,24 @@ const silentLogger = makeSilentLogger();
 
 const LARGE_CONTENT = 'x'.repeat(50_000);
 
-function makeToolResult(toolSet: IToolSet, name: string): ToolCallResult {
+const SCREENSHOT: ToolContentPart = {
+  type: 'image',
+  file_id: 'f1',
+  media_type: 'image/jpeg',
+  width: 1280,
+  height: 800,
+};
+
+function makeToolResult(
+  toolSet: IToolSet,
+  name: string,
+  content: ToolContentPart[] = [{ type: 'text', text: LARGE_CONTENT }],
+): ToolCallResult {
   return {
     message: {
       role: 'tool',
       tool_call_id: 'call-1',
-      content: LARGE_CONTENT,
+      content,
     },
     info: {
       toolSet,
@@ -48,8 +61,31 @@ describe('LargeToolResponse sandbox object identity (ISSUE-035)', () => {
       context: [],
     });
 
-    expect(sandboxResult.message.content).toContain('write to a file');
-    expect(mcpResult.message.content).not.toContain('write to a file');
-    expect(mcpResult.message.content).toContain('Content too big');
+    expect(toolContentText(sandboxResult.message.content)).toContain('write to a file');
+    expect(toolContentText(mcpResult.message.content)).not.toContain('write to a file');
+    expect(toolContentText(mcpResult.message.content)).toContain('Content too big');
+  });
+
+  it('offloads only the text of a result and keeps its images', async () => {
+    const processor = largeToolResponse({
+      dynamicSubAgentsPresent: false,
+      settings: { individualTokenThreshold: 100, totalTokenThreshold: 200 },
+      logger: silentLogger,
+    }).toolResponseProcessors?.[0];
+    if (!processor) throw new Error('expected largeToolResponse processor');
+    const mcp = makeMockIMCPServer({ name: 'browser', preload: true });
+    const withImage = makeToolResult(mcp, 'screenshot', [{ type: 'text', text: LARGE_CONTENT }, SCREENSHOT]);
+    const imageOnly = makeToolResult(mcp, 'screenshot', [SCREENSHOT]);
+
+    await processor.process([withImage, imageOnly], {
+      threadId: 'main',
+      sandbox: undefined,
+      currentContextUsage: getEmptyCurrentContextUsage(),
+      context: [],
+    });
+
+    expect(toolContentText(withImage.message.content)).toContain('Content too big');
+    expect(withImage.message.content.filter(part => part.type === 'image')).toEqual([SCREENSHOT]);
+    expect(imageOnly.message.content).toEqual([SCREENSHOT]);
   });
 });

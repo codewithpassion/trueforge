@@ -17,7 +17,7 @@ import type {
   AgentThreadExecutionContext,
   PreSendContextProcessor,
 } from '../capabilities/AgentContextProcessor';
-import type { InternalEnrichedAssistantMessage, LLMToolMessage } from '../llm/LLMTypes';
+import { textToolContent, type InternalEnrichedAssistantMessage, type LLMToolMessage } from '../llm/LLMTypes';
 import type { ContextMessage } from './AgentThread.types';
 import { InternalEventType } from './AgentThread.types';
 import { mergeCurrentContextUsage } from './contextUsage';
@@ -79,7 +79,7 @@ export class OpenToolCallCloser implements PreSendContextProcessor {
     const dummyToolMessages: LLMToolMessage[] = [...requestedIds].map(toolCallId => ({
       role: 'tool',
       tool_call_id: toolCallId,
-      content: DUMMY_TOOL_MESSAGE_CONTENT,
+      content: textToolContent(DUMMY_TOOL_MESSAGE_CONTENT),
     }));
 
     const currentContextUsage = mergeCurrentContextUsage(

@@ -612,6 +612,11 @@ export interface SharedServerConfiguration {
   /** Max bytes for one remote MCP tool-call HTTP response body (not GET SSE). Env: `MCP_TOOL_CALL_MAX_RESPONSE_BYTES`. Default 50 MB. */
   MCP_TOOL_CALL_MAX_RESPONSE_BYTES: number;
   /**
+   * Tool-result images kept in a model request: past twice this many, the oldest become text stubs
+   * down to this many. Stored history keeps them all. Env: `TOOL_RESULT_IMAGES_KEEP`. Default 5.
+   */
+  TOOL_RESULT_IMAGES_KEEP: number;
+  /**
    * Client name used for Dynamic Client Registration (DCR) of MCP servers.
    * This is the client name shown on authorization-server consent screens.
    * Env: `MCP_DCR_OAUTH_CLIENT_NAME`. Default: "truefoundry-harness".
@@ -947,6 +952,11 @@ export function parseServerConfiguration(): ServerConfiguration {
       envKey: 'MCP_TOOL_CALL_MAX_RESPONSE_BYTES',
       raw: getEnv('MCP_TOOL_CALL_MAX_RESPONSE_BYTES'),
       defaultValue: 50 * 1024 * 1024,
+    }),
+    TOOL_RESULT_IMAGES_KEEP: parsePositiveInt({
+      envKey: 'TOOL_RESULT_IMAGES_KEEP',
+      raw: getEnv('TOOL_RESULT_IMAGES_KEEP'),
+      defaultValue: 5,
     }),
     MCP_DCR_OAUTH_CLIENT_NAME:
       getEnv('MCP_DCR_OAUTH_CLIENT_NAME', { defaultValue: 'truefoundry-harness' }) ?? 'truefoundry-harness',

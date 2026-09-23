@@ -14,13 +14,14 @@ import type {
   LLMUserMessage,
   ToolInfo,
 } from '../llm/LLMTypes';
-import { UNKNOWN_TOOL_NAME } from '../llm/LLMTypes';
+import { normalizeToolContent, UNKNOWN_TOOL_NAME } from '../llm/LLMTypes';
 import { estimateTokensForString } from '../llm/usage';
 import type {
   AgentThreadRuntimeSendInput,
   ContextMessage,
   InternalThreadDoneEvent,
   LLMContextMessage,
+  SubAgentCompletionMarker,
 } from './AgentThread.types';
 import type { CurrentContextUsage } from './contextUsage';
 import type { AgentInputUserMessage } from './UserInputMessage';
@@ -43,6 +44,19 @@ export function internalSystemMessage(m: string): LLMUserMessage {
 
 export function isLLMContextMessage(msg: ContextMessage): msg is LLMContextMessage {
   return 'role' in msg;
+}
+
+/** Thread snapshots persisted before tool content became parts hold plain strings. */
+export function normalizeContextMessage(msg: ContextMessage): ContextMessage {
+  return isLLMContextMessage(msg) && msg.role === 'tool' ? normalizeToolMessage(msg) : msg;
+}
+
+export function normalizeSubAgentCompletion(completion: SubAgentCompletionMarker): SubAgentCompletionMarker {
+  return { ...completion, send_to_parent: normalizeToolMessage(completion.send_to_parent) };
+}
+
+function normalizeToolMessage(msg: LLMToolMessage): LLMToolMessage {
+  return { ...msg, content: normalizeToolContent(msg.content) };
 }
 
 export function isInternalSystemMessage(m: ContextMessage): boolean {

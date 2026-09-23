@@ -1,4 +1,4 @@
-import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat';
+import type { ChatCompletionTool } from 'openai/resources/chat';
 import type { AgentCapability, CapabilityState } from '../capabilities/AgentCapability';
 import type {
   AgentContextProcessorOutput,
@@ -34,8 +34,9 @@ import {
   type UserToolResponseMessage,
 } from '../events/schema';
 import { InstructionBuilder, ROOT_AGENT_IDENTITY } from '../InstructionBuilder';
-import type { LLMCreateParamsStreaming } from '../llm/ILLM';
+import type { LLMCreateParamsStreaming, LLMRequestMessage } from '../llm/ILLM';
 import {
+  textToolContent,
   type CompletionUsage,
   type ExtendedChatCompletionChunk,
   type FinishReason,
@@ -46,7 +47,7 @@ import {
   type RawAssistantMessage,
 } from '../llm/LLMTypes';
 import { toOpenAIResponseFormat } from '../llm/responseFormat';
-import { toOpenAIChatMessage } from '../llm/toOpenAIChatMessage';
+import { toLLMRequestMessage } from '../llm/toLLMRequestMessage';
 import { estimateTokensForString } from '../llm/usage';
 import { convertMCPServersToTools, type ConvertToolsResult, type MappedMCPTool } from '../mcp/convertMCPServers';
 import { executeToolCalls } from '../mcp/executeToolCalls';
@@ -88,6 +89,8 @@ import {
   isLLMContextMessage,
   isLLMToolMessage,
   makeUnknownToolInfo,
+  normalizeContextMessage,
+  normalizeSubAgentCompletion,
   scanApprovalDecisions,
   toEnrichedToolCall,
   toToolCallInfo,
@@ -523,12 +526,13 @@ export class AgentThread {
     this.logger = input.logger.child({ module: 'AgentThread' });
     this.threadId = input.threadId;
     this.definition = input.definition;
-    this.context = input.context ? [...input.context] : [];
+    this.context = input.context ? input.context.map(normalizeContextMessage) : [];
     this.title = input.title;
     this.parent = input.parent;
     this.currentContextUsage = input.currentContextUsage ?? getEmptyCurrentContextUsage();
     this.agentInfo = input.agentInfo;
-    this.preComputedCompletion = input.preComputedCompletion;
+    this.preComputedCompletion =
+      input.preComputedCompletion && normalizeSubAgentCompletion(input.preComputedCompletion);
     this.sandbox = input.sandbox;
 
     const capabilities = input.capabilities ?? [];
@@ -638,7 +642,7 @@ export class AgentThread {
         const toolResponseContext: LLMToolMessage[] = clientSideToolResponses.map(m => ({
           role: 'tool',
           tool_call_id: m.tool_call_id,
-          content: m.content,
+          content: textToolContent(m.content),
         }));
         yield* this.appendToContext({
           context: [...approvalContext, ...toolResponseContext],
@@ -735,7 +739,7 @@ export class AgentThread {
       send_to_parent: this.parent
         ? {
             role: 'tool',
-            content: message,
+            content: textToolContent(message),
             tool_call_id: this.parent.tool_call_id,
           }
         : undefined,
@@ -779,7 +783,7 @@ export class AgentThread {
   }
 
   private transformToLLMRequest(tools: ChatCompletionTool[]): LLMCreateParamsStreaming {
-    let messages: ChatCompletionMessageParam[] = [];
+    let messages: LLMRequestMessage[] = [];
 
     if (this.instruction) {
       messages.push({
@@ -791,14 +795,14 @@ export class AgentThread {
     if (this.definition.messages) {
       for (const msg of this.definition.messages) {
         if (isLLMContextMessage(msg)) {
-          messages.push(toOpenAIChatMessage(msg));
+          messages.push(toLLMRequestMessage(msg));
         }
       }
     }
 
     // NOTE: all this code-golf is to remove `tool_info` before sending the message to Gateway
     // ApprovalDecisionMessage rows are persisted in context but must not be sent to the LLM.
-    const contextMessages = this.context.filter(isLLMContextMessage).map(msg => toOpenAIChatMessage(msg));
+    const contextMessages = this.context.filter(isLLMContextMessage).map(msg => toLLMRequestMessage(msg));
 
     messages.push(...contextMessages);
 
@@ -1102,14 +1106,18 @@ export class AgentThread {
           type: 'error',
           output: agentAssistantMessage,
           error_message: errorMessage,
-          send_to_parent: { role: 'tool', tool_call_id: this.parent.tool_call_id, content: errorMessage },
+          send_to_parent: {
+            role: 'tool',
+            tool_call_id: this.parent.tool_call_id,
+            content: textToolContent(errorMessage),
+          },
         };
       } else if (!hasToolCalls(assistantMessage)) {
         const content = assistantMessageContentToStringForSubAgent(assistantMessage.content);
         completion = {
           type: 'done',
           output: agentAssistantMessage,
-          send_to_parent: { role: 'tool', tool_call_id: this.parent.tool_call_id, content },
+          send_to_parent: { role: 'tool', tool_call_id: this.parent.tool_call_id, content: textToolContent(content) },
         };
       }
     }
@@ -1174,6 +1182,7 @@ export class AgentThread {
       toolMapping,
       threadId: this.threadId,
       approvalDecisions: decisions,
+      files: this.definition.toolImages?.files,
     });
     void clientSideToolCalls;
     if (approvalRequiredToolCalls.length > 0) {
