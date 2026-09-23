@@ -5,6 +5,7 @@ import typing
 from ..core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
 from ..core.request_options import RequestOptions
 from ..types.desktop_action import DesktopAction
+from ..types.desktop_takeover_answer_response import DesktopTakeoverAnswerResponse
 from ..types.get_desktop_clipboard_response import GetDesktopClipboardResponse
 from ..types.get_desktop_status_response import GetDesktopStatusResponse
 from .raw_client import AsyncRawComputerDesktopsClient, RawComputerDesktopsClient
@@ -77,9 +78,9 @@ class ComputerDesktopsClient:
         agent_id: typing.Optional[str] = None,
         note: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> GetDesktopStatusResponse:
+    ) -> DesktopTakeoverAnswerResponse:
         """
-        Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.
+        Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it. Refused while another person controls the desktop.
 
         Parameters
         ----------
@@ -100,8 +101,8 @@ class ComputerDesktopsClient:
 
         Returns
         -------
-        GetDesktopStatusResponse
-            The desktop status.
+        DesktopTakeoverAnswerResponse
+            The desktop status after the request, and what happened to the named takeover (null without one).
 
         Examples
         --------
@@ -222,7 +223,7 @@ class ComputerDesktopsClient:
         note: typing.Optional[str] = OMIT,
         session_id: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> GetDesktopStatusResponse:
+    ) -> DesktopTakeoverAnswerResponse:
         """
         Ends the control the caller holds and clears the clipboard. With `session_id`, also answers that pending takeover as completed so the agent continues.
 
@@ -245,8 +246,8 @@ class ComputerDesktopsClient:
 
         Returns
         -------
-        GetDesktopStatusResponse
-            The desktop status.
+        DesktopTakeoverAnswerResponse
+            The desktop status after the request, and what happened to the named takeover (null without one).
 
         Examples
         --------
@@ -494,9 +495,9 @@ class AsyncComputerDesktopsClient:
         agent_id: typing.Optional[str] = None,
         note: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> GetDesktopStatusResponse:
+    ) -> DesktopTakeoverAnswerResponse:
         """
-        Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.
+        Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it. Refused while another person controls the desktop.
 
         Parameters
         ----------
@@ -517,8 +518,8 @@ class AsyncComputerDesktopsClient:
 
         Returns
         -------
-        GetDesktopStatusResponse
-            The desktop status.
+        DesktopTakeoverAnswerResponse
+            The desktop status after the request, and what happened to the named takeover (null without one).
 
         Examples
         --------
@@ -663,7 +664,7 @@ class AsyncComputerDesktopsClient:
         note: typing.Optional[str] = OMIT,
         session_id: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> GetDesktopStatusResponse:
+    ) -> DesktopTakeoverAnswerResponse:
         """
         Ends the control the caller holds and clears the clipboard. With `session_id`, also answers that pending takeover as completed so the agent continues.
 
@@ -686,8 +687,8 @@ class AsyncComputerDesktopsClient:
 
         Returns
         -------
-        GetDesktopStatusResponse
-            The desktop status.
+        DesktopTakeoverAnswerResponse
+            The desktop status after the request, and what happened to the named takeover (null without one).
 
         Examples
         --------

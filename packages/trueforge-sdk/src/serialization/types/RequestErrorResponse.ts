@@ -9,13 +9,11 @@ export const RequestErrorResponse: core.serialization.ObjectSchema<
     serializers.RequestErrorResponse.Raw,
     TrueForge.RequestErrorResponse
 > = core.serialization.object({
-    data: core.serialization.unknown().optional(),
     error: RequestErrorResponseError,
 });
 
 export declare namespace RequestErrorResponse {
     export interface Raw {
-        data?: unknown | null;
         error: RequestErrorResponseError.Raw;
     }
 }

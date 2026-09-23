@@ -123,20 +123,23 @@ describe("ComputerDesktopsClient", () => {
         const rawRequestBody = { session_id: "session_id" };
         const rawResponseBody = {
             data: {
-                computer_id: "computer_id",
-                controller: { kind: "agent", session_id: "session_id" },
-                desktop: true,
-                online: true,
-                pending_takeovers: [
-                    {
-                        agent_id: "agent_id",
-                        reason: "reason",
-                        requested_at: "requested_at",
-                        session_id: "session_id",
-                        tool_call_id: "tool_call_id",
-                        turn_id: "turn_id",
-                    },
-                ],
+                status: {
+                    computer_id: "computer_id",
+                    controller: { kind: "agent", session_id: "session_id" },
+                    desktop: true,
+                    online: true,
+                    pending_takeovers: [
+                        {
+                            agent_id: "agent_id",
+                            reason: "reason",
+                            requested_at: "requested_at",
+                            session_id: "session_id",
+                            tool_call_id: "tool_call_id",
+                            turn_id: "turn_id",
+                        },
+                    ],
+                },
+                takeover: { message: "message", result: "resumed", session_id: "session_id" },
             },
         };
 
@@ -154,23 +157,30 @@ describe("ComputerDesktopsClient", () => {
         });
         expect(response).toEqual({
             data: {
-                computerId: "computer_id",
-                controller: {
-                    kind: "agent",
+                status: {
+                    computerId: "computer_id",
+                    controller: {
+                        kind: "agent",
+                        sessionId: "session_id",
+                    },
+                    desktop: true,
+                    online: true,
+                    pendingTakeovers: [
+                        {
+                            agentId: "agent_id",
+                            reason: "reason",
+                            requestedAt: "requested_at",
+                            sessionId: "session_id",
+                            toolCallId: "tool_call_id",
+                            turnId: "turn_id",
+                        },
+                    ],
+                },
+                takeover: {
+                    message: "message",
+                    result: "resumed",
                     sessionId: "session_id",
                 },
-                desktop: true,
-                online: true,
-                pendingTakeovers: [
-                    {
-                        agentId: "agent_id",
-                        reason: "reason",
-                        requestedAt: "requested_at",
-                        sessionId: "session_id",
-                        toolCallId: "tool_call_id",
-                        turnId: "turn_id",
-                    },
-                ],
             },
         });
     });
@@ -274,7 +284,7 @@ describe("ComputerDesktopsClient", () => {
             .post("/api/v1/computer-desktops/computer_id/cancel-takeover")
             .jsonBody(rawRequestBody)
             .respondWith()
-            .statusCode(409)
+            .statusCode(423)
             .jsonBody(rawResponseBody)
             .build();
 
@@ -282,7 +292,7 @@ describe("ComputerDesktopsClient", () => {
             return await client.computerDesktops.cancelTakeover("computer_id", {
                 sessionId: "x",
             });
-        }).rejects.toThrow(TrueForgeTypes.ConflictError);
+        }).rejects.toThrow(TrueForgeTypes.LockedError);
     });
 
     test("cancel_takeover (7)", async () => {
@@ -663,20 +673,23 @@ describe("ComputerDesktopsClient", () => {
         const rawRequestBody = {};
         const rawResponseBody = {
             data: {
-                computer_id: "computer_id",
-                controller: { kind: "agent", session_id: "session_id" },
-                desktop: true,
-                online: true,
-                pending_takeovers: [
-                    {
-                        agent_id: "agent_id",
-                        reason: "reason",
-                        requested_at: "requested_at",
-                        session_id: "session_id",
-                        tool_call_id: "tool_call_id",
-                        turn_id: "turn_id",
-                    },
-                ],
+                status: {
+                    computer_id: "computer_id",
+                    controller: { kind: "agent", session_id: "session_id" },
+                    desktop: true,
+                    online: true,
+                    pending_takeovers: [
+                        {
+                            agent_id: "agent_id",
+                            reason: "reason",
+                            requested_at: "requested_at",
+                            session_id: "session_id",
+                            tool_call_id: "tool_call_id",
+                            turn_id: "turn_id",
+                        },
+                    ],
+                },
+                takeover: { message: "message", result: "resumed", session_id: "session_id" },
             },
         };
 
@@ -692,23 +705,30 @@ describe("ComputerDesktopsClient", () => {
         const response = await client.computerDesktops.handBack("computer_id");
         expect(response).toEqual({
             data: {
-                computerId: "computer_id",
-                controller: {
-                    kind: "agent",
+                status: {
+                    computerId: "computer_id",
+                    controller: {
+                        kind: "agent",
+                        sessionId: "session_id",
+                    },
+                    desktop: true,
+                    online: true,
+                    pendingTakeovers: [
+                        {
+                            agentId: "agent_id",
+                            reason: "reason",
+                            requestedAt: "requested_at",
+                            sessionId: "session_id",
+                            toolCallId: "tool_call_id",
+                            turnId: "turn_id",
+                        },
+                    ],
+                },
+                takeover: {
+                    message: "message",
+                    result: "resumed",
                     sessionId: "session_id",
                 },
-                desktop: true,
-                online: true,
-                pendingTakeovers: [
-                    {
-                        agentId: "agent_id",
-                        reason: "reason",
-                        requestedAt: "requested_at",
-                        sessionId: "session_id",
-                        toolCallId: "tool_call_id",
-                        turnId: "turn_id",
-                    },
-                ],
             },
         });
     });
@@ -804,26 +824,6 @@ describe("ComputerDesktopsClient", () => {
             .post("/api/v1/computer-desktops/computer_id/hand-back")
             .jsonBody(rawRequestBody)
             .respondWith()
-            .statusCode(409)
-            .jsonBody(rawResponseBody)
-            .build();
-
-        await expect(async () => {
-            return await client.computerDesktops.handBack("computer_id");
-        }).rejects.toThrow(TrueForgeTypes.ConflictError);
-    });
-
-    test("hand_back (7)", async () => {
-        const server = mockServerPool.createServer();
-        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
-        const rawRequestBody = {};
-        const rawResponseBody = { error: { message: "message" } };
-
-        server
-            .mockEndpoint()
-            .post("/api/v1/computer-desktops/computer_id/hand-back")
-            .jsonBody(rawRequestBody)
-            .respondWith()
             .statusCode(423)
             .jsonBody(rawResponseBody)
             .build();
@@ -833,7 +833,7 @@ describe("ComputerDesktopsClient", () => {
         }).rejects.toThrow(TrueForgeTypes.LockedError);
     });
 
-    test("hand_back (8)", async () => {
+    test("hand_back (7)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
         const rawRequestBody = {};

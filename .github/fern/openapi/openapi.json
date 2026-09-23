@@ -2046,6 +2046,65 @@
         ],
         "type": "object"
       },
+      "DesktopTakeoverAnswer": {
+        "properties": {
+          "message": {
+            "description": "What happened, for the person who answered.",
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DesktopTakeoverResult"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "result",
+          "message"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "DesktopTakeoverAnswerResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DesktopTakeoverAnswerResult"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "DesktopTakeoverAnswerResult": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/DesktopStatus"
+          },
+          "takeover": {
+            "$ref": "#/components/schemas/DesktopTakeoverAnswer"
+          }
+        },
+        "required": [
+          "status",
+          "takeover"
+        ],
+        "type": "object"
+      },
+      "DesktopTakeoverResult": {
+        "description": "`resumed`: the agent continues. `already_answered`: answered elsewhere. `not_pending`: nothing was waiting. `resume_failed`: the session could not continue and is no longer listed.",
+        "enum": [
+          "resumed",
+          "already_answered",
+          "not_pending",
+          "resume_failed"
+        ],
+        "type": "string"
+      },
       "DesktopTypeAction": {
         "properties": {
           "text": {
@@ -4713,9 +4772,6 @@
       },
       "RequestErrorResponse": {
         "properties": {
-          "data": {
-            "description": "State after a refused request, on the routes that document it; absent otherwise."
-          },
           "error": {
             "properties": {
               "code": {
@@ -8608,7 +8664,7 @@
     },
     "/api/v1/computer-desktops/{computer_id}/cancel-takeover": {
       "post": {
-        "description": "Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.",
+        "description": "Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it. Refused while another person controls the desktop.",
         "parameters": [
           {
             "description": "Computer id.",
@@ -8648,11 +8704,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GetDesktopStatusResponse"
+                  "$ref": "#/components/schemas/DesktopTakeoverAnswerResponse"
                 }
               }
             },
-            "description": "The desktop status."
+            "description": "The desktop status after the request, and what happened to the named takeover (null without one)."
           },
           "400": {
             "content": {
@@ -8694,7 +8750,7 @@
             },
             "description": "No such computer or agent, or this server does not serve remote computers."
           },
-          "409": {
+          "423": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8702,7 +8758,7 @@
                 }
               }
             },
-            "description": "Code `takeover_already_answered` or `not_pending`: the takeover was answered elsewhere."
+            "description": "Code `human_in_control`: another person controls the desktop; nothing was answered."
           },
           "503": {
             "content": {
@@ -9016,11 +9072,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GetDesktopStatusResponse"
+                  "$ref": "#/components/schemas/DesktopTakeoverAnswerResponse"
                 }
               }
             },
-            "description": "The desktop status."
+            "description": "The desktop status after the request, and what happened to the named takeover (null without one)."
           },
           "400": {
             "content": {
@@ -9061,16 +9117,6 @@
               }
             },
             "description": "No such computer or agent, or this server does not serve remote computers."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "Code `not_pending`: nothing changed. Code `takeover_already_answered`: answered elsewhere, but control is released. Either way `data` is the desktop status after the request."
           },
           "423": {
             "content": {
@@ -12940,7 +12986,7 @@
                 }
               }
             },
-            "description": "Code `already_answered`: a tool response continuing the session tip lost to another answer of the same pending call, or the tip is still running."
+            "description": "Code `already_answered`: a tool response continuing the session tip lost to another answer of the same pending call. Code `tip_running`: the session tip is still running."
           },
           "412": {
             "content": {

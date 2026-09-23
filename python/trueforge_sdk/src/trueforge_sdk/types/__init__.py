@@ -95,6 +95,10 @@ if typing.TYPE_CHECKING:
     from .desktop_mouse_up_action_button import DesktopMouseUpActionButton
     from .desktop_scroll_action import DesktopScrollAction
     from .desktop_status import DesktopStatus
+    from .desktop_takeover_answer import DesktopTakeoverAnswer
+    from .desktop_takeover_answer_response import DesktopTakeoverAnswerResponse
+    from .desktop_takeover_answer_result import DesktopTakeoverAnswerResult
+    from .desktop_takeover_result import DesktopTakeoverResult
     from .desktop_type_action import DesktopTypeAction
     from .dynamic_sub_agents_config import DynamicSubAgentsConfig
     from .extended_chunk_delta_tool_call import ExtendedChunkDeltaToolCall
@@ -395,6 +399,10 @@ _dynamic_imports: typing.Dict[str, str] = {
     "DesktopMouseUpActionButton": ".desktop_mouse_up_action_button",
     "DesktopScrollAction": ".desktop_scroll_action",
     "DesktopStatus": ".desktop_status",
+    "DesktopTakeoverAnswer": ".desktop_takeover_answer",
+    "DesktopTakeoverAnswerResponse": ".desktop_takeover_answer_response",
+    "DesktopTakeoverAnswerResult": ".desktop_takeover_answer_result",
+    "DesktopTakeoverResult": ".desktop_takeover_result",
     "DesktopTypeAction": ".desktop_type_action",
     "DynamicSubAgentsConfig": ".dynamic_sub_agents_config",
     "ExtendedChunkDeltaToolCall": ".extended_chunk_delta_tool_call",
@@ -719,6 +727,10 @@ __all__ = [
     "DesktopMouseUpActionButton",
     "DesktopScrollAction",
     "DesktopStatus",
+    "DesktopTakeoverAnswer",
+    "DesktopTakeoverAnswerResponse",
+    "DesktopTakeoverAnswerResult",
+    "DesktopTakeoverResult",
     "DesktopTypeAction",
     "DynamicSubAgentsConfig",
     "ExtendedChunkDeltaToolCall",

@@ -21,6 +21,7 @@ from ..errors.not_found_error import NotFoundError
 from ..errors.service_unavailable_error import ServiceUnavailableError
 from ..errors.unauthorized_error import UnauthorizedError
 from ..types.desktop_action import DesktopAction
+from ..types.desktop_takeover_answer_response import DesktopTakeoverAnswerResponse
 from ..types.get_desktop_clipboard_response import GetDesktopClipboardResponse
 from ..types.get_desktop_status_response import GetDesktopStatusResponse
 from ..types.request_error_response import RequestErrorResponse
@@ -128,9 +129,9 @@ class RawComputerDesktopsClient:
         agent_id: typing.Optional[str] = None,
         note: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> HttpResponse[GetDesktopStatusResponse]:
+    ) -> HttpResponse[DesktopTakeoverAnswerResponse]:
         """
-        Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.
+        Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it. Refused while another person controls the desktop.
 
         Parameters
         ----------
@@ -151,8 +152,8 @@ class RawComputerDesktopsClient:
 
         Returns
         -------
-        HttpResponse[GetDesktopStatusResponse]
-            The desktop status.
+        HttpResponse[DesktopTakeoverAnswerResponse]
+            The desktop status after the request, and what happened to the named takeover (null without one).
         """
         _response = self._client_wrapper.httpx_client.request(
             f"api/v1/computer-desktops/{encode_path_param(computer_id)}/cancel-takeover",
@@ -173,9 +174,9 @@ class RawComputerDesktopsClient:
         try:
             if 200 <= _response.status_code < 300:
                 _data = typing.cast(
-                    GetDesktopStatusResponse,
+                    DesktopTakeoverAnswerResponse,
                     construct_type(
-                        type_=GetDesktopStatusResponse,  # type: ignore
+                        type_=DesktopTakeoverAnswerResponse,  # type: ignore
                         object_=_response.json(),
                     ),
                 )
@@ -224,8 +225,8 @@ class RawComputerDesktopsClient:
                         ),
                     ),
                 )
-            if _response.status_code == 409:
-                raise ConflictError(
+            if _response.status_code == 423:
+                raise LockedError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -536,7 +537,7 @@ class RawComputerDesktopsClient:
         note: typing.Optional[str] = OMIT,
         session_id: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> HttpResponse[GetDesktopStatusResponse]:
+    ) -> HttpResponse[DesktopTakeoverAnswerResponse]:
         """
         Ends the control the caller holds and clears the clipboard. With `session_id`, also answers that pending takeover as completed so the agent continues.
 
@@ -559,8 +560,8 @@ class RawComputerDesktopsClient:
 
         Returns
         -------
-        HttpResponse[GetDesktopStatusResponse]
-            The desktop status.
+        HttpResponse[DesktopTakeoverAnswerResponse]
+            The desktop status after the request, and what happened to the named takeover (null without one).
         """
         _response = self._client_wrapper.httpx_client.request(
             f"api/v1/computer-desktops/{encode_path_param(computer_id)}/hand-back",
@@ -581,9 +582,9 @@ class RawComputerDesktopsClient:
         try:
             if 200 <= _response.status_code < 300:
                 _data = typing.cast(
-                    GetDesktopStatusResponse,
+                    DesktopTakeoverAnswerResponse,
                     construct_type(
-                        type_=GetDesktopStatusResponse,  # type: ignore
+                        type_=DesktopTakeoverAnswerResponse,  # type: ignore
                         object_=_response.json(),
                     ),
                 )
@@ -623,17 +624,6 @@ class RawComputerDesktopsClient:
                 )
             if _response.status_code == 404:
                 raise NotFoundError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        RequestErrorResponse,
-                        construct_type(
-                            type_=RequestErrorResponse,  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
-            if _response.status_code == 409:
-                raise ConflictError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -1178,9 +1168,9 @@ class AsyncRawComputerDesktopsClient:
         agent_id: typing.Optional[str] = None,
         note: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> AsyncHttpResponse[GetDesktopStatusResponse]:
+    ) -> AsyncHttpResponse[DesktopTakeoverAnswerResponse]:
         """
-        Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.
+        Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it. Refused while another person controls the desktop.
 
         Parameters
         ----------
@@ -1201,8 +1191,8 @@ class AsyncRawComputerDesktopsClient:
 
         Returns
         -------
-        AsyncHttpResponse[GetDesktopStatusResponse]
-            The desktop status.
+        AsyncHttpResponse[DesktopTakeoverAnswerResponse]
+            The desktop status after the request, and what happened to the named takeover (null without one).
         """
         _response = await self._client_wrapper.httpx_client.request(
             f"api/v1/computer-desktops/{encode_path_param(computer_id)}/cancel-takeover",
@@ -1223,9 +1213,9 @@ class AsyncRawComputerDesktopsClient:
         try:
             if 200 <= _response.status_code < 300:
                 _data = typing.cast(
-                    GetDesktopStatusResponse,
+                    DesktopTakeoverAnswerResponse,
                     construct_type(
-                        type_=GetDesktopStatusResponse,  # type: ignore
+                        type_=DesktopTakeoverAnswerResponse,  # type: ignore
                         object_=_response.json(),
                     ),
                 )
@@ -1274,8 +1264,8 @@ class AsyncRawComputerDesktopsClient:
                         ),
                     ),
                 )
-            if _response.status_code == 409:
-                raise ConflictError(
+            if _response.status_code == 423:
+                raise LockedError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -1586,7 +1576,7 @@ class AsyncRawComputerDesktopsClient:
         note: typing.Optional[str] = OMIT,
         session_id: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> AsyncHttpResponse[GetDesktopStatusResponse]:
+    ) -> AsyncHttpResponse[DesktopTakeoverAnswerResponse]:
         """
         Ends the control the caller holds and clears the clipboard. With `session_id`, also answers that pending takeover as completed so the agent continues.
 
@@ -1609,8 +1599,8 @@ class AsyncRawComputerDesktopsClient:
 
         Returns
         -------
-        AsyncHttpResponse[GetDesktopStatusResponse]
-            The desktop status.
+        AsyncHttpResponse[DesktopTakeoverAnswerResponse]
+            The desktop status after the request, and what happened to the named takeover (null without one).
         """
         _response = await self._client_wrapper.httpx_client.request(
             f"api/v1/computer-desktops/{encode_path_param(computer_id)}/hand-back",
@@ -1631,9 +1621,9 @@ class AsyncRawComputerDesktopsClient:
         try:
             if 200 <= _response.status_code < 300:
                 _data = typing.cast(
-                    GetDesktopStatusResponse,
+                    DesktopTakeoverAnswerResponse,
                     construct_type(
-                        type_=GetDesktopStatusResponse,  # type: ignore
+                        type_=DesktopTakeoverAnswerResponse,  # type: ignore
                         object_=_response.json(),
                     ),
                 )
@@ -1673,17 +1663,6 @@ class AsyncRawComputerDesktopsClient:
                 )
             if _response.status_code == 404:
                 raise NotFoundError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        RequestErrorResponse,
-                        construct_type(
-                            type_=RequestErrorResponse,  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
-            if _response.status_code == 409:
-                raise ConflictError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,

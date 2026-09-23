@@ -599,7 +599,7 @@ await client.computerDesktops.get("computer_id");
 </dl>
 </details>
 
-<details><summary><code>client.computerDesktops.<a href="/src/api/resources/computerDesktops/client/Client.ts">cancelTakeover</a>(computer_id, { ...params }) -> TrueForge.GetDesktopStatusResponse</code></summary>
+<details><summary><code>client.computerDesktops.<a href="/src/api/resources/computerDesktops/client/Client.ts">cancelTakeover</a>(computer_id, { ...params }) -> TrueForge.DesktopTakeoverAnswerResponse</code></summary>
 <dl>
 <dd>
 
@@ -611,7 +611,7 @@ await client.computerDesktops.get("computer_id");
 <dl>
 <dd>
 
-Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.
+Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it. Refused while another person controls the desktop.
 </dd>
 </dl>
 </dd>
@@ -816,7 +816,7 @@ await client.computerDesktops.setClipboard("computer_id", {
 </dl>
 </details>
 
-<details><summary><code>client.computerDesktops.<a href="/src/api/resources/computerDesktops/client/Client.ts">handBack</a>(computer_id, { ...params }) -> TrueForge.GetDesktopStatusResponse</code></summary>
+<details><summary><code>client.computerDesktops.<a href="/src/api/resources/computerDesktops/client/Client.ts">handBack</a>(computer_id, { ...params }) -> TrueForge.DesktopTakeoverAnswerResponse</code></summary>
 <dl>
 <dd>
 

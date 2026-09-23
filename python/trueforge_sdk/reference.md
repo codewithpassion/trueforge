@@ -707,7 +707,7 @@ client.computer_desktops.get(
 </dl>
 </details>
 
-<details><summary><code>client.computer_desktops.<a href="src/trueforge_sdk/computer_desktops/client.py">cancel_takeover</a>(...) -> GetDesktopStatusResponse</code></summary>
+<details><summary><code>client.computer_desktops.<a href="src/trueforge_sdk/computer_desktops/client.py">cancel_takeover</a>(...) -> DesktopTakeoverAnswerResponse</code></summary>
 <dl>
 <dd>
 
@@ -719,7 +719,7 @@ client.computer_desktops.get(
 <dl>
 <dd>
 
-Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.
+Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it. Refused while another person controls the desktop.
 </dd>
 </dl>
 </dd>
@@ -973,7 +973,7 @@ client.computer_desktops.set_clipboard(
 </dl>
 </details>
 
-<details><summary><code>client.computer_desktops.<a href="src/trueforge_sdk/computer_desktops/client.py">hand_back</a>(...) -> GetDesktopStatusResponse</code></summary>
+<details><summary><code>client.computer_desktops.<a href="src/trueforge_sdk/computer_desktops/client.py">hand_back</a>(...) -> DesktopTakeoverAnswerResponse</code></summary>
 <dl>
 <dd>
 

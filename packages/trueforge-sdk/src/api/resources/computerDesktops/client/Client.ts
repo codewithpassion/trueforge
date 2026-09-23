@@ -147,7 +147,7 @@ export class ComputerDesktopsClient {
     }
 
     /**
-     * Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.
+     * Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it. Refused while another person controls the desktop.
      *
      * @param {string} computer_id - Computer id.
      * @param {TrueForge.CancelDesktopTakeoverRequest} request
@@ -157,7 +157,7 @@ export class ComputerDesktopsClient {
      * @throws {@link TrueForge.UnauthorizedError}
      * @throws {@link TrueForge.ForbiddenError}
      * @throws {@link TrueForge.NotFoundError}
-     * @throws {@link TrueForge.ConflictError}
+     * @throws {@link TrueForge.LockedError}
      * @throws {@link TrueForge.ServiceUnavailableError}
      * @throws {@link errors.TrueForgeError}
      * @throws {@link errors.TrueForgeTimeoutError}
@@ -171,7 +171,7 @@ export class ComputerDesktopsClient {
         computer_id: string,
         request: TrueForge.CancelDesktopTakeoverRequest,
         requestOptions?: ComputerDesktopsClient.RequestOptions,
-    ): core.HttpResponsePromise<TrueForge.GetDesktopStatusResponse> {
+    ): core.HttpResponsePromise<TrueForge.DesktopTakeoverAnswerResponse> {
         return core.HttpResponsePromise.fromPromise(this.__cancelTakeover(computer_id, request, requestOptions));
     }
 
@@ -179,7 +179,7 @@ export class ComputerDesktopsClient {
         computer_id: string,
         request: TrueForge.CancelDesktopTakeoverRequest,
         requestOptions?: ComputerDesktopsClient.RequestOptions,
-    ): Promise<core.WithRawResponse<TrueForge.GetDesktopStatusResponse>> {
+    ): Promise<core.WithRawResponse<TrueForge.DesktopTakeoverAnswerResponse>> {
         const { agentId, ..._body } = request;
         const _queryParams: Record<string, unknown> = {
             agent_id: agentId,
@@ -222,7 +222,7 @@ export class ComputerDesktopsClient {
         });
         if (_response.ok) {
             return {
-                data: serializers.GetDesktopStatusResponse.parseOrThrow(_response.body, {
+                data: serializers.DesktopTakeoverAnswerResponse.parseOrThrow(_response.body, {
                     unrecognizedObjectKeys: "passthrough",
                     allowUnrecognizedUnionMembers: true,
                     allowUnrecognizedEnumValues: true,
@@ -279,8 +279,8 @@ export class ComputerDesktopsClient {
                         }),
                         _response.rawResponse,
                     );
-                case 409:
-                    throw new TrueForge.ConflictError(
+                case 423:
+                    throw new TrueForge.LockedError(
                         serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
                             unrecognizedObjectKeys: "passthrough",
                             allowUnrecognizedUnionMembers: true,
@@ -687,7 +687,6 @@ export class ComputerDesktopsClient {
      * @throws {@link TrueForge.UnauthorizedError}
      * @throws {@link TrueForge.ForbiddenError}
      * @throws {@link TrueForge.NotFoundError}
-     * @throws {@link TrueForge.ConflictError}
      * @throws {@link TrueForge.LockedError}
      * @throws {@link TrueForge.ServiceUnavailableError}
      * @throws {@link errors.TrueForgeError}
@@ -700,7 +699,7 @@ export class ComputerDesktopsClient {
         computer_id: string,
         request: TrueForge.HandBackDesktopRequest = {},
         requestOptions?: ComputerDesktopsClient.RequestOptions,
-    ): core.HttpResponsePromise<TrueForge.GetDesktopStatusResponse> {
+    ): core.HttpResponsePromise<TrueForge.DesktopTakeoverAnswerResponse> {
         return core.HttpResponsePromise.fromPromise(this.__handBack(computer_id, request, requestOptions));
     }
 
@@ -708,7 +707,7 @@ export class ComputerDesktopsClient {
         computer_id: string,
         request: TrueForge.HandBackDesktopRequest = {},
         requestOptions?: ComputerDesktopsClient.RequestOptions,
-    ): Promise<core.WithRawResponse<TrueForge.GetDesktopStatusResponse>> {
+    ): Promise<core.WithRawResponse<TrueForge.DesktopTakeoverAnswerResponse>> {
         const { agentId, ..._body } = request;
         const _queryParams: Record<string, unknown> = {
             agent_id: agentId,
@@ -751,7 +750,7 @@ export class ComputerDesktopsClient {
         });
         if (_response.ok) {
             return {
-                data: serializers.GetDesktopStatusResponse.parseOrThrow(_response.body, {
+                data: serializers.DesktopTakeoverAnswerResponse.parseOrThrow(_response.body, {
                     unrecognizedObjectKeys: "passthrough",
                     allowUnrecognizedUnionMembers: true,
                     allowUnrecognizedEnumValues: true,
@@ -799,17 +798,6 @@ export class ComputerDesktopsClient {
                     );
                 case 404:
                     throw new TrueForge.NotFoundError(
-                        serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
-                            unrecognizedObjectKeys: "passthrough",
-                            allowUnrecognizedUnionMembers: true,
-                            allowUnrecognizedEnumValues: true,
-                            skipValidation: true,
-                            breadcrumbsPrefix: ["response"],
-                        }),
-                        _response.rawResponse,
-                    );
-                case 409:
-                    throw new TrueForge.ConflictError(
                         serializers.RequestErrorResponse.parseOrThrow(_response.error.body, {
                             unrecognizedObjectKeys: "passthrough",
                             allowUnrecognizedUnionMembers: true,
