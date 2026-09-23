@@ -914,32 +914,34 @@ export function convertMessages({
   const systemParts: string[] = [];
   const result: ModelMessage[] = [];
   for (const msg of messages) {
-    if (msg.role === 'system') {
-      systemParts.push(msg.content);
-      continue;
+    switch (msg.role) {
+      case 'system':
+        systemParts.push(msg.content);
+        break;
+      case 'user':
+        result.push({ role: 'user', content: toUserContent(msg.content) });
+        break;
+      case 'assistant':
+        result.push(toAssistantModelMessage({ msg, provider, providerName, logger }));
+        break;
+      case 'tool': {
+        const toolContent: ToolContent = [
+          {
+            type: 'tool-result',
+            toolCallId: msg.tool_call_id,
+            toolName: toolNameById.get(msg.tool_call_id) ?? '',
+            output: toToolResultOutput({ content: msg.content, provider, images }),
+          },
+        ];
+        result.push({ role: 'tool', content: toolContent });
+        break;
+      }
+      default: {
+        // Roles outside the harness message type (developer, function) are skipped.
+        const _skipped: never = msg;
+        void _skipped;
+      }
     }
-    if (msg.role === 'user') {
-      result.push({ role: 'user', content: toUserContent(msg.content) });
-      continue;
-    }
-    if (msg.role === 'assistant') {
-      result.push(toAssistantModelMessage({ msg, provider, providerName, logger }));
-      continue;
-    }
-    if (msg.role === 'tool') {
-      const toolName = toolNameById.get(msg.tool_call_id) ?? '';
-      const toolContent: ToolContent = [
-        {
-          type: 'tool-result',
-          toolCallId: msg.tool_call_id,
-          toolName,
-          output: toToolResultOutput({ content: msg.content, provider, images }),
-        },
-      ];
-      result.push({ role: 'tool', content: toolContent });
-      continue;
-    }
-    // Roles outside the harness message type (developer, function) are skipped.
   }
   return { instructions: systemParts.length > 0 ? systemParts.join('\n\n') : undefined, messages: result };
 }

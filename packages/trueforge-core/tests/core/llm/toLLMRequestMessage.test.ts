@@ -3,6 +3,7 @@ import type {
   ExtendedChatCompletionChunk,
   InternalEnrichedAssistantMessage,
   RawAssistantMessageWithUsage,
+  ToolContentPart,
 } from '../../../src/core/llm/LLMTypes';
 import { getEmptyUsage } from '../../../src/core/llm/LLMTypes';
 import { ResponseFormatSchema, toOpenAIResponseFormat } from '../../../src/core/llm/responseFormat';
@@ -94,9 +95,9 @@ describe('toLLMRequestMessage', () => {
       role: 'user',
       content: 'hi',
     });
-    const toolContent = [
-      { type: 'text' as const, text: 'result' },
-      { type: 'image' as const, file_id: 'f1', media_type: 'image/jpeg', width: 1280, height: 800 },
+    const toolContent: ToolContentPart[] = [
+      { type: 'text', text: 'result' },
+      { type: 'image', file_id: 'f1', media_type: 'image/jpeg', width: 1280, height: 800 },
     ];
     expect(toLLMRequestMessage({ role: 'tool', tool_call_id: 'call-1', content: toolContent })).toEqual({
       role: 'tool',
