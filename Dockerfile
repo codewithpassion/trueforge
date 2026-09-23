@@ -14,7 +14,8 @@ WORKDIR /app
 # HOST=0.0.0.0 so Kubernetes Service/probe traffic reaches the process.
 ENV NODE_ENV=production \
     STANDALONE=false \
-    HOST=0.0.0.0
+    HOST=0.0.0.0 \
+    FILE_STORE_DIR=/data/files
 
 ARG APP_VERSION
 RUN test -n "$APP_VERSION" || (echo "APP_VERSION build-arg is required" >&2 && exit 1)
@@ -23,8 +24,11 @@ RUN test -n "$APP_VERSION" || (echo "APP_VERSION build-arg is required" >&2 && e
 RUN npm install --omit=dev "@truefoundry/trueforge@${APP_VERSION}" \
   && npm cache clean --force
 
+# /data/files is FILE_STORE_DIR for the default filesystem file store; mount a volume there to keep files.
 RUN groupadd --gid 10001 trueforge \
-  && useradd --uid 10001 --gid trueforge --shell /usr/sbin/nologin trueforge
+  && useradd --uid 10001 --gid trueforge --shell /usr/sbin/nologin trueforge \
+  && mkdir -p /data/files \
+  && chown 10001:10001 /data/files
 
 EXPOSE 8790
 

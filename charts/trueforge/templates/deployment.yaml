@@ -87,6 +87,10 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if eq (include "trueforge.fileStore.backend" .) "filesystem" }}
+            - name: files
+              mountPath: /data/files
+            {{- end }}
             {{- include "trueforge.mtlsVolumeMount" . | nindent 12 }}
             {{- include "trueforge.customCA.volumeMounts" . | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
@@ -103,6 +107,10 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if eq (include "trueforge.fileStore.backend" .) "filesystem" }}
+        - name: files
+          emptyDir: {}
+        {{- end }}
         {{- include "trueforge.mtlsVolume" . | nindent 8 }}
         {{- include "trueforge.customCA.volumes" . | nindent 8 }}
         {{- with .Values.extraVolumes }}

@@ -334,6 +334,12 @@ async function createDistributedPersistence(options: {
   logger: Logger;
 }): Promise<NodeServerPersistence<Transaction<PostgresDatabase>>> {
   const { configuration, logger } = options;
+  if (configuration.FILE_STORE.FILE_STORE_BACKEND === 'filesystem') {
+    logger.warn(
+      `Session files are kept on this machine under ${FILE_STORE_DIR} (FILE_STORE_BACKEND=filesystem), which is single-replica only: ` +
+        'another replica cannot read them. Set FILE_STORE_BACKEND=s3 before running more than one replica.',
+    );
+  }
   const {
     DATABASE_URL: databaseUrl,
     DATABASE_SSL: databaseSsl,

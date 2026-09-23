@@ -84,7 +84,8 @@ RUN pnpm install --frozen-lockfile --offline --prod --filter @truefoundry/truefo
 FROM base AS runner
 
 ENV NODE_ENV=production \
-    HOST=0.0.0.0
+    HOST=0.0.0.0 \
+    FILE_STORE_DIR=/data/files
 
 # Production dependency tree (pnpm workspace symlinks preserved).
 COPY --from=prod-deps /app/node_modules ./node_modules
@@ -106,8 +107,11 @@ COPY --from=frontend-builder /app/packages/frontend/dist ./packages/trueforge/di
 
 WORKDIR /app/packages/trueforge
 
+# /data/files is FILE_STORE_DIR for the default filesystem file store; mount a volume there to keep files.
 RUN groupadd --gid 10001 trueforge \
-  && useradd --uid 10001 --gid trueforge trueforge
+  && useradd --uid 10001 --gid trueforge trueforge \
+  && mkdir -p /data/files \
+  && chown 10001:10001 /data/files
 
 EXPOSE 8790
 

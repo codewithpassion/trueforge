@@ -270,6 +270,27 @@ tier is set.
 {{- end -}}
 {{- end }}
 
+{{/*
+Session file store backend: filesystem or s3. The filesystem backend keeps
+files on one pod, so it fails with more than one server replica or autoscaling.
+*/}}
+{{- define "trueforge.fileStore.backend" -}}
+{{- $backend := .Values.fileStore.backend | default "filesystem" | toString | trim -}}
+{{- if not (has $backend (list "filesystem" "s3")) -}}
+{{- fail (printf "fileStore.backend must be filesystem or s3 (got %q)" $backend) -}}
+{{- end -}}
+{{- if eq $backend "filesystem" -}}
+{{- if .Values.autoscaling.enabled -}}
+{{- fail "fileStore.backend filesystem keeps session files on one pod and cannot be combined with autoscaling.enabled; set fileStore.backend to s3" -}}
+{{- end -}}
+{{- $replicas := include "trueforge.replicas" . | trim | int -}}
+{{- if gt $replicas 1 -}}
+{{- fail (printf "fileStore.backend filesystem keeps session files on one pod and cannot run %d server replicas (server.replicaCount or resourceTier); set fileStore.backend to s3" $replicas) -}}
+{{- end -}}
+{{- end -}}
+{{- $backend -}}
+{{- end }}
+
 {{- define "trueforge.defaultResources.small" -}}
 requests:
   cpu: 50m
@@ -497,6 +518,23 @@ fields, wires bundled Postgres/Redis, optional OIDC, then server.extraEnv.
 {{- end -}}
 {{- if .Values.networkPolicy.outbound.blockedHosts -}}
 {{- $env = append $env (dict "name" "OUTBOUND_URL_BLOCKED_HOSTS" "value" (.Values.networkPolicy.outbound.blockedHosts | toJson)) -}}
+{{- end -}}
+
+{{- if eq (include "trueforge.fileStore.backend" .) "s3" -}}
+{{- $s3 := .Values.fileStore.s3 -}}
+{{- $_ := required "fileStore.s3.endpoint is required when fileStore.backend is s3" $s3.endpoint -}}
+{{- $_ := required "fileStore.s3.bucket is required when fileStore.backend is s3" $s3.bucket -}}
+{{- $env = append $env (dict "name" "FILE_STORE_BACKEND" "value" "s3") -}}
+{{- $env = append $env (dict "name" "FILE_STORE_S3_ENDPOINT" "value" $s3.endpoint) -}}
+{{- $env = append $env (dict "name" "FILE_STORE_S3_BUCKET" "value" $s3.bucket) -}}
+{{- if $s3.region -}}
+{{- $env = append $env (dict "name" "FILE_STORE_S3_REGION" "value" $s3.region) -}}
+{{- end -}}
+{{- $env = append $env (include "trueforge.env.fromStringOrValueFrom" (dict "name" "FILE_STORE_S3_ACCESS_KEY_ID" "field" "fileStore.s3.accessKeyId" "value" $s3.accessKeyId) | fromJson) -}}
+{{- $env = append $env (include "trueforge.env.fromStringOrValueFrom" (dict "name" "FILE_STORE_S3_SECRET_ACCESS_KEY" "field" "fileStore.s3.secretAccessKey" "value" $s3.secretAccessKey) | fromJson) -}}
+{{- else -}}
+{{- $env = append $env (dict "name" "FILE_STORE_BACKEND" "value" "filesystem") -}}
+{{- $env = append $env (dict "name" "FILE_STORE_DIR" "value" "/data/files") -}}
 {{- end -}}
 
 {{- /* Controller -> server auth. The app rejects an empty value when peered. */ -}}

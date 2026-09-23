@@ -164,6 +164,34 @@ the chart's own `resourceTier` wins.
 | `medium` | 2 | 100m / 256Mi | 100m / 256Mi |
 | `large` | 3 | 500m / 512Mi | 500m / 512Mi |
 
+## File store
+
+Sessions keep files such as tool-result screenshots outside their history.
+`fileStore.backend` picks where:
+
+- `filesystem` (default) keeps them in an `emptyDir` mounted at `/data/files`.
+  Files are lost when the pod is replaced, and another pod cannot read them,
+  so the render **fails** when this backend meets more than one server replica
+  (`server.replicaCount` or a `resourceTier` of `medium`/`large`) or
+  `autoscaling.enabled`.
+- `s3` uses any S3-compatible bucket (AWS S3, R2, MinIO) and works with any
+  number of replicas.
+
+```yaml
+fileStore:
+  backend: s3
+  s3:
+    endpoint: https://s3.us-east-1.amazonaws.com
+    bucket: trueforge-files
+    region: us-east-1 # empty = us-east-1; auto for R2
+    accessKeyId:
+      valueFrom:
+        secretKeyRef: { name: trueforge-file-store, key: access-key-id }
+    secretAccessKey:
+      valueFrom:
+        secretKeyRef: { name: trueforge-file-store, key: secret-access-key }
+```
+
 ## Postgres
 
 Bundled by default (`postgresql.enabled=true`). The chart ships a **dev**
@@ -309,7 +337,8 @@ chart does **not** create Secrets for chart-owned fields — supply
 Fields that accept string | `valueFrom.secretKeyRef`:
 `externalPostgres.host`, `externalPostgres.port`, `externalPostgres.database`,
 `externalPostgres.user`, `externalPostgres.password`, `externalRedis.url`,
-`configs.oidc.clientSecret`.
+`configs.oidc.clientSecret`, `fileStore.s3.accessKeyId`,
+`fileStore.s3.secretAccessKey`.
 `configs.oidc.issuerUrl` and `clientId` are plain strings only.
 
 **Bundled Postgres password** still uses Bitnami's API (`postgresql.auth.existingSecret`,
@@ -367,6 +396,7 @@ extraObjects:
 | `service.port`        | `8790`                              | Service port.                         |
 | `server.port`         | `8790`                              | Container port (`PORT`).              |
 | `autoscaling.enabled` | `false`                             | Enable a HorizontalPodAutoscaler.     |
+| `fileStore.backend`   | `filesystem`                        | Session file storage: `filesystem` (one replica only) or `s3` (`fileStore.s3.*`). See [File store](#file-store). |
 | `podDisruptionBudget.enabled` | `true`                        | Server PodDisruptionBudget (`minAvailable` defaults to `1`); rendered only when the server runs more than one replica. |
 | `podSecurityContext`  | non-root UID/GID `10001`            | Pod-level restricted security defaults. |
 | `securityContext`     | read-only root FS + drop all capabilities | Container-level restricted security defaults. |
@@ -405,4 +435,4 @@ also sets the `/tmp` `emptyDir.sizeLimit`.
 - If enabling `mtls`, set `mtls.secretName` and ensure any reverse proxy dials HTTPS with a trusted client cert (see Caddy `internal_mtls`).
 - Tune container `resources` (especially CPU requests) before enabling HPA.
 - Default `tfy.jfrog.io` images and the Helm chart are anonymously pullable — set `imagePullSecrets` only if you override to a private registry.
-- Run multiple replicas (`server.replicaCount` or a `resourceTier` of `medium`/`large`); the server PodDisruptionBudget (`{release}-trueforge-server`, `minAvailable: 1`) then applies automatically.
+- Run multiple replicas (`server.replicaCount` or a `resourceTier` of `medium`/`large`); the server PodDisruptionBudget (`{release}-trueforge-server`, `minAvailable: 1`) then applies automatically. Multiple replicas need `fileStore.backend: s3`.

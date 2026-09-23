@@ -195,6 +195,28 @@ networkPolicy:
     # Env: OUTBOUND_URL_BLOCKED_HOSTS (JSON string array). Empty = no blocklist entries.
     # Example: ["evil.example.com"]
     blockedHosts: []
+# Session file storage, such as tool-result screenshots (FILE_STORE_* env).
+# filesystem keeps files in an emptyDir at /data/files on the pod: they are
+# lost when the pod is replaced, and the chart refuses to render it with more
+# than one server replica or with autoscaling. Use s3 for those.
+fileStore:
+  # filesystem | s3
+  backend: filesystem
+  s3:
+    # http(s) origin of the S3 API: AWS (https://s3.<region>.amazonaws.com),
+    # an R2 account endpoint, or MinIO. Requests are path-style.
+    endpoint: ""
+    bucket: ""
+    # Empty = us-east-1 (use auto for R2).
+    region: ""
+    # string or { valueFrom: { secretKeyRef: ... } } (prefer valueFrom).
+    accessKeyId: ""
+    secretAccessKey: ""
+    # accessKeyId:
+    #   valueFrom:
+    #     secretKeyRef:
+    #       name: trueforge-file-store
+    #       key: access-key-id
 # Resource tier: small | medium | large presets for server and controller.
 # Empty = use `resources` / `controller.resources`. Wins over a parent chart's
 # global.resourceTier.
