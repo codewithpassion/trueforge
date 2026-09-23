@@ -4,6 +4,30 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 35 — Integrations section in the agent builder (2026-09-23)
+
+**Goal:** Let users manage an agent's Slack integrations from the agent builder config panel (`/build-agent`). The user had expected to find them on the agent configuration screen.
+
+**What we did:**
+
+- **Feature (`db2e43a9`).** New `AgentIntegrationsSection.tsx` in `packages/trueforge-ui/src/atoms/draft/`, placed after Runtime Config in `AgentConfigPanel.tsx`. A draft agent shows "Save the agent to connect Slack."; a saved agent shows a compact list with a status badge (new `IntegrationStatusBadge.tsx`) and a Manage action that opens a drawer. The drawer reuses `IntegrationsPage` through new `embedded` and `initialIntegrationId` props, so there is no second integrations UI. The agent-page Integrations tab stays.
+- **Fable review, one fix round (`4ba0dcfd`).** No blockers. Fixed: the section rendered without a sessions server, and `IntegrationsPage` throws in that case with no error boundary above it, so it is now gated; clicking a row opens that integration's detail instead of the list; removed an aria-label that did nothing; fixed a comment that credited the wrong component.
+- **Re-review (`e3da0cc7`).** Found one test that could not fail (the drawer aria-label assertion). Rewrote it and mutation-checked it: it fails when the label is put back.
+- **Deploy and QA.** Landed on `dom/main` at `e3da0cc7` and deployed as Workers version `6ebf0354`. A Sonnet agent used agent-browser (headless Chrome) against a local standalone build and passed 9/9 checks. The T3 preview host was unavailable, so it was not used.
+- **Not fixed:** the Save agent dialog keeps Save disabled until Description is filled but does not mark the field as required. This predates the change, QA hit it twice, and it was reported to the user.
+
+**Lessons learned:**
+
+- Reusing `IntegrationsPage` inside a drawer also carried over its hard dependency on the sessions server. Any page embedded somewhere new needs its preconditions checked where it is mounted, because nothing catches the throw.
+- A test asserting that an attribute is absent passes trivially if the query never finds the element. Only a mutation check (put the attribute back, watch the test fail) showed it was dead.
+- agent-browser with headless Chrome on a local build replaced the flaky T3 preview host for this QA run without problems.
+
+**Avoid next time:**
+
+- Don't embed a full page component without listing what it throws on; gate it in the host or add an error boundary.
+- Don't accept negative assertions (`not.toHaveAttribute`, `queryBy… === null`) without first asserting the element exists, or mutation-checking the test.
+- Don't wait on the T3 preview host for browser QA; start with agent-browser against a local standalone build.
+
 ## Cycle 34 — Per-agent integrations P3 (docs), deploy and prod testing (2026-09-23)
 
 **Goal:** Finish the per-agent integrations work: bring the Slack plan docs in line (P3), deploy to Workers, and verify the feature in a browser locally and on prod.
