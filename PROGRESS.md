@@ -4,6 +4,33 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 37 — Phase 9a-1: session file store (2026-09-24)
+
+**Goal:** Build the session file store from `docs/remote-desktop-plan.md` (phase 9a-1), so later phases can persist screenshots and other binary session artifacts.
+
+**What we did:**
+
+- **Store (`ee481e40`).** `IFileStore` / `SessionFileStore` live in `packages/trueforge-core/src/agent-session/store`. Three backends: R2 (binding `FILES`, bucket `trueforge-rockyshoreslabs-files`), S3 through `aws4fetch`, and a filesystem default (`FILE_STORE_DIR=/data/files` in the Dockerfiles, owned by uid 10001). Metadata goes in a new `session_file` table on D1, Postgres and SQLite (D1 migration `0009_session_file`). The S3 backend has only been tested against a fake, never a real bucket.
+- **Route and limits.** `GET /api/v1/sessions/{session_id}/files/{file_id}` checks access with `canReadAgentBoundResource` and returns 404 when access is denied. Responses carry a CSP `sandbox` header and `nosniff`. Writes accept only `image/(png|jpeg|webp|gif)`.
+- **Deletion.** The session-delete route removes files in three steps: sweep files, delete the session, sweep again, so a file written during the delete is not left behind.
+- **Helm.** New `fileStore` values. The filesystem backend refuses to start with more than one replica or with autoscaling on, so the medium and large tiers will not start until S3 is configured.
+- **Adversarial review.** 0 blockers, 2 majors: the default directory in the container was not writable, and file authz did not match the rule used for turns. Both fixed (`9de205b2`, `0692d4bf`) and the re-review said LAND. `62f1e48c` then removed an unreachable 404 check in S3 DeleteObjects.
+- **Shipped.** Landed on `dom/main` at `62f1e48c` and deployed as Workers version `137009b1` with D1 `0009_session_file` applied. Still in flight: 9b daemon and server fix rounds, and 9a-2 (image tool results).
+
+**Lessons learned:**
+
+- `wrangler d1 migrations apply` can print error 7403 after it has already applied the migration. Query `d1_migrations` before retrying.
+- `(cmd | tail) && next` takes the exit code from `tail`, not `cmd`, so the deploy ran even though the migration step had failed.
+- Worktrees created by the Agent tool started from `origin/main`, not `dom/main`, so a forge agent can build on the wrong base without noticing.
+- A filesystem default that works on a dev host can still fail in the container: the image runs as uid 10001 and the default directory was not writable. The review caught this; the tests did not.
+
+**Avoid next time:**
+
+- Don't pipe a deploy or migration step through `tail`/`head` inside an `&&` chain. Use `set -o pipefail` or check the step's own exit code.
+- Don't retry a D1 migration after an error without checking `d1_migrations` first.
+- Don't start a forge worktree without checking its base commit against `dom/main`.
+- Don't give a new resource route its own authz rule. Reuse the one that guards the sibling resource (turns).
+
 ## Cycle 36 — Agent description made optional (2026-09-23)
 
 **Goal:** Make the agent description optional, as the user asked ("make it not mandatory unless that would mean a db change"). No DB change was needed: the column is already `TEXT NOT NULL DEFAULT ''`.
