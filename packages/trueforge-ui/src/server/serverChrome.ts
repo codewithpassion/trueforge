@@ -31,7 +31,7 @@ export function isSchedulesChromeEnabled({ schedules }: { schedules: ScheduleSer
   return schedules != null;
 }
 
-/** Agent-details Integrations tab (no top-level path). */
+/** Agent-details Integrations tab and the builder's Integrations section (no top-level path). */
 export function isIntegrationsChromeEnabled({
   integrations,
 }: {

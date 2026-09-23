@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType, type FormEvent } from 'react';
 import { z } from 'zod';
 
-import { cn } from '@/atoms/lib/cn.js';
 import { auiInputClass } from '@/atoms/lib/inputClasses.js';
 import { Button } from '@/atoms/primitives/Button.js';
 import { CenteredModal } from '@/atoms/primitives/CenteredModal.js';
@@ -26,6 +25,7 @@ import {
   validateIntegrationForm,
   type IntegrationFormDraft,
 } from './integrationForm.js';
+import { IntegrationStatusBadge } from './IntegrationStatusBadge.js';
 
 /** Schedule names offered by the rule picker; one page is plenty for a datalist. */
 const SCHEDULE_PICKER_LIMIT = 25;
@@ -33,6 +33,8 @@ const SCHEDULE_PICKER_LIMIT = 25;
 export type IntegrationsPageProps = {
   /** The agent whose integrations are listed and created. */
   agentId: string;
+  /** Drops the page heading and background when another surface (a drawer) supplies the chrome. */
+  embedded?: boolean;
 };
 
 const NOTIFICATION_OUTCOMES: { value: IntegrationNotificationRule['outcome']; label: string }[] = [
@@ -40,21 +42,6 @@ const NOTIFICATION_OUTCOMES: { value: IntegrationNotificationRule['outcome']; la
   { value: 'success', label: 'Successful runs' },
   { value: 'failure', label: 'Failed runs' },
 ];
-
-function StatusBadge({ status }: { status: IntegrationBase['status'] }) {
-  const connected = status === 'connected';
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-        connected ? 'bg-success-bg/10 text-success-bg' : 'bg-secondary-bg text-text-secondary',
-      )}
-    >
-      <Icon name={connected ? 'circle-check' : 'clock'} className="size-3" />
-      {connected ? 'Connected' : 'Waiting for the Slack app'}
-    </span>
-  );
-}
 
 /**
  * The handle Slack will give the bot user. Read from the manifest the server generated rather
@@ -83,7 +70,7 @@ function FieldLabel({ htmlFor, children }: { htmlFor: string; children: string }
   );
 }
 
-export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
+export function IntegrationsPage({ agentId, embedded = false }: IntegrationsPageProps) {
   const integrationServer = useIntegrationServer();
   const sessionsServer = useAgentSessionsServer();
   const scheduleServer = useOptionalScheduleServer();
@@ -437,7 +424,7 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
             Back
           </Button.Ghost>
           <h3 className="text-xl font-semibold tracking-tight text-text-primary">{selected.botDisplayName}</h3>
-          <StatusBadge status={selected.status} />
+          <IntegrationStatusBadge status={selected.status} />
         </div>
 
         {error ? (
@@ -633,8 +620,12 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
   } else {
     body = (
       <>
-        <h3 className="text-xl font-semibold tracking-tight text-text-primary">Integrations</h3>
-        <p className="mt-1 text-sm text-text-secondary">Let a Slack workspace talk to this agent.</p>
+        {embedded ? null : (
+          <>
+            <h3 className="text-xl font-semibold tracking-tight text-text-primary">Integrations</h3>
+            <p className="mt-1 text-sm text-text-secondary">Let a Slack workspace talk to this agent.</p>
+          </>
+        )}
 
         {error ? (
           <p className="mt-3 rounded-md border border-failure-bg/30 bg-failure-bg/10 px-3 py-2 text-sm text-failure-bg">
@@ -686,7 +677,7 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
                           <span className="truncate text-sm font-medium text-text-primary">
                             {integration.botDisplayName}
                           </span>
-                          <StatusBadge status={integration.status} />
+                          <IntegrationStatusBadge status={integration.status} />
                         </span>
                       </span>
                       <Icon name="chevron-right" className="size-4 text-text-secondary" />
@@ -739,6 +730,8 @@ export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
       </>
     );
   }
+
+  if (embedded) return <div className="flex min-h-0 flex-1 flex-col px-5 py-4">{body}</div>;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-primary-bg px-6 py-4">

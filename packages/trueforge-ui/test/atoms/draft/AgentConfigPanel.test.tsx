@@ -5,8 +5,10 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentConfigPanel } from '@/atoms/draft/AgentConfigPanel.js';
 import { withInitialUserMessages } from '@/atoms/draft/agentConfigMessages.js';
 import { CompactLayoutProvider } from '@/atoms/lib/CompactLayoutContext.js';
+import { ServerProvider } from '@/server/ServerContext.js';
 import type { AgentSpec, ModelSelection } from '@/server/types.js';
 import { SlotsProvider } from '@/theme/SlotsProvider.js';
+import { createMockAgentUIServer, createMockIntegrationServer } from '../../server/mockServer.js';
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function showModal() {
@@ -104,6 +106,26 @@ describe('AgentConfigPanel', () => {
       'px-3',
       'py-1.5',
     );
+  });
+
+  it('places Integrations after Runtime Config when the host serves integrations', () => {
+    render(
+      <SlotsProvider>
+        <ServerProvider server={createMockAgentUIServer({ integrations: createMockIntegrationServer() })}>
+          <AgentConfigPanel
+            spec={spec}
+            model={model}
+            {...catalogProps}
+            skillsAvailable
+            instructions={spec.instructions ?? ''}
+            onOpenEditor={vi.fn()}
+          />
+        </ServerProvider>
+      </SlotsProvider>,
+    );
+
+    const headings = screen.getAllByRole('heading', { level: 3 }).map(heading => heading.textContent);
+    expect(headings).toEqual(['Instructions', 'Runtime Config', 'Integrations', 'MCP Servers', 'Skills']);
   });
 
   it('routes editor actions from the configuration summary', () => {

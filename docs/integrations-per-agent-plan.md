@@ -105,6 +105,7 @@ In `packages/trueforge-ui`:
 - **Delete the Settings section.** Remove `hasIntegrations`, the `integrations` section entry and its render branch from `SettingsBuilder/index.tsx`.
 - **Server port.** Replace the `integrationCatalog` slot on `CatalogServer` with an `IntegrationServer` provided through `ServerContext` (`useOptionalIntegrationServer`, `isIntegrationsChromeEnabled`), matching the schedule server. Port types stay canonical in `packages/assistant-ui-runtime/src/server/types.ts`: `listIntegrations({ agentNames })`, and `CreateIntegrationRequest` gains `agentName` while losing `defaultAgentName`. `@truefoundry/trueforge-ui` re-exports them as pass-through aliases only. The adapter in `plugins/trueforge-agent-server-adapter/catalogs/integrationCatalog.ts` moves beside the schedule adapter and targets the new paths.
 - `packages/frontend` needs no change beyond picking up the new server wiring, if it builds servers explicitly.
+- **Builder section.** The agent builder's config panel adds an `AgentIntegrationsSection` slot after Runtime Config: for a saved agent it lists the integrations with their status and opens `IntegrationsPage` (with `embedded`) in a drawer; a draft is told to save first.
 
 ## 3. Phases
 

@@ -211,6 +211,7 @@ export function AgentConfigSection({
   actionIcon = 'pencil',
   actionLabel,
   onEdit,
+  action,
   children,
 }: {
   title?: string;
@@ -219,9 +220,11 @@ export function AgentConfigSection({
   actionIcon?: string;
   actionLabel?: string;
   onEdit?: () => void;
+  /** Header control for sections whose body is not one click target; takes the place of the edit button. */
+  action?: ReactNode;
   children?: ReactNode;
 }) {
-  const action = actionLabel ?? `Edit ${title}`;
+  const editLabel = actionLabel ?? `Edit ${title}`;
 
   return (
     <section
@@ -251,24 +254,25 @@ export function AgentConfigSection({
               {description ? <p className="text-text-secondary mt-0.5 text-xs">{description}</p> : null}
             </div>
           </div>
-          {onEdit ? (
-            <button
-              type="button"
-              aria-label={action}
-              title={action}
-              className={auiButtonClass({
-                variant: 'ghost',
-                size: 'icon',
-                className: 'size-7 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100',
-              })}
-              onClick={event => {
-                event.stopPropagation();
-                onEdit();
-              }}
-            >
-              <Icon name={actionIcon} className="size-3.5" />
-            </button>
-          ) : null}
+          {action ??
+            (onEdit ? (
+              <button
+                type="button"
+                aria-label={editLabel}
+                title={editLabel}
+                className={auiButtonClass({
+                  variant: 'ghost',
+                  size: 'icon',
+                  className: 'size-7 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100',
+                })}
+                onClick={event => {
+                  event.stopPropagation();
+                  onEdit();
+                }}
+              >
+                <Icon name={actionIcon} className="size-3.5" />
+              </button>
+            ) : null)}
         </div>
       )}
       {children}
@@ -294,6 +298,7 @@ export function AgentConfigPanel({
   const Section = useSlot('AgentConfigSection');
   const AgentModelEditorContent = useSlot('AgentModelEditorContent');
   const AgentModelSettingsContent = useSlot('AgentModelSettingsContent');
+  const AgentIntegrationsSection = useSlot('AgentIntegrationsSection');
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelSettingsMenuOpen, setModelSettingsMenuOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState('');
@@ -472,6 +477,8 @@ export function AgentConfigPanel({
             ))}
           </dl>
         </Section>
+
+        <AgentIntegrationsSection />
 
         <Section
           title="MCP Servers"

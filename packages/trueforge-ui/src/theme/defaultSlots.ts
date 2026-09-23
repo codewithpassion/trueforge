@@ -46,6 +46,7 @@ import { AgentConfigEditors } from '../atoms/draft/AgentConfigEditors.js';
 import { AgentConfigPanel, AgentConfigSection } from '../atoms/draft/AgentConfigPanel.js';
 import { AgentCustomParametersEditor } from '../atoms/draft/AgentCustomParametersEditor.js';
 import { AgentInstructionsDrawer } from '../atoms/draft/AgentInstructionsDrawer.js';
+import { AgentIntegrationsSection } from '../atoms/draft/AgentIntegrationsSection.js';
 import { AgentMcpEditorContent } from '../atoms/draft/AgentMcpEditorContent.js';
 import { AgentModelConfigModal } from '../atoms/draft/AgentModelConfigModal.js';
 import { AgentModelEditorContent } from '../atoms/draft/AgentModelEditorContent.js';
@@ -173,6 +174,7 @@ export const defaultSlots = {
   AgentSkillsEditorContent,
   AgentConfigPanel,
   AgentConfigSection,
+  AgentIntegrationsSection,
   AgentRuntimeConfigFields,
   AgentRuntimeConfigDrawer,
   AgentRuntimeEditorContent,
