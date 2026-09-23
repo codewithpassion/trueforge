@@ -205,7 +205,6 @@ client = TrueForge(
 )
 
 client.agents.create(
-    description="description",
     manifest=AgentSpec(
         model=Model(
             name="name",
@@ -228,14 +227,6 @@ client.agents.create(
 <dl>
 <dd>
 
-**description:** `str` 
-    
-</dd>
-</dl>
-
-<dl>
-<dd>
-
 **manifest:** `AgentSpec` 
     
 </dd>
@@ -245,6 +236,14 @@ client.agents.create(
 <dd>
 
 **name:** `ResourceName` 
+    
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**description:** `typing.Optional[str]` 
     
 </dd>
 </dl>

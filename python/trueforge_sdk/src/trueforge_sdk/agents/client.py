@@ -84,9 +84,9 @@ class AgentsClient:
     def create(
         self,
         *,
-        description: str,
         manifest: AgentSpec,
         name: ResourceName,
+        description: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> GetAgentResponse:
         """
@@ -94,11 +94,11 @@ class AgentsClient:
 
         Parameters
         ----------
-        description : str
-
         manifest : AgentSpec
 
         name : ResourceName
+
+        description : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -117,7 +117,6 @@ class AgentsClient:
             base_url="https://yourhost.com/path/to/api",
         )
         client.agents.create(
-            description="description",
             manifest=AgentSpec(
                 model=Model(
                     name="name",
@@ -127,7 +126,7 @@ class AgentsClient:
         )
         """
         _response = self._raw_client.create(
-            description=description, manifest=manifest, name=name, request_options=request_options
+            manifest=manifest, name=name, description=description, request_options=request_options
         )
         return _response.data
 
@@ -322,9 +321,9 @@ class AsyncAgentsClient:
     async def create(
         self,
         *,
-        description: str,
         manifest: AgentSpec,
         name: ResourceName,
+        description: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> GetAgentResponse:
         """
@@ -332,11 +331,11 @@ class AsyncAgentsClient:
 
         Parameters
         ----------
-        description : str
-
         manifest : AgentSpec
 
         name : ResourceName
+
+        description : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -360,7 +359,6 @@ class AsyncAgentsClient:
 
         async def main() -> None:
             await client.agents.create(
-                description="description",
                 manifest=AgentSpec(
                     model=Model(
                         name="name",
@@ -373,7 +371,7 @@ class AsyncAgentsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.create(
-            description=description, manifest=manifest, name=name, request_options=request_options
+            manifest=manifest, name=name, description=description, request_options=request_options
         )
         return _response.data
 

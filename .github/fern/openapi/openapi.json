@@ -43,7 +43,6 @@
           },
           "description": {
             "maxLength": 1024,
-            "minLength": 1,
             "type": "string"
           },
           "id": {
@@ -1304,7 +1303,6 @@
         "properties": {
           "description": {
             "maxLength": 1024,
-            "minLength": 1,
             "type": "string"
           },
           "manifest": {
@@ -1316,7 +1314,6 @@
         },
         "required": [
           "name",
-          "description",
           "manifest"
         ],
         "type": "object"
@@ -2252,7 +2249,6 @@
           },
           "description": {
             "maxLength": 1024,
-            "minLength": 1,
             "type": "string"
           },
           "manifest": {
@@ -6384,7 +6380,6 @@
         "properties": {
           "description": {
             "maxLength": 1024,
-            "minLength": 1,
             "type": "string"
           },
           "manifest": {

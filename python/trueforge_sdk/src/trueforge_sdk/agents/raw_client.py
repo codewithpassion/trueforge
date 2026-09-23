@@ -130,9 +130,9 @@ class RawAgentsClient:
     def create(
         self,
         *,
-        description: str,
         manifest: AgentSpec,
         name: ResourceName,
+        description: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[GetAgentResponse]:
         """
@@ -140,11 +140,11 @@ class RawAgentsClient:
 
         Parameters
         ----------
-        description : str
-
         manifest : AgentSpec
 
         name : ResourceName
+
+        description : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -540,9 +540,9 @@ class AsyncRawAgentsClient:
     async def create(
         self,
         *,
-        description: str,
         manifest: AgentSpec,
         name: ResourceName,
+        description: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[GetAgentResponse]:
         """
@@ -550,11 +550,11 @@ class AsyncRawAgentsClient:
 
         Parameters
         ----------
-        description : str
-
         manifest : AgentSpec
 
         name : ResourceName
+
+        description : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
