@@ -3,14 +3,14 @@
  * The base URL picks the behavior: https://llm.test/<scenario>/v1, where scenario is `text`,
  * `tools-<K>` (K datetime tool calls, then text), `ask-<K>` (K `ask_user_question` calls in ONE
  * message, so the turn pauses holding all of them, then text), `sandbox` (one sandbox exec, then
- * text), `desktop` (one `computer_screenshot`, then text), `slow` (one delta, then a stalled stream), `gap` (one delta, a second after `GAP_MS`,
+ * text), `desktop` (one `computer_screenshot`, then text echoing the tool result it was sent), `slow` (one delta, then a stalled stream), `gap` (one delta, a second after `GAP_MS`,
  * then a stalled stream), `delay-<ms>` (a text reply after ms), or `huge` (one reply larger than
  * D1 stores per value).
  */
 export const HUGE_REPLY_BYTES = 2_100_000;
 
 interface ChatRequestBody {
-  messages?: { role?: string }[];
+  messages?: { role?: string; content?: unknown }[];
   tools?: { function?: { name?: string } }[];
 }
 
@@ -150,10 +150,17 @@ export async function handleMockLlmRequest(request: Request): Promise<Response> 
     });
   }
   if (scenario === 'desktop') {
-    const done = (body.messages ?? []).filter(message => message.role === 'tool').length;
+    const results = (body.messages ?? []).filter(message => message.role === 'tool');
     const toolName = namedTool(body, 'computer_screenshot');
-    if (done > 0 || toolName === undefined) {
-      return textReply(`Finished after ${String(done)} desktop calls.`);
+    if (results.length > 0 || toolName === undefined) {
+      // Echoed so a test can see what the model was actually sent: the result and the no-images note.
+      const toldNoImages = (body.messages ?? []).some(
+        message => message.role === 'system' && JSON.stringify(message.content).includes('does not receive images'),
+      );
+      return textReply(
+        `Finished after ${String(results.length)} desktop calls. Told no images: ${String(toldNoImages)}. ` +
+          `Last result: ${JSON.stringify(results.at(-1)?.content ?? null)}`,
+      );
     }
     return toolCallReply({ toolName, callIndex: 1 });
   }

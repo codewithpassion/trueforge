@@ -757,6 +757,10 @@ describe('a desktop turn', () => {
     expect(JSON.stringify(finished?.snapshot.threads ?? {})).toMatch(
       /"type":"image","file_id":"[^"]+","media_type":"image\/jpeg","width":1280,"height":800/,
     );
+    // The mock model's provider type takes no images, so it was sent the stub and told to use exec.
+    const threads = JSON.stringify(finished?.snapshot.threads ?? {});
+    expect(threads).toContain('Told no images: true.');
+    expect(threads).toContain('[screenshot 1280x800 omitted: model does not accept images in tool results]');
     // A screenshot-only session still records its sandbox, so its next turn works in the same directory.
     expect(finished?.snapshot.sandbox_info?.sandbox_id).toBe(`v1:remote-computer:${computerId}/${sessionId}`);
     expect(refusedWith(await agentOn({ computerId, sessionId: 'someone-else' }).screenshot())).toBe('desktop_busy');
