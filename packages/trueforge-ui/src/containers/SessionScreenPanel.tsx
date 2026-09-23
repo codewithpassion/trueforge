@@ -39,7 +39,8 @@ export function SessionScreenToggle({ open, onToggle }: { open: boolean; onToggl
       aria-pressed={open}
       aria-label={open ? 'Hide screen' : 'Show screen'}
       title={open ? 'Hide screen' : 'Show screen'}
-      className={auiButtonClass({ variant: 'ghost', size: 'icon' })}
+      // The panel only fits beside the chat from md up, so there is nothing to toggle below that.
+      className={auiButtonClass({ variant: 'ghost', size: 'icon', className: 'hidden md:inline-flex' })}
       onClick={onToggle}
     >
       <Icon name="monitor" />

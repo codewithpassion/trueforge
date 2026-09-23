@@ -139,9 +139,11 @@ describe('desktop tools', () => {
     expect(describeComputerAction('computer_click', '{"x":10,"y":20,"button":"right","count":2}')).toBe(
       'Double-click (right) at (10, 20)',
     );
-    expect(describeComputerAction('computer_type', '{"text":"hello"}')).toBe('Type “hello”');
-    expect(describeComputerAction('computer_type', JSON.stringify({ text: 'x'.repeat(50) }))).toBe(
-      `Type “${'x'.repeat(40)}…”`,
+    // Typed text can be a password, so only its length shows.
+    expect(describeComputerAction('computer_type', '{"text":"hunter2"}')).toBe('Typed 7 characters');
+    expect(describeComputerAction('computer_type', '{"text":"é"}')).toBe('Typed 1 character');
+    expect(describeComputerAction('computer_type', JSON.stringify({ text: '🙂'.repeat(50) }))).toBe(
+      'Typed 50 characters',
     );
     expect(describeComputerAction('computer_key', '{"keys":"ctrl+l"}')).toBe('Press ctrl+l');
     expect(describeComputerAction('computer_scroll', '{"x":1,"y":2,"dx":0,"dy":3}')).toBe('Scroll at (1, 2)');

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 
 import { DesktopScreen } from '@/atoms/desktop/DesktopScreen.js';
 import { cn } from '@/atoms/lib/cn.js';
@@ -182,6 +182,14 @@ function DesktopWarning() {
 
 type DetailTab = 'details' | 'desktop';
 
+const DETAIL_TABS: { id: DetailTab; label: string }[] = [
+  { id: 'details', label: 'Details' },
+  { id: 'desktop', label: 'Desktop' },
+];
+
+const tabId = (tab: DetailTab) => `computer-tab-${tab}`;
+const panelId = (tab: DetailTab) => `computer-panel-${tab}`;
+
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex justify-between gap-4 py-1 text-sm">
@@ -226,6 +234,27 @@ const ComputerSettings = () => {
   const server = useOptionalServer();
   const desktopServer = useOptionalComputerDesktopServer();
   const [detailTab, setDetailTab] = useState<DetailTab>('details');
+  const tabRefs = useRef<Partial<Record<DetailTab, HTMLButtonElement | null>>>({});
+  // Arrow keys, Home and End move between tabs, as the tabs pattern expects.
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const index = DETAIL_TABS.findIndex(tab => tab.id === detailTab);
+    const last = DETAIL_TABS.length - 1;
+    const next =
+      event.key === 'ArrowRight'
+        ? (index + 1) % DETAIL_TABS.length
+        : event.key === 'ArrowLeft'
+          ? (index + last) % DETAIL_TABS.length
+          : event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? last
+              : null;
+    const target = next === null ? undefined : DETAIL_TABS[next];
+    if (target === undefined) return;
+    event.preventDefault();
+    setDetailTab(target.id);
+    tabRefs.current[target.id]?.focus();
+  };
 
   const [computers, setComputers] = useState<ComputerBase[]>([]);
   const [loading, setLoading] = useState(true);
@@ -521,17 +550,19 @@ const ComputerSettings = () => {
 
         {desktopServer === null ? null : (
           <div role="tablist" aria-label="Computer" className="mt-3 flex gap-1 border-b border-border">
-            {(
-              [
-                { id: 'details', label: 'Details' },
-                { id: 'desktop', label: 'Desktop' },
-              ] satisfies { id: DetailTab; label: string }[]
-            ).map(tab => (
+            {DETAIL_TABS.map(tab => (
               <button
                 key={tab.id}
+                ref={element => {
+                  tabRefs.current[tab.id] = element;
+                }}
+                id={tabId(tab.id)}
                 type="button"
                 role="tab"
                 aria-selected={detailTab === tab.id}
+                aria-controls={panelId(tab.id)}
+                tabIndex={detailTab === tab.id ? 0 : -1}
+                onKeyDown={onTabKeyDown}
                 className={cn(
                   'relative h-9 px-3 text-sm font-medium text-text-secondary',
                   'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus-ring',
@@ -549,7 +580,12 @@ const ComputerSettings = () => {
         )}
 
         {desktopServer !== null && detailTab === 'desktop' ? (
-          <div className="mt-4 flex flex-1 flex-col gap-4 overflow-y-auto pb-1">
+          <div
+            id={panelId('desktop')}
+            role="tabpanel"
+            aria-labelledby={tabId('desktop')}
+            className="mt-4 flex flex-1 flex-col gap-4 overflow-y-auto pb-1"
+          >
             <DesktopWarning />
             {selected.tools?.desktop === true ? (
               <>
@@ -570,7 +606,12 @@ const ComputerSettings = () => {
             )}
           </div>
         ) : (
-          <div className="mt-4 flex-1 overflow-y-auto pb-1">
+          <div
+            className="mt-4 flex-1 overflow-y-auto pb-1"
+            {...(desktopServer === null
+              ? {}
+              : { id: panelId('details'), role: 'tabpanel', 'aria-labelledby': tabId('details') })}
+          >
             <div className="flex flex-col gap-5">
               <SecurityNote />
 

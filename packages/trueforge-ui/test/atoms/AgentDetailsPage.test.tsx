@@ -715,6 +715,18 @@ describe('AgentDetailsPage Screen tab', () => {
     expect(AgentScreen).not.toHaveBeenCalled();
   });
 
+  it('shows the failure on a Screen deep link when the agent cannot be loaded', async () => {
+    window.history.replaceState(null, '', '/library/agent-1?tab=screen');
+    renderPage({
+      getAgent: vi.fn(async () => Promise.reject(new Error('not found'))),
+      serverOverrides: { computerDesktop },
+      overrides: { AgentScreen },
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Agent details unavailable' })).toBeInTheDocument();
+    expect(AgentScreen).not.toHaveBeenCalled();
+  });
+
   it('hides the Screen tab when the host has no desktop port', async () => {
     renderPage({ getAgent: vi.fn(async () => desktopDetail) });
     expect(await screen.findByRole('tab', { name: 'Overview' })).toBeInTheDocument();

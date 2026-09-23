@@ -418,12 +418,12 @@ Computer use is useless if a screenshot reaches the model as a string. **File st
   - **Take control**, **Hand back** with a note field, and **Cancel request**;
   - clipboard controls.
 - **Screen panel.** The same component appears as a right-side panel in the session view, for the session creator.
-- **Settings.** Settings → Computers → _computer_ → **Desktop** holds the admin toggle and warning text (shared screen across agents, and `exec` paused for all agents while a human holds control), plus the same component for pre-seeding logins.
+- **Settings.** Settings → Computers → _computer_ → **Desktop** shows the desktop's state as the machine reports it and the warning text (shared screen across agents, and `exec` paused for all agents while a human holds control), plus the same component for pre-seeding logins. There is no toggle here: the desktop is turned on by starting the machine's client with `--desktop`.
 
 **Input while in control**
 
 - **Pointer.** Pointer events are mapped from the displayed size to 1280×800. The wheel maps to scroll.
-- **Keyboard.** Focus is trapped in the view. Printable text is taken from `beforeinput`/`input` events and sent as `type`, so non-US layouts and dead keys work. Only chords (a modifier plus a key) and non-printing keys come from `keydown`, translated to X keysyms.
+- **Keyboard.** Focus is trapped in the view; Ctrl+Alt+Shift gives it back to the page. Printable text is taken from `beforeinput`/`input` events and sent as `type`, so non-US layouts and dead keys work. Only chords (a modifier plus a key) and non-printing keys come from `keydown`, translated to X keysyms. On a Mac, Cmd+C/X/V/A/Z/L go as the Ctrl chords and Option+letter types its composed character.
 - **Browser-reserved chords.** A toolbar sends chords the local browser would otherwise take: Ctrl+W, Ctrl+T, Ctrl+L and Super.
 
 **Clipboard, both ways**

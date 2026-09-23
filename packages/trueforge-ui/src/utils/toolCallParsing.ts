@@ -307,8 +307,6 @@ function readPoint(value: unknown): string | undefined {
   return typeof x === 'number' && typeof y === 'number' ? `(${String(x)}, ${String(y)})` : undefined;
 }
 
-const TYPED_PREVIEW_LENGTH = 40;
-
 /** One line saying what a desktop tool call did, for its card title. */
 export function describeComputerAction(toolName: string, argsText: string | undefined): string {
   const args = parseArgsRecord(argsText);
@@ -323,9 +321,10 @@ export function describeComputerAction(toolName: string, argsText: string | unde
       return at === undefined ? `${count}${button}` : `${count}${button} at ${at}`;
     }
     case 'computer_type': {
+      // Typed text is often a password or a code, so the title only counts it.
       if (typeof args.text !== 'string') return 'Type';
-      const text = args.text.length > TYPED_PREVIEW_LENGTH ? `${args.text.slice(0, TYPED_PREVIEW_LENGTH)}…` : args.text;
-      return `Type “${text}”`;
+      const count = Array.from(args.text).length;
+      return `Typed ${String(count)} ${count === 1 ? 'character' : 'characters'}`;
     }
     case 'computer_key':
       return typeof args.keys === 'string' ? `Press ${args.keys}` : 'Press a key';

@@ -478,9 +478,42 @@ describe('ComputerSettings desktop tab', () => {
     expect(screen.getByText('The desktop is not running: no Xvfb')).toBeInTheDocument();
   });
 
+  it('wires the tabs to their panels and moves between them with the arrow keys', async () => {
+    renderSection({ listComputers: async () => [ONLINE] }, { computerDesktop: desktopServer() });
+    fireEvent.click(await screen.findByText('office-box'));
+    const details = screen.getByRole('tab', { name: 'Details' });
+    const desktop = screen.getByRole('tab', { name: 'Desktop' });
+    expect(details).toHaveAttribute('tabindex', '0');
+    expect(desktop).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tabpanel', { name: 'Details' })).toHaveAttribute(
+      'id',
+      details.getAttribute('aria-controls'),
+    );
+
+    fireEvent.keyDown(details, { key: 'ArrowRight' });
+    expect(desktop).toHaveAttribute('aria-selected', 'true');
+    expect(desktop).toHaveFocus();
+    expect(desktop).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tabpanel', { name: 'Desktop' })).toHaveAttribute(
+      'id',
+      desktop.getAttribute('aria-controls'),
+    );
+
+    fireEvent.keyDown(desktop, { key: 'ArrowRight' });
+    expect(details).toHaveAttribute('aria-selected', 'true');
+    expect(details).toHaveFocus();
+    fireEvent.keyDown(details, { key: 'End' });
+    expect(desktop).toHaveFocus();
+    fireEvent.keyDown(desktop, { key: 'Home' });
+    expect(details).toHaveFocus();
+    fireEvent.keyDown(details, { key: 'ArrowLeft' });
+    expect(desktop).toHaveFocus();
+  });
+
   it('has no Desktop tab without the desktop port', async () => {
     renderSection({ listComputers: async () => [ONLINE] });
     fireEvent.click(await screen.findByText('office-box'));
     expect(screen.queryByRole('tab', { name: 'Desktop' })).toBeNull();
+    expect(screen.queryByRole('tabpanel')).toBeNull();
   });
 });
