@@ -28,7 +28,7 @@ Everything a model produced is escaped before it reaches a block, argument summa
 credentials recursively and by value shape, and non-JSON arguments are never shown.
 
 Who approved or denied is recorded in a new `integration_decision` table, one row per held turn,
-readable through `GET /api/v1/settings/integrations/{integration_id}/decisions`. It is its own
+readable through `GET /api/v1/integrations/{integration_id}/decisions`. It is its own
 table because the dedupe log is pruned at 24 hours, and it is not session metadata because any
 tenant user can rewrite that. Answers to questions are not recorded: anyone in the thread may
 give one.

@@ -85,6 +85,8 @@ The admin gate goes away. Each route checks access the way schedules do:
 - **create:** the caller must be able to manage the named agent,
 - **get / update / delete / app-manifest / decisions:** the creator or a manager of the integration's agent.
 
+The UI enables Add, Save and Disconnect only for callers who can manage the agent. That is stricter than the API, which also lets the integration's creator and admins edit it; we accept the gap as the conservative choice.
+
 The run-as model is unchanged: turns run as `created_by_subject`. That subject is now an agent manager rather than necessarily an admin, so the risk in the Slack plan's Section 6 reads "the bot acts with the access of the agent manager who connected it". Allowed channels and the approver allowlist remain the mitigation.
 
 ### 2.6 Channel runtime
