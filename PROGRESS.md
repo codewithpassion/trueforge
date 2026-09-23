@@ -4,6 +4,33 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 39 — Phase 9a-2: images in tool results, plus integration with 9b (2026-09-24)
+
+**Goal:** Ship phase 9a-2 of `docs/remote-desktop-plan.md` (§5.2) so tools can return images, and wire the 9b `computer_*` tools to return real screenshots.
+
+**What we did:**
+
+- **Content model.** Tool message content is now always `ToolContentPart[]` (`text` | `image {file_id, media_type, width, height}`). `normalizeToolContent` runs at every read boundary: the Postgres/SQLite/D1/InMemory stores, context replay, sub-agent completions, Redis live replay, and the Workers `turnEventWire` decode. The harness owns `LLMRequestMessage` at the ILLM boundary.
+- **Write path.** `executeToolCalls` sniffs the header (PNG/JPEG/GIF/WebP, dimensions read from the header, `image/jpg` treated as jpeg) and stores the image in the session file store. Limits: 3.75 MiB per image, at most 8000 px per side.
+- **Providers.** `VercelAILLM` emits ai@7 `{type:'content', value:[text, file]}` for anthropic, openai Responses and google. openai-compatible, moonshot and alibaba get a text stub. When more than 2N images are live, the oldest are stubbed down to N (N=5) in one batch, which keeps the Anthropic cache prefix stable. Each request has a 20 MiB base64 budget, images are cached per turn, and they count toward the context estimate.
+- **Computer tools.** They return real screenshots through `toolImageResultResponse`. The desktop instructions warn when the provider can't take images.
+- **SDK.** Regenerated with a major changeset: `tool.response` content is a list of parts. It also adds `sandbox.desktop`, the `desktop` capability, and audit op `desktop`.
+- **Reviews.** 0 blockers, 3 majors, all fixed: no chat thumbnails (deliberately deferred to the 9c UI step), one bad image could brick a session, and the server wiring had no end-to-end test. The re-review of the fixes plus the 9b integration found two more wedge paths, no pixel cap and no per-request byte cap. Both fixed in `83bdf790`.
+- **Shipped.** Landed on `dom/main` at `83bdf790` and deployed as Workers version `27227fd1` (no migration).
+
+**Lessons learned:**
+
+- Anything replayed on every request, like images in history, needs every provider limit enforced at write time. Otherwise one bad item wedges the session for good.
+- The first review fixed the per-image size and missed pixel dimensions and total request bytes. Every provider limit needs its own check.
+- The 9b note that the UI drops `sandbox.desktop` on save was wrong: the SDK passes unknown keys through. Carried-over claims like that should be checked with a test before anyone plans work around them.
+
+**Avoid next time:**
+
+- Don't add a replayed input type without listing each provider limit (bytes, pixels, count, per-request total) and checking all of them at write time.
+- Don't let an image lookup failure fail the turn. Fall back to the stub.
+- Don't repeat a "known bug" from an earlier cycle without reproducing it.
+- Next: 9c server merge (takeover flow and desktop routes, in progress), SDK regen, then the 9c UI (Screen page/panel, settings Desktop tab, takeover card, computer tool cards and thumbnails), then a live browser test.
+
 ## Cycle 38 — Phase 9b: desktop on the daemon, agent computer tools, agent lease (2026-09-24)
 
 **Goal:** Ship phase 9b of `docs/remote-desktop-plan.md`: the daemon runs a desktop, and agents drive it through `computer_*` tools while holding a turn-scoped lease.
