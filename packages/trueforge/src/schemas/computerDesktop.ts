@@ -128,14 +128,17 @@ export const CancelDesktopTakeoverRequestSchema = z
   .strict()
   .openapi('CancelDesktopTakeoverRequest');
 
+export const DesktopTakeoverResultSchema = z
+  .enum(['resumed', 'already_answered', 'not_pending', 'resume_failed'])
+  .describe(
+    '`resumed`: the agent continues. `already_answered`: answered elsewhere. `not_pending`: nothing was waiting. `resume_failed`: the session could not continue and is no longer listed.',
+  )
+  .openapi('DesktopTakeoverResult');
+
 export const DesktopTakeoverAnswerSchema = z
   .object({
     session_id: z.string(),
-    result: z
-      .enum(['resumed', 'already_answered', 'not_pending', 'resume_failed'])
-      .describe(
-        '`resumed`: the agent continues. `already_answered`: answered elsewhere. `not_pending`: nothing was waiting. `resume_failed`: the session could not continue and is no longer listed.',
-      ),
+    result: DesktopTakeoverResultSchema,
     message: z.string().describe('What happened, for the person who answered.'),
   })
   .openapi('DesktopTakeoverAnswer');
