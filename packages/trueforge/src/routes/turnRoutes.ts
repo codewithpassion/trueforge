@@ -228,6 +228,11 @@ Use \`previous_turn_id\` to chain to the session's last turn (defaults to \`auto
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'Session, prior turn, or referenced agent not found.',
     },
+    409: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description:
+        'Code `already_answered`: a tool response continuing the session tip lost to another answer of the same pending call, or the tip is still running.',
+    },
     412: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'Requested action cannot be performed on the session because it is no longer usable.',

@@ -6,11 +6,23 @@ import type { IComputerStore } from '../db/computerStore';
 import type { ComputerRelayStatus, RelayRequestInput, RequestOutcome } from './protocol';
 import type { RateLimiter } from './rateLimit';
 
+/** A session whose tip turn waits for a person to take over this computer's desktop. */
+export interface TakeoverPointer {
+  session_id: string;
+  turn_id: string;
+}
+
 /** The relay calls the API and the provider make, narrowed so a test can stand one in. */
 export interface ComputerRelayPort {
   request(input: RelayRequestInput): Promise<RequestOutcome>;
   /** Drops the desktop lease when this turn of this session holds it; a no-op otherwise. */
   releaseLease(input: { tenant_id: string; session_id: string; turn_id: string }): Promise<{ released: boolean }>;
+  /** Notes that the session waits on a takeover since this turn, replacing its earlier pointer. */
+  recordTakeoverPointer(input: TakeoverPointer & { tenant_id: string }): Promise<{ recorded: boolean }>;
+  /** Forgets the session's pointer, but only while it still names this turn. */
+  clearTakeoverPointer(input: TakeoverPointer & { tenant_id: string }): Promise<{ cleared: boolean }>;
+  /** Oldest first. Pointers are only hints: the session tip decides whether one still waits. */
+  listTakeoverPointers(input: { tenant_id: string }): Promise<TakeoverPointer[]>;
   /** Marks the machine revoked and closes its socket. Terminal for the client. */
   revoke(): Promise<{ closed: number }>;
   /** Closes the socket without revoking, so a re-enrolled machine can come back. */

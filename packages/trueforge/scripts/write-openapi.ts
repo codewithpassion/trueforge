@@ -84,6 +84,7 @@ const app = createServerApp({
   sandboxIntegration: undefined,
   // Routes register regardless; the spec is the same whether or not a runtime serves them.
   computers: undefined,
+  humanTakeovers: undefined,
   clientCertificateMiddleware: undefined,
   sessionImport: undefined,
   resolveAgentStore: () => agentStore,

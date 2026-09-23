@@ -725,7 +725,7 @@ async function startDesktopTurn({
       onTurnDrained: withHook
         ? createTurnDrainedHook({
             deliver: () => Promise.resolve(),
-            desktop: { computers: workersComputersService(env), leases: desktopLeases },
+            desktop: { computers: workersComputersService(env), leases: desktopLeases, agentStore: stores.agentStore },
             logger,
           })
         : undefined,

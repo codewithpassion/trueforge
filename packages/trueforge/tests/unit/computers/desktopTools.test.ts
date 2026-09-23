@@ -62,6 +62,9 @@ function providerWith({
         );
       },
       releaseLease: () => Promise.reject(new Error('not used')),
+      recordTakeoverPointer: () => Promise.reject(new Error('not used')),
+      clearTakeoverPointer: () => Promise.reject(new Error('not used')),
+      listTakeoverPointers: () => Promise.reject(new Error('not used')),
       revoke: () => Promise.reject(new Error('not used')),
       disconnect: () => Promise.reject(new Error('not used')),
       destroy: () => Promise.reject(new Error('not used')),
@@ -206,25 +209,40 @@ describe('desktop tools', () => {
     });
   });
 
-  it('tells the model to stop and tell the user when a person is in control', async () => {
+  it('tells the model to ask for a takeover and stop, not retry, when a person is in control', async () => {
     const { provider } = providerWith({ refuse: { desktop_screenshot: refused('human_in_control', 'paused') } });
     const result = text(await tool(desktopProviderTools(provider).tools, 'computer_screenshot').execute({}));
     expect(result).toEqual({
       text:
         'A person is using the desktop of this computer, so desktop actions and commands are paused. ' +
-        'Stop and tell the user rather than retrying.',
+        'Do not retry: if you need them to finish a step for you, call request_human_takeover with what they should do, then stop.',
       isError: true,
     });
   });
 
-  it('never names a tool the model has not got', () => {
+  it('offers request_human_takeover as a client-side tool beside the desktop tools, and names it only then', async () => {
     for (const requireApproval of [false, true]) {
       const offered = desktopProviderTools(providerWith({ requireApproval }).provider);
-      expect(offered.instructions).not.toContain('request_human_takeover');
-      for (const candidate of offered.tools) {
-        expect(candidate.description).not.toContain('request_human_takeover');
+      expect(offered.instructions).toContain('call request_human_takeover');
+      expect(offered.clientSideToolSets).toHaveLength(1);
+      const takeover = offered.clientSideToolSets[0];
+      if (takeover === undefined) {
+        throw new Error('expected the takeover tool set');
       }
+      const listed = await takeover.listTools();
+      if (!('result' in listed)) {
+        throw new Error('expected a tool list');
+      }
+      expect(listed.result.tools.map(candidate => candidate.name)).toEqual(['request_human_takeover']);
+      const info = await takeover.toolCallInfo({ name: 'request_human_takeover', arguments: { reason: 'log in' } });
+      expect(info.is_client_side).toBe(true);
     }
+
+    const down = desktopProviderTools(
+      providerWith({ capabilities: { ...DESKTOP, desktop: false, desktop_unavailable_reason: 'no X' } }).provider,
+    );
+    expect(down.clientSideToolSets).toEqual([]);
+    expect(down.instructions).not.toContain('request_human_takeover');
   });
 
   it('says the action already ran when only the screenshot after it was refused', async () => {

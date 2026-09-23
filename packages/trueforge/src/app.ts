@@ -50,6 +50,7 @@ import {
   renderInstallScript,
 } from './computers/installScript';
 import type { ComputersService } from './computers/service';
+import type { HumanTakeoverService } from './computers/takeover';
 import configuration, {
   getPublicBaseUrl,
   getPublicBaseUrlOrUndefined,
@@ -220,6 +221,8 @@ export interface ServerDeps<TTransaction> {
    * 404 and `GET /capabilities` reports computers off, which is the Node build until phase 8c.
    */
   computers: ComputersService | undefined;
+  /** Pending desktop takeovers and their hand-back; undefined exactly when `computers` is. */
+  humanTakeovers: HumanTakeoverService | undefined;
   /** Rejects requests without a verified client certificate; set only when mTLS is on. */
   clientCertificateMiddleware: MiddlewareHandler | undefined;
   /** Per-request store: DB git skills, or TrueFoundry registry catalog in TrueFoundry mode. */

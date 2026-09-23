@@ -102,6 +102,7 @@ export class TurnCompletionNotifier<TTransaction> {
           turn,
           turn_id: turnId,
           state: turnState,
+          agent: session.agent,
           interactive: deliveryIsInteractive(delivery),
         }),
       });
@@ -155,6 +156,7 @@ export class TurnCompletionNotifier<TTransaction> {
         turn,
         turn_id: turnId,
         state: turnState,
+        agent: session.agent,
         interactive: false,
       });
       const outcome = scheduleOutcome(turnState);

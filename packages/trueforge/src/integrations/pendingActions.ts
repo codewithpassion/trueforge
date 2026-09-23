@@ -8,6 +8,7 @@
 import type { TerminalTurnState, TurnHandle } from '@truefoundry/trueforge-core/agent-session';
 import { EventType } from '@truefoundry/trueforge-core/core/events/schema';
 import { z } from 'zod';
+import { REQUEST_HUMAN_TAKEOVER_TOOL, TAKEOVER_REASON_MAX_CHARS } from '../computers/requestHumanTakeover';
 
 /** The tool an agent asks a question with; its answer resumes the turn as a tool response. */
 export const ASK_USER_QUESTION_TOOL = 'ask_user_question';
@@ -64,18 +65,30 @@ export interface PendingQuestion {
   options: readonly string[];
 }
 
+/** A person was asked to take over the computer's desktop; the Screen page settles it, not a channel. */
+export interface PendingTakeoverRequest {
+  thread_id: string;
+  tool_call_id: string;
+  /** Cut to the tool's limit: client-side call arguments are never validated. */
+  reason: string;
+}
+
 /**
- * What one channel interaction can settle. Core refuses a resume that leaves any pending call
+ * What one interaction can settle. Core refuses a resume that leaves any pending call
  * unresolved, so a set that cannot be decided in one go is not offered at all: it reads as
  * `undefined` here and the channel posts a status line instead.
  */
 export type PendingAction =
-  { type: 'approval'; approvals: readonly PendingToolApproval[] } | { type: 'question'; question: PendingQuestion };
+  | { type: 'approval'; approvals: readonly PendingToolApproval[] }
+  | { type: 'question'; question: PendingQuestion }
+  | { type: 'takeover'; takeover: PendingTakeoverRequest };
 
 const AskUserQuestionArgumentsSchema = z.object({
   question: z.string().min(1),
   options: z.array(z.string().min(1)).default([]),
 });
+
+const TakeoverArgumentsSchema = z.object({ reason: z.string() });
 
 interface ResolvedToolCall {
   name: string;
@@ -235,6 +248,28 @@ function questionFrom(input: {
   };
 }
 
+function takeoverFrom(input: {
+  thread_id: string;
+  tool_call_id: string;
+  call: ResolvedToolCall;
+}): PendingTakeoverRequest | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input.call.argumentsJson);
+  } catch {
+    return undefined;
+  }
+  const requested = TakeoverArgumentsSchema.safeParse(parsed);
+  if (!requested.success) {
+    return undefined;
+  }
+  return {
+    thread_id: input.thread_id,
+    tool_call_id: input.tool_call_id,
+    reason: truncate(requested.data.reason.trim(), TAKEOVER_REASON_MAX_CHARS),
+  };
+}
+
 interface PendingRef {
   thread_id: string;
   tool_call_id: string;
@@ -297,16 +332,23 @@ export async function readPendingAction(input: {
     return { type: 'approval', approvals };
   }
 
-  // Exactly one client-side call, and it must be the question tool: a second one, or any other
-  // client tool, would be left unresolved by the answer.
+  // Exactly one client-side call, and it must be the question or the takeover tool: a second one,
+  // or any other client tool, would be left unresolved by the answer.
   const only = clientRefs.length === 1 ? clientRefs[0] : undefined;
   if (only === undefined) {
     return undefined;
   }
   const call = calls.get(only.tool_call_id);
-  if (call?.name !== ASK_USER_QUESTION_TOOL) {
-    return undefined;
+  switch (call?.name) {
+    case ASK_USER_QUESTION_TOOL: {
+      const question = questionFrom({ thread_id: only.thread_id, tool_call_id: only.tool_call_id, call });
+      return question === undefined ? undefined : { type: 'question', question };
+    }
+    case REQUEST_HUMAN_TAKEOVER_TOOL: {
+      const takeover = takeoverFrom({ thread_id: only.thread_id, tool_call_id: only.tool_call_id, call });
+      return takeover === undefined ? undefined : { type: 'takeover', takeover };
+    }
+    default:
+      return undefined;
   }
-  const question = questionFrom({ thread_id: only.thread_id, tool_call_id: only.tool_call_id, call });
-  return question === undefined ? undefined : { type: 'question', question };
 }

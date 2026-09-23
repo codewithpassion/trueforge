@@ -41,6 +41,9 @@ export function workersComputersService(
       return {
         request: input => stub.request(input),
         releaseLease: input => stub.releaseLease(input),
+        recordTakeoverPointer: input => stub.recordTakeoverPointer(input),
+        clearTakeoverPointer: input => stub.clearTakeoverPointer(input),
+        listTakeoverPointers: input => stub.listTakeoverPointers(input),
         revoke: () => stub.revoke(),
         disconnect: () => stub.disconnect(),
         destroy: () => stub.destroy(),

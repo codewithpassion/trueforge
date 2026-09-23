@@ -20,6 +20,7 @@ function modelMessage(content: ModelMessageEvent['content']): ModelMessageEvent 
 
 const COMPLETED_AT = '2026-09-16T00:00:00.000Z';
 const TURN_ID = 'turn-1';
+const AGENT = { type: 'reference', id: 'agent-1', name: 'desk' } as const;
 
 /** No pending action, so nothing reads back events. */
 const noEvents: Pick<TurnHandle, 'listEvents'> = turnEventReader([]);
@@ -30,6 +31,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: {
           status: 'done',
@@ -46,6 +48,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: {
           status: 'done',
@@ -65,6 +68,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: { status: 'done', output: null, required_actions: [], completed_at: COMPLETED_AT },
       }),
@@ -76,6 +80,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: {
           status: 'cancelled',
@@ -91,6 +96,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: { status: 'error', message: 'model timed out', completed_at: COMPLETED_AT },
       }),
@@ -124,6 +130,7 @@ describe('buildDeliveryContent', () => {
     const content = await buildDeliveryContent({
       turn: turnEventReader([narration]),
       turn_id: TURN_ID,
+      agent: AGENT,
       interactive: true,
       state: {
         status: 'done',
@@ -161,6 +168,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: { status: 'done', output: null, required_actions: [authRequired], completed_at: COMPLETED_AT },
       }),

@@ -208,7 +208,11 @@ export class SessionDO extends DurableObject {
           // Awaited inside `drained`, so the alarm invocation that holds the turn holds this too.
           onTurnDrained: createTurnDrainedHook({
             deliver: input => notifier.deliverForTurn(input),
-            desktop: { computers: workersComputersService(this.env), leases: this.#desktopLeases },
+            desktop: {
+              computers: workersComputersService(this.env),
+              leases: this.#desktopLeases,
+              agentStore: persistence.agentStore,
+            },
             logger: this.#logger,
           }),
         },

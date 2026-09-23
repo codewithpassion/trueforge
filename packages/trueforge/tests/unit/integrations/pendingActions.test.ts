@@ -1,6 +1,7 @@
 import type { TerminalTurnState } from '@truefoundry/trueforge-core/agent-session';
 import type { ModelMessageEvent } from '@truefoundry/trueforge-core/core/events/schema';
 import { EventType } from '@truefoundry/trueforge-core/core/events/schema';
+import { REQUEST_HUMAN_TAKEOVER_TOOL } from '../../../src/computers/requestHumanTakeover';
 import {
   ASK_USER_QUESTION_TOOL,
   readPendingAction,
@@ -320,6 +321,52 @@ describe('readPendingAction', () => {
     const pending = await readPendingAction({
       turn: turnEventReader([toolCallMessage([{ id: 'call-x', name: 'render_ui', args: '{}' }])]),
       state: heldOnResponse(['call-x']),
+    });
+
+    expect(pending).toBeUndefined();
+  });
+
+  it('reads a takeover request with its reason', async () => {
+    const pending = await readPendingAction({
+      turn: turnEventReader([
+        toolCallMessage([
+          {
+            id: 'call-t',
+            name: REQUEST_HUMAN_TAKEOVER_TOOL,
+            args: JSON.stringify({ reason: '  Log into the supplier portal as accounts@example.com  ' }),
+          },
+        ]),
+      ]),
+      state: heldOnResponse(['call-t']),
+    });
+
+    expect(pending).toEqual({
+      type: 'takeover',
+      takeover: {
+        thread_id: 'main',
+        tool_call_id: 'call-t',
+        reason: 'Log into the supplier portal as accounts@example.com',
+      },
+    });
+  });
+
+  it('cuts a takeover reason the model made too long, rather than dropping the request', async () => {
+    const pending = await readPendingAction({
+      turn: turnEventReader([
+        toolCallMessage([
+          { id: 'call-t', name: REQUEST_HUMAN_TAKEOVER_TOOL, args: JSON.stringify({ reason: 'r'.repeat(900) }) },
+        ]),
+      ]),
+      state: heldOnResponse(['call-t']),
+    });
+
+    expect(pending?.type === 'takeover' ? pending.takeover.reason.length : undefined).toBe(500);
+  });
+
+  it('is nothing for a takeover request without a reason', async () => {
+    const pending = await readPendingAction({
+      turn: turnEventReader([toolCallMessage([{ id: 'call-t', name: REQUEST_HUMAN_TAKEOVER_TOOL, args: '{}' }])]),
+      state: heldOnResponse(['call-t']),
     });
 
     expect(pending).toBeUndefined();

@@ -30,6 +30,13 @@ export const BUSY_CONVERSATION_NOTICE =
 export const APPROVAL_PENDING_NOTICE =
   'This thread is waiting on a tool approval — use the Approve or Deny buttons above.';
 
+/**
+ * What a conversation hears when it types while a person is needed on the computer: the answer
+ * comes from the Screen page, and a user message sent into the held thread would be refused.
+ */
+export const TAKEOVER_PENDING_NOTICE =
+  'This thread is waiting for a person to finish a step on the computer — open the agent’s Screen page, take control, then hand it back.';
+
 export type IntegrationRouteResult =
   | { type: 'started'; turn_id: string; session_id: string }
   /** The channel replayed an event that was already accepted; nothing ran. */
@@ -160,8 +167,9 @@ export class IntegrationRouter<TTransaction> {
     // answer in free text. A thread waiting on an approval is not: a decision needs the buttons,
     // and sending a user message into a thread that is holding tool calls is refused anyway.
     const pending = tip === undefined ? undefined : await this.#pendingAction(tip);
-    if (pending?.type === 'approval' && tip !== undefined) {
-      this.#notice({ integration, adapter, event, session_id: session.session_id, text: APPROVAL_PENDING_NOTICE });
+    if ((pending?.type === 'approval' || pending?.type === 'takeover') && tip !== undefined) {
+      const text = pending.type === 'approval' ? APPROVAL_PENDING_NOTICE : TAKEOVER_PENDING_NOTICE;
+      this.#notice({ integration, adapter, event, session_id: session.session_id, text });
       return { type: 'busy', running_turn_id: tip.id };
     }
     const question = pending?.type === 'question' ? pending.question : undefined;

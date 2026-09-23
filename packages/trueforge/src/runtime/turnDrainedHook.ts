@@ -3,6 +3,8 @@ import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/err
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { ComputersService } from '../computers/service';
 import type { TurnDesktopLeases } from '../computers/turnDesktopLeases';
+import type { IAgentStore } from '../db/agentStore';
+import { readPendingAction } from '../integrations/pendingActions';
 import type { TurnDrainedHook } from './turnRunner';
 
 /**
@@ -30,8 +32,49 @@ export async function releaseComputerLeases({
 }
 
 /**
- * Everything that runs when a turn drains: result delivery, then the desktop leases. Each step is
- * isolated, so a delivery that fails still releases the leases.
+ * Tells the agent's computer that this session waits for a person, when the turn finished asking
+ * for a takeover. Cancelled and failed turns asked nothing anyone can answer, so they record none.
+ * The computer is the agent's current one: the turn may have asked before touching the desktop.
+ */
+export async function recordTakeoverPointer({
+  computers,
+  agentStore,
+  session,
+  turn_id,
+}: {
+  computers: Pick<ComputersService, 'relay'>;
+  agentStore: Pick<IAgentStore, 'getAgent'>;
+  session: Pick<SessionHandle, 'tenant_id' | 'session_id' | 'agent' | 'getTurn'>;
+  turn_id: string;
+}): Promise<void> {
+  // Inline agents cannot use a computer, so they never offer the tool.
+  if (session.agent.type !== 'reference') {
+    return;
+  }
+  const turn = await session.getTurn(turn_id);
+  const state = turn?.state;
+  if (turn === undefined || state?.status !== 'done' || state.required_actions.length === 0) {
+    return;
+  }
+  const pending = await readPendingAction({ turn, state });
+  if (pending?.type !== 'takeover') {
+    return;
+  }
+  const agent = await agentStore.getAgent({ tenant_id: session.tenant_id, id: session.agent.id });
+  const computerId = agent?.manifest.config.sandbox.computer_id;
+  if (computerId === undefined) {
+    return;
+  }
+  await computers.relay(computerId).recordTakeoverPointer({
+    tenant_id: session.tenant_id,
+    session_id: session.session_id,
+    turn_id,
+  });
+}
+
+/**
+ * Everything that runs when a turn drains: result delivery, then the desktop leases, then a
+ * pending takeover. Each step is isolated, so a delivery that fails still releases the leases.
  */
 export function createTurnDrainedHook({
   deliver,
@@ -40,7 +83,14 @@ export function createTurnDrainedHook({
 }: {
   deliver: TurnDrainedHook;
   /** Undefined on a runtime without remote computers, where no lease can be held. */
-  desktop: { computers: Pick<ComputersService, 'relay'>; leases: TurnDesktopLeases } | undefined;
+  desktop:
+    | {
+        computers: Pick<ComputersService, 'relay'>;
+        leases: TurnDesktopLeases;
+        /** Finds the computer a takeover request belongs to. */
+        agentStore: Pick<IAgentStore, 'getAgent'>;
+      }
+    | undefined;
   logger: Logger;
 }): TurnDrainedHook {
   const steps: { name: string; run: TurnDrainedHook }[] = [{ name: 'deliver', run: deliver }];
@@ -48,6 +98,10 @@ export function createTurnDrainedHook({
     steps.push({
       name: 'release_computer_leases',
       run: input => releaseComputerLeases({ computers: desktop.computers, desktopLeases: desktop.leases, ...input }),
+    });
+    steps.push({
+      name: 'record_takeover_pointer',
+      run: input => recordTakeoverPointer({ computers: desktop.computers, agentStore: desktop.agentStore, ...input }),
     });
   }
   return async input => {
