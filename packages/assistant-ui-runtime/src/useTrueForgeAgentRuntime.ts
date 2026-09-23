@@ -159,6 +159,19 @@ function useTrueForgeAgentRuntimeImpl(
     [server, sessionId, sandboxId, resolveSandboxIdForTurn],
   );
 
+  const getSessionFile = useCallback(
+    async (fileId: string) => {
+      if (server.getSessionFile == null) {
+        throw new Error('Reading a session file requires AgentChatServer.getSessionFile.');
+      }
+      if (sessionId == null) {
+        throw new Error('Reading a session file requires a persisted session.');
+      }
+      return await server.getSessionFile({ sessionId, fileId });
+    },
+    [server, sessionId],
+  );
+
   const draftExtras = useMemo(() => {
     if (agent.mode !== 'draft') {
       return null;
@@ -190,6 +203,7 @@ function useTrueForgeAgentRuntimeImpl(
       respondToToolResponse,
       resumeMcpAuth,
       downloadSandboxFile,
+      getSessionFile,
       cancel,
       // resetFromTurn/branchFromTurn/sendTurn already report via onError.
       resetFromTurn: (turnId: string) => resetFromTurn(turnId).catch(() => undefined),

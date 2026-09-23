@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 
+import { DesktopScreen } from '@/atoms/desktop/DesktopScreen.js';
 import { cn } from '@/atoms/lib/cn.js';
 import { auiInputClass } from '@/atoms/lib/inputClasses.js';
 import { Button } from '@/atoms/primitives/Button.js';
 import { CenteredModal } from '@/atoms/primitives/CenteredModal.js';
 import { Switch } from '@/atoms/primitives/Switch.js';
 import { Icon } from '@/icons/Icon.js';
-import { useCatalogServer, useOptionalServer } from '@/server/ServerContext.js';
+import { useCatalogServer, useOptionalComputerDesktopServer, useOptionalServer } from '@/server/ServerContext.js';
 import type { ComputerAuditEntry, ComputerBase, ComputerCatalogServer, ComputerEnrollment } from '@/server/types.js';
 import { clientReportedText } from '@/utils/clientReportedText.js';
 import { getErrorMessage } from '@/utils/getErrorMessage.js';
@@ -160,6 +161,27 @@ function AuditCommand({ command }: { command: string }) {
   );
 }
 
+function DesktopWarning() {
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-warning-bg/30 bg-warning-bg/10 px-3 py-2 text-sm text-text-primary">
+      <Icon name="triangle-exclamation" className="mt-0.5 size-4 shrink-0 text-warning-bg" />
+      <ul className="flex list-disc flex-col gap-1 pl-4">
+        <li>
+          This screen is shared. Every desktop agent on this computer uses it, and anyone who may use one of those
+          agents can watch it and take control — including browser sessions someone else logged in.
+        </li>
+        <li>While a person holds control, no agent on this computer can run commands, desktop or not.</li>
+        <li>
+          Processes an agent started earlier keep running during a takeover and could watch the screen or the clipboard.
+          Attach desktop agents only where that is acceptable.
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+type DetailTab = 'details' | 'desktop';
+
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex justify-between gap-4 py-1 text-sm">
@@ -202,6 +224,8 @@ const ComputerSettings = () => {
   // The section only renders when the host supplied this port (see SettingsBuilder/index.tsx).
   const computerCatalog: ComputerCatalogServer | undefined = catalog.computerCatalog;
   const server = useOptionalServer();
+  const desktopServer = useOptionalComputerDesktopServer();
+  const [detailTab, setDetailTab] = useState<DetailTab>('details');
 
   const [computers, setComputers] = useState<ComputerBase[]>([]);
   const [loading, setLoading] = useState(true);
@@ -311,6 +335,7 @@ const ComputerSettings = () => {
 
   const openDetail = (computer: ComputerBase) => {
     setSelectedId(computer.id);
+    setDetailTab('details');
     setDetailName(computer.name);
     setDetailRequireApproval(computer.requireApproval);
     setError(null);
@@ -494,271 +519,335 @@ const ComputerSettings = () => {
           </p>
         ) : null}
 
-        <div className="mt-4 flex-1 overflow-y-auto pb-1">
-          <div className="flex flex-col gap-5">
-            <SecurityNote />
+        {desktopServer === null ? null : (
+          <div role="tablist" aria-label="Computer" className="mt-3 flex gap-1 border-b border-border">
+            {(
+              [
+                { id: 'details', label: 'Details' },
+                { id: 'desktop', label: 'Desktop' },
+              ] satisfies { id: DetailTab; label: string }[]
+            ).map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={detailTab === tab.id}
+                className={cn(
+                  'relative h-9 px-3 text-sm font-medium text-text-secondary',
+                  'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus-ring',
+                  detailTab === tab.id &&
+                    'text-primary-button-bg after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary-button-bg',
+                )}
+                onClick={() => {
+                  setDetailTab(tab.id);
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
 
-            <section
-              aria-labelledby="computer-facts-heading"
-              className="rounded-xl border border-border bg-card-bg p-4"
-            >
-              <h4 id="computer-facts-heading" className="text-[0.8125rem] font-semibold uppercase text-text-secondary">
-                What the machine reports
-              </h4>
-              <div className="mt-3 divide-y divide-border">
-                <DetailRow label="Hostname">{reported(selected.hostname, 'not reported yet')}</DetailRow>
-                <DetailRow label="OS">
-                  {selected.os === null
-                    ? 'not reported yet'
-                    : `${reported(selected.os, '')}${selected.arch === null ? '' : ` / ${reported(selected.arch, '')}`}`}
-                </DetailRow>
-                <DetailRow label="Client version">{reported(selected.agentVersion, 'not reported yet')}</DetailRow>
-                <DetailRow label="Runs commands as">{reported(selected.runAsUser, 'not reported yet')}</DetailRow>
-                <DetailRow label="Detected tools">{toolsLabel(selected.tools)}</DetailRow>
-                <DetailRow label="Last seen">{formatInstant(selected.lastSeenAt)}</DetailRow>
-              </div>
-            </section>
-
-            <form onSubmit={handleSaveDetail} className="rounded-xl border border-border bg-card-bg p-4">
-              <h4 className="text-[0.8125rem] font-semibold uppercase text-text-secondary">Settings</h4>
-              <div className="mt-3 flex flex-col gap-4">
-                <div>
-                  <label
-                    htmlFor="computer-name"
-                    className="mb-2 block text-xs font-semibold uppercase tracking-wide text-text-secondary"
-                  >
-                    Name
-                  </label>
-                  <input
-                    id="computer-name"
-                    value={detailName}
-                    disabled={revoked}
-                    onChange={event => {
-                      setDetailName(event.target.value);
-                    }}
-                    className={auiInputClass('h-11 disabled:opacity-60')}
-                  />
-                </div>
-                <div className="flex items-start justify-between gap-4">
-                  <span>
-                    <span className="block text-sm font-medium text-text-primary">Ask before each command</span>
-                    <span className="mt-0.5 block text-xs text-text-secondary">
-                      Stored now, enforced from a later release — this server records the setting but does not yet pause
-                      a command for approval.
-                    </span>
-                  </span>
-                  <Switch
-                    checked={detailRequireApproval}
-                    disabled={busy || revoked}
-                    onCheckedChange={setDetailRequireApproval}
-                    aria-label="Ask before each command"
-                  />
-                </div>
-                <div className="flex items-center justify-end gap-3">
-                  {revoked ? (
-                    <span className="text-xs text-text-secondary">
-                      This computer is revoked, so there is nothing left for a setting to apply to.
-                    </span>
-                  ) : null}
-                  <Button.Primary type="submit" disabled={busy || revoked}>
-                    Save
-                  </Button.Primary>
-                </div>
-              </div>
-            </form>
-
-            <section
-              aria-labelledby="computer-access-heading"
-              className="rounded-xl border border-border bg-card-bg p-4"
-            >
-              <h4 id="computer-access-heading" className="text-[0.8125rem] font-semibold uppercase text-text-secondary">
-                Agents allowed to use it
-              </h4>
-              <p className="mt-2 text-sm text-text-secondary">
-                Granting an agent trusts everyone who can edit that agent: they can point it at this machine and change
-                what it is told to do. Only saved, named agents can be granted.
-              </p>
-              {accessError ? (
-                <p className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-failure-bg/30 bg-failure-bg/10 px-3 py-2 text-sm text-failure-bg">
-                  <span>{accessError}</span>
-                  {accessFailed ? (
-                    <Button.Secondary
-                      size="small"
-                      type="button"
-                      onClick={() => {
-                        setAccessEpoch(epoch => epoch + 1);
-                      }}
-                    >
-                      <Icon name="rotate-right" size="1rem" className="mr-1" />
-                      Try again
-                    </Button.Secondary>
-                  ) : null}
+        {desktopServer !== null && detailTab === 'desktop' ? (
+          <div className="mt-4 flex flex-1 flex-col gap-4 overflow-y-auto pb-1">
+            <DesktopWarning />
+            {selected.tools?.desktop === true ? (
+              <>
+                <p className="text-sm text-text-secondary">
+                  Log in to accounts here before any agent runs. With no request pending, Hand back only releases
+                  control.
                 </p>
-              ) : null}
-              <ul className="mt-3 flex flex-wrap gap-2">
-                {agentNames.map(name => (
-                  <li
-                    key={name}
-                    className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-text-primary"
-                  >
-                    {name}
-                    <button
-                      type="button"
-                      aria-label={`Remove ${name}`}
-                      disabled={busy}
-                      className="text-text-secondary transition-colors hover:text-text-primary disabled:opacity-40"
-                      onClick={() => {
-                        handleSaveAccess(agentNames.filter(granted => granted !== name));
-                      }}
-                    >
-                      <Icon name="xmark" className="size-3.5" />
-                    </button>
-                  </li>
-                ))}
-                {agentNames.length === 0 ? (
-                  <li className="text-sm text-text-secondary">
-                    {accessLoading
-                      ? 'Loading the allowlist…'
-                      : accessFailed
-                        ? 'The allowlist could not be read, so what holds this computer is unknown.'
-                        : 'No agents granted.'}
-                  </li>
-                ) : null}
-              </ul>
-              <datalist id="computer-agent-names">
-                {knownAgentNames.map(name => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-              <div className="mt-3 flex gap-2">
-                <input
-                  aria-label="Agent name"
-                  list="computer-agent-names"
-                  value={agentDraft}
-                  onChange={event => {
-                    setAgentDraft(event.target.value);
-                  }}
-                  placeholder="release-bot"
-                  className={auiInputClass('h-11')}
-                />
-                <Button.Secondary
-                  type="button"
-                  disabled={busy || accessFailed || agentDraft.trim() === ''}
-                  onClick={() => {
-                    const name = agentDraft.trim();
-                    if (name === '' || agentNames.includes(name)) return;
-                    handleSaveAccess([...agentNames, name]);
-                  }}
-                >
-                  <Icon name="plus" size="1rem" className="mr-1" />
-                  Grant
-                </Button.Secondary>
-              </div>
-            </section>
-
-            <section
-              aria-labelledby="computer-audit-heading"
-              className="rounded-xl border border-border bg-card-bg p-4"
-            >
-              <h4 id="computer-audit-heading" className="text-[0.8125rem] font-semibold uppercase text-text-secondary">
-                Activity
-              </h4>
-              <p className="mt-2 text-sm text-text-secondary">
-                Newest first. Commands are stored in clear for 30 days, so a secret typed into one is readable here
-                until it is swept.
+                <DesktopScreen key={selected.id} server={desktopServer} computerId={selected.id} />
+              </>
+            ) : (
+              <p className="text-sm text-text-secondary">
+                {selected.tools === null
+                  ? 'The machine has not reported yet, so its desktop is unknown.'
+                  : selected.tools.desktopUnavailableReason === null
+                    ? 'This machine does not run a desktop. Start its client with --desktop to turn one on.'
+                    : `The desktop is not running: ${clientReportedText(selected.tools.desktopUnavailableReason)}`}
               </p>
-              {audit.length === 0 ? (
-                <p className="mt-3 text-sm text-text-secondary">Nothing has run on this computer yet.</p>
-              ) : (
-                <ul className="mt-3 divide-y divide-border">
-                  {audit.map(entry => (
-                    <li key={entry.id} className="flex flex-col gap-1 py-3">
-                      <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
-                        <span>{formatInstant(entry.createdAt)}</span>
-                        <span className="font-medium text-text-primary">{entry.op}</span>
-                        <span>{entry.sessionId === null ? 'no session' : `session ${entry.sessionId}`}</span>
-                        <span>exit {entry.exitCode === null ? 'unknown' : String(entry.exitCode)}</span>
-                        <span>{entry.outcome}</span>
-                        <span>{entry.durationMs} ms</span>
+            )}
+          </div>
+        ) : (
+          <div className="mt-4 flex-1 overflow-y-auto pb-1">
+            <div className="flex flex-col gap-5">
+              <SecurityNote />
+
+              <section
+                aria-labelledby="computer-facts-heading"
+                className="rounded-xl border border-border bg-card-bg p-4"
+              >
+                <h4
+                  id="computer-facts-heading"
+                  className="text-[0.8125rem] font-semibold uppercase text-text-secondary"
+                >
+                  What the machine reports
+                </h4>
+                <div className="mt-3 divide-y divide-border">
+                  <DetailRow label="Hostname">{reported(selected.hostname, 'not reported yet')}</DetailRow>
+                  <DetailRow label="OS">
+                    {selected.os === null
+                      ? 'not reported yet'
+                      : `${reported(selected.os, '')}${selected.arch === null ? '' : ` / ${reported(selected.arch, '')}`}`}
+                  </DetailRow>
+                  <DetailRow label="Client version">{reported(selected.agentVersion, 'not reported yet')}</DetailRow>
+                  <DetailRow label="Runs commands as">{reported(selected.runAsUser, 'not reported yet')}</DetailRow>
+                  <DetailRow label="Detected tools">{toolsLabel(selected.tools)}</DetailRow>
+                  <DetailRow label="Last seen">{formatInstant(selected.lastSeenAt)}</DetailRow>
+                </div>
+              </section>
+
+              <form onSubmit={handleSaveDetail} className="rounded-xl border border-border bg-card-bg p-4">
+                <h4 className="text-[0.8125rem] font-semibold uppercase text-text-secondary">Settings</h4>
+                <div className="mt-3 flex flex-col gap-4">
+                  <div>
+                    <label
+                      htmlFor="computer-name"
+                      className="mb-2 block text-xs font-semibold uppercase tracking-wide text-text-secondary"
+                    >
+                      Name
+                    </label>
+                    <input
+                      id="computer-name"
+                      value={detailName}
+                      disabled={revoked}
+                      onChange={event => {
+                        setDetailName(event.target.value);
+                      }}
+                      className={auiInputClass('h-11 disabled:opacity-60')}
+                    />
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <span>
+                      <span className="block text-sm font-medium text-text-primary">Ask before each command</span>
+                      <span className="mt-0.5 block text-xs text-text-secondary">
+                        Stored now, enforced from a later release — this server records the setting but does not yet
+                        pause a command for approval.
                       </span>
-                      <AuditCommand command={entry.command} />
+                    </span>
+                    <Switch
+                      checked={detailRequireApproval}
+                      disabled={busy || revoked}
+                      onCheckedChange={setDetailRequireApproval}
+                      aria-label="Ask before each command"
+                    />
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    {revoked ? (
+                      <span className="text-xs text-text-secondary">
+                        This computer is revoked, so there is nothing left for a setting to apply to.
+                      </span>
+                    ) : null}
+                    <Button.Primary type="submit" disabled={busy || revoked}>
+                      Save
+                    </Button.Primary>
+                  </div>
+                </div>
+              </form>
+
+              <section
+                aria-labelledby="computer-access-heading"
+                className="rounded-xl border border-border bg-card-bg p-4"
+              >
+                <h4
+                  id="computer-access-heading"
+                  className="text-[0.8125rem] font-semibold uppercase text-text-secondary"
+                >
+                  Agents allowed to use it
+                </h4>
+                <p className="mt-2 text-sm text-text-secondary">
+                  Granting an agent trusts everyone who can edit that agent: they can point it at this machine and
+                  change what it is told to do. Only saved, named agents can be granted.
+                </p>
+                {accessError ? (
+                  <p className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-failure-bg/30 bg-failure-bg/10 px-3 py-2 text-sm text-failure-bg">
+                    <span>{accessError}</span>
+                    {accessFailed ? (
+                      <Button.Secondary
+                        size="small"
+                        type="button"
+                        onClick={() => {
+                          setAccessEpoch(epoch => epoch + 1);
+                        }}
+                      >
+                        <Icon name="rotate-right" size="1rem" className="mr-1" />
+                        Try again
+                      </Button.Secondary>
+                    ) : null}
+                  </p>
+                ) : null}
+                <ul className="mt-3 flex flex-wrap gap-2">
+                  {agentNames.map(name => (
+                    <li
+                      key={name}
+                      className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-text-primary"
+                    >
+                      {name}
+                      <button
+                        type="button"
+                        aria-label={`Remove ${name}`}
+                        disabled={busy}
+                        className="text-text-secondary transition-colors hover:text-text-primary disabled:opacity-40"
+                        onClick={() => {
+                          handleSaveAccess(agentNames.filter(granted => granted !== name));
+                        }}
+                      >
+                        <Icon name="xmark" className="size-3.5" />
+                      </button>
                     </li>
                   ))}
+                  {agentNames.length === 0 ? (
+                    <li className="text-sm text-text-secondary">
+                      {accessLoading
+                        ? 'Loading the allowlist…'
+                        : accessFailed
+                          ? 'The allowlist could not be read, so what holds this computer is unknown.'
+                          : 'No agents granted.'}
+                    </li>
+                  ) : null}
                 </ul>
-              )}
-              {auditNextToken === undefined ? null : (
-                <Button.Secondary
-                  size="small"
-                  type="button"
-                  className="mt-3"
-                  disabled={auditLoading}
-                  onClick={loadMoreAudit}
-                >
-                  {auditLoading ? 'Loading…' : 'Load more'}
-                </Button.Secondary>
-              )}
-            </section>
+                <datalist id="computer-agent-names">
+                  {knownAgentNames.map(name => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+                <div className="mt-3 flex gap-2">
+                  <input
+                    aria-label="Agent name"
+                    list="computer-agent-names"
+                    value={agentDraft}
+                    onChange={event => {
+                      setAgentDraft(event.target.value);
+                    }}
+                    placeholder="release-bot"
+                    className={auiInputClass('h-11')}
+                  />
+                  <Button.Secondary
+                    type="button"
+                    disabled={busy || accessFailed || agentDraft.trim() === ''}
+                    onClick={() => {
+                      const name = agentDraft.trim();
+                      if (name === '' || agentNames.includes(name)) return;
+                      handleSaveAccess([...agentNames, name]);
+                    }}
+                  >
+                    <Icon name="plus" size="1rem" className="mr-1" />
+                    Grant
+                  </Button.Secondary>
+                </div>
+              </section>
 
-            <section
-              aria-labelledby="computer-danger-heading"
-              className="rounded-xl border border-border bg-card-bg p-4"
-            >
-              <h4 id="computer-danger-heading" className="text-[0.8125rem] font-semibold uppercase text-text-secondary">
-                Enrollment and removal
-              </h4>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button.Secondary
-                  type="button"
-                  disabled={busy || revoked}
-                  onClick={() => {
-                    setConfirm('rotate');
-                  }}
+              <section
+                aria-labelledby="computer-audit-heading"
+                className="rounded-xl border border-border bg-card-bg p-4"
+              >
+                <h4
+                  id="computer-audit-heading"
+                  className="text-[0.8125rem] font-semibold uppercase text-text-secondary"
                 >
-                  <Icon name="rotate-right" size="1rem" className="mr-1" />
-                  Rotate enrollment
-                </Button.Secondary>
-                <Button.Destructive
-                  type="button"
-                  disabled={busy || revoked}
-                  onClick={() => {
-                    setConfirm('revoke');
-                  }}
+                  Activity
+                </h4>
+                <p className="mt-2 text-sm text-text-secondary">
+                  Newest first. Commands are stored in clear for 30 days, so a secret typed into one is readable here
+                  until it is swept.
+                </p>
+                {audit.length === 0 ? (
+                  <p className="mt-3 text-sm text-text-secondary">Nothing has run on this computer yet.</p>
+                ) : (
+                  <ul className="mt-3 divide-y divide-border">
+                    {audit.map(entry => (
+                      <li key={entry.id} className="flex flex-col gap-1 py-3">
+                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
+                          <span>{formatInstant(entry.createdAt)}</span>
+                          <span className="font-medium text-text-primary">{entry.op}</span>
+                          <span>{entry.sessionId === null ? 'no session' : `session ${entry.sessionId}`}</span>
+                          <span>exit {entry.exitCode === null ? 'unknown' : String(entry.exitCode)}</span>
+                          <span>{entry.outcome}</span>
+                          <span>{entry.durationMs} ms</span>
+                        </span>
+                        <AuditCommand command={entry.command} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {auditNextToken === undefined ? null : (
+                  <Button.Secondary
+                    size="small"
+                    type="button"
+                    className="mt-3"
+                    disabled={auditLoading}
+                    onClick={loadMoreAudit}
+                  >
+                    {auditLoading ? 'Loading…' : 'Load more'}
+                  </Button.Secondary>
+                )}
+              </section>
+
+              <section
+                aria-labelledby="computer-danger-heading"
+                className="rounded-xl border border-border bg-card-bg p-4"
+              >
+                <h4
+                  id="computer-danger-heading"
+                  className="text-[0.8125rem] font-semibold uppercase text-text-secondary"
                 >
-                  Revoke
-                </Button.Destructive>
-                <Button.Ghost
-                  type="button"
-                  disabled={busy || !grantsKnown || grantedCount > 0}
-                  onClick={() => {
-                    setConfirm('delete');
-                  }}
-                >
-                  <Icon name="trash" size="1rem" className="mr-1" />
-                  Delete
-                </Button.Ghost>
-              </div>
-              {revoked ? (
-                <p className="mt-2 text-xs text-text-secondary">
-                  A revoked computer holds no credential, so there is nothing left to rotate or revoke. Delete it once
-                  no agent is granted it.
-                </p>
-              ) : null}
-              {grantsKnown && grantedCount > 0 ? (
-                <p className="mt-2 text-xs text-text-secondary">
-                  {grantedCount} agent(s) are still allowed to use this computer — remove their access before deleting
-                  it.
-                </p>
-              ) : null}
-              {grantsKnown ? null : (
-                <p className="mt-2 text-xs text-text-secondary">
-                  {accessLoading
-                    ? 'Checking which agents hold this computer…'
-                    : 'Deleting is held back until the allowlist can be read — retry it above.'}
-                </p>
-              )}
-            </section>
+                  Enrollment and removal
+                </h4>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button.Secondary
+                    type="button"
+                    disabled={busy || revoked}
+                    onClick={() => {
+                      setConfirm('rotate');
+                    }}
+                  >
+                    <Icon name="rotate-right" size="1rem" className="mr-1" />
+                    Rotate enrollment
+                  </Button.Secondary>
+                  <Button.Destructive
+                    type="button"
+                    disabled={busy || revoked}
+                    onClick={() => {
+                      setConfirm('revoke');
+                    }}
+                  >
+                    Revoke
+                  </Button.Destructive>
+                  <Button.Ghost
+                    type="button"
+                    disabled={busy || !grantsKnown || grantedCount > 0}
+                    onClick={() => {
+                      setConfirm('delete');
+                    }}
+                  >
+                    <Icon name="trash" size="1rem" className="mr-1" />
+                    Delete
+                  </Button.Ghost>
+                </div>
+                {revoked ? (
+                  <p className="mt-2 text-xs text-text-secondary">
+                    A revoked computer holds no credential, so there is nothing left to rotate or revoke. Delete it once
+                    no agent is granted it.
+                  </p>
+                ) : null}
+                {grantsKnown && grantedCount > 0 ? (
+                  <p className="mt-2 text-xs text-text-secondary">
+                    {grantedCount} agent(s) are still allowed to use this computer — remove their access before deleting
+                    it.
+                  </p>
+                ) : null}
+                {grantsKnown ? null : (
+                  <p className="mt-2 text-xs text-text-secondary">
+                    {accessLoading
+                      ? 'Checking which agents hold this computer…'
+                      : 'Deleting is held back until the allowlist can be read — retry it above.'}
+                  </p>
+                )}
+              </section>
+            </div>
           </div>
-        </div>
+        )}
 
         <CenteredModal
           open={confirm !== null}

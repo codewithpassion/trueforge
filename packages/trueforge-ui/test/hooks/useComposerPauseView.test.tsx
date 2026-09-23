@@ -104,6 +104,14 @@ describe('useComposerPauseView', () => {
     expect(result.current).toEqual({ kind: 'ask-user' });
   });
 
+  it('shows the takeover view while the agent waits for a person on its screen', () => {
+    useToolResponses.mockReturnValue({ pending: [{ toolCallId: 'tc-1', toolName: 'request_human_takeover' }] });
+
+    const { result } = renderHook(() => useComposerPauseView());
+
+    expect(result.current).toEqual({ kind: 'takeover' });
+  });
+
   it('shows the custom view when the pending tool name is registered', () => {
     useToolResponses.mockReturnValue({
       pending: [{ toolCallId: 'tc-1', toolName: 'secret_select', args: {} }],

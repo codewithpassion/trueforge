@@ -103,6 +103,8 @@ export type AgentDetailsTabsProps = {
   showMetrics?: boolean;
   showSchedules?: boolean;
   showIntegrations?: boolean;
+  /** The agent drives a computer's desktop and the host can show it. */
+  showScreen?: boolean;
   end?: ReactNode;
 };
 

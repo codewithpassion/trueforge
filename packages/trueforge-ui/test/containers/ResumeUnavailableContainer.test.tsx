@@ -24,6 +24,7 @@ function Harness({ resumeUnavailable }: { resumeUnavailable: boolean }) {
       respondToToolResponse: () => {},
       resumeMcpAuth: async () => {},
       downloadSandboxFile: async () => new Blob(),
+      getSessionFile: async () => new Blob(),
       cancel: async () => {},
       resetFromTurn: async () => {},
       reload: () => {},

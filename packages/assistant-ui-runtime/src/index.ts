@@ -35,6 +35,7 @@ export {
   useTrueForgeResumeMcpAuth,
   useTrueForgeResumeUnavailable,
   useTrueForgeSandboxId,
+  useTrueForgeSessionFile,
   useTrueForgeToolResponses,
   useTrueForgeTurnId,
   useTrueForgeUpdateAgentSpec,
@@ -59,6 +60,7 @@ export {
   collectResponseInputs,
   messageHasPendingResponses,
 } from './toolResponse.js';
+export { getToolResultImages, type ToolResultImagesArtifact } from './toolResultImages.js';
 export { getTrueForgeExtras, trueForgeExtras, tryGetTrueForgeExtras } from './trueforgeExtras.js';
 export type { TrueForgeDraftRuntimeExtras, TrueForgeRuntimeExtras } from './trueforgeExtras.js';
 export { createTrueForgeOwnedSessionsThreadListAdapter } from './trueforgeOwnedSessionsThreadListAdapter.js';

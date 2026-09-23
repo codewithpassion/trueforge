@@ -5,12 +5,14 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AgentDetailsPage } from '@/atoms/agent-details/AgentDetailsPage.js';
 import { AgentSessions } from '@/atoms/agent-details/AgentSessions.js';
+import type { AgentScreenProps } from '@/atoms/desktop/AgentScreen.js';
 import { ServerProvider } from '@/server/ServerContext.js';
 import { ShellModeProvider, useShellMode } from '@/server/ShellModeContext.js';
 import type {
   AgentDetail,
   AgentMetricsServer,
   CodeSnippet,
+  ComputerDesktopServer,
   IntegrationServer,
   ListPermissionsResponse,
   ScheduleServer,
@@ -662,5 +664,60 @@ describe('AgentDetailsPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Agent details unavailable' })).toBeInTheDocument();
     });
+  });
+});
+
+describe('AgentDetailsPage Screen tab', () => {
+  const desktopDetail: AgentDetail = {
+    ...detail,
+    agentSpec: { ...detail.agentSpec, config: { sandbox: { enabled: true, computerId: 'computer-1', desktop: true } } },
+  };
+  const unused = async (): Promise<never> => {
+    throw new Error('Unexpected desktop call');
+  };
+  const computerDesktop: ComputerDesktopServer = {
+    getDesktopStatus: unused,
+    getDesktopScreenshot: unused,
+    sendDesktopInput: unused,
+    getDesktopClipboard: unused,
+    setDesktopClipboard: unused,
+    takeDesktopControl: unused,
+    handBackDesktop: unused,
+    cancelDesktopTakeover: unused,
+  };
+  const AgentScreen = vi.fn(({ agentId, computerId }: AgentScreenProps) => (
+    <div data-testid="agent-screen">{`${agentId}@${computerId}`}</div>
+  ));
+
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
+    AgentScreen.mockClear();
+  });
+
+  it('shows the Screen tab for a desktop agent and opens it from the deep link', async () => {
+    window.history.replaceState(null, '', '/library/agent-1?tab=screen');
+    renderPage({
+      getAgent: vi.fn(async () => desktopDetail),
+      serverOverrides: { computerDesktop },
+      overrides: { AgentScreen },
+    });
+
+    expect(await screen.findByRole('tab', { name: 'Screen' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByTestId('agent-screen')).toHaveTextContent('agent-1@computer-1');
+  });
+
+  it('hides the Screen tab for an agent without a desktop', async () => {
+    window.history.replaceState(null, '', '/library/agent-1?tab=screen');
+    renderPage({ serverOverrides: { computerDesktop }, overrides: { AgentScreen } });
+
+    expect(await screen.findByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tab', { name: 'Screen' })).toBeNull();
+    expect(AgentScreen).not.toHaveBeenCalled();
+  });
+
+  it('hides the Screen tab when the host has no desktop port', async () => {
+    renderPage({ getAgent: vi.fn(async () => desktopDetail) });
+    expect(await screen.findByRole('tab', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Screen' })).toBeNull();
   });
 });

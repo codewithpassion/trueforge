@@ -11,6 +11,7 @@ import { Spinner } from '@/atoms/primitives/Spinner.js';
 import { Icon } from '@/icons/Icon.js';
 import { useOptionalCatalogServer, useOptionalRefreshServerCapabilities } from '@/server/ServerContext.js';
 import { useShellMode, type SettingsSection } from '@/server/ShellModeContext.js';
+import { isDesktopKeyboardTarget } from '@/utils/desktopInput.js';
 
 // Section modules (and their list/catalog APIs) load only when that tab mounts.
 const ModelSettings = lazy(() => import('./ModelSettings.js'));
@@ -68,6 +69,8 @@ const TruefoundrySettingsBuilder = () => {
     if (!settingsOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      // Escape inside the desktop view belongs to the remote desktop.
+      if (isDesktopKeyboardTarget(event.target)) return;
       event.stopImmediatePropagation();
       closeSettings();
     };

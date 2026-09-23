@@ -203,6 +203,7 @@ describe('AssistantTextContainer', () => {
           respondToToolResponse: () => {},
           resumeMcpAuth: async () => {},
           downloadSandboxFile,
+          getSessionFile: async () => new Blob(),
           cancel: async () => {},
           resetFromTurn: async () => {},
           reload: () => {},

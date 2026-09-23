@@ -4,6 +4,7 @@ import { useAuiState } from '@assistant-ui/react';
 import { useTrueForgeApprovals, useTrueForgeToolResponses } from '@truefoundry/trueforge-assistant-ui-runtime';
 
 import { useOptionalCustomActionRenderers } from '../server/CustomActionRenderersContext.js';
+import { REQUEST_HUMAN_TAKEOVER_TOOL_NAME } from '../utils/toolCallParsing.js';
 
 export type ThreadPauseState = {
   thread: {
@@ -28,6 +29,8 @@ export type ComposerPauseView =
   | { kind: 'mcp' }
   | { kind: 'custom'; toolName: string }
   | { kind: 'ask-user' }
+  /** The agent waits for a person on its computer's screen. */
+  | { kind: 'takeover' }
   | { kind: 'approval' }
   | { kind: 'compose' };
 
@@ -47,6 +50,9 @@ export function useComposerPauseView(): ComposerPauseView {
     const toolName = firstPending.toolName;
     if (toolName != null && customActionRenderers?.[toolName] != null) {
       return { kind: 'custom', toolName };
+    }
+    if (toolName === REQUEST_HUMAN_TAKEOVER_TOOL_NAME) {
+      return { kind: 'takeover' };
     }
     return { kind: 'ask-user' };
   }

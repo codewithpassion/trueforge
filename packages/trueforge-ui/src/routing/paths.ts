@@ -11,6 +11,7 @@ const DEFAULTS = {
   settings: '/settings',
   library: '/library',
   libraryAgent: '/library/:agentId',
+  agentScreen: '/agents/:agentId/screen',
   schedules: '/schedules',
   buildAgent: '/build-agent',
   agent: '/agents/:agentName',
@@ -38,6 +39,7 @@ export function resolveRoutesConfig(routes?: RoutesConfig): ResolvedRoutes {
     settings: resolveOptional(paths?.settings, DEFAULTS.settings),
     library: resolveOptional(paths?.library, DEFAULTS.library),
     libraryAgent: resolveOptional(paths?.libraryAgent, DEFAULTS.libraryAgent),
+    agentScreen: resolveOptional(paths?.agentScreen, DEFAULTS.agentScreen),
     schedules: resolveOptional(paths?.schedules, DEFAULTS.schedules),
     buildAgent: resolveOptional(paths?.buildAgent, DEFAULTS.buildAgent),
     agent: resolveOptional(paths?.agent, DEFAULTS.agent),
@@ -125,6 +127,7 @@ export function sanitizeSearchForPlace(place: RoutePlace, search: string): strin
       view: null,
       timeRange: null,
       ...(share.sessionId != null && share.agentId !== place.agentId ? { sessionId: null, agentId: null } : {}),
+      ...(place.tab != null ? { tab: place.tab } : {}),
     });
     clearScheduleShareSearch(params);
     if (share.tab === 'schedules') {
@@ -203,6 +206,11 @@ export function matchPath(pathname: string, routes: ResolvedRoutes): RoutePlace 
   if (routes.libraryAgent != null) {
     const agentId = matchTemplate(routes.libraryAgent, segments);
     if (agentId != null) return { type: 'libraryAgent', agentId };
+  }
+  // Only reachable while agent details are, since it lands on the agent's page.
+  if (routes.agentScreen != null && routes.libraryAgent != null) {
+    const agentId = matchTemplate(routes.agentScreen, segments);
+    if (agentId != null) return { type: 'libraryAgent', agentId, tab: 'screen' };
   }
   if (routes.schedules != null && normalized === routes.schedules) {
     return { type: 'schedules' };
