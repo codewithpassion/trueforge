@@ -41,4 +41,6 @@ export interface ToolImageSettings {
    * text stubs down to this many. Stubbing in batches keeps the cached prompt prefix stable.
    */
   keep: number;
+  /** Larger tool-result images reach the model as a text note instead. */
+  maxBytes: number;
 }

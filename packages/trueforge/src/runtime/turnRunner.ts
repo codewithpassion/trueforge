@@ -237,7 +237,11 @@ function createTurnResolver(
       return record.manifest;
     },
     webSearchProvider,
-    toolImages: { files, keep: configuration.TOOL_RESULT_IMAGES_KEEP },
+    toolImages: {
+      files,
+      keep: configuration.TOOL_RESULT_IMAGES_KEEP,
+      maxBytes: configuration.TOOL_RESULT_IMAGE_MAX_BYTES,
+    },
     logger,
   });
 }

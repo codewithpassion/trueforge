@@ -1,7 +1,7 @@
 import type { ContentBlock, ImageContent } from '@modelcontextprotocol/sdk/types.js';
 import type { RegisteredPassthroughEvent } from '../events/PassthroughEvents';
 import type { ApprovalDecision, MCPServerInitInfo } from '../events/schema';
-import type { SessionFiles } from '../files/SessionFiles';
+import { readImageHeader } from '../files/imageHeader';
 import {
   textToolContent,
   type InternalEnrichedAssistantMessage,
@@ -10,6 +10,7 @@ import {
   type ToolContentPart,
 } from '../llm/LLMTypes';
 import type { MCPAuthRequired } from '../mcp/IMCPServer';
+import type { ToolImageSettings } from '../runtime/AgentDefinition';
 import type { AgentThreadCreateSubAgent } from '../runtime/AgentThread.types';
 import { InternalEventType } from '../runtime/AgentThread.types';
 import type { SandboxInfo } from '../sandbox/Sandbox';
@@ -47,32 +48,74 @@ export interface ExecuteToolCallsResult {
   events: RegisteredPassthroughEvent[];
 }
 
-function imageDimension(meta: ImageContent['_meta'], key: 'width' | 'height'): number | undefined {
+function metaDimension(meta: ImageContent['_meta'], key: 'width' | 'height'): number | undefined {
   const value = meta?.[key];
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
+  return typeof value === 'number' ? value : undefined;
 }
 
-/** Stores the bytes in the session's files; the model and the event log only see the reference. */
+function imageNote(reason: string): ToolContentPart {
+  return { type: 'text', text: `[image omitted: ${reason}]` };
+}
+
+/**
+ * Stores the bytes in the session's files; the model and the event log only see the reference.
+ * The bytes are checked first: a model request carrying an oversized or undecodable image fails,
+ * and would fail again on every later request that replays it.
+ */
 async function toImagePart({
   image,
-  files,
+  toolImages,
   logger,
 }: {
   image: ImageContent;
-  files: SessionFiles | undefined;
+  toolImages: ToolImageSettings | undefined;
   logger: Logger;
 }): Promise<ToolContentPart> {
-  const width = imageDimension(image._meta, 'width');
-  const height = imageDimension(image._meta, 'height');
-  if (width === undefined || height === undefined) {
-    return { type: 'text', text: '[image omitted: the tool did not report its size]' };
+  if (toolImages === undefined) {
+    return imageNote('no file store');
   }
-  if (files === undefined) {
-    return { type: 'text', text: `[image ${String(width)}x${String(height)} omitted: no file store]` };
+  const { files, maxBytes } = toolImages;
+  const declared = image.mimeType.toLowerCase();
+  // Four base64 characters carry three bytes, so an oversized image is refused before it is decoded.
+  const approxBytes = Math.floor((image.data.length * 3) / 4);
+  if (approxBytes > maxBytes) {
+    logger.warn('Tool-result image is too large; sending a note', {
+      media_type: declared,
+      bytes: approxBytes,
+      max_bytes: maxBytes,
+    });
+    return imageNote(`larger than ${String(maxBytes)} bytes`);
+  }
+  const bytes = Buffer.from(image.data, 'base64');
+  const header = readImageHeader(bytes);
+  if (header === undefined) {
+    logger.warn('Tool-result image is not a PNG, JPEG, GIF or WebP image; sending a note', {
+      media_type: declared,
+      bytes: bytes.byteLength,
+    });
+    return imageNote('not a PNG, JPEG, GIF or WebP image');
+  }
+  if (header.media_type !== declared) {
+    logger.warn('Tool-result image data does not match its media type; sending a note', {
+      media_type: declared,
+      detected_media_type: header.media_type,
+    });
+    return imageNote(`the data is not ${declared}`);
+  }
+  const { width, height } = header;
+  const metaWidth = metaDimension(image._meta, 'width');
+  const metaHeight = metaDimension(image._meta, 'height');
+  if ((metaWidth !== undefined && metaWidth !== width) || (metaHeight !== undefined && metaHeight !== height)) {
+    logger.warn('Tool-reported image size differs from the image header; using the header', {
+      width,
+      height,
+      meta_width: metaWidth,
+      meta_height: metaHeight,
+    });
   }
   try {
-    const { file_id } = await files.put({ media_type: image.mimeType, bytes: Buffer.from(image.data, 'base64') });
-    return { type: 'image', file_id, media_type: image.mimeType, width, height };
+    const { file_id } = await files.put({ media_type: header.media_type, bytes });
+    return { type: 'image', file_id, media_type: header.media_type, width, height };
   } catch (error) {
     // The model and the event log get a note; the cause stays in the logs.
     logger.warn('Could not store a tool-result image', extractErrorLogFields(error));
@@ -80,27 +123,37 @@ async function toImagePart({
   }
 }
 
-/** The text blocks joined into one part, as before images were kept, followed by the images. */
+/**
+ * Text and image blocks in their original order; adjacent text blocks stay one part, as text-only
+ * results always were. Other block kinds only show when there is nothing else.
+ */
 async function toToolContent({
   blocks,
-  files,
+  toolImages,
   logger,
 }: {
   blocks: ContentBlock[];
-  files: SessionFiles | undefined;
+  toolImages: ToolImageSettings | undefined;
   logger: Logger;
 }): Promise<ToolContentPart[]> {
-  const text = blocks
-    .filter(block => block.type === 'text')
-    .map(block => block.text)
-    .join('\n');
-  const images = await Promise.all(
-    blocks.filter(block => block.type === 'image').map(image => toImagePart({ image, files, logger })),
-  );
-  if (text === '' && images.length === 0) {
-    return textToolContent(JSON.stringify(blocks));
+  const parts: ToolContentPart[] = [];
+  let pendingText: string[] = [];
+  const flushText = (): void => {
+    if (pendingText.length > 0) {
+      parts.push({ type: 'text', text: pendingText.join('\n') });
+      pendingText = [];
+    }
+  };
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      pendingText.push(block.text);
+    } else if (block.type === 'image') {
+      flushText();
+      parts.push(await toImagePart({ image: block, toolImages, logger }));
+    }
   }
-  return [...(text === '' ? [] : textToolContent(text)), ...images];
+  flushText();
+  return parts.length > 0 ? parts : textToolContent(JSON.stringify(blocks));
 }
 
 export async function executeToolCalls({
@@ -108,7 +161,7 @@ export async function executeToolCalls({
   toolMapping,
   threadId,
   approvalDecisions,
-  files,
+  toolImages,
   logger,
 }: {
   assistantMessage: InternalEnrichedAssistantMessage;
@@ -116,7 +169,7 @@ export async function executeToolCalls({
   threadId: string;
   approvalDecisions: Map<string, ApprovalDecision>;
   /** Where image results are stored; without it they reach the model as a text note. */
-  files: SessionFiles | undefined;
+  toolImages: ToolImageSettings | undefined;
   logger: Logger;
 }): Promise<ExecuteToolCallsResult> {
   const toolMessages: ToolCallResult[] = [];
@@ -230,8 +283,14 @@ export async function executeToolCalls({
     } else if (result.structuredContent) {
       isStructuredContent = true;
       content = textToolContent(JSON.stringify(result.structuredContent));
+      // The structured result stands in for the text blocks, which repeat it; images have no such twin.
+      for (const block of Array.isArray(result.content) ? result.content : []) {
+        if (block.type === 'image') {
+          content.push(await toImagePart({ image: block, toolImages, logger }));
+        }
+      }
     } else if (Array.isArray(result.content)) {
-      content = await toToolContent({ blocks: result.content, files, logger });
+      content = await toToolContent({ blocks: result.content, toolImages, logger });
     } else {
       content = textToolContent(JSON.stringify(result.content));
     }

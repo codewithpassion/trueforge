@@ -616,6 +616,8 @@ export interface SharedServerConfiguration {
    * down to this many. Stored history keeps them all. Env: `TOOL_RESULT_IMAGES_KEEP`. Default 5.
    */
   TOOL_RESULT_IMAGES_KEEP: number;
+  /** Max bytes for one tool-result image; larger ones reach the model as a text note. Env: `TOOL_RESULT_IMAGE_MAX_BYTES`. Default 5 MiB. */
+  TOOL_RESULT_IMAGE_MAX_BYTES: number;
   /**
    * Client name used for Dynamic Client Registration (DCR) of MCP servers.
    * This is the client name shown on authorization-server consent screens.
@@ -957,6 +959,11 @@ export function parseServerConfiguration(): ServerConfiguration {
       envKey: 'TOOL_RESULT_IMAGES_KEEP',
       raw: getEnv('TOOL_RESULT_IMAGES_KEEP'),
       defaultValue: 5,
+    }),
+    TOOL_RESULT_IMAGE_MAX_BYTES: parsePositiveInt({
+      envKey: 'TOOL_RESULT_IMAGE_MAX_BYTES',
+      raw: getEnv('TOOL_RESULT_IMAGE_MAX_BYTES'),
+      defaultValue: 5 * 1024 * 1024,
     }),
     MCP_DCR_OAUTH_CLIENT_NAME:
       getEnv('MCP_DCR_OAUTH_CLIENT_NAME', { defaultValue: 'truefoundry-harness' }) ?? 'truefoundry-harness',

@@ -1182,7 +1182,7 @@ export class AgentThread {
       toolMapping,
       threadId: this.threadId,
       approvalDecisions: decisions,
-      files: this.definition.toolImages?.files,
+      toolImages: this.definition.toolImages,
       logger: this.logger,
     });
     void clientSideToolCalls;

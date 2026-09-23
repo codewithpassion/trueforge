@@ -94,15 +94,17 @@ export function toolResultResponse(params: {
 
 /**
  * An image result, for example a screenshot. The harness stores the bytes in the session's files
- * and hands the model a reference; `_meta` carries the size MCP image content has no field for.
+ * and hands the model a reference. The size, when given, travels in `_meta` and is advisory: the
+ * harness reads it from the image header, and the header wins when they differ.
  */
 export function toolImageResultResponse(params: {
   data_b64: string;
-  width: number;
-  height: number;
   media_type: string;
+  width?: number | undefined;
+  height?: number | undefined;
   overrides?: Partial<CallToolResultMetadata> | undefined;
 }): CallToolResolvedResponse {
+  const { width, height } = params;
   return {
     result: {
       content: [
@@ -110,7 +112,7 @@ export function toolImageResultResponse(params: {
           type: 'image',
           data: params.data_b64,
           mimeType: params.media_type,
-          _meta: { width: params.width, height: params.height },
+          ...(width !== undefined && height !== undefined ? { _meta: { width, height } } : {}),
         },
       ],
     },
