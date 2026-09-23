@@ -11,6 +11,7 @@ import { useOptionalShellMode } from '../server/ShellModeContext.js';
 import type { AgentSpec } from '../server/types.js';
 import { useSlot } from '../theme/SlotsProvider.js';
 import { getErrorMessage } from '../utils/getErrorMessage.js';
+import { agentDescriptionField } from './lib/agentDescriptionField.js';
 import { auiButtonClass } from './lib/buttonClasses.js';
 import { cloneAgentSpec } from './lib/cloneAgentSpec.js';
 import { Button } from './primitives/Button.js';
@@ -98,14 +99,13 @@ export function AgentOverflowMenu({
   const handleCloneSave = async () => {
     if (!canCreate || builder == null || cloneSpec == null) return;
     const normalizedName = cloneName.trim();
-    const normalizedDescription = cloneDescription.trim();
     if (!normalizedName || !cloneSpec.model.name.trim()) return;
     setBusy(true);
     setCloneError(null);
     try {
       await builder.saveAgent({
         agentName: normalizedName,
-        description: normalizedDescription,
+        ...agentDescriptionField(cloneDescription),
         // The grant is held against the source agent's id, so the clone starts without it.
         agentSpec: specWithoutComputer(cloneSpec),
         intent: 'create',

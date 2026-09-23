@@ -18,6 +18,7 @@ import type { AgentSpec } from '../server/types.js';
 import { useSlot } from '../theme/SlotsProvider.js';
 import { getErrorMessage } from '../utils/getErrorMessage.js';
 import { useOptionalAgentConfigInstructions } from './draft/AgentConfigInstructionsContext.js';
+import { agentDescriptionField } from './lib/agentDescriptionField.js';
 import { cloneAgentSpec } from './lib/cloneAgentSpec.js';
 import { Button } from './primitives/Button.js';
 import { SideDrawer } from './primitives/SideDrawer.js';
@@ -122,7 +123,7 @@ function SaveAgentButtonContent({
     if (intent === 'update' ? !canManageAgent : !canCreate) return;
     const normalizedName = name.trim();
     if (!normalizedName || !draftSpec.model.name.trim()) return;
-    const normalizedDescription = description?.trim();
+    const descriptionField = agentDescriptionField(description);
     setSaving(true);
     setError(null);
     // An agent that does not exist yet cannot be on a computer's allowlist, so a create never
@@ -131,7 +132,7 @@ function SaveAgentButtonContent({
     try {
       const result = await builder.saveAgent({
         agentName: normalizedName,
-        ...(normalizedDescription === undefined ? {} : { description: normalizedDescription }),
+        ...descriptionField,
         agentSpec: savedSpec,
         intent,
         sessionId: draftSessionId,
@@ -140,7 +141,7 @@ function SaveAgentButtonContent({
       shell?.bindMutableAgent({
         agentId: result.agentId ?? normalizedName,
         agentName: normalizedName,
-        ...(normalizedDescription === undefined ? {} : { description: normalizedDescription }),
+        ...descriptionField,
         agentSpec: savedSpec,
       });
       shell?.invalidateAgentsList();
