@@ -156,13 +156,13 @@ describe('AgentIntegrationsSection', () => {
     expect(await screen.findByTestId('integrations-page')).toHaveTextContent(/^agent-1 embedded$/);
   });
 
-  it('names the drawer by its visible title', async () => {
+  // aria-labelledby wins the accessible name, so only the attribute shows an action label leaking onto the drawer.
+  it("does not label the drawer with the action's label", async () => {
     renderSection({ server: serverWith(async () => [PENDING]), saved: SUPPORT_BOT });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Manage integrations' }));
 
-    expect(await screen.findByRole('dialog', { name: 'Integrations' })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: 'Manage integrations' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).not.toHaveAttribute('aria-label', 'Manage integrations');
   });
 
   it('keeps the action disabled for a caller who cannot manage the agent', async () => {
