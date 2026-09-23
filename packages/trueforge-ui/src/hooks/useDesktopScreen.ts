@@ -56,11 +56,20 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
   const sendingRef = useRef<Promise<void>>(Promise.resolve());
   const activeRef = useRef(true);
 
-  const applyStatus = useCallback((next: DesktopStatus) => {
+  // Bumped by every status an action returns, so a poll that started earlier cannot undo it.
+  const statusVersionRef = useRef(0);
+  const setKnownStatus = useCallback((next: DesktopStatus) => {
     statusRef.current = next;
     setStatus(next);
     setStatusError(null);
   }, []);
+  const applyStatus = useCallback(
+    (next: DesktopStatus) => {
+      statusVersionRef.current += 1;
+      setKnownStatus(next);
+    },
+    [setKnownStatus],
+  );
 
   const showFrame = useCallback((blob: Blob, seq: number) => {
     if (!activeRef.current || seq < appliedSeqRef.current) return;
@@ -91,10 +100,11 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
     const load = (): Promise<void> => {
       if (inFlight !== null) return inFlight;
       const { server: port, ...req } = scopeRef.current;
+      const version = statusVersionRef.current;
       inFlight = port
         .getDesktopStatus(req)
         .then(next => {
-          if (!stopped) applyStatus(next);
+          if (!stopped && version === statusVersionRef.current) setKnownStatus(next);
         })
         .catch((error: unknown) => {
           if (stopped) return;
@@ -119,7 +129,7 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
       activeRef.current = false;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [computerId, agentId, applyStatus]);
+  }, [computerId, agentId, setKnownStatus]);
 
   // Frames: one request at a time, every 500 ms while visible and every 2 s while hidden.
   useEffect(() => {

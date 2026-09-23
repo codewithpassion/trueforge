@@ -170,6 +170,27 @@ describe('useDesktopScreen frame polling', () => {
   });
 });
 
+describe('useDesktopScreen status', () => {
+  it('keeps the status an action returned over a poll that started before it', async () => {
+    const stale = deferred<DesktopStatus>();
+    const getDesktopStatus = vi.fn(() => stale.promise);
+    const server = createServer({ getDesktopStatus });
+    const { result } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+
+    const mine: DesktopStatus = {
+      ...onlineStatus,
+      controller: { kind: 'human', userId: 'me', isMe: true, expiresAt: '2026-09-24T10:05:00.000Z' },
+    };
+    act(() => result.current.applyStatus(mine));
+    await act(async () => {
+      stale.resolve(onlineStatus);
+      await Promise.resolve();
+    });
+    expect(result.current.status).toEqual(mine);
+  });
+});
+
 describe('useDesktopScreen input', () => {
   it('batches input about every 100 ms and shows the frame the input returns', async () => {
     const sendDesktopInput = vi.fn(async () => new Blob(['after-input']));
