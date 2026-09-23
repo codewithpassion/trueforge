@@ -153,7 +153,7 @@ export const DESKTOP_WIDTH = 1280;
 export const DESKTOP_HEIGHT = 800;
 export const DESKTOP_TYPE_MAX_CHARS = 512;
 export const DESKTOP_CLIPBOARD_MAX_BYTES = 64 * 1024;
-export const DESKTOP_MAX_ACTIONS = 64;
+const DESKTOP_MAX_ACTIONS = 64;
 const DESKTOP_KEYS_MAX_CHARS = 64;
 const DESKTOP_SCROLL_MAX = 50;
 
@@ -174,7 +174,6 @@ const DesktopYSchema = z
   .min(0)
   .max(DESKTOP_HEIGHT - 1);
 export const DesktopButtonSchema = z.enum(['left', 'middle', 'right']);
-export type DesktopButton = z.infer<typeof DesktopButtonSchema>;
 const DesktopScrollDeltaSchema = z.number().int().min(-DESKTOP_SCROLL_MAX).max(DESKTOP_SCROLL_MAX);
 
 export const DesktopActionSchema = z.discriminatedUnion('type', [
@@ -218,8 +217,7 @@ export const DesktopClipboardGetRequestSchema = z.object({
 });
 export type DesktopClipboardGetRequest = z.infer<typeof DesktopClipboardGetRequestSchema>;
 
-export const DesktopClipboardSelectionSchema = z.enum(['clipboard', 'primary']);
-export type DesktopClipboardSelection = z.infer<typeof DesktopClipboardSelectionSchema>;
+const DesktopClipboardSelectionSchema = z.enum(['clipboard', 'primary']);
 
 export const DesktopClipboardSetRequestSchema = z.object({
   op: z.literal('desktop_clipboard_set'),
@@ -246,16 +244,16 @@ export const ClientOpRequestSchema = z.discriminatedUnion('op', [
 ]);
 export type ClientOpRequest = z.infer<typeof ClientOpRequestSchema>;
 
-/** Ops that only read the desktop; the rest change what is on it. */
-const DESKTOP_READ_OPS: ReadonlySet<string> = new Set(['desktop_screenshot', 'desktop_clipboard_get']);
-const DESKTOP_WRITE_OPS: ReadonlySet<string> = new Set(['desktop_input', 'desktop_clipboard_set']);
+const DESKTOP_OPS: ReadonlySet<string> = new Set([
+  DesktopScreenshotRequestSchema.shape.op.value,
+  DesktopInputRequestSchema.shape.op.value,
+  DesktopClipboardGetRequestSchema.shape.op.value,
+  DesktopClipboardSetRequestSchema.shape.op.value,
+]);
 
+/** Desktop ops are the only ones gated on the desktop capability and the lease. */
 export function isDesktopOp(op: string): boolean {
-  return DESKTOP_READ_OPS.has(op) || DESKTOP_WRITE_OPS.has(op);
-}
-
-export function isDesktopReadOp(op: string): boolean {
-  return DESKTOP_READ_OPS.has(op);
+  return DESKTOP_OPS.has(op);
 }
 
 /** Typing is the slow action; everything else in a batch is a few milliseconds. */
