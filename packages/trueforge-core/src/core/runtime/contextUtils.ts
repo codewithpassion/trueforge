@@ -15,7 +15,7 @@ import type {
   ToolInfo,
 } from '../llm/LLMTypes';
 import { normalizeToolContent, UNKNOWN_TOOL_NAME } from '../llm/LLMTypes';
-import { estimateTokensForString } from '../llm/usage';
+import { estimateTokensForImage, estimateTokensForString } from '../llm/usage';
 import type {
   AgentThreadRuntimeSendInput,
   ContextMessage,
@@ -166,6 +166,8 @@ export function estimateTokensForContextMessages(messages: ContextMessage[]): Cu
         for (const part of b.content) {
           if ('text' in part && typeof part.text === 'string') {
             tokenCount += estimateTokensForString(part.text);
+          } else if (part.type === 'image') {
+            tokenCount += estimateTokensForImage(part);
           }
         }
       }

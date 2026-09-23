@@ -1,18 +1,14 @@
 /**
- * Images in tool results: the per-provider-type stub table, the `content` output with `file` parts,
- * and one real image sent through each installed adapter to pin what reaches the wire.
+ * Images in tool results: which provider types get a stub, the `content` output with `file` parts,
+ * one real image sent through each installed adapter to pin what reaches the wire, and the reuse
+ * of loaded images across requests.
  */
 import { createInMemoryFileStore } from '../../../src/agent-session/store/InMemoryFileStore';
 import { scopeFileStore } from '../../../src/agent-session/store/SessionFileStore';
 import type { SessionFiles, StoredFile } from '../../../src/core/files/SessionFiles';
 import type { LLMRequestMessage } from '../../../src/core/llm/ILLM';
 import type { ToolContentPart } from '../../../src/core/llm/LLMTypes';
-import {
-  convertMessages,
-  providerAcceptsToolImages,
-  VercelAILLM,
-  type VercelAIProviderName,
-} from '../../../src/core/llm/VercelAILLM';
+import { convertMessages, VercelAILLM, type VercelAIProviderName } from '../../../src/core/llm/VercelAILLM';
 import { setOutboundPolicy } from '../../../src/core/util/outboundFetch';
 import { makeSilentLogger } from '../harnessMocks';
 
@@ -66,13 +62,6 @@ function toolOutput({
   if (result?.type !== 'tool-result') throw new Error('expected a tool result');
   return result.output;
 }
-
-describe('providerAcceptsToolImages', () => {
-  it('lets only anthropic, openai and google carry images in tool results', () => {
-    expect(IMAGE_PROVIDERS.map(providerAcceptsToolImages)).toEqual([true, true, true]);
-    expect(STUB_PROVIDERS.map(providerAcceptsToolImages)).toEqual(STUB_PROVIDERS.map(() => false));
-  });
-});
 
 describe('convertMessages with tool-result images', () => {
   const loaded = new Map<string, StoredFile>([['f1', { bytes: JPEG_BYTES, media_type: 'image/jpeg' }]]);
@@ -134,11 +123,8 @@ describe('VercelAILLM sends tool-result images through each adapter', () => {
     setOutboundPolicy({ fetch: platformFetch, mcpFetch: platformFetch, assertUrl: () => Promise.resolve() });
   });
 
-  async function sendScreenshot(provider: VercelAIProviderName): Promise<{ body: string; files: SessionFiles }> {
-    const files = scopeFileStore({ fileStore: createInMemoryFileStore(), tenant_id: 't1', session_id: 's1' });
-    const { file_id } = await files.put({ media_type: 'image/jpeg', bytes: JPEG_BYTES });
-    const get = jest.spyOn(files, 'get');
-    const llm = new VercelAILLM({
+  function llmFor({ provider, files }: { provider: VercelAIProviderName; files: SessionFiles }): VercelAILLM {
+    return new VercelAILLM({
       providerConfig: {
         provider: { type: provider, name: provider },
         model: { id: 'test-model', name: 'test-model' },
@@ -150,12 +136,37 @@ describe('VercelAILLM sends tool-result images through each adapter', () => {
       logger: makeSilentLogger(),
       files,
     });
+  }
+
+  async function sendScreenshot(provider: VercelAIProviderName): Promise<{ body: string; files: SessionFiles }> {
+    const files = scopeFileStore({ fileStore: createInMemoryFileStore(), tenant_id: 't1', session_id: 's1' });
+    const { file_id } = await files.put({ media_type: 'image/jpeg', bytes: JPEG_BYTES });
+    const get = jest.spyOn(files, 'get');
+    const llm = llmFor({ provider, files });
     await expect(llm.createNonStream({ messages: screenshotConversation(file_id) })).rejects.toThrow();
     expect(requestBodies).toHaveLength(1);
     // Adapters that cannot carry the image never cost a file read.
-    expect(get).toHaveBeenCalledTimes(providerAcceptsToolImages(provider) ? 1 : 0);
+    expect(get).toHaveBeenCalledTimes(IMAGE_PROVIDERS.some(p => p === provider) ? 1 : 0);
     return { body: requestBodies[0] ?? '', files };
   }
+
+  it('reads an image once across consecutive requests and forgets it once a request leaves it out', async () => {
+    const files = scopeFileStore({ fileStore: createInMemoryFileStore(), tenant_id: 't1', session_id: 's1' });
+    const { file_id } = await files.put({ media_type: 'image/jpeg', bytes: JPEG_BYTES });
+    const get = jest.spyOn(files, 'get');
+    const llm = llmFor({ provider: 'anthropic', files });
+    const withImage = screenshotConversation(file_id);
+    const withoutImage = withImage.slice(0, 1);
+
+    await expect(llm.createNonStream({ messages: withImage })).rejects.toThrow();
+    await expect(llm.createNonStream({ messages: withImage })).rejects.toThrow();
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(requestBodies[1]).toContain(JPEG_B64);
+
+    await expect(llm.createNonStream({ messages: withoutImage })).rejects.toThrow();
+    await expect(llm.createNonStream({ messages: withImage })).rejects.toThrow();
+    expect(get).toHaveBeenCalledTimes(2);
+  });
 
   // Each adapter's own image shape inside the tool result, next to the bytes themselves.
   it.each([

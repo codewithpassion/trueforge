@@ -233,23 +233,25 @@ const TOOL_RESULT_IMAGE_SUPPORT = {
   truefoundry: false,
 } as const satisfies Record<VercelAIProviderName, boolean>;
 
-export function providerAcceptsToolImages(providerType: VercelAIProviderName): boolean {
+function providerAcceptsToolImages(providerType: VercelAIProviderName): boolean {
   return TOOL_RESULT_IMAGE_SUPPORT[providerType];
 }
 
 /**
- * Loads every tool-result image the provider will be shown, keyed by file id. A file that is gone
- * or fails to load is left out, and {@link toToolResultOutput} stubs it.
+ * Loads every tool-result image the provider will be shown, keyed by file id, reusing `cached`
+ * ones. A file that is gone or fails to load is left out, and the converted request stubs it.
  */
-export async function loadToolImages({
+async function loadToolImages({
   messages,
   provider,
   files,
+  cached,
   logger,
 }: {
   messages: readonly LLMRequestMessage[];
   provider: VercelAIProviderName;
   files: SessionFiles | undefined;
+  cached: ReadonlyMap<string, StoredFile>;
   logger: Logger;
 }): Promise<Map<string, StoredFile>> {
   const loaded = new Map<string, StoredFile>();
@@ -263,6 +265,11 @@ export async function loadToolImages({
   );
   await Promise.all(
     [...fileIds].map(async fileId => {
+      const hit = cached.get(fileId);
+      if (hit !== undefined) {
+        loaded.set(fileId, hit);
+        return;
+      }
       try {
         const file = await files.get(fileId);
         if (file === undefined) {
@@ -285,7 +292,7 @@ export async function loadToolImages({
  * Text-only results keep the plain text output they always had. Images become `file` parts for the
  * providers that carry them and text stubs for the rest.
  */
-export function toToolResultOutput({
+function toToolResultOutput({
   content,
   provider,
   images,
@@ -1459,6 +1466,11 @@ export class VercelAILLM implements ILLM {
   private readonly config: VercelAILLMConfig;
   private readonly logger: Logger;
   private readonly signal: AbortSignal | undefined;
+  /**
+   * The previous request's tool-result images, since consecutive requests mostly resend the same
+   * ones. Holding only the latest request's bounds memory.
+   */
+  private toolImageCache: ReadonlyMap<string, StoredFile> = new Map();
 
   constructor(config: VercelAILLMConfig) {
     this.config = config;
@@ -1477,8 +1489,10 @@ export class VercelAILLM implements ILLM {
       messages: body.messages,
       provider: provider.type,
       files: this.config.files,
+      cached: this.toolImageCache,
       logger: this.logger,
     });
+    this.toolImageCache = images;
     const { instructions, messages } = convertMessages({
       messages: body.messages,
       provider: provider.type,

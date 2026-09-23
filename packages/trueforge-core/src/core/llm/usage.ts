@@ -4,6 +4,14 @@ export function estimateTokensForString(s: string): number {
   return s.length / 4;
 }
 
+/**
+ * About one token per 750 pixels, capped where providers downscale large images; a 1280x800
+ * screenshot comes to about 1400.
+ */
+export function estimateTokensForImage({ width, height }: { width: number; height: number }): number {
+  return Math.min(Math.ceil((width * height) / 750), 1600);
+}
+
 function sumOptional(a: number | undefined, b: number | undefined): number | undefined {
   if (a === undefined && b === undefined) {
     return undefined;

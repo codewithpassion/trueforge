@@ -94,12 +94,7 @@ export type { SessionFiles, StoredFile } from './files/SessionFiles';
 export type { AgentMetadata, ILLM, LLMCreateParams, LLMCreateParamsStreaming, LLMRequestMessage } from './llm/ILLM';
 export { ResponseFormatSchema, toOpenAIResponseFormat } from './llm/responseFormat';
 export type { ResponseFormat } from './llm/responseFormat';
-export {
-  SUPPORTED_REASONING_EFFORTS,
-  VERCEL_AI_PROVIDER_NAMES,
-  VercelAILLM,
-  providerAcceptsToolImages,
-} from './llm/VercelAILLM';
+export { SUPPORTED_REASONING_EFFORTS, VERCEL_AI_PROVIDER_NAMES, VercelAILLM } from './llm/VercelAILLM';
 export type { VercelAILLMConfig, VercelAIProviderConfig, VercelAIProviderName } from './llm/VercelAILLM';
 
 // Event contracts
