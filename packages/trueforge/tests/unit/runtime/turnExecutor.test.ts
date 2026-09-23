@@ -1,4 +1,9 @@
-import { CancellationReason, SessionTipMovedError, TurnNotFoundError } from '@truefoundry/trueforge-core/agent-session';
+import {
+  CancellationReason,
+  SessionTipMovedError,
+  SessionTipRunningError,
+  TurnNotFoundError,
+} from '@truefoundry/trueforge-core/agent-session';
 import { AgentHarnessError, McpConnectionError } from '@truefoundry/trueforge-core/core/errors';
 import { HTTPException } from 'hono/http-exception';
 import { freezeTurnIgnoringMissing, turnStartFailure } from '../../../src/runtime/turnExecutor';
@@ -35,6 +40,11 @@ describe('turnStartFailure', () => {
       code: 'already_answered',
       message: error.message,
     });
+  });
+
+  it('maps an answer to a tip that is still running to 409 tip_running', () => {
+    const error = new SessionTipRunningError('t1');
+    expect(turnStartFailure(error)).toEqual({ ok: false, status: 409, code: 'tip_running', message: error.message });
   });
 
   it.each([

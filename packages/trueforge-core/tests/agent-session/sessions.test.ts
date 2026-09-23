@@ -2,7 +2,11 @@ import { EventType } from '../../src/agent-session/schemas/events';
 import { CancellationReason } from '../../src/agent-session/schemas/turn';
 import { Sessions } from '../../src/agent-session/Sessions';
 import { InMemorySessionStore } from '../../src/agent-session/store/InMemorySessionStore';
-import { SessionTipMovedError, TurnNotFoundError } from '../../src/agent-session/store/SessionStoreErrors';
+import {
+  SessionTipMovedError,
+  SessionTipRunningError,
+  TurnNotFoundError,
+} from '../../src/agent-session/store/SessionStoreErrors';
 import { TurnHandle } from '../../src/agent-session/TurnHandle';
 import {
   makeAgentSpec,
@@ -259,7 +263,7 @@ describe('Sessions / SessionHandle / TurnHandle (storage + createTurn)', () => {
         signal: new AbortController().signal,
         resolver: makeTestResolver(),
       }),
-    ).rejects.toBeInstanceOf(SessionTipMovedError);
+    ).rejects.toBeInstanceOf(SessionTipRunningError);
 
     const tip = await store.getTurn({ session_id: 's1', turn_id: running.id });
     expect(tip?.state.status).toBe('running');

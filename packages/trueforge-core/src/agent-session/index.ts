@@ -119,6 +119,7 @@ export {
   SessionStoreInvariantError,
   SessionStoreNotFoundError,
   SessionTipMovedError,
+  SessionTipRunningError,
   TurnAlreadyExistsError,
   TurnNotFoundError,
   TurnNotRunningError,

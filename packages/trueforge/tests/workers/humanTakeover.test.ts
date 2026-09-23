@@ -14,6 +14,7 @@ import { TrueForgeAuthorizer } from '../../src/auth/authorizer';
 import type { RequestContext } from '../../src/auth/identity';
 import type { ComputerCapabilities } from '../../src/computers/protocol';
 import { createHumanTakeoverService, type HumanTakeoverService } from '../../src/computers/takeover';
+import type { TurnExecutor } from '../../src/runtime/turnExecutor';
 import { newId } from '../../src/utils/id';
 import { workersComputersService } from '../../src/workers/computersService';
 import { createConsoleLogger } from '../../src/workers/logger';
@@ -48,13 +49,13 @@ function executor(): WorkersTurnExecutor {
   return new WorkersTurnExecutor({ namespace: env.SESSION_DO, sessionStore: d1Persistence().sessionStore });
 }
 
-function takeovers(): HumanTakeoverService {
+function takeovers(turnExecutor: Pick<TurnExecutor, 'start'> = executor()): HumanTakeoverService {
   const stores = d1Persistence();
   return createHumanTakeoverService({
     computers: workersComputersService(env),
     sessions: new Sessions({ sessionStore: stores.sessionStore }),
     agentStore: stores.agentStore,
-    turnExecutor: executor(),
+    turnExecutor,
     resolveTurnStores: () => ({
       agentStore: stores.agentStore,
       modelProviderStore: stores.modelProviderStore,
@@ -264,16 +265,22 @@ async function turnsOf(sessionId: string) {
   return data;
 }
 
-function resolve(service: HumanTakeoverService, input: { computerId: string; sessionId: string }) {
+function resolve(
+  service: HumanTakeoverService,
+  input: { computerId: string; sessionId: string; actingUserId?: string },
+) {
   return service.resolveTakeover({
     tenant_id: TENANT_ID,
     computer_id: input.computerId,
     session_id: input.sessionId,
     outcome: 'completed',
     note: 'logged in',
-    acting_user_id: HELPER,
+    acting_user_id: input.actingUserId ?? HELPER,
   });
 }
+
+/** What the model reads back when HELPER, who did not start the session, hands back. */
+const HELPER_HAND_BACK = JSON.stringify({ outcome: 'completed', note: 'logged in', answered_by: 'another_user' });
 
 beforeAll(async () => {
   await migrateDatabase();
@@ -347,7 +354,7 @@ describe('a desktop takeover', () => {
         type: EventType.USER_TOOL_RESPONSE,
         thread_id: 'main',
         tool_call_id: 'call_1',
-        content: JSON.stringify({ outcome: 'completed', note: 'logged in' }),
+        content: HELPER_HAND_BACK,
       },
     ]);
     expect(resumed?.state.status).toBe('done');
@@ -385,7 +392,12 @@ describe('a desktop takeover', () => {
       body: { session_id: sessionId, note: 'logged in' },
     });
     expect(handedBack.status).toBe(200);
-    expect(handedBack.body).toMatchObject({ data: { controller: { kind: 'none' }, pending_takeovers: [] } });
+    expect(handedBack.body).toMatchObject({
+      data: {
+        status: { controller: { kind: 'none' }, pending_takeovers: [] },
+        takeover: { session_id: sessionId, result: 'resumed' },
+      },
+    });
     await drain(sessionId);
 
     const turns = await turnsOf(sessionId);
@@ -397,27 +409,121 @@ describe('a desktop takeover', () => {
         type: EventType.USER_TOOL_RESPONSE,
         thread_id: 'main',
         tool_call_id: 'call_1',
-        content: JSON.stringify({ outcome: 'completed', note: 'logged in' }),
+        content: HELPER_HAND_BACK,
       },
     ]);
     expect(resumed?.state.status).toBe('done');
 
     // Control and the takeover are both gone, so a repeat changes nothing.
     const again = await desktopCall({ ...at, path: '/hand-back', method: 'POST', body: { session_id: sessionId } });
-    expect(again.status).toBe(409);
-    expect(again.body).toMatchObject({ error: { code: 'not_pending' }, data: { controller: { kind: 'none' } } });
+    expect(again.status).toBe(423);
+    const cancelled = await desktopCall({
+      ...at,
+      path: '/cancel-takeover',
+      method: 'POST',
+      body: { session_id: sessionId },
+    });
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body).toMatchObject({
+      data: { status: { controller: { kind: 'none' } }, takeover: { session_id: sessionId, result: 'not_pending' } },
+    });
     expect(await turnsOf(sessionId)).toHaveLength(2);
     agent.client.close();
   });
 
-  it('refuses the chat answer with 409 once the hand-back resumed the session', async () => {
+  it('refuses the chat answer with 409 already_answered once the hand-back resumed the session', async () => {
     const agent = await desktopAgent();
     const { sessionId } = await waitingSession(agent);
 
     expect(await resolve(takeovers(), { computerId: agent.computerId, sessionId })).toEqual({ ok: true });
-    expect(await chatAnswer({ sessionId, toolCallId: 'call_1' })).toEqual({ status: 409, code: 'already_answered' });
     await drain(sessionId);
+    expect(await chatAnswer({ sessionId, toolCallId: 'call_1' })).toEqual({ status: 409, code: 'already_answered' });
     expect(await turnsOf(sessionId)).toHaveLength(2);
+    agent.client.close();
+  });
+
+  it('refuses the chat answer with 409 tip_running while the session tip still runs', async () => {
+    const agent = await desktopAgent();
+    const { sessionId, turnId } = await waitingSession(agent);
+    // A turn another executor holds, so it stays running for the whole test.
+    const now = new Date();
+    await d1Persistence().sessionStore.createTurn({
+      turn: {
+        turn_id: `held-${newId()}`,
+        session_id: sessionId,
+        first_turn_id: turnId,
+        ancestor_ids: [turnId],
+        previous_turn_id: turnId,
+        active_executor_id: 'elsewhere',
+        state: { status: 'running' },
+        input: [],
+        custom: null,
+        created_at: now,
+        updated_at: now,
+      },
+      new_threads: [],
+      new_context_appends: [],
+      capability_states: [{ thread_id: 'main', capability_state: null }],
+      update_session_title_if_not_exist: null,
+      require_tip: false,
+    });
+
+    expect(await chatAnswer({ sessionId, toolCallId: 'call_1' })).toEqual({ status: 409, code: 'tip_running' });
+    expect(await resolve(takeovers(), { computerId: agent.computerId, sessionId })).toEqual({
+      ok: false,
+      code: 'takeover_already_answered',
+    });
+    expect(await turnsOf(sessionId)).toHaveLength(2);
+    agent.client.close();
+  });
+
+  it('tells the model when the session creator answered', async () => {
+    const agent = await desktopAgent();
+    const { sessionId, turnId } = await waitingSession(agent);
+
+    expect(await resolve(takeovers(), { computerId: agent.computerId, sessionId, actingUserId: USER_REF })).toEqual({
+      ok: true,
+    });
+    await drain(sessionId);
+    const resumed = (await turnsOf(sessionId)).find(turn => turn.turn_id !== turnId);
+    expect(resumed?.input).toMatchObject([
+      { content: JSON.stringify({ outcome: 'completed', note: 'logged in', answered_by: 'session_creator' }) },
+    ]);
+    agent.client.close();
+  });
+
+  it('drops the request from the desktop when the session cannot be resumed, leaving the session as it was', async () => {
+    const agent = await desktopAgent();
+    const { sessionId } = await waitingSession(agent);
+    await d1Persistence().agentStore.deleteAgent({ tenant_id: TENANT_ID, id: agent.agentId });
+
+    const answered = await resolve(takeovers(), { computerId: agent.computerId, sessionId });
+    expect(answered).toMatchObject({ ok: false, code: 'resume_failed' });
+    expect(answered.ok ? '' : 'message' in answered ? answered.message : '').toContain('in the chat');
+    expect(await takeovers().listPendingTakeovers({ tenant_id: TENANT_ID, computer_id: agent.computerId })).toEqual([]);
+    expect(
+      await workersComputersService(env).relay(agent.computerId).listTakeoverPointers({ tenant_id: TENANT_ID }),
+    ).toEqual([]);
+    expect(await turnsOf(sessionId)).toHaveLength(1);
+    agent.client.close();
+  });
+
+  it('drops the request when the executor refuses the resume with anything but a conflict', async () => {
+    const agent = await desktopAgent();
+    const { sessionId } = await waitingSession(agent);
+    const refusing: Pick<TurnExecutor, 'start'> = {
+      start: () =>
+        Promise.resolve({ ok: false, status: 422, code: 'unprocessable_entity', message: 'Agent not found' }),
+    };
+
+    expect(await resolve(takeovers(refusing), { computerId: agent.computerId, sessionId })).toMatchObject({
+      ok: false,
+      code: 'resume_failed',
+    });
+    expect(
+      await workersComputersService(env).relay(agent.computerId).listTakeoverPointers({ tenant_id: TENANT_ID }),
+    ).toEqual([]);
+    expect(await turnsOf(sessionId)).toHaveLength(1);
     agent.client.close();
   });
 
@@ -453,7 +559,9 @@ describe('a desktop takeover', () => {
     const chatWon = answered.status === 200;
     expect([handBackWon, chatWon].filter(Boolean)).toHaveLength(1);
     if (handBackWon) {
-      expect(answered).toEqual({ status: 409, code: 'already_answered' });
+      // The resumed turn may still be running when the chat answer arrives.
+      expect(answered.status).toBe(409);
+      expect(['already_answered', 'tip_running']).toContain(answered.code);
     } else {
       expect(handedBack).toEqual({ ok: false, code: 'takeover_already_answered' });
     }

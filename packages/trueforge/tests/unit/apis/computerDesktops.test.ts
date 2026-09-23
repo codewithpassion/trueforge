@@ -14,7 +14,7 @@ import {
   type TakeHumanLeaseOutcome,
 } from '../../../src/computers/protocol';
 import type { ComputerRelayPort, ComputersService, TakeoverPointer } from '../../../src/computers/service';
-import type { HumanTakeoverService, PendingTakeover } from '../../../src/computers/takeover';
+import type { HumanTakeoverService, PendingTakeover, TakeoverResolution } from '../../../src/computers/takeover';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
 import { SqliteAgentStore } from '../../../src/db/sqlite/agent-store/SqliteAgentStore';
 import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
@@ -154,10 +154,13 @@ class FakeRelay implements ComputerRelayPort {
 
 class FakeTakeovers implements HumanTakeoverService {
   pending: PendingTakeover[] = [];
-  answer: Awaited<ReturnType<HumanTakeoverService['resolveTakeover']>> = { ok: true };
+  answer: TakeoverResolution = { ok: true };
   readonly resolved: Parameters<HumanTakeoverService['resolveTakeover']>[0][] = [];
+  /** Each listing loads every waiting session, so a request should list at most once. */
+  listed = 0;
 
   listPendingTakeovers(input: { tenant_id: string; computer_id: string; agent_id?: string }) {
+    this.listed += 1;
     return Promise.resolve(
       this.pending.filter(takeover => input.agent_id === undefined || takeover.agent_id === input.agent_id),
     );
@@ -358,6 +361,15 @@ async function statusOf(response: Response) {
     throw new Error('not a status envelope');
   }
   return body.data;
+}
+
+/** The `{ status, takeover }` a hand-back or cancel answers with. */
+async function answerOf(response: Response): Promise<{ status: unknown; takeover: unknown }> {
+  const data: unknown = await statusOf(response);
+  if (typeof data !== 'object' || data === null || !('status' in data) || !('takeover' in data)) {
+    throw new Error('not an answer envelope');
+  }
+  return { status: data.status, takeover: data.takeover };
 }
 
 /** Returns the desktop audit commands written after this call; the store is shared across tests. */
@@ -692,7 +704,11 @@ describe('handing back', () => {
         acting_user_id: 'alice',
       },
     ]);
-    expect(await statusOf(response)).toMatchObject({ controller: { kind: 'none' } });
+    expect(takeovers.listed).toBe(1);
+    expect(await answerOf(response)).toEqual({
+      status: expect.objectContaining({ controller: { kind: 'none' }, pending_takeovers: [] }),
+      takeover: { session_id: 'ses_desk', result: 'resumed', message: expect.any(String) },
+    });
   });
 
   it('only releases control without a session', async () => {
@@ -704,6 +720,7 @@ describe('handing back', () => {
     expect(relay.releasedFor).toHaveLength(1);
     expect(takeovers.resolved).toHaveLength(0);
     expect(await audited()).toEqual(['computer.desktop.hand_back by alice']);
+    expect(await answerOf(response)).toMatchObject({ status: { controller: { kind: 'none' } }, takeover: null });
   });
 
   it('needs control', async () => {
@@ -715,31 +732,39 @@ describe('handing back', () => {
     expect(takeovers.resolved).toHaveLength(0);
   });
 
-  it('answers 409 when the takeover was already answered', async () => {
+  it.each([
+    [{ ok: false, code: 'takeover_already_answered' }, 'already_answered'],
+    [{ ok: false, code: 'resume_failed', message: 'answer it in the chat' }, 'resume_failed'],
+  ] as const)('releases control and says so when the takeover could not be resumed (%j)', async (answer, result) => {
     const { call, relay, takeovers } = setup();
     takeovers.pending = [{ ...PENDING_DESK, agent_id: agents.desk }];
-    takeovers.answer = { ok: false, code: 'takeover_already_answered' };
+    takeovers.answer = answer;
     relay.control = { kind: 'human', user_id: 'alice', expires_at: Date.now() + 60_000 };
     const audited = await auditFromNow();
     const response = await call({ method: 'POST', path: '/hand-back', body: { session_id: 'ses_desk' } });
-    expect(response.status).toBe(409);
-    expect((await errorOf(response.clone())).code).toBe('takeover_already_answered');
-    // Control still went back, and nobody else recorded that; the body says so.
-    expect(await statusOf(response)).toMatchObject({ controller: { kind: 'none' } });
+    expect(response.status).toBe(200);
+    const body = await answerOf(response);
+    expect(body.status).toMatchObject({ controller: { kind: 'none' }, pending_takeovers: [] });
+    expect(body.takeover).toMatchObject({ session_id: 'ses_desk', result });
+    if (answer.code === 'resume_failed') {
+      expect(body.takeover).toMatchObject({ message: answer.message });
+    }
+    // Control went back, and nobody else recorded that.
     expect(await audited()).toEqual(['computer.desktop.hand_back by alice']);
   });
 
-  it('will not answer a session of another agent', async () => {
+  it('will not answer a session of another agent, but control still goes back', async () => {
     const { call, relay, takeovers } = setup();
     takeovers.pending = [{ ...PENDING_DESK, agent_id: 'agent_other' }];
     relay.control = { kind: 'human', user_id: 'alice', expires_at: Date.now() + 60_000 };
     const response = await call({ method: 'POST', path: '/hand-back', body: { session_id: 'ses_desk' } });
-    expect(response.status).toBe(409);
-    expect((await errorOf(response.clone())).code).toBe('not_pending');
-    // Nothing changed: the caller still holds control.
-    expect(await statusOf(response)).toMatchObject({ controller: { kind: 'human', user_id: 'alice', is_me: true } });
+    expect(response.status).toBe(200);
+    expect(await answerOf(response)).toMatchObject({
+      status: { controller: { kind: 'none' } },
+      takeover: { session_id: 'ses_desk', result: 'not_pending' },
+    });
     expect(takeovers.resolved).toHaveLength(0);
-    expect(relay.releasedFor).toHaveLength(0);
+    expect(relay.releasedFor).toHaveLength(1);
   });
 
   it('answers 503 for a session where takeovers cannot be answered, before releasing', async () => {
@@ -773,6 +798,11 @@ describe('cancelling a takeover', () => {
         acting_user_id: 'alice',
       },
     ]);
+    expect(takeovers.listed).toBe(1);
+    expect(await answerOf(response)).toMatchObject({
+      status: { pending_takeovers: [] },
+      takeover: { session_id: 'ses_desk', result: 'resumed' },
+    });
   });
 
   it('releases the caller control when they hold it', async () => {
@@ -781,15 +811,36 @@ describe('cancelling a takeover', () => {
     relay.control = { kind: 'human', user_id: 'alice', expires_at: Date.now() + 60_000 };
     const response = await call({ method: 'POST', path: '/cancel-takeover', body: { session_id: 'ses_desk' } });
     expect(response.status).toBe(200);
-    expect(await statusOf(response)).toMatchObject({ controller: { kind: 'none' } });
+    expect(await answerOf(response)).toMatchObject({ status: { controller: { kind: 'none' } } });
   });
 
-  it('answers 409 when the takeover was already answered', async () => {
+  it('is refused with 423 while another person controls the desktop, and answers nothing', async () => {
+    const { call, relay, takeovers } = setup();
+    takeovers.pending = [{ ...PENDING_DESK, agent_id: agents.desk }];
+    relay.control = { kind: 'human', user_id: 'bob', expires_at: Date.now() + 60_000 };
+    const response = await call({ method: 'POST', path: '/cancel-takeover', body: { session_id: 'ses_desk' } });
+    expect(response.status).toBe(423);
+    expect((await errorOf(response)).code).toBe('human_in_control');
+    expect(takeovers.resolved).toHaveLength(0);
+    expect(relay.releasedFor).toHaveLength(0);
+    expect(relay.control).toMatchObject({ kind: 'human', user_id: 'bob' });
+  });
+
+  it('will not answer a session of another agent', async () => {
+    const { call, takeovers } = setup();
+    takeovers.pending = [{ ...PENDING_DESK, agent_id: 'agent_other' }];
+    const response = await call({ method: 'POST', path: '/cancel-takeover', body: { session_id: 'ses_desk' } });
+    expect(response.status).toBe(200);
+    expect(await answerOf(response)).toMatchObject({ takeover: { session_id: 'ses_desk', result: 'not_pending' } });
+    expect(takeovers.resolved).toHaveLength(0);
+  });
+
+  it('says so when the takeover was already answered', async () => {
     const { call, takeovers } = setup();
     takeovers.pending = [{ ...PENDING_DESK, agent_id: agents.desk }];
     takeovers.answer = { ok: false, code: 'takeover_already_answered' };
     const response = await call({ method: 'POST', path: '/cancel-takeover', body: { session_id: 'ses_desk' } });
-    expect(response.status).toBe(409);
-    expect((await errorOf(response)).code).toBe('takeover_already_answered');
+    expect(response.status).toBe(200);
+    expect(await answerOf(response)).toMatchObject({ takeover: { result: 'already_answered' } });
   });
 });

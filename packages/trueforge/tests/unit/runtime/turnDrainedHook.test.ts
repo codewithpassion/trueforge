@@ -224,6 +224,8 @@ async function takeoverHarness(input: {
   end: TurnEnd;
   session_id: string;
   computer_id: string | undefined;
+  /** The sandbox the session's turn recorded; none when omitted. */
+  sandbox_id?: string;
   db?: Kysely<Database>;
 }): Promise<{ db: Kysely<Database>; session: SessionHandle; agentStore: SqliteAgentStore }> {
   const db = input.db ?? createSqliteDb(':memory:');
@@ -260,6 +262,13 @@ async function takeoverHarness(input: {
     source: null,
   });
   await sessionStore.createTurn(makeCreateTurnInput({ sessionId: input.session_id, turnId: AGENT_TURN_ID }));
+  if (input.sandbox_id !== undefined) {
+    await sessionStore.patchSandboxInfo({
+      session_id: input.session_id,
+      turn_id: AGENT_TURN_ID,
+      sandbox_info: { sandbox_id: input.sandbox_id },
+    });
+  }
   const toolName = input.end === 'question' ? ASK_USER_QUESTION_TOOL : REQUEST_HUMAN_TAKEOVER_TOOL;
   const args = input.end === 'question' ? { question: 'Which?' } : { reason: 'Log into the portal' };
   const modelEventId = newEventId();
@@ -325,11 +334,16 @@ describe('the turn drained hook and takeover requests', () => {
     db = undefined;
   });
 
-  async function drain(input: { end: TurnEnd; computer_id?: string | undefined }): Promise<string[]> {
+  async function drain(input: {
+    end: TurnEnd;
+    computer_id?: string | undefined;
+    sandbox_id?: string;
+  }): Promise<string[]> {
     const built = await takeoverHarness({
       end: input.end,
       session_id: SESSION_ID,
       computer_id: 'computer_id' in input ? input.computer_id : COMPUTER_ID,
+      ...(input.sandbox_id === undefined ? {} : { sandbox_id: input.sandbox_id }),
     });
     db = built.db;
     const { computers, pointers } = recordingComputers();
@@ -344,6 +358,25 @@ describe('the turn drained hook and takeover requests', () => {
 
   it('records a pointer on the agent’s computer when the turn ends asking for a takeover', async () => {
     expect(await drain({ end: 'takeover' })).toEqual([`${COMPUTER_ID}:${TENANT}:${SESSION_ID}:${AGENT_TURN_ID}`]);
+  });
+
+  it('records it on the computer the session’s sandbox runs on, even after the agent moved', async () => {
+    expect(await drain({ end: 'takeover', sandbox_id: `v1:remote-computer:cmp_session/${SESSION_ID}` })).toEqual([
+      `cmp_session:${TENANT}:${SESSION_ID}:${AGENT_TURN_ID}`,
+    ]);
+  });
+
+  it('records it where the session’s sandbox runs even when the agent no longer uses a computer', async () => {
+    const sandboxId = `v1:remote-computer:cmp_session/${SESSION_ID}`;
+    expect(await drain({ end: 'takeover', computer_id: undefined, sandbox_id: sandboxId })).toEqual([
+      `cmp_session:${TENANT}:${SESSION_ID}:${AGENT_TURN_ID}`,
+    ]);
+  });
+
+  it('falls back to the agent’s computer when the session’s sandbox is not a remote computer', async () => {
+    expect(await drain({ end: 'takeover', sandbox_id: 'v1:e2b:sbx-1' })).toEqual([
+      `${COMPUTER_ID}:${TENANT}:${SESSION_ID}:${AGENT_TURN_ID}`,
+    ]);
   });
 
   it.each<TurnEnd>(['cancelled', 'error'])('records none when the turn was %s', async end => {

@@ -87,8 +87,8 @@ export class PreviousTurnRunningError extends SessionStoreConflictError {
 }
 
 /**
- * A resume that must continue the session tip found another turn there, or found the tip still
- * running: someone else answered first.
+ * A resume that must continue the session tip found another turn there, or a finished tip not
+ * waiting on the call it answers: someone else answered first.
  */
 export class SessionTipMovedError extends SessionStoreConflictError {
   readonly expected_turn_id: string;
@@ -97,6 +97,17 @@ export class SessionTipMovedError extends SessionStoreConflictError {
     super(`Turn ${expected_turn_id} is no longer the finished tip of its session; it was already answered`);
     this.name = 'SessionTipMovedError';
     this.expected_turn_id = expected_turn_id;
+  }
+}
+
+/** A tool response that must continue the session tip found that tip still running. */
+export class SessionTipRunningError extends SessionStoreConflictError {
+  readonly turn_id: string;
+
+  constructor(turn_id: string) {
+    super(`Turn ${turn_id} is still running; answer its tool calls once it has finished`);
+    this.name = 'SessionTipRunningError';
+    this.turn_id = turn_id;
   }
 }
 

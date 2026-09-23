@@ -231,7 +231,7 @@ Use \`previous_turn_id\` to chain to the session's last turn (defaults to \`auto
     409: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description:
-        'Code `already_answered`: a tool response continuing the session tip lost to another answer of the same pending call, or the tip is still running.',
+        'Code `already_answered`: a tool response continuing the session tip lost to another answer of the same pending call. Code `tip_running`: the session tip is still running.',
     },
     412: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },

@@ -22,7 +22,12 @@ import {
   type RequestOutcome,
 } from '../computers/protocol';
 import type { ComputerRelayPort, ComputersService } from '../computers/service';
-import { recordDesktopControl, type HumanTakeoverService } from '../computers/takeover';
+import {
+  recordDesktopControl,
+  type HumanTakeoverService,
+  type PendingTakeover,
+  type TakeoverResolution,
+} from '../computers/takeover';
 import type { IAgentStore } from '../db/agentStore';
 import {
   cancelDesktopTakeoverRoute,
@@ -34,7 +39,7 @@ import {
   setDesktopClipboardRoute,
   takeDesktopControlRoute,
 } from '../routes/computerDesktopRoutes';
-import type { DesktopController, DesktopStatus } from '../schemas/computerDesktop';
+import type { DesktopController, DesktopStatus, DesktopTakeoverAnswer } from '../schemas/computerDesktop';
 import { fromBase64, toArrayBuffer } from '../utils/bytes';
 import { agentIfAccessible } from './agentAccess';
 import { COMPUTERS_UNSUPPORTED } from './computers';
@@ -43,10 +48,28 @@ import { COMPUTERS_UNSUPPORTED } from './computers';
 const NO_SUCH_COMPUTER = 'No such computer';
 const NO_SUCH_AGENT = 'No such agent';
 const LEASE_REQUIRED_MESSAGE = 'Take control of the desktop first';
-const ANSWER_REFUSED = {
-  not_pending: 'No takeover is pending for that session',
-  takeover_already_answered: 'The takeover was already answered',
-} as const;
+const NOT_PENDING_MESSAGE = 'No takeover is pending for that session';
+
+/** The service's resolution as the caller reads it. */
+function takeoverAnswer({
+  sessionId,
+  resolution,
+}: {
+  sessionId: string;
+  resolution: TakeoverResolution;
+}): DesktopTakeoverAnswer {
+  if (resolution.ok) {
+    return { session_id: sessionId, result: 'resumed', message: 'The agent continues' };
+  }
+  switch (resolution.code) {
+    case 'not_pending':
+      return { session_id: sessionId, result: 'not_pending', message: NOT_PENDING_MESSAGE };
+    case 'takeover_already_answered':
+      return { session_id: sessionId, result: 'already_answered', message: 'The takeover was already answered' };
+    case 'resume_failed':
+      return { session_id: sessionId, result: 'resume_failed', message: resolution.message };
+  }
+}
 
 export interface ComputerDesktopsRouterDeps {
   /** Undefined on a runtime that cannot reach a machine's relay; every route then answers 404. */
@@ -228,15 +251,22 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
     return frame.ok ? { ok: true, value: toArrayBuffer(fromBase64(frame.value.data_b64)) } : frame;
   }
 
-  async function desktopStatus(access: DesktopAccess): Promise<DesktopStatus> {
-    const [live, pending] = await Promise.all([
-      access.relay.status(),
+  function listPending(access: DesktopAccess): Promise<PendingTakeover[]> {
+    return (
       deps.humanTakeovers?.listPendingTakeovers({
         tenant_id: access.tenantId,
         computer_id: access.computerId,
         ...(access.agentId === undefined ? {} : { agent_id: access.agentId }),
-      }) ?? [],
-    ]);
+      }) ?? Promise.resolve([])
+    );
+  }
+
+  /** Listing takeovers loads every waiting session, so a route that already has the list passes it in. */
+  async function desktopStatus(
+    access: DesktopAccess,
+    { pending: known }: { pending?: PendingTakeover[] } = {},
+  ): Promise<DesktopStatus> {
+    const [live, pending] = await Promise.all([access.relay.status(), known ?? listPending(access)]);
     const control = live.desktop_control;
     let controller: DesktopController;
     switch (control.kind) {
@@ -263,19 +293,6 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
       controller,
       pending_takeovers: pending,
     };
-  }
-
-  /** Whether the session is waiting on a person for this caller's agent; always true for an unscoped admin. */
-  async function isScopedTakeover({ access, sessionId }: { access: DesktopAccess; sessionId: string }) {
-    if (access.agentId === undefined || deps.humanTakeovers === undefined) {
-      return true;
-    }
-    const pending = await deps.humanTakeovers.listPendingTakeovers({
-      tenant_id: access.tenantId,
-      computer_id: access.computerId,
-      agent_id: access.agentId,
-    });
-    return pending.some(takeover => takeover.session_id === sessionId);
   }
 
   const recordControl = ({ access, action }: { access: DesktopAccess; action: 'take_control' | 'hand_back' }) =>
@@ -437,6 +454,42 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
     return c.json({ data: await desktopStatus(access) }, 200);
   };
 
+  /**
+   * Answers the named takeover once the caller's control is settled. A caller scoped to an agent
+   * may only answer that agent's sessions; an unscoped admin leaves every check to the service.
+   * The status reuses the one list of takeovers, less the one just answered.
+   */
+  async function answerTakeover({
+    access,
+    takeovers,
+    sessionId,
+    outcome,
+    note,
+  }: {
+    access: DesktopAccess;
+    takeovers: HumanTakeoverService;
+    sessionId: string;
+    outcome: 'completed' | 'cancelled';
+    note: string | null;
+  }): Promise<{ status: DesktopStatus; takeover: DesktopTakeoverAnswer }> {
+    const pending = await listPending(access);
+    const resolution: TakeoverResolution =
+      access.agentId !== undefined && !pending.some(takeover => takeover.session_id === sessionId)
+        ? { ok: false, code: 'not_pending' }
+        : await takeovers.resolveTakeover({
+            tenant_id: access.tenantId,
+            computer_id: access.computerId,
+            session_id: sessionId,
+            outcome,
+            note,
+            acting_user_id: access.principal.user_id,
+          });
+    const status = await desktopStatus(access, {
+      pending: pending.filter(takeover => takeover.session_id !== sessionId),
+    });
+    return { status, takeover: takeoverAnswer({ sessionId, resolution }) };
+  }
+
   const handBackHandler: RouteHandler<typeof handBackDesktopRoute> = async c => {
     const { computer_id: computerId } = c.req.valid('param');
     const { agent_id: agentId } = c.req.valid('query');
@@ -453,12 +506,6 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
     if (sessionId !== undefined && takeovers === undefined) {
       return c.json({ error: { message: 'Takeovers cannot be answered on this server' } }, 503);
     }
-    if (sessionId !== undefined && !(await isScopedTakeover({ access, sessionId }))) {
-      return c.json(
-        { error: { message: ANSWER_REFUSED.not_pending, code: 'not_pending' }, data: await desktopStatus(access) },
-        409,
-      );
-    }
     // Released before the answer, so the resumed turn does not find a person still in control.
     const released = await access.relay.releaseHumanLease({
       tenant_id: access.tenantId,
@@ -469,28 +516,14 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
     }
     if (sessionId === undefined || takeovers === undefined) {
       await recordControl({ access, action: 'hand_back' });
-      return c.json({ data: await desktopStatus(access) }, 200);
+      return c.json({ data: { status: await desktopStatus(access), takeover: null } }, 200);
     }
-    const answered = await takeovers.resolveTakeover({
-      tenant_id: access.tenantId,
-      computer_id: computerId,
-      session_id: sessionId,
-      outcome: 'completed',
-      note: note ?? null,
-      acting_user_id: access.principal.user_id,
-    });
-    if (!answered.ok) {
-      // Control went back all the same; only an answered takeover is recorded by the service.
+    const answered = await answerTakeover({ access, takeovers, sessionId, outcome: 'completed', note: note ?? null });
+    if (answered.takeover.result !== 'resumed') {
+      // Control went back all the same; only a resumed takeover is recorded by the service.
       await recordControl({ access, action: 'hand_back' });
-      return c.json(
-        {
-          error: { message: ANSWER_REFUSED[answered.code], code: answered.code },
-          data: await desktopStatus(access),
-        },
-        409,
-      );
     }
-    return c.json({ data: await desktopStatus(access) }, 200);
+    return c.json({ data: answered }, 200);
   };
 
   const cancelTakeoverHandler: RouteHandler<typeof cancelDesktopTakeoverRoute> = async c => {
@@ -509,23 +542,15 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
     if (takeovers === undefined) {
       return c.json({ error: { message: 'Takeovers cannot be answered on this server' } }, 503);
     }
-    if (!(await isScopedTakeover({ access, sessionId }))) {
-      return c.json({ error: { message: ANSWER_REFUSED.not_pending, code: 'not_pending' } }, 409);
+    // The person in control may be doing the very step asked for; only they end it.
+    const control = (await access.relay.status()).desktop_control;
+    if (control.kind === 'human' && control.user_id !== access.principal.user_id) {
+      return c.json({ error: { message: 'Another person controls the desktop', code: 'human_in_control' } }, 423);
     }
     // Anyone who may use the agent may cancel; the caller's own control, if any, ends with it.
     await access.relay.releaseHumanLease({ tenant_id: access.tenantId, user_id: access.principal.user_id });
-    const answered = await takeovers.resolveTakeover({
-      tenant_id: access.tenantId,
-      computer_id: computerId,
-      session_id: sessionId,
-      outcome: 'cancelled',
-      note: note ?? null,
-      acting_user_id: access.principal.user_id,
-    });
-    if (!answered.ok) {
-      return c.json({ error: { message: ANSWER_REFUSED[answered.code], code: answered.code } }, 409);
-    }
-    return c.json({ data: await desktopStatus(access) }, 200);
+    const answered = await answerTakeover({ access, takeovers, sessionId, outcome: 'cancelled', note: note ?? null });
+    return c.json({ data: answered }, 200);
   };
 
   router.openapi(getDesktopStatusRoute, getStatusHandler);

@@ -3,6 +3,7 @@ import { createRoute, z } from '@hono/zod-openapi';
 import {
   CancelDesktopTakeoverRequestSchema,
   ComputerDesktopRequestQuerySchema,
+  DesktopTakeoverAnswerResponseSchema,
   GetDesktopClipboardResponseSchema,
   GetDesktopStatusResponseSchema,
   HandBackDesktopRequestSchema,
@@ -43,6 +44,11 @@ const jpegFrame = {
 const statusResponse = {
   content: { 'application/json': { schema: GetDesktopStatusResponseSchema } },
   description: 'The desktop status.',
+};
+
+const answerResponse = {
+  content: { 'application/json': { schema: DesktopTakeoverAnswerResponseSchema } },
+  description: 'The desktop status after the request, and what happened to the named takeover (null without one).',
 };
 
 const FERN_GROUP = ['computerDesktops'];
@@ -191,14 +197,11 @@ export const handBackDesktopRoute = createRoute({
     body: { content: { 'application/json': { schema: HandBackDesktopRequestSchema } }, required: true },
   },
   responses: {
-    200: statusResponse,
+    200: answerResponse,
     400: badRequest,
     401: unauthorized,
     403: forbidden,
     404: notFound,
-    409: errorResponse(
-      'Code `not_pending`: nothing changed. Code `takeover_already_answered`: answered elsewhere, but control is released. Either way `data` is the desktop status after the request.',
-    ),
     423: errorResponse('Code `lease_required`: the caller does not control the desktop.'),
     503: errorResponse('Takeovers cannot be answered on this server.'),
   },
@@ -210,7 +213,7 @@ export const cancelDesktopTakeoverRoute = createRoute({
   tags: [OpenApiTag.COMPUTERS],
   summary: 'Cancel a desktop takeover',
   description:
-    'Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it.',
+    'Answers a pending takeover as cancelled so the agent continues without help. Needs no control; releases it if the caller holds it. Refused while another person controls the desktop.',
   'x-fern-sdk-group-name': FERN_GROUP,
   'x-fern-sdk-method-name': 'cancel_takeover',
   request: {
@@ -219,12 +222,12 @@ export const cancelDesktopTakeoverRoute = createRoute({
     body: { content: { 'application/json': { schema: CancelDesktopTakeoverRequestSchema } }, required: true },
   },
   responses: {
-    200: statusResponse,
+    200: answerResponse,
     400: badRequest,
     401: unauthorized,
     403: forbidden,
     404: notFound,
-    409: errorResponse('Code `takeover_already_answered` or `not_pending`: the takeover was answered elsewhere.'),
+    423: errorResponse('Code `human_in_control`: another person controls the desktop; nothing was answered.'),
     503: errorResponse('Takeovers cannot be answered on this server.'),
   },
 });

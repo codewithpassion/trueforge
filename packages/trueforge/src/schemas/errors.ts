@@ -19,10 +19,6 @@ export const RequestErrorResponseSchema = z
         .optional()
         .describe('Optional request field that caused the error; null when not field-specific.'),
     }),
-    data: z
-      .unknown()
-      .optional()
-      .describe('State after a refused request, on the routes that document it; absent otherwise.'),
   })
   .openapi('RequestErrorResponse');
 

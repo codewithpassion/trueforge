@@ -2,7 +2,6 @@ import type { SessionHandle, Sessions } from '@truefoundry/trueforge-core/agent-
 import { EventType } from '@truefoundry/trueforge-core/core/events/schema';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
-import { HTTPException } from 'hono/http-exception';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IComputerStore } from '../db/computerStore';
 import { readPendingAction, type PendingTakeoverRequest } from '../integrations/pendingActions';
@@ -35,8 +34,14 @@ export interface HumanTakeoverService {
     outcome: 'completed' | 'cancelled';
     note: string | null;
     acting_user_id: string;
-  }): Promise<{ ok: true } | { ok: false; code: 'not_pending' | 'takeover_already_answered' }>;
+  }): Promise<TakeoverResolution>;
 }
+
+/** `resume_failed` drops the request from the desktop; the session itself is left waiting. */
+export type TakeoverResolution =
+  | { ok: true }
+  | { ok: false; code: 'not_pending' | 'takeover_already_answered' }
+  | { ok: false; code: 'resume_failed'; message: string };
 
 export interface HumanTakeoverServiceDeps {
   computers: Pick<ComputersService, 'relay'> & { store: Pick<IComputerStore, 'getComputer' | 'appendAudit'> };
@@ -191,10 +196,26 @@ export function createHumanTakeoverService(deps: HumanTakeoverServiceDeps): Huma
         return { ok: false, code: 'not_pending' };
       }
       const { session, takeover } = found;
+      // A resume that cannot start now will not start on a retry either, so the request leaves the
+      // desktop rather than staying listed; the creator can still answer it in chat.
+      const resumeFailed = async (reason: string): Promise<TakeoverResolution> => {
+        deps.logger.warn('Could not resume a session after a desktop takeover', {
+          session_id,
+          computer_id,
+          reason,
+        });
+        await relay.clearTakeoverPointer({ tenant_id, ...pointer });
+        return {
+          ok: false,
+          code: 'resume_failed',
+          message: `The session could not continue (${reason}). It is no longer listed here; the person who started it can still answer it in the chat.`,
+        };
+      };
       const agent = await deps.agentStore.getAgent({ tenant_id, id: found.agent_id });
       if (agent === undefined) {
-        throw new HTTPException(422, { message: `Agent not found: ${found.agent_id}` });
+        return resumeFailed(`agent not found: ${found.agent_id}`);
       }
+      const creator = session.record.created_by_subject.subject_id;
 
       // `'auto'` rather than the pending turn's id: only a resume of the tip is checked against a
       // racing answer, and an explicit id would fork the session instead of losing to it.
@@ -205,21 +226,25 @@ export function createHumanTakeoverService(deps: HumanTakeoverServiceDeps): Huma
             type: EventType.USER_TOOL_RESPONSE,
             thread_id: takeover.thread_id,
             tool_call_id: takeover.tool_call_id,
-            content: takeoverToolResponseText({ outcome, note }),
+            content: takeoverToolResponseText({
+              outcome,
+              note,
+              answered_by: acting_user_id === creator ? 'session_creator' : 'another_user',
+            }),
           },
         ],
         previous_turn_id: 'auto',
         // The turn runs as the session's creator; who answered goes to the audit row.
-        userRef: session.record.created_by_subject.subject_id,
+        userRef: creator,
         request_metadata: undefined,
         stores: deps.resolveTurnStores({ session, agent }),
       });
       if (!started.ok) {
-        // 409: another answer landed between the check above and this resume.
+        // 409: another answer landed, or is running, between the check above and this resume.
         if (started.status === 409) {
           return { ok: false, code: 'takeover_already_answered' };
         }
-        throw new HTTPException(started.status, { message: started.message });
+        return resumeFailed(started.message);
       }
 
       await relay.clearTakeoverPointer({ tenant_id, ...pointer });

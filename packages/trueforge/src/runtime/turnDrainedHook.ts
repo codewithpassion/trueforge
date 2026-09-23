@@ -1,6 +1,7 @@
 import type { SessionHandle } from '@truefoundry/trueforge-core/agent-session';
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
+import { computerIdFromSandboxRef } from '../computers/RemoteComputerProvider';
 import type { ComputersService } from '../computers/service';
 import type { TurnDesktopLeases } from '../computers/turnDesktopLeases';
 import type { IAgentStore } from '../db/agentStore';
@@ -32,9 +33,10 @@ export async function releaseComputerLeases({
 }
 
 /**
- * Tells the agent's computer that this session waits for a person, when the turn finished asking
+ * Tells the session's computer that this session waits for a person, when the turn finished asking
  * for a takeover. Cancelled and failed turns asked nothing anyone can answer, so they record none.
- * The computer is the agent's current one: the turn may have asked before touching the desktop.
+ * The computer is the one the session's sandbox runs on, so an agent moved since keeps its request
+ * where the session's desktop is; a session with no sandbox yet asked first, and gets the agent's.
  */
 export async function recordTakeoverPointer({
   computers,
@@ -60,8 +62,11 @@ export async function recordTakeoverPointer({
   if (pending?.type !== 'takeover') {
     return;
   }
-  const agent = await agentStore.getAgent({ tenant_id: session.tenant_id, id: session.agent.id });
-  const computerId = agent?.manifest.config.sandbox.computer_id;
+  const sandboxId = turn.record.snapshot.sandbox_info?.sandbox_id;
+  const computerId =
+    (sandboxId === undefined ? undefined : computerIdFromSandboxRef(sandboxId)) ??
+    (await agentStore.getAgent({ tenant_id: session.tenant_id, id: session.agent.id }))?.manifest.config.sandbox
+      .computer_id;
   if (computerId === undefined) {
     return;
   }

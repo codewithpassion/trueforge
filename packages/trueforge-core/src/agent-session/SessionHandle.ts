@@ -30,7 +30,7 @@ import type { SessionAgent } from './schemas/session';
 import type { TurnInputItem } from './schemas/turn';
 import { CancellationReason } from './schemas/turn';
 import type { ISessionStore, NewThreadInit, TurnContextAppend, TurnRecordWithoutSnapshot } from './store/ISessionStore';
-import { SessionTipMovedError, TurnNotFoundError } from './store/SessionStoreErrors';
+import { SessionTipMovedError, SessionTipRunningError, TurnNotFoundError } from './store/SessionStoreErrors';
 import { TurnHandle } from './TurnHandle';
 
 /** How many recent ancestors SessionHandle persists on each turn. Store-local. */
@@ -181,7 +181,8 @@ export class SessionHandle<
    * `previous_turn_id`: omitted/`'auto'` → session tip; `'none'` → new root
    * (no parent, even on a non-empty session); string → fork from that turn
    * (must exist). Concurrent `'auto'` forks both succeed, except tool-response answers: those
-   * commit only while the tip they resolved is still the finished tip, else `SessionTipMovedError`.
+   * commit only while the tip they resolved is still the finished tip, else `SessionTipMovedError`
+   * (`SessionTipRunningError` while that tip is still running).
    */
   async createTurn(input: {
     turn_id: string;
@@ -359,8 +360,8 @@ export class SessionHandle<
    * Missing turn → {@link TurnNotFoundError}.
    */
   /**
-   * The tip a tool response answers. It is never frozen: a running tip means someone already
-   * answered and that run must not be cancelled by the late answer. A finished tip that is not
+   * The tip a tool response answers. It is never frozen: a running tip is refused, because that run
+   * must not be cancelled by a late answer. A finished tip that is not
    * waiting on the call being answered means that answer already landed and the run moved on.
    */
   private async answeredTip({
@@ -375,7 +376,7 @@ export class SessionHandle<
       throw new TurnNotFoundError(turnId);
     }
     if (tip.state.status === 'running') {
-      throw new SessionTipMovedError(turnId);
+      throw new SessionTipRunningError(turnId);
     }
     if (tip.state.status === 'done') {
       const awaited = new Set(

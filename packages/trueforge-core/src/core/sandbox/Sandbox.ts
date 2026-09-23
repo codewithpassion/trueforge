@@ -115,8 +115,8 @@ export interface SandboxProviderTools {
   instructions: string;
   /**
    * What only the root thread, which can pause for a person, is given beside `tools`: client-side
-   * tools such as asking a person to take over, the text naming them, and any rewording of `tools`
-   * results that points at them. `tools` and `instructions` reach every thread.
+   * tools such as asking a person to take over, and the text naming them. `tools` and
+   * `instructions` reach every thread.
    */
   rootCapability: AgentCapability | undefined;
 }

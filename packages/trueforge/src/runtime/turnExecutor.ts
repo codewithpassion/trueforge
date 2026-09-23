@@ -1,6 +1,7 @@
 import {
   SessionStoreNotFoundError,
   SessionTipMovedError,
+  SessionTipRunningError,
   TurnNotFoundError,
   type CancellationReason,
   type SessionHandle,
@@ -90,6 +91,8 @@ const HTTP_EXCEPTION_CODES = {
 
 /** What a tool response that lost the race to another answer of the same pending call gets. */
 export const ALREADY_ANSWERED_CODE = 'already_answered';
+/** What a tool response continuing a session tip that is still running gets. */
+const TIP_RUNNING_CODE = 'tip_running';
 
 /** Client-caused turn-start failures; undefined means the error is unexpected and must be rethrown. */
 export function turnStartFailure(error: unknown): TurnExecutorFailure | undefined {
@@ -104,6 +107,9 @@ export function turnStartFailure(error: unknown): TurnExecutorFailure | undefine
   }
   if (error instanceof SessionTipMovedError) {
     return { ok: false, status: 409, code: ALREADY_ANSWERED_CODE, message: error.message };
+  }
+  if (error instanceof SessionTipRunningError) {
+    return { ok: false, status: 409, code: TIP_RUNNING_CODE, message: error.message };
   }
   if (error instanceof AgentHarnessError && !(error instanceof McpConnectionError)) {
     switch (error.code) {
