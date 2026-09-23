@@ -6,7 +6,6 @@ import pydantic
 from ..core.pydantic_utilities import IS_PYDANTIC_V2
 from ..core.unchecked_base_model import UncheckedBaseModel
 from .integration_notification_rule import IntegrationNotificationRule
-from .resource_name import ResourceName
 from .slack_bot_display_name import SlackBotDisplayName
 from .slack_integration_auth import SlackIntegrationAuth
 from .slack_reply_mode import SlackReplyMode
@@ -39,7 +38,6 @@ class IntegrationManifest(UncheckedBaseModel):
     User id of the bot, used to ignore its own messages. Filled from `auth.test`.
     """
 
-    default_agent_name: ResourceName
     notification_rules: typing.Optional[typing.List[IntegrationNotificationRule]] = pydantic.Field(default=None)
     """
     Schedule results posted to a channel, independent of the allowed channels.

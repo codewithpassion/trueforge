@@ -3,29 +3,30 @@
 import typing
 from json.decoder import JSONDecodeError
 
-from ...core.api_error import ApiError
-from ...core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
-from ...core.http_response import AsyncHttpResponse, HttpResponse
-from ...core.jsonable_encoder import encode_path_param
-from ...core.parse_error import ParsingError
-from ...core.request_options import RequestOptions
-from ...core.serialization import convert_and_respect_annotation_metadata
-from ...core.unchecked_base_model import construct_type
-from ...errors.bad_gateway_error import BadGatewayError
-from ...errors.bad_request_error import BadRequestError
-from ...errors.conflict_error import ConflictError
-from ...errors.forbidden_error import ForbiddenError
-from ...errors.internal_server_error import InternalServerError
-from ...errors.not_found_error import NotFoundError
-from ...errors.unauthorized_error import UnauthorizedError
-from ...errors.unprocessable_entity_error import UnprocessableEntityError
-from ...types.delete_integration_response import DeleteIntegrationResponse
-from ...types.get_integration_app_manifest_response import GetIntegrationAppManifestResponse
-from ...types.get_integration_response import GetIntegrationResponse
-from ...types.integration_manifest import IntegrationManifest
-from ...types.list_integration_decisions_response import ListIntegrationDecisionsResponse
-from ...types.list_integrations_response import ListIntegrationsResponse
-from ...types.request_error_response import RequestErrorResponse
+from ..core.api_error import ApiError
+from ..core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
+from ..core.http_response import AsyncHttpResponse, HttpResponse
+from ..core.jsonable_encoder import encode_path_param
+from ..core.parse_error import ParsingError
+from ..core.request_options import RequestOptions
+from ..core.serialization import convert_and_respect_annotation_metadata
+from ..core.unchecked_base_model import construct_type
+from ..errors.bad_gateway_error import BadGatewayError
+from ..errors.bad_request_error import BadRequestError
+from ..errors.conflict_error import ConflictError
+from ..errors.forbidden_error import ForbiddenError
+from ..errors.internal_server_error import InternalServerError
+from ..errors.not_found_error import NotFoundError
+from ..errors.unauthorized_error import UnauthorizedError
+from ..errors.unprocessable_entity_error import UnprocessableEntityError
+from ..types.delete_integration_response import DeleteIntegrationResponse
+from ..types.get_integration_app_manifest_response import GetIntegrationAppManifestResponse
+from ..types.get_integration_response import GetIntegrationResponse
+from ..types.integration_manifest import IntegrationManifest
+from ..types.list_integration_decisions_response import ListIntegrationDecisionsResponse
+from ..types.list_integrations_response import ListIntegrationsResponse
+from ..types.request_error_response import RequestErrorResponse
+from ..types.resource_name import ResourceName
 from pydantic import ValidationError
 
 # this is used as the default value for optional parameters
@@ -37,24 +38,30 @@ class RawIntegrationsClient:
         self._client_wrapper = client_wrapper
 
     def list(
-        self, *, request_options: typing.Optional[RequestOptions] = None
+        self, *, agent_names: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[ListIntegrationsResponse]:
         """
-        All channel integrations for this tenant. Manifest credentials are redacted.
+        Integrations the caller created or whose agent the caller manages; admins see all. Manifest credentials are redacted.
 
         Parameters
         ----------
+        agent_names : typing.Optional[str]
+            Filter by one or more agent names (comma-separated). When set, at least one name is required.
+
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
 
         Returns
         -------
         HttpResponse[ListIntegrationsResponse]
-            All connected integrations.
+            Matching integrations, oldest first.
         """
         _response = self._client_wrapper.httpx_client.request(
-            "api/v1/settings/integrations",
+            "api/v1/integrations",
             method="GET",
+            params={
+                "agent_names": agent_names,
+            },
             request_options=request_options,
         )
         try:
@@ -67,8 +74,8 @@ class RawIntegrationsClient:
                     ),
                 )
                 return HttpResponse(response=_response, data=_data)
-            if _response.status_code == 401:
-                raise UnauthorizedError(
+            if _response.status_code == 400:
+                raise BadRequestError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -78,8 +85,8 @@ class RawIntegrationsClient:
                         ),
                     ),
                 )
-            if _response.status_code == 403:
-                raise ForbiddenError(
+            if _response.status_code == 401:
+                raise UnauthorizedError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -99,13 +106,19 @@ class RawIntegrationsClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     def create(
-        self, *, manifest: IntegrationManifest, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        agent_name: ResourceName,
+        manifest: IntegrationManifest,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[GetIntegrationResponse]:
         """
-        Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
+        Connects a channel to an agent the caller manages. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 
         Parameters
         ----------
+        agent_name : ResourceName
+
         manifest : IntegrationManifest
 
         request_options : typing.Optional[RequestOptions]
@@ -117,9 +130,10 @@ class RawIntegrationsClient:
             The new integration.
         """
         _response = self._client_wrapper.httpx_client.request(
-            "api/v1/settings/integrations",
+            "api/v1/integrations",
             method="POST",
             json={
+                "agent_name": agent_name,
                 "manifest": convert_and_respect_annotation_metadata(
                     object_=manifest, annotation=IntegrationManifest, direction="write"
                 ),
@@ -142,6 +156,39 @@ class RawIntegrationsClient:
                 return HttpResponse(response=_response, data=_data)
             if _response.status_code == 400:
                 raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -197,7 +244,7 @@ class RawIntegrationsClient:
         self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[GetIntegrationResponse]:
         """
-        One integration by immutable id. Manifest credentials are redacted.
+        One integration by immutable id, for its creator or a manager of its agent. Manifest credentials are redacted.
 
         Parameters
         ----------
@@ -213,7 +260,7 @@ class RawIntegrationsClient:
             The integration.
         """
         _response = self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}",
+            f"api/v1/integrations/{encode_path_param(integration_id)}",
             method="GET",
             request_options=request_options,
         )
@@ -227,6 +274,28 @@ class RawIntegrationsClient:
                     ),
                 )
                 return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             if _response.status_code == 404:
                 raise NotFoundError(
                     headers=dict(_response.headers),
@@ -255,7 +324,7 @@ class RawIntegrationsClient:
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[GetIntegrationResponse]:
         """
-        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
+        Replaces the whole manifest of an existing integration; its agent cannot change. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 
         Parameters
         ----------
@@ -273,7 +342,7 @@ class RawIntegrationsClient:
             The saved integration.
         """
         _response = self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}",
+            f"api/v1/integrations/{encode_path_param(integration_id)}",
             method="PUT",
             json={
                 "manifest": convert_and_respect_annotation_metadata(
@@ -298,6 +367,28 @@ class RawIntegrationsClient:
                 return HttpResponse(response=_response, data=_data)
             if _response.status_code == 400:
                 raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -364,7 +455,7 @@ class RawIntegrationsClient:
         self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[DeleteIntegrationResponse]:
         """
-        Deletes the integration by immutable id and stops its ingress. Existing sessions stay.
+        Deletes the integration by immutable id and stops its ingress. Existing sessions stay. Idempotent.
 
         Parameters
         ----------
@@ -377,10 +468,10 @@ class RawIntegrationsClient:
         Returns
         -------
         HttpResponse[DeleteIntegrationResponse]
-            Integration disconnected.
+            Integration disconnected, or already gone.
         """
         _response = self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}",
+            f"api/v1/integrations/{encode_path_param(integration_id)}",
             method="DELETE",
             request_options=request_options,
         )
@@ -394,6 +485,28 @@ class RawIntegrationsClient:
                     ),
                 )
                 return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
@@ -423,7 +536,7 @@ class RawIntegrationsClient:
             The app manifest and where to paste it.
         """
         _response = self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}/app-manifest",
+            f"api/v1/integrations/{encode_path_param(integration_id)}/app-manifest",
             method="GET",
             request_options=request_options,
         )
@@ -437,6 +550,28 @@ class RawIntegrationsClient:
                     ),
                 )
                 return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             if _response.status_code == 404:
                 raise NotFoundError(
                     headers=dict(_response.headers),
@@ -488,7 +623,7 @@ class RawIntegrationsClient:
             Recent decisions for this integration.
         """
         _response = self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}/decisions",
+            f"api/v1/integrations/{encode_path_param(integration_id)}/decisions",
             method="GET",
             request_options=request_options,
         )
@@ -502,6 +637,28 @@ class RawIntegrationsClient:
                     ),
                 )
                 return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             if _response.status_code == 404:
                 raise NotFoundError(
                     headers=dict(_response.headers),
@@ -528,24 +685,30 @@ class AsyncRawIntegrationsClient:
         self._client_wrapper = client_wrapper
 
     async def list(
-        self, *, request_options: typing.Optional[RequestOptions] = None
+        self, *, agent_names: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[ListIntegrationsResponse]:
         """
-        All channel integrations for this tenant. Manifest credentials are redacted.
+        Integrations the caller created or whose agent the caller manages; admins see all. Manifest credentials are redacted.
 
         Parameters
         ----------
+        agent_names : typing.Optional[str]
+            Filter by one or more agent names (comma-separated). When set, at least one name is required.
+
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
 
         Returns
         -------
         AsyncHttpResponse[ListIntegrationsResponse]
-            All connected integrations.
+            Matching integrations, oldest first.
         """
         _response = await self._client_wrapper.httpx_client.request(
-            "api/v1/settings/integrations",
+            "api/v1/integrations",
             method="GET",
+            params={
+                "agent_names": agent_names,
+            },
             request_options=request_options,
         )
         try:
@@ -558,8 +721,8 @@ class AsyncRawIntegrationsClient:
                     ),
                 )
                 return AsyncHttpResponse(response=_response, data=_data)
-            if _response.status_code == 401:
-                raise UnauthorizedError(
+            if _response.status_code == 400:
+                raise BadRequestError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -569,8 +732,8 @@ class AsyncRawIntegrationsClient:
                         ),
                     ),
                 )
-            if _response.status_code == 403:
-                raise ForbiddenError(
+            if _response.status_code == 401:
+                raise UnauthorizedError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -590,13 +753,19 @@ class AsyncRawIntegrationsClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     async def create(
-        self, *, manifest: IntegrationManifest, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        agent_name: ResourceName,
+        manifest: IntegrationManifest,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[GetIntegrationResponse]:
         """
-        Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
+        Connects a channel to an agent the caller manages. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 
         Parameters
         ----------
+        agent_name : ResourceName
+
         manifest : IntegrationManifest
 
         request_options : typing.Optional[RequestOptions]
@@ -608,9 +777,10 @@ class AsyncRawIntegrationsClient:
             The new integration.
         """
         _response = await self._client_wrapper.httpx_client.request(
-            "api/v1/settings/integrations",
+            "api/v1/integrations",
             method="POST",
             json={
+                "agent_name": agent_name,
                 "manifest": convert_and_respect_annotation_metadata(
                     object_=manifest, annotation=IntegrationManifest, direction="write"
                 ),
@@ -633,6 +803,39 @@ class AsyncRawIntegrationsClient:
                 return AsyncHttpResponse(response=_response, data=_data)
             if _response.status_code == 400:
                 raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -688,7 +891,7 @@ class AsyncRawIntegrationsClient:
         self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[GetIntegrationResponse]:
         """
-        One integration by immutable id. Manifest credentials are redacted.
+        One integration by immutable id, for its creator or a manager of its agent. Manifest credentials are redacted.
 
         Parameters
         ----------
@@ -704,7 +907,7 @@ class AsyncRawIntegrationsClient:
             The integration.
         """
         _response = await self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}",
+            f"api/v1/integrations/{encode_path_param(integration_id)}",
             method="GET",
             request_options=request_options,
         )
@@ -718,6 +921,28 @@ class AsyncRawIntegrationsClient:
                     ),
                 )
                 return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             if _response.status_code == 404:
                 raise NotFoundError(
                     headers=dict(_response.headers),
@@ -746,7 +971,7 @@ class AsyncRawIntegrationsClient:
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[GetIntegrationResponse]:
         """
-        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
+        Replaces the whole manifest of an existing integration; its agent cannot change. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 
         Parameters
         ----------
@@ -764,7 +989,7 @@ class AsyncRawIntegrationsClient:
             The saved integration.
         """
         _response = await self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}",
+            f"api/v1/integrations/{encode_path_param(integration_id)}",
             method="PUT",
             json={
                 "manifest": convert_and_respect_annotation_metadata(
@@ -789,6 +1014,28 @@ class AsyncRawIntegrationsClient:
                 return AsyncHttpResponse(response=_response, data=_data)
             if _response.status_code == 400:
                 raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         RequestErrorResponse,
@@ -855,7 +1102,7 @@ class AsyncRawIntegrationsClient:
         self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[DeleteIntegrationResponse]:
         """
-        Deletes the integration by immutable id and stops its ingress. Existing sessions stay.
+        Deletes the integration by immutable id and stops its ingress. Existing sessions stay. Idempotent.
 
         Parameters
         ----------
@@ -868,10 +1115,10 @@ class AsyncRawIntegrationsClient:
         Returns
         -------
         AsyncHttpResponse[DeleteIntegrationResponse]
-            Integration disconnected.
+            Integration disconnected, or already gone.
         """
         _response = await self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}",
+            f"api/v1/integrations/{encode_path_param(integration_id)}",
             method="DELETE",
             request_options=request_options,
         )
@@ -885,6 +1132,28 @@ class AsyncRawIntegrationsClient:
                     ),
                 )
                 return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
@@ -914,7 +1183,7 @@ class AsyncRawIntegrationsClient:
             The app manifest and where to paste it.
         """
         _response = await self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}/app-manifest",
+            f"api/v1/integrations/{encode_path_param(integration_id)}/app-manifest",
             method="GET",
             request_options=request_options,
         )
@@ -928,6 +1197,28 @@ class AsyncRawIntegrationsClient:
                     ),
                 )
                 return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             if _response.status_code == 404:
                 raise NotFoundError(
                     headers=dict(_response.headers),
@@ -979,7 +1270,7 @@ class AsyncRawIntegrationsClient:
             Recent decisions for this integration.
         """
         _response = await self._client_wrapper.httpx_client.request(
-            f"api/v1/settings/integrations/{encode_path_param(integration_id)}/decisions",
+            f"api/v1/integrations/{encode_path_param(integration_id)}/decisions",
             method="GET",
             request_options=request_options,
         )
@@ -993,6 +1284,28 @@ class AsyncRawIntegrationsClient:
                     ),
                 )
                 return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        RequestErrorResponse,
+                        construct_type(
+                            type_=RequestErrorResponse,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             if _response.status_code == 404:
                 raise NotFoundError(
                     headers=dict(_response.headers),

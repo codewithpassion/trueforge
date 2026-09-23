@@ -9,9 +9,11 @@ from .created_by_subject import CreatedBySubject
 from .integration_manifest import IntegrationManifest
 from .integration_status import IntegrationStatus
 from .integration_type import IntegrationType
+from .resource_name import ResourceName
 
 
 class Integration(UncheckedBaseModel):
+    agent_name: ResourceName
     created_at: str = pydantic.Field()
     """
     ISO 8601 creation timestamp.

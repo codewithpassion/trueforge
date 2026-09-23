@@ -1363,11 +1363,15 @@
       "CreateIntegrationRequest": {
         "additionalProperties": false,
         "properties": {
+          "agent_name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
           "manifest": {
             "$ref": "#/components/schemas/IntegrationManifest"
           }
         },
         "required": [
+          "agent_name",
           "manifest"
         ],
         "type": "object"
@@ -2664,6 +2668,9 @@
       "Integration": {
         "additionalProperties": false,
         "properties": {
+          "agent_name": {
+            "$ref": "#/components/schemas/ResourceName"
+          },
           "created_at": {
             "description": "ISO 8601 creation timestamp.",
             "type": "string"
@@ -2695,6 +2702,7 @@
         },
         "required": [
           "id",
+          "agent_name",
           "type",
           "status",
           "external_account_id",
@@ -2819,9 +2827,6 @@
             "minLength": 1,
             "type": "string"
           },
-          "default_agent_name": {
-            "$ref": "#/components/schemas/ResourceName"
-          },
           "notification_rules": {
             "default": [],
             "description": "Schedule results posted to a channel, independent of the allowed channels.",
@@ -2848,7 +2853,6 @@
         },
         "required": [
           "type",
-          "default_agent_name",
           "allowed_channel_ids",
           "allow_direct_messages",
           "reply_mode"
@@ -8902,6 +8906,552 @@
         "x-fern-sdk-method-name": "revoke"
       }
     },
+    "/api/v1/integrations": {
+      "get": {
+        "description": "Integrations the caller created or whose agent the caller manages; admins see all. Manifest credentials are redacted.",
+        "parameters": [
+          {
+            "description": "Filter by one or more agent names (comma-separated). When set, at least one name is required.",
+            "in": "query",
+            "name": "agent_names",
+            "required": false,
+            "schema": {
+              "description": "Filter by one or more agent names (comma-separated). When set, at least one name is required.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListIntegrationsResponse"
+                }
+              }
+            },
+            "description": "Matching integrations, oldest first."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid query parameters."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthenticated."
+          }
+        },
+        "summary": "List integrations",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "list"
+      },
+      "post": {
+        "description": "Connects a channel to an agent the caller manages. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationResponse"
+                }
+              }
+            },
+            "description": "The new integration."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body, or a redacted credential with no stored secret to keep."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller does not manage the named agent."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Named agent not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "That channel account is already connected to this agent."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel refused the credentials; they are wrong or not a bot token."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel could not be reached to confirm the credentials."
+          }
+        },
+        "summary": "Create an integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "create"
+      }
+    },
+    "/api/v1/integrations/{integration_id}": {
+      "delete": {
+        "description": "Deletes the integration by immutable id and stops its ingress. Existing sessions stay. Idempotent.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteIntegrationResponse"
+                }
+              }
+            },
+            "description": "Integration disconnected, or already gone."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller neither created the integration nor manages its agent."
+          }
+        },
+        "summary": "Disconnect an integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "delete"
+      },
+      "get": {
+        "description": "One integration by immutable id, for its creator or a manager of its agent. Manifest credentials are redacted.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationResponse"
+                }
+              }
+            },
+            "description": "The integration."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller neither created the integration nor manages its agent."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          }
+        },
+        "summary": "Get an integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "get"
+      },
+      "put": {
+        "description": "Replaces the whole manifest of an existing integration; its agent cannot change. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationResponse"
+                }
+              }
+            },
+            "description": "The saved integration."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body, or a redacted credential with no stored secret to keep."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller neither created the integration nor manages its agent."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "That channel account is already connected to this agent, or belongs to a different workspace."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel refused the credentials; they are wrong or not a bot token."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The channel could not be reached to confirm the credentials."
+          }
+        },
+        "summary": "Replace an integration",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "update"
+      }
+    },
+    "/api/v1/integrations/{integration_id}/app-manifest": {
+      "get": {
+        "description": "App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIntegrationAppManifestResponse"
+                }
+              }
+            },
+            "description": "The app manifest and where to paste it."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller neither created the integration nor manages its agent."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Server misconfiguration (e.g. PUBLIC_BASE_URL unset)."
+          }
+        },
+        "summary": "Get the channel app manifest",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "get_app_manifest"
+      }
+    },
+    "/api/v1/integrations/{integration_id}/decisions": {
+      "get": {
+        "description": "Recent tool approvals settled from the channel, newest first, with who decided and when. Read-only. Answering a question is not recorded, because anyone in the conversation may.",
+        "parameters": [
+          {
+            "description": "Immutable integration id.",
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "description": "Immutable integration id.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListIntegrationDecisionsResponse"
+                }
+              }
+            },
+            "description": "Recent decisions for this integration."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "The caller neither created the integration nor manages its agent."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestErrorResponse"
+                }
+              }
+            },
+            "description": "Integration not found."
+          }
+        },
+        "summary": "List tool approvals decided from the channel",
+        "tags": [
+          "Integrations"
+        ],
+        "x-fern-sdk-group-name": [
+          "integrations"
+        ],
+        "x-fern-sdk-method-name": "list_decisions"
+      }
+    },
     "/api/v1/integrations/{integration_id}/events": {
       "post": {
         "description": "Endpoint a channel posts events to. The request is authenticated by the channel signature in its own headers, not by a TrueForge credential.",
@@ -11294,417 +11844,6 @@
           "format": "sse",
           "resumable": true
         }
-      }
-    },
-    "/api/v1/settings/integrations": {
-      "get": {
-        "description": "All channel integrations for this tenant. Manifest credentials are redacted.",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListIntegrationsResponse"
-                }
-              }
-            },
-            "description": "All connected integrations."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "OIDC is configured and the request has no valid session cookie."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "OIDC is configured and the caller is authenticated but not an admin."
-          }
-        },
-        "summary": "List connected integrations",
-        "tags": [
-          "Integrations"
-        ],
-        "x-fern-sdk-group-name": [
-          "settings",
-          "integrations"
-        ],
-        "x-fern-sdk-method-name": "list"
-      },
-      "post": {
-        "description": "Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateIntegrationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetIntegrationResponse"
-                }
-              }
-            },
-            "description": "The new integration."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid request body, or a redacted credential with no stored secret to keep."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "That channel account is already connected."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "The channel refused the credentials; they are wrong or not a bot token."
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "The channel could not be reached to confirm the credentials."
-          }
-        },
-        "summary": "Create an integration",
-        "tags": [
-          "Integrations"
-        ],
-        "x-fern-sdk-group-name": [
-          "settings",
-          "integrations"
-        ],
-        "x-fern-sdk-method-name": "create"
-      }
-    },
-    "/api/v1/settings/integrations/{integration_id}": {
-      "delete": {
-        "description": "Deletes the integration by immutable id and stops its ingress. Existing sessions stay.",
-        "parameters": [
-          {
-            "description": "Immutable integration id.",
-            "in": "path",
-            "name": "integration_id",
-            "required": true,
-            "schema": {
-              "description": "Immutable integration id.",
-              "minLength": 1,
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeleteIntegrationResponse"
-                }
-              }
-            },
-            "description": "Integration disconnected."
-          }
-        },
-        "summary": "Disconnect an integration",
-        "tags": [
-          "Integrations"
-        ],
-        "x-fern-sdk-group-name": [
-          "settings",
-          "integrations"
-        ],
-        "x-fern-sdk-method-name": "delete"
-      },
-      "get": {
-        "description": "One integration by immutable id. Manifest credentials are redacted.",
-        "parameters": [
-          {
-            "description": "Immutable integration id.",
-            "in": "path",
-            "name": "integration_id",
-            "required": true,
-            "schema": {
-              "description": "Immutable integration id.",
-              "minLength": 1,
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetIntegrationResponse"
-                }
-              }
-            },
-            "description": "The integration."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "Integration not found."
-          }
-        },
-        "summary": "Get a connected integration",
-        "tags": [
-          "Integrations"
-        ],
-        "x-fern-sdk-group-name": [
-          "settings",
-          "integrations"
-        ],
-        "x-fern-sdk-method-name": "get"
-      },
-      "put": {
-        "description": "Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.",
-        "parameters": [
-          {
-            "description": "Immutable integration id.",
-            "in": "path",
-            "name": "integration_id",
-            "required": true,
-            "schema": {
-              "description": "Immutable integration id.",
-              "minLength": 1,
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateIntegrationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetIntegrationResponse"
-                }
-              }
-            },
-            "description": "The saved integration."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid request body, or a redacted credential with no stored secret to keep."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "Integration not found."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "That channel account is already connected, or belongs to a different workspace."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "The channel refused the credentials; they are wrong or not a bot token."
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "The channel could not be reached to confirm the credentials."
-          }
-        },
-        "summary": "Replace a connected integration",
-        "tags": [
-          "Integrations"
-        ],
-        "x-fern-sdk-group-name": [
-          "settings",
-          "integrations"
-        ],
-        "x-fern-sdk-method-name": "update"
-      }
-    },
-    "/api/v1/settings/integrations/{integration_id}/app-manifest": {
-      "get": {
-        "description": "App manifest to paste into the channel, built from the bot name and this integration id. Create the app from it, then save the credentials it issues.",
-        "parameters": [
-          {
-            "description": "Immutable integration id.",
-            "in": "path",
-            "name": "integration_id",
-            "required": true,
-            "schema": {
-              "description": "Immutable integration id.",
-              "minLength": 1,
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetIntegrationAppManifestResponse"
-                }
-              }
-            },
-            "description": "The app manifest and where to paste it."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "Integration not found."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "Server misconfiguration (e.g. PUBLIC_BASE_URL unset)."
-          }
-        },
-        "summary": "Get the channel app manifest",
-        "tags": [
-          "Integrations"
-        ],
-        "x-fern-sdk-group-name": [
-          "settings",
-          "integrations"
-        ],
-        "x-fern-sdk-method-name": "get_app_manifest"
-      }
-    },
-    "/api/v1/settings/integrations/{integration_id}/decisions": {
-      "get": {
-        "description": "Recent tool approvals settled from the channel, newest first, with who decided and when. Read-only. Answering a question is not recorded, because anyone in the conversation may.",
-        "parameters": [
-          {
-            "description": "Immutable integration id.",
-            "in": "path",
-            "name": "integration_id",
-            "required": true,
-            "schema": {
-              "description": "Immutable integration id.",
-              "minLength": 1,
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListIntegrationDecisionsResponse"
-                }
-              }
-            },
-            "description": "Recent decisions for this integration."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RequestErrorResponse"
-                }
-              }
-            },
-            "description": "Integration not found."
-          }
-        },
-        "summary": "List tool approvals decided from the channel",
-        "tags": [
-          "Integrations"
-        ],
-        "x-fern-sdk-group-name": [
-          "settings",
-          "integrations"
-        ],
-        "x-fern-sdk-method-name": "list_decisions"
       }
     },
     "/api/v1/settings/mcp-servers": {

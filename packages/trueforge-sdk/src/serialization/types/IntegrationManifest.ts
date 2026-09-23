@@ -4,7 +4,6 @@ import type * as TrueForge from "../../api/index.js";
 import * as core from "../../core/index.js";
 import type * as serializers from "../index.js";
 import { IntegrationNotificationRule } from "./IntegrationNotificationRule.js";
-import { ResourceName } from "./ResourceName.js";
 import { SlackBotDisplayName } from "./SlackBotDisplayName.js";
 import { SlackIntegrationAuth } from "./SlackIntegrationAuth.js";
 import { SlackReplyMode } from "./SlackReplyMode.js";
@@ -25,7 +24,6 @@ export const IntegrationManifest: core.serialization.ObjectSchema<
     auth: SlackIntegrationAuth.optional(),
     botDisplayName: core.serialization.property("bot_display_name", SlackBotDisplayName.optional()),
     botUserId: core.serialization.property("bot_user_id", core.serialization.string().optional()),
-    defaultAgentName: core.serialization.property("default_agent_name", ResourceName),
     notificationRules: core.serialization.property(
         "notification_rules",
         core.serialization.list(IntegrationNotificationRule).optional(),
@@ -43,7 +41,6 @@ export declare namespace IntegrationManifest {
         auth?: SlackIntegrationAuth.Raw | null;
         bot_display_name?: SlackBotDisplayName.Raw | null;
         bot_user_id?: string | null;
-        default_agent_name: ResourceName.Raw;
         notification_rules?: IntegrationNotificationRule.Raw[] | null;
         reply_mode: SlackReplyMode.Raw;
         team_id?: string | null;

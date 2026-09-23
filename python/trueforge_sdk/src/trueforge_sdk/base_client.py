@@ -13,6 +13,7 @@ if typing.TYPE_CHECKING:
     from .auth.client import AsyncAuthClient, AuthClient
     from .catalogs.client import AsyncCatalogsClient, CatalogsClient
     from .computers.client import AsyncComputersClient, ComputersClient
+    from .integrations.client import AsyncIntegrationsClient, IntegrationsClient
     from .internal.client import AsyncInternalClient, InternalClient
     from .mcp_servers.client import AsyncMcpServersClient, McpServersClient
     from .models.client import AsyncModelsClient, ModelsClient
@@ -103,6 +104,7 @@ class BaseTrueForge:
         self._auth: typing.Optional[AuthClient] = None
         self._server: typing.Optional[ServerClient] = None
         self._computers: typing.Optional[ComputersClient] = None
+        self._integrations: typing.Optional[IntegrationsClient] = None
         self._mcp_servers: typing.Optional[McpServersClient] = None
         self._models: typing.Optional[ModelsClient] = None
         self._schedules: typing.Optional[SchedulesClient] = None
@@ -150,6 +152,14 @@ class BaseTrueForge:
 
             self._computers = ComputersClient(client_wrapper=self._client_wrapper)
         return self._computers
+
+    @property
+    def integrations(self):
+        if self._integrations is None:
+            from .integrations.client import IntegrationsClient  # noqa: E402
+
+            self._integrations = IntegrationsClient(client_wrapper=self._client_wrapper)
+        return self._integrations
 
     @property
     def mcp_servers(self):
@@ -309,6 +319,7 @@ class AsyncBaseTrueForge:
         self._auth: typing.Optional[AsyncAuthClient] = None
         self._server: typing.Optional[AsyncServerClient] = None
         self._computers: typing.Optional[AsyncComputersClient] = None
+        self._integrations: typing.Optional[AsyncIntegrationsClient] = None
         self._mcp_servers: typing.Optional[AsyncMcpServersClient] = None
         self._models: typing.Optional[AsyncModelsClient] = None
         self._schedules: typing.Optional[AsyncSchedulesClient] = None
@@ -356,6 +367,14 @@ class AsyncBaseTrueForge:
 
             self._computers = AsyncComputersClient(client_wrapper=self._client_wrapper)
         return self._computers
+
+    @property
+    def integrations(self):
+        if self._integrations is None:
+            from .integrations.client import AsyncIntegrationsClient  # noqa: E402
+
+            self._integrations = AsyncIntegrationsClient(client_wrapper=self._client_wrapper)
+        return self._integrations
 
     @property
     def mcp_servers(self):

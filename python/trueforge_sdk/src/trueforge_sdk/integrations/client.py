@@ -2,14 +2,15 @@
 
 import typing
 
-from ...core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
-from ...core.request_options import RequestOptions
-from ...types.delete_integration_response import DeleteIntegrationResponse
-from ...types.get_integration_app_manifest_response import GetIntegrationAppManifestResponse
-from ...types.get_integration_response import GetIntegrationResponse
-from ...types.integration_manifest import IntegrationManifest
-from ...types.list_integration_decisions_response import ListIntegrationDecisionsResponse
-from ...types.list_integrations_response import ListIntegrationsResponse
+from ..core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
+from ..core.request_options import RequestOptions
+from ..types.delete_integration_response import DeleteIntegrationResponse
+from ..types.get_integration_app_manifest_response import GetIntegrationAppManifestResponse
+from ..types.get_integration_response import GetIntegrationResponse
+from ..types.integration_manifest import IntegrationManifest
+from ..types.list_integration_decisions_response import ListIntegrationDecisionsResponse
+from ..types.list_integrations_response import ListIntegrationsResponse
+from ..types.resource_name import ResourceName
 from .raw_client import AsyncRawIntegrationsClient, RawIntegrationsClient
 
 # this is used as the default value for optional parameters
@@ -31,19 +32,24 @@ class IntegrationsClient:
         """
         return self._raw_client
 
-    def list(self, *, request_options: typing.Optional[RequestOptions] = None) -> ListIntegrationsResponse:
+    def list(
+        self, *, agent_names: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
+    ) -> ListIntegrationsResponse:
         """
-        All channel integrations for this tenant. Manifest credentials are redacted.
+        Integrations the caller created or whose agent the caller manages; admins see all. Manifest credentials are redacted.
 
         Parameters
         ----------
+        agent_names : typing.Optional[str]
+            Filter by one or more agent names (comma-separated). When set, at least one name is required.
+
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
 
         Returns
         -------
         ListIntegrationsResponse
-            All connected integrations.
+            Matching integrations, oldest first.
 
         Examples
         --------
@@ -53,19 +59,25 @@ class IntegrationsClient:
             token="YOUR_TOKEN",
             base_url="https://yourhost.com/path/to/api",
         )
-        client.settings.integrations.list()
+        client.integrations.list()
         """
-        _response = self._raw_client.list(request_options=request_options)
+        _response = self._raw_client.list(agent_names=agent_names, request_options=request_options)
         return _response.data
 
     def create(
-        self, *, manifest: IntegrationManifest, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        agent_name: ResourceName,
+        manifest: IntegrationManifest,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> GetIntegrationResponse:
         """
-        Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
+        Connects a channel to an agent the caller manages. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 
         Parameters
         ----------
+        agent_name : ResourceName
+
         manifest : IntegrationManifest
 
         request_options : typing.Optional[RequestOptions]
@@ -84,22 +96,22 @@ class IntegrationsClient:
             token="YOUR_TOKEN",
             base_url="https://yourhost.com/path/to/api",
         )
-        client.settings.integrations.create(
+        client.integrations.create(
+            agent_name="agent_name",
             manifest=IntegrationManifest(
                 allow_direct_messages=True,
                 allowed_channel_ids=["allowed_channel_ids"],
-                default_agent_name="default_agent_name",
             ),
         )
         """
-        _response = self._raw_client.create(manifest=manifest, request_options=request_options)
+        _response = self._raw_client.create(agent_name=agent_name, manifest=manifest, request_options=request_options)
         return _response.data
 
     def get(
         self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> GetIntegrationResponse:
         """
-        One integration by immutable id. Manifest credentials are redacted.
+        One integration by immutable id, for its creator or a manager of its agent. Manifest credentials are redacted.
 
         Parameters
         ----------
@@ -122,7 +134,7 @@ class IntegrationsClient:
             token="YOUR_TOKEN",
             base_url="https://yourhost.com/path/to/api",
         )
-        client.settings.integrations.get(
+        client.integrations.get(
             integration_id="integration_id",
         )
         """
@@ -137,7 +149,7 @@ class IntegrationsClient:
         request_options: typing.Optional[RequestOptions] = None,
     ) -> GetIntegrationResponse:
         """
-        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
+        Replaces the whole manifest of an existing integration; its agent cannot change. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 
         Parameters
         ----------
@@ -162,12 +174,11 @@ class IntegrationsClient:
             token="YOUR_TOKEN",
             base_url="https://yourhost.com/path/to/api",
         )
-        client.settings.integrations.update(
+        client.integrations.update(
             integration_id="integration_id",
             manifest=IntegrationManifest(
                 allow_direct_messages=True,
                 allowed_channel_ids=["allowed_channel_ids"],
-                default_agent_name="default_agent_name",
             ),
         )
         """
@@ -180,7 +191,7 @@ class IntegrationsClient:
         self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> DeleteIntegrationResponse:
         """
-        Deletes the integration by immutable id and stops its ingress. Existing sessions stay.
+        Deletes the integration by immutable id and stops its ingress. Existing sessions stay. Idempotent.
 
         Parameters
         ----------
@@ -193,7 +204,7 @@ class IntegrationsClient:
         Returns
         -------
         DeleteIntegrationResponse
-            Integration disconnected.
+            Integration disconnected, or already gone.
 
         Examples
         --------
@@ -203,7 +214,7 @@ class IntegrationsClient:
             token="YOUR_TOKEN",
             base_url="https://yourhost.com/path/to/api",
         )
-        client.settings.integrations.delete(
+        client.integrations.delete(
             integration_id="integration_id",
         )
         """
@@ -237,7 +248,7 @@ class IntegrationsClient:
             token="YOUR_TOKEN",
             base_url="https://yourhost.com/path/to/api",
         )
-        client.settings.integrations.get_app_manifest(
+        client.integrations.get_app_manifest(
             integration_id="integration_id",
         )
         """
@@ -271,7 +282,7 @@ class IntegrationsClient:
             token="YOUR_TOKEN",
             base_url="https://yourhost.com/path/to/api",
         )
-        client.settings.integrations.list_decisions(
+        client.integrations.list_decisions(
             integration_id="integration_id",
         )
         """
@@ -294,19 +305,24 @@ class AsyncIntegrationsClient:
         """
         return self._raw_client
 
-    async def list(self, *, request_options: typing.Optional[RequestOptions] = None) -> ListIntegrationsResponse:
+    async def list(
+        self, *, agent_names: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
+    ) -> ListIntegrationsResponse:
         """
-        All channel integrations for this tenant. Manifest credentials are redacted.
+        Integrations the caller created or whose agent the caller manages; admins see all. Manifest credentials are redacted.
 
         Parameters
         ----------
+        agent_names : typing.Optional[str]
+            Filter by one or more agent names (comma-separated). When set, at least one name is required.
+
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
 
         Returns
         -------
         ListIntegrationsResponse
-            All connected integrations.
+            Matching integrations, oldest first.
 
         Examples
         --------
@@ -321,22 +337,28 @@ class AsyncIntegrationsClient:
 
 
         async def main() -> None:
-            await client.settings.integrations.list()
+            await client.integrations.list()
 
 
         asyncio.run(main())
         """
-        _response = await self._raw_client.list(request_options=request_options)
+        _response = await self._raw_client.list(agent_names=agent_names, request_options=request_options)
         return _response.data
 
     async def create(
-        self, *, manifest: IntegrationManifest, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        agent_name: ResourceName,
+        manifest: IntegrationManifest,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> GetIntegrationResponse:
         """
-        Creates a channel integration. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
+        Connects a channel to an agent the caller manages. Without credentials it stays pending until the channel app is installed; with them the workspace and bot ids are read from the channel.
 
         Parameters
         ----------
+        agent_name : ResourceName
+
         manifest : IntegrationManifest
 
         request_options : typing.Optional[RequestOptions]
@@ -360,25 +382,27 @@ class AsyncIntegrationsClient:
 
 
         async def main() -> None:
-            await client.settings.integrations.create(
+            await client.integrations.create(
+                agent_name="agent_name",
                 manifest=IntegrationManifest(
                     allow_direct_messages=True,
                     allowed_channel_ids=["allowed_channel_ids"],
-                    default_agent_name="default_agent_name",
                 ),
             )
 
 
         asyncio.run(main())
         """
-        _response = await self._raw_client.create(manifest=manifest, request_options=request_options)
+        _response = await self._raw_client.create(
+            agent_name=agent_name, manifest=manifest, request_options=request_options
+        )
         return _response.data
 
     async def get(
         self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> GetIntegrationResponse:
         """
-        One integration by immutable id. Manifest credentials are redacted.
+        One integration by immutable id, for its creator or a manager of its agent. Manifest credentials are redacted.
 
         Parameters
         ----------
@@ -406,7 +430,7 @@ class AsyncIntegrationsClient:
 
 
         async def main() -> None:
-            await client.settings.integrations.get(
+            await client.integrations.get(
                 integration_id="integration_id",
             )
 
@@ -424,7 +448,7 @@ class AsyncIntegrationsClient:
         request_options: typing.Optional[RequestOptions] = None,
     ) -> GetIntegrationResponse:
         """
-        Replaces the whole manifest of an existing integration. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
+        Replaces the whole manifest of an existing integration; its agent cannot change. Credentials: a real value sets or rotates and the workspace and bot ids are read from the channel; omitted or redacted keeps the stored secret.
 
         Parameters
         ----------
@@ -454,12 +478,11 @@ class AsyncIntegrationsClient:
 
 
         async def main() -> None:
-            await client.settings.integrations.update(
+            await client.integrations.update(
                 integration_id="integration_id",
                 manifest=IntegrationManifest(
                     allow_direct_messages=True,
                     allowed_channel_ids=["allowed_channel_ids"],
-                    default_agent_name="default_agent_name",
                 ),
             )
 
@@ -475,7 +498,7 @@ class AsyncIntegrationsClient:
         self, *, integration_id: str, request_options: typing.Optional[RequestOptions] = None
     ) -> DeleteIntegrationResponse:
         """
-        Deletes the integration by immutable id and stops its ingress. Existing sessions stay.
+        Deletes the integration by immutable id and stops its ingress. Existing sessions stay. Idempotent.
 
         Parameters
         ----------
@@ -488,7 +511,7 @@ class AsyncIntegrationsClient:
         Returns
         -------
         DeleteIntegrationResponse
-            Integration disconnected.
+            Integration disconnected, or already gone.
 
         Examples
         --------
@@ -503,7 +526,7 @@ class AsyncIntegrationsClient:
 
 
         async def main() -> None:
-            await client.settings.integrations.delete(
+            await client.integrations.delete(
                 integration_id="integration_id",
             )
 
@@ -545,7 +568,7 @@ class AsyncIntegrationsClient:
 
 
         async def main() -> None:
-            await client.settings.integrations.get_app_manifest(
+            await client.integrations.get_app_manifest(
                 integration_id="integration_id",
             )
 
@@ -589,7 +612,7 @@ class AsyncIntegrationsClient:
 
 
         async def main() -> None:
-            await client.settings.integrations.list_decisions(
+            await client.integrations.list_decisions(
                 integration_id="integration_id",
             )
 

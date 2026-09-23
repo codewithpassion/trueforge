@@ -7,9 +7,11 @@ import { CreatedBySubject } from "./CreatedBySubject.js";
 import { IntegrationManifest } from "./IntegrationManifest.js";
 import { IntegrationStatus } from "./IntegrationStatus.js";
 import { IntegrationType } from "./IntegrationType.js";
+import { ResourceName } from "./ResourceName.js";
 
 export const Integration: core.serialization.ObjectSchema<serializers.Integration.Raw, TrueForge.Integration> =
     core.serialization.object({
+        agentName: core.serialization.property("agent_name", ResourceName),
         createdAt: core.serialization.property("created_at", core.serialization.string()),
         createdBySubject: core.serialization.property("created_by_subject", CreatedBySubject),
         externalAccountId: core.serialization.property("external_account_id", core.serialization.string()),
@@ -22,6 +24,7 @@ export const Integration: core.serialization.ObjectSchema<serializers.Integratio
 
 export declare namespace Integration {
     export interface Raw {
+        agent_name: ResourceName.Raw;
         created_at: string;
         created_by_subject: CreatedBySubject.Raw;
         external_account_id: string;

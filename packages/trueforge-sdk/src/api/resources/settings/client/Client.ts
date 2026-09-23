@@ -2,7 +2,6 @@
 
 import type { BaseClientOptions } from "../../../../BaseClient.js";
 import { type NormalizedClientOptionsWithAuth, normalizeClientOptionsWithAuth } from "../../../../BaseClient.js";
-import { IntegrationsClient } from "../resources/integrations/client/Client.js";
 import { McpServersClient } from "../resources/mcpServers/client/Client.js";
 import { ModelProvidersClient } from "../resources/modelProviders/client/Client.js";
 import { SandboxProvidersClient } from "../resources/sandboxProviders/client/Client.js";
@@ -14,7 +13,6 @@ export declare namespace SettingsClient {
 
 export class SettingsClient {
     protected readonly _options: NormalizedClientOptionsWithAuth<SettingsClient.Options>;
-    protected _integrations: IntegrationsClient | undefined;
     protected _mcpServers: McpServersClient | undefined;
     protected _modelProviders: ModelProvidersClient | undefined;
     protected _sandboxProviders: SandboxProvidersClient | undefined;
@@ -22,10 +20,6 @@ export class SettingsClient {
 
     constructor(options: SettingsClient.Options) {
         this._options = normalizeClientOptionsWithAuth(options);
-    }
-
-    public get integrations(): IntegrationsClient {
-        return (this._integrations ??= new IntegrationsClient(this._options));
     }
 
     public get mcpServers(): McpServersClient {

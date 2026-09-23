@@ -16,7 +16,6 @@ export interface IntegrationManifest {
     botDisplayName?: TrueForge.SlackBotDisplayName;
     /** User id of the bot, used to ignore its own messages. Filled from `auth.test`. */
     botUserId?: string;
-    defaultAgentName: TrueForge.ResourceName;
     /** Schedule results posted to a channel, independent of the allowed channels. */
     notificationRules?: TrueForge.IntegrationNotificationRule[];
     replyMode: TrueForge.SlackReplyMode;

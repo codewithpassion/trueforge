@@ -3,6 +3,7 @@
 import type * as TrueForge from "../index.js";
 
 export interface Integration {
+    agentName: TrueForge.ResourceName;
     /** ISO 8601 creation timestamp. */
     createdAt: string;
     createdBySubject: TrueForge.CreatedBySubject;
