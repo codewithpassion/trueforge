@@ -134,6 +134,13 @@ export interface CreateTurnInput<TTurnCustom extends object = Record<string, nev
   capability_states: ThreadCapabilityStateInit[];
   /** Set only if session.title is NULL (first write wins). */
   update_session_title_if_not_exist: string | null;
+  /**
+   * True writes the turn only while `session.last_turn_id` still equals `turn.previous_turn_id`
+   * (and that turn is not running), checked in the same atomic unit that advances the tip;
+   * otherwise `SessionTipMovedError`. Set for tool-response resumes of the tip, so two
+   * answers to one pending call cannot both land and fork the session.
+   */
+  require_tip: boolean;
 }
 
 export interface FreezeAndGetTurnInput {
@@ -319,6 +326,8 @@ export interface ISessionStore<
    *   allowed (relaxed) and treated as no inheritance. If that turn exists and
    *   is still `running`, reject with {@link PreviousTurnRunningError} —
    *   callers must {@link freezeAndGetTurn} first.
+   * - `require_tip` narrows the string case to "still the session tip"; a
+   *   moved tip rejects with `SessionTipMovedError` and writes nothing.
    * `last_turn_id` always advances to the new turn in the same atomic unit.
    *
    * `update_session_title_if_not_exist`: when set AND `session.title` is

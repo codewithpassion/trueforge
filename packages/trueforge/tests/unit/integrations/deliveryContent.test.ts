@@ -3,8 +3,11 @@ import type {
   MCPAuthRequiredEvent,
   ModelMessageEvent,
   ToolApprovalRequiredEvent,
+  ToolResponseRequiredEvent,
 } from '@truefoundry/trueforge-core/core/events/schema';
 import { EventType } from '@truefoundry/trueforge-core/core/events/schema';
+import { agentScreenUrl, REQUEST_HUMAN_TAKEOVER_TOOL } from '../../../src/computers/requestHumanTakeover';
+import { getPublicBaseUrlOrUndefined } from '../../../src/config';
 import { buildDeliveryContent } from '../../../src/integrations/deliveryContent';
 import { turnEventReader } from './turnEventReader';
 
@@ -20,6 +23,7 @@ function modelMessage(content: ModelMessageEvent['content']): ModelMessageEvent 
 
 const COMPLETED_AT = '2026-09-16T00:00:00.000Z';
 const TURN_ID = 'turn-1';
+const AGENT = { type: 'reference', id: 'agent-1', name: 'desk' } as const;
 
 /** No pending action, so nothing reads back events. */
 const noEvents: Pick<TurnHandle, 'listEvents'> = turnEventReader([]);
@@ -30,6 +34,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: {
           status: 'done',
@@ -46,6 +51,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: {
           status: 'done',
@@ -65,6 +71,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: { status: 'done', output: null, required_actions: [], completed_at: COMPLETED_AT },
       }),
@@ -76,6 +83,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: {
           status: 'cancelled',
@@ -91,6 +99,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: { status: 'error', message: 'model timed out', completed_at: COMPLETED_AT },
       }),
@@ -124,6 +133,7 @@ describe('buildDeliveryContent', () => {
     const content = await buildDeliveryContent({
       turn: turnEventReader([narration]),
       turn_id: TURN_ID,
+      agent: AGENT,
       interactive: true,
       state: {
         status: 'done',
@@ -148,6 +158,50 @@ describe('buildDeliveryContent', () => {
     });
   });
 
+  it('posts a takeover request, even where nothing could click a button', async () => {
+    const responseRequired: ToolResponseRequiredEvent = {
+      type: EventType.TOOL_RESPONSE_REQUIRED,
+      id: 'evt-2',
+      created_at: COMPLETED_AT,
+      thread_id: 'main',
+      tool_calls: [{ id: 'call-1', source_event_id: 'evt-1' }],
+    };
+    const narration: ModelMessageEvent = {
+      ...modelMessage('I reached the login page.'),
+      tool_calls: [
+        {
+          id: 'call-1',
+          type: 'function',
+          function: { name: REQUEST_HUMAN_TAKEOVER_TOOL, arguments: '{"reason":"Log into the portal"}' },
+          tool_info: { type: 'truefoundry-system', name: REQUEST_HUMAN_TAKEOVER_TOOL },
+        },
+      ],
+    };
+
+    for (const interactive of [true, false]) {
+      expect(
+        await buildDeliveryContent({
+          turn: turnEventReader([narration]),
+          turn_id: TURN_ID,
+          agent: AGENT,
+          interactive,
+          state: {
+            status: 'done',
+            output: narration,
+            required_actions: [responseRequired],
+            completed_at: COMPLETED_AT,
+          },
+        }),
+      ).toEqual({
+        type: 'takeover_request',
+        turn_id: TURN_ID,
+        intro: 'I reached the login page.',
+        takeover: { thread_id: 'main', tool_call_id: 'call-1', reason: 'Log into the portal' },
+        screen_url: agentScreenUrl({ public_base_url: getPublicBaseUrlOrUndefined(), agent_id: AGENT.id }),
+      });
+    }
+  });
+
   it('falls back to the status line when the pending action is one no channel can answer', async () => {
     const authRequired: MCPAuthRequiredEvent = {
       type: EventType.MCP_AUTH_REQUIRED,
@@ -161,6 +215,7 @@ describe('buildDeliveryContent', () => {
       await buildDeliveryContent({
         turn: noEvents,
         turn_id: TURN_ID,
+        agent: AGENT,
         interactive: true,
         state: { status: 'done', output: null, required_actions: [authRequired], completed_at: COMPLETED_AT },
       }),

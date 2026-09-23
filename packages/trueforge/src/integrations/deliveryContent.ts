@@ -1,5 +1,7 @@
-import type { TerminalTurnState, TurnHandle } from '@truefoundry/trueforge-core/agent-session';
+import type { SessionHandle, TerminalTurnState, TurnHandle } from '@truefoundry/trueforge-core/agent-session';
 import type { ModelMessageEvent } from '@truefoundry/trueforge-core/core/events/schema';
+import { agentScreenUrl } from '../computers/requestHumanTakeover';
+import { getPublicBaseUrlOrUndefined } from '../config';
 import { readPendingAction } from './pendingActions';
 import type { DeliveryContent } from './types';
 
@@ -30,7 +32,8 @@ export function deliveryIsInteractive(input: { conversation_key: string; session
 
 /**
  * What the channel posts for a finished turn: the final assistant message, the decision the
- * turn is held on, or a short status line when it produced neither.
+ * turn is held on, or a short status line when it produced neither. A takeover request needs no
+ * buttons, so it is posted whether or not the channel can resume the turn.
  *
  * The extra read that resolves a pending action only happens for a turn that actually paused.
  */
@@ -38,6 +41,8 @@ export async function buildDeliveryContent(input: {
   turn: Pick<TurnHandle, 'listEvents'>;
   turn_id: string;
   state: TerminalTurnState;
+  /** The session's agent, whose Screen page a takeover request links to. */
+  agent: SessionHandle['agent'];
   /** False posts a status line where buttons would go, because nothing could click them. */
   interactive: boolean;
 }): Promise<DeliveryContent> {
@@ -48,11 +53,20 @@ export async function buildDeliveryContent(input: {
       // A held turn is checked before its text, because the model often narrates the call it is
       // about to make; posting only that narration would leave the turn waiting forever.
       if (state.required_actions.length > 0) {
-        const pending = input.interactive ? await readPendingAction({ turn: input.turn, state }) : undefined;
-        if (pending?.type === 'approval') {
+        const pending = await readPendingAction({ turn: input.turn, state });
+        if (pending?.type === 'takeover' && input.agent.type === 'reference') {
+          return {
+            type: 'takeover_request',
+            turn_id: input.turn_id,
+            intro: text,
+            takeover: pending.takeover,
+            screen_url: agentScreenUrl({ public_base_url: getPublicBaseUrlOrUndefined(), agent_id: input.agent.id }),
+          };
+        }
+        if (input.interactive && pending?.type === 'approval') {
           return { type: 'approval_request', turn_id: input.turn_id, intro: text, approvals: pending.approvals };
         }
-        if (pending?.type === 'question') {
+        if (input.interactive && pending?.type === 'question') {
           return { type: 'question', turn_id: input.turn_id, intro: text, question: pending.question };
         }
         if (text.length === 0) {

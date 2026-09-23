@@ -9,6 +9,7 @@ import { EventType } from '@truefoundry/trueforge-core/core/events/schema';
 import type { Kysely } from 'kysely';
 import { createLogger } from 'winston';
 import { makeTurnDoneEvent } from '../../../../trueforge-core/tests/agent-session/testHelpers';
+import { REQUEST_HUMAN_TAKEOVER_TOOL } from '../../../src/computers/requestHumanTakeover';
 import type { IIntegrationStore, IntegrationRecord } from '../../../src/db/integrationStore';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
@@ -23,7 +24,12 @@ import { SqliteSkillStore } from '../../../src/db/sqlite/skill-store/SqliteSkill
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import type { Database } from '../../../src/db/sqlite/types';
 import { ASK_USER_QUESTION_TOOL } from '../../../src/integrations/pendingActions';
-import { APPROVAL_PENDING_NOTICE, BUSY_CONVERSATION_NOTICE, IntegrationRouter } from '../../../src/integrations/router';
+import {
+  APPROVAL_PENDING_NOTICE,
+  BUSY_CONVERSATION_NOTICE,
+  IntegrationRouter,
+  TAKEOVER_PENDING_NOTICE,
+} from '../../../src/integrations/router';
 import { TurnCompletionNotifier } from '../../../src/integrations/TurnCompletionNotifier';
 import type {
   InboundEvent,
@@ -108,7 +114,7 @@ interface Harness {
   executor: RecordingTurnExecutor;
   sessions: Sessions;
   /** Leaves a started turn finished but waiting on a human, the way a real pause looks. */
-  holdTurn: (input: { turn_id: string; held: 'approval' | 'question'; calls?: number }) => Promise<void>;
+  holdTurn: (input: { turn_id: string; held: 'approval' | 'question' | 'takeover'; calls?: number }) => Promise<void>;
   /** Awaits the flushes the router handed to `deferDelivery`, which a request would not wait on. */
   flush: () => Promise<void>;
 }
@@ -213,10 +219,12 @@ async function createHarness(): Promise<Harness> {
               function:
                 input.held === 'approval'
                   ? { name: 'restart_service', arguments: '{"service":"api"}' }
-                  : {
-                      name: ASK_USER_QUESTION_TOOL,
-                      arguments: JSON.stringify({ question: 'Which one?', options: ['staging', 'production'] }),
-                    },
+                  : input.held === 'takeover'
+                    ? { name: REQUEST_HUMAN_TAKEOVER_TOOL, arguments: JSON.stringify({ reason: 'Log in' }) }
+                    : {
+                        name: ASK_USER_QUESTION_TOOL,
+                        arguments: JSON.stringify({ question: 'Which one?', options: ['staging', 'production'] }),
+                      },
               tool_info: { type: 'truefoundry-system', name: 'held' },
             })),
           },
@@ -790,6 +798,31 @@ describe('a plain reply while the thread is held', () => {
     expect(replied).toMatchObject({ type: 'busy' });
     expect(harness.executor.starts).toHaveLength(1);
     expect(harness.channel.notices).toEqual([APPROVAL_PENDING_NOTICE]);
+  });
+
+  it('tells a reply to use the Screen page while a takeover is pending, and starts nothing', async () => {
+    harness = await createHarness();
+    const routed = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent(),
+    });
+    if (routed.type !== 'started') {
+      throw new Error('expected the turn to start');
+    }
+    await harness.holdTurn({ turn_id: routed.turn_id, held: 'takeover' });
+    await harness.flush();
+
+    const replied = await harness.router.route({
+      integration: harness.integration,
+      adapter: harness.channel.adapter,
+      event: inboundEvent({ event_id: 'Ev0002', text: 'done, I logged in' }),
+    });
+    await harness.flush();
+
+    expect(replied).toMatchObject({ type: 'busy' });
+    expect(harness.executor.starts).toHaveLength(1);
+    expect(harness.channel.notices).toEqual([TAKEOVER_PENDING_NOTICE]);
   });
 
   it('loses to a button click that already claimed the turn', async () => {

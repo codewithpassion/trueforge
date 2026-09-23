@@ -2,9 +2,16 @@ import { EventType } from '../../src/agent-session/schemas/events';
 import { CancellationReason } from '../../src/agent-session/schemas/turn';
 import { Sessions } from '../../src/agent-session/Sessions';
 import { InMemorySessionStore } from '../../src/agent-session/store/InMemorySessionStore';
-import { TurnNotFoundError } from '../../src/agent-session/store/SessionStoreErrors';
+import { SessionTipMovedError, TurnNotFoundError } from '../../src/agent-session/store/SessionStoreErrors';
 import { TurnHandle } from '../../src/agent-session/TurnHandle';
-import { makeAgentSpec, makeTestResolver, mintTestTurnId, TEST_ACTIVE_EXECUTOR_ID } from './testHelpers';
+import {
+  makeAgentSpec,
+  makeDoneTurnState,
+  makeTestResolver,
+  makeTurnDoneEvent,
+  mintTestTurnId,
+  TEST_ACTIVE_EXECUTOR_ID,
+} from './testHelpers';
 
 describe('Sessions / SessionHandle / TurnHandle (storage + createTurn)', () => {
   const tenant = 'tenant-1';
@@ -224,6 +231,77 @@ describe('Sessions / SessionHandle / TurnHandle (storage + createTurn)', () => {
     await expect(
       session.freezeTurn({ turn_id: 'missing-turn', reason: CancellationReason.ClientCancelled }),
     ).rejects.toBeInstanceOf(TurnNotFoundError);
+  });
+
+  it('a tool response for a tip that is still running is refused without cancelling that run', async () => {
+    const store = new InMemorySessionStore();
+    const sessions = new Sessions({ sessionStore: store });
+    const session = await sessions.create({
+      tenant_id: tenant,
+      session_id: 's1',
+      created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
+      agent: { type: 'inline', spec: makeAgentSpec() },
+      external_id: null,
+    });
+    const running = await session.createTurn({
+      turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
+      previous_turn_id: 'none',
+      signal: new AbortController().signal,
+      resolver: makeTestResolver(),
+    });
+
+    await expect(
+      session.createTurn({
+        turn_id: mintTestTurnId(),
+        active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
+        input: [{ type: EventType.USER_TOOL_RESPONSE, thread_id: 'main', tool_call_id: 'call-1', content: 'late' }],
+        signal: new AbortController().signal,
+        resolver: makeTestResolver(),
+      }),
+    ).rejects.toBeInstanceOf(SessionTipMovedError);
+
+    const tip = await store.getTurn({ session_id: 's1', turn_id: running.id });
+    expect(tip?.state.status).toBe('running');
+    const reloaded = await sessions.get({ tenant_id: tenant, session_id: 's1' });
+    expect(reloaded?.record.last_turn_id).toBe(running.id);
+  });
+
+  it('a tool response for a call the finished tip is not waiting on was already answered', async () => {
+    const store = new InMemorySessionStore();
+    const sessions = new Sessions({ sessionStore: store });
+    const session = await sessions.create({
+      tenant_id: tenant,
+      session_id: 's1',
+      created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
+      agent: { type: 'inline', spec: makeAgentSpec() },
+      external_id: null,
+    });
+    const tip = await session.createTurn({
+      turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
+      previous_turn_id: 'none',
+      signal: new AbortController().signal,
+      resolver: makeTestResolver(),
+    });
+    const done = makeDoneTurnState();
+    await store.updateTurnState({
+      session_id: 's1',
+      turn_id: tip.id,
+      state: done,
+      turn_done_event: makeTurnDoneEvent(done),
+    });
+
+    await expect(
+      session.createTurn({
+        turn_id: mintTestTurnId(),
+        active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
+        input: [{ type: EventType.USER_TOOL_RESPONSE, thread_id: 'main', tool_call_id: 'call-1', content: 'late' }],
+        signal: new AbortController().signal,
+        resolver: makeTestResolver(),
+      }),
+    ).rejects.toBeInstanceOf(SessionTipMovedError);
+    expect((await sessions.get({ tenant_id: tenant, session_id: 's1' }))?.record.last_turn_id).toBe(tip.id);
   });
 
   it('custom value vs merge-fn', async () => {

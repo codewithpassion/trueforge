@@ -47,6 +47,7 @@ import {
   SessionExternalIdConflictError,
   SessionNotFoundError,
   SessionStoreInvariantError,
+  SessionTipMovedError,
   TurnAlreadyExistsError,
   TurnNotFoundError,
   TurnNotRunningError,
@@ -369,6 +370,14 @@ export class InMemorySessionStore<
     }
 
     const previousTurnId = input.turn.previous_turn_id;
+    if (input.require_tip) {
+      if (previousTurnId === null) {
+        throw new SessionStoreInvariantError('require_tip needs a previous turn');
+      }
+      if (stored.record.last_turn_id !== previousTurnId) {
+        throw new SessionTipMovedError(previousTurnId);
+      }
+    }
     let previousSnapshot: TurnSnapshot | undefined;
     if (previousTurnId !== null) {
       const prevKey = turnKey({ session_id: input.turn.session_id, turn_id: previousTurnId });

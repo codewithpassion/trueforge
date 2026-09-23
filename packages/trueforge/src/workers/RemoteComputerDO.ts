@@ -9,6 +9,7 @@ import {
   CLOSE_STALE,
   type ComputerRelayStatus,
   DESKTOP_CLIPBOARD_TIMEOUT_MS,
+  type DesktopControlState,
   HEARTBEAT_PING,
   HEARTBEAT_PONG,
   type HelloMessage,
@@ -135,6 +136,16 @@ function parseOpRequest(raw: string): Record<string, unknown> | undefined {
   }
   return forwarded;
 }
+
+/** Sessions waiting on a person, kept apart from the lease: several can wait while one person drives. */
+const TAKEOVER_POINTERS_KEY = 'takeover_pointers';
+/** Far more than one shared desktop sees; past it the longest-waiting session is forgotten. */
+const MAX_TAKEOVER_POINTERS = 100;
+
+const StoredTakeoverPointersSchema = z.array(
+  z.object({ session_id: z.string(), turn_id: z.string(), recorded_at: z.number() }),
+);
+type StoredTakeoverPointers = z.infer<typeof StoredTakeoverPointersSchema>;
 
 const LEASE_KEY = 'desktop_lease';
 /** A crash backstop: a turn that took the lease releases it when it ends. */
@@ -778,6 +789,68 @@ export class RemoteComputerDO extends DurableObject {
     return { released: true };
   }
 
+  async #readTakeoverPointers(): Promise<StoredTakeoverPointers> {
+    const parsed = StoredTakeoverPointersSchema.safeParse(await this.ctx.storage.get(TAKEOVER_POINTERS_KEY));
+    return parsed.success ? parsed.data : [];
+  }
+
+  async #writeTakeoverPointers(pointers: StoredTakeoverPointers): Promise<void> {
+    await (pointers.length === 0
+      ? this.ctx.storage.delete(TAKEOVER_POINTERS_KEY)
+      : this.ctx.storage.put(TAKEOVER_POINTERS_KEY, pointers));
+  }
+
+  /**
+   * Remembers that a session's turn ended asking a person to take over, so the Screen page can find
+   * it. Only the pointer is kept; what was asked stays in the turn, which is the truth about it.
+   */
+  async recordTakeoverPointer({
+    tenant_id,
+    session_id,
+    turn_id,
+  }: {
+    tenant_id: string;
+    session_id: string;
+    turn_id: string;
+  }): Promise<{ recorded: boolean }> {
+    if (!this.#ownedBy(tenant_id)) {
+      return { recorded: false };
+    }
+    const others = (await this.#readTakeoverPointers()).filter(pointer => pointer.session_id !== session_id);
+    const next = [...others, { session_id, turn_id, recorded_at: Date.now() }].slice(-MAX_TAKEOVER_POINTERS);
+    await this.#writeTakeoverPointers(next);
+    return { recorded: true };
+  }
+
+  /** Forgets a session's pointer only while it names this turn, so a newer request is never lost. */
+  async clearTakeoverPointer({
+    tenant_id,
+    session_id,
+    turn_id,
+  }: {
+    tenant_id: string;
+    session_id: string;
+    turn_id: string;
+  }): Promise<{ cleared: boolean }> {
+    if (!this.#ownedBy(tenant_id)) {
+      return { cleared: false };
+    }
+    const pointers = await this.#readTakeoverPointers();
+    const kept = pointers.filter(pointer => !(pointer.session_id === session_id && pointer.turn_id === turn_id));
+    if (kept.length === pointers.length) {
+      return { cleared: false };
+    }
+    await this.#writeTakeoverPointers(kept);
+    return { cleared: true };
+  }
+
+  async listTakeoverPointers({ tenant_id }: { tenant_id: string }): Promise<{ session_id: string; turn_id: string }[]> {
+    if (!this.#ownedBy(tenant_id)) {
+      return [];
+    }
+    return (await this.#readTakeoverPointers()).map(({ session_id, turn_id }) => ({ session_id, turn_id }));
+  }
+
   /**
    * A person takes control, preempting any agent. Taking it from another person, or while the last
    * person's clipboard is still being cleared, waits for that clear first, so one person never reads
@@ -1040,7 +1113,23 @@ export class RemoteComputerDO extends DurableObject {
       in_flight_exec: this.#inFlightExec,
       queued: this.#queue.length,
       hello: this.#hello,
+      desktop_control: this.#desktopControlState(),
     };
+  }
+
+  /** Read through `#currentControl`, so a lapsed lease is reported, and handled, as lapsed. */
+  #desktopControlState(): DesktopControlState {
+    const control = this.#currentControl(Date.now());
+    if (control === undefined) {
+      return { kind: 'none' };
+    }
+    if (control.kind === 'clearing') {
+      return { kind: 'clearing' };
+    }
+    if (control.holder.kind === 'agent') {
+      return { kind: 'agent', session_id: control.holder.session_id };
+    }
+    return { kind: 'human', user_id: control.holder.user_id, expires_at: heldExpiresAt(control) };
   }
 
   /** Records last-seen from the platform's heartbeat stamp; one write a minute, not one per heartbeat. */

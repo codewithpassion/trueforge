@@ -1,5 +1,6 @@
 import {
   SessionStoreNotFoundError,
+  SessionTipMovedError,
   TurnNotFoundError,
   type CancellationReason,
   type SessionHandle,
@@ -87,6 +88,9 @@ const HTTP_EXCEPTION_CODES = {
   422: 'unprocessable_entity',
 } as const;
 
+/** What a tool response that lost the race to another answer of the same pending call gets. */
+export const ALREADY_ANSWERED_CODE = 'already_answered';
+
 /** Client-caused turn-start failures; undefined means the error is unexpected and must be rethrown. */
 export function turnStartFailure(error: unknown): TurnExecutorFailure | undefined {
   if (error instanceof HTTPException) {
@@ -97,6 +101,9 @@ export function turnStartFailure(error: unknown): TurnExecutorFailure | undefine
   }
   if (error instanceof SessionStoreNotFoundError) {
     return { ok: false, status: 404, code: 'not_found', message: error.message };
+  }
+  if (error instanceof SessionTipMovedError) {
+    return { ok: false, status: 409, code: ALREADY_ANSWERED_CODE, message: error.message };
   }
   if (error instanceof AgentHarnessError && !(error instanceof McpConnectionError)) {
     switch (error.code) {

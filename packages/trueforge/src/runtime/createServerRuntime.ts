@@ -4,13 +4,14 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { createServerApp } from '../app';
 import type { Authenticator } from '../auth/authenticator';
 import type { Authorizer } from '../auth/authorizer';
-import { resolveRequestContext, type RequestContext } from '../auth/identity';
+import { requestContextFromCreatedBySubject, resolveRequestContext, type RequestContext } from '../auth/identity';
 import { initOidc } from '../auth/oidc';
 import { McpCatalog } from '../catalog/McpCatalog';
 import { ModelCatalog } from '../catalog/ModelCatalog';
 import { SandboxCatalog } from '../catalog/SandboxCatalog';
 import { SkillCatalog } from '../catalog/SkillCatalog';
 import type { ComputersService } from '../computers/service';
+import { createHumanTakeoverService } from '../computers/takeover';
 import configuration, { isOidcConfigured, isTrueFoundryModeEnabled } from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IIntegrationStore } from '../db/integrationStore';
@@ -137,6 +138,31 @@ export async function createServerRuntime<TTransaction>(options: {
     }
     return new InlineSkillStore({ inner: store, inline: parseInlineSkills(rawInline) });
   };
+  const computers = options.computers;
+  const humanTakeovers =
+    computers === undefined
+      ? undefined
+      : createHumanTakeoverService({
+          computers,
+          sessions,
+          agentStore,
+          turnExecutor: options.turnExecutor,
+          // Like a scheduled run: no live caller, so stores resolve as the session's creator.
+          resolveTurnStores: ({ session, agent }) => {
+            const requestContext = requestContextFromCreatedBySubject({
+              tenant_id: session.tenant_id,
+              created_by_subject: session.record.created_by_subject,
+            });
+            return {
+              agentStore,
+              modelProviderStore: persistence.resolveModelProviderStore(requestContext, agent),
+              mcpServerStore: persistence.resolveMcpServerStore(requestContext, agent),
+              sandboxProviderStore: persistence.resolveSandboxProviderStore(requestContext),
+              skillStore: turnSkillsResolverStore,
+            };
+          },
+          logger,
+        });
   return createServerApp({
     modelCatalog: ModelCatalog.load(),
     mcpCatalog: McpCatalog.load(),
@@ -148,7 +174,8 @@ export async function createServerRuntime<TTransaction>(options: {
     resolveImportAgentStore,
     resolveSandboxProviderStore,
     sandboxIntegration: options.sandboxIntegration,
-    computers: options.computers,
+    computers,
+    humanTakeovers,
     clientCertificateMiddleware: options.clientCertificateMiddleware,
     resolveSkillStore,
     withTransaction,

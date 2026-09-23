@@ -24,6 +24,7 @@ import {
   type DesktopScreenshotResultPayload,
 } from './protocol';
 import type { DesktopCallResult, DesktopFailureCode, RemoteComputerProvider } from './RemoteComputerProvider';
+import { REQUEST_HUMAN_TAKEOVER_TOOL, RequestHumanTakeover } from './requestHumanTakeover';
 
 /** Lets a click's effect reach the screen before the screenshot that shows it. */
 const SETTLE_MS = 500;
@@ -72,7 +73,7 @@ export function desktopFailureText({ code, message }: { code: DesktopFailureCode
     case 'human_in_control':
       return (
         'A person is using the desktop of this computer, so desktop actions and commands are paused. ' +
-        'Stop and tell the user rather than retrying.'
+        `Do not retry: if you need them to finish a step for you, call ${REQUEST_HUMAN_TAKEOVER_TOOL} with what they should do, then stop.`
       );
     case 'desktop_busy':
       return (
@@ -246,8 +247,9 @@ const BASE_INSTRUCTIONS = [
   `This computer has a ${String(DESKTOP_WIDTH)}x${String(DESKTOP_HEIGHT)} desktop you can see and drive with the computer_* tools; coordinates are pixels from the top-left corner.`,
   'DISPLAY is already set for exec, so start applications with exec and a trailing &, for example `chromium https://example.com &` or `xterm &`.',
   'Prefer exec and the filesystem over the desktop whenever both can do the job.',
-  'For logins, CAPTCHAs and two-factor prompts, stop and ask the user to do that step instead of guessing or asking for credentials.',
 ].join(' ');
+
+const TAKEOVER_INSTRUCTIONS = `For logins, CAPTCHAs and two-factor prompts, call ${REQUEST_HUMAN_TAKEOVER_TOOL} so a person does that step on the desktop, instead of guessing or asking for credentials.`;
 
 const APPROVAL_INSTRUCTIONS =
   'This computer asks a person to approve each action, and desktop input cannot be approved yet, so only computer_screenshot and computer_clipboard_read are available.';
@@ -256,10 +258,11 @@ const NO_IMAGES_INSTRUCTIONS =
   'This model does not receive images, so every screenshot comes back as a one-line note of its size; read the screen through exec and the clipboard instead, and tell the user the desktop needs a model that accepts images if that is not enough.';
 
 /**
- * The desktop tools for one turn of an agent that asked for the desktop. A machine whose desktop is
- * down gets none, and the model is told why. With `requireApproval` set the input tools are
- * withheld, because nothing can yet ask a person before a click. Spec validation has no way to warn,
- * so a model that cannot take images learns it here rather than from blank screenshots.
+ * The desktop tools for one turn of an agent that asked for the desktop, with the takeover request
+ * beside them. A machine whose desktop is down gets none, and the model is told why. With
+ * `requireApproval` set the input tools are withheld, because nothing can yet ask a person before
+ * a click; a person can still take over. Spec validation has no way to warn, so a model that cannot
+ * take images learns it here rather than from blank screenshots.
  */
 export function desktopProviderTools({
   provider,
@@ -273,6 +276,8 @@ export function desktopProviderTools({
     return {
       tools: [],
       instructions: `This agent is set up to use the desktop of this computer, but the desktop is not running${reason === null ? '' : ` (${reason})`}, so no desktop tools are available.`,
+      clientSideToolSets: [],
+      clientSideInstructions: '',
     };
   }
   const serial = serialQueue();
@@ -284,5 +289,10 @@ export function desktopProviderTools({
     ...(provider.requiresApproval ? [APPROVAL_INSTRUCTIONS] : []),
     ...(modelAcceptsToolImages ? [] : [NO_IMAGES_INSTRUCTIONS]),
   ];
-  return { tools, instructions: instructions.join(' ') };
+  return {
+    tools,
+    instructions: instructions.join(' '),
+    clientSideToolSets: [new RequestHumanTakeover()],
+    clientSideInstructions: TAKEOVER_INSTRUCTIONS,
+  };
 }

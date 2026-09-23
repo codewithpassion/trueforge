@@ -3,7 +3,9 @@
  * The base URL picks the behavior: https://llm.test/<scenario>/v1, where scenario is `text`,
  * `tools-<K>` (K datetime tool calls, then text), `ask-<K>` (K `ask_user_question` calls in ONE
  * message, so the turn pauses holding all of them, then text), `sandbox` (one sandbox exec, then
- * text), `desktop` (one `computer_screenshot`, then text echoing the tool result it was sent), `slow` (one delta, then a stalled stream), `gap` (one delta, a second after `GAP_MS`,
+ * text), `desktop` (one `computer_screenshot`, then text echoing the tool result it was sent),
+ * `takeover` (one `request_human_takeover`, then text), `slow` (one delta, then a stalled stream),
+ * `gap` (one delta, a second after `GAP_MS`,
  * then a stalled stream), `delay-<ms>` (a text reply after ms), or `huge` (one reply larger than
  * D1 stores per value).
  */
@@ -163,6 +165,14 @@ export async function handleMockLlmRequest(request: Request): Promise<Response> 
       );
     }
     return toolCallReply({ toolName, callIndex: 1 });
+  }
+  if (scenario === 'takeover') {
+    const answered = (body.messages ?? []).filter(message => message.role === 'tool').length;
+    const toolName = namedTool(body, 'request_human_takeover');
+    if (answered > 0 || toolName === undefined) {
+      return textReply('Finished after the takeover.');
+    }
+    return toolCallReply({ toolName, callIndex: 1, args: { reason: 'Log into the supplier portal' } });
   }
   const asks = /^ask-(\d+)$/.exec(scenario);
   if (asks?.[1] !== undefined) {

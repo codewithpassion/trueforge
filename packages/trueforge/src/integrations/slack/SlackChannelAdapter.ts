@@ -13,7 +13,13 @@ import type {
   InteractionOutcome,
 } from '../types';
 import { postSlackMessage, postSlackResponseUrl, type SlackFetch } from './api';
-import { buildApprovalMessage, buildQuestionMessage, buildSettledMessage, type SlackBlockMessage } from './blocks';
+import {
+  buildApprovalMessage,
+  buildQuestionMessage,
+  buildSettledMessage,
+  buildTakeoverMessage,
+  type SlackBlockMessage,
+} from './blocks';
 import { chunkForSlack } from './chunk';
 import {
   decideSlackEvent,
@@ -47,7 +53,8 @@ function plainText(content: DeliveryContent): string {
       return content.detail;
     case 'approval_request':
     case 'question':
-      // Unreachable: `blockMessageFor` covers both, and this keeps the switch exhaustive.
+    case 'takeover_request':
+      // Unreachable: `blockMessageFor` covers these, and this keeps the switch exhaustive.
       return content.intro;
   }
 }
@@ -96,6 +103,9 @@ function blockMessageFor(content: DeliveryContent): SlackBlockMessage | undefine
   }
   if (content.type === 'question') {
     return buildQuestionMessage({ turn_id: content.turn_id, intro: content.intro, question: content.question });
+  }
+  if (content.type === 'takeover_request') {
+    return buildTakeoverMessage({ intro: content.intro, takeover: content.takeover, screen_url: content.screen_url });
   }
   return undefined;
 }

@@ -15,6 +15,7 @@ import {
   PreviousTurnRunningError,
   SessionNotFoundError,
   SessionStoreInvariantError,
+  SessionTipMovedError,
   TurnAlreadyExistsError,
   TurnNotFoundError,
   TurnNotRunningError,
@@ -92,6 +93,8 @@ export interface CreateTurnInput {
   }[];
   last_activity_timestamp_ms: number;
   update_session_title_if_not_exist: string | null;
+  /** Statement 1 also requires `session.last_turn_id` to still be `turn.previous_turn_id`. */
+  require_tip: boolean;
   mcp_servers: Record<string, MCPServerInitInfo> | null;
   sandbox_info: SandboxInfo | null;
 }
@@ -415,6 +418,15 @@ export async function createTurn(
   }
 
   const prevTurnId = input.turn.previous_turn_id;
+  if (input.require_tip) {
+    if (prevTurnId === null) {
+      throw new SessionStoreInvariantError('require_tip needs a previous turn');
+    }
+    // Early answer only; the batch below re-checks it where it counts.
+    if (session.last_turn_id !== prevTurnId) {
+      throw new SessionTipMovedError(prevTurnId);
+    }
+  }
 
   let prevCheckpoint: TurnCheckpoint | null = null;
   const prevThreadRows: TurnThreadRow[] = [];
@@ -490,6 +502,8 @@ export async function createTurn(
           SELECT 1 FROM turn
           WHERE session_id = ${input.session_id} AND turn_id = ${prevTurnId} AND state->>'status' = 'running'
         )`;
+  // Part of the one guarded statement, so the tip check and the tip advance commit together.
+  const stillTip = input.require_tip ? sql` AND last_turn_id IS ${prevTurnId ?? null}` : sql``;
   const insertTurn = db
     .insertInto('turn')
     .columns([
@@ -511,7 +525,7 @@ export async function createTurn(
           ${jsonbBind(input.turn.ancestor_ids)}, ${input.turn.active_executor_id}, ${jsonbBind(input.turn.input)}, ${jsonbBind(input.turn.state)},
           ${jsonbBind(checkpoint)}, ${turnCustom !== null ? jsonbBind(turnCustom) : null}, ${now}, ${now}
         FROM session
-        WHERE session_id = ${input.session_id}${previousNotRunning}`,
+        WHERE session_id = ${input.session_id}${stillTip}${previousNotRunning}`,
     )
     .compile();
 
@@ -600,22 +614,32 @@ export async function createTurn(
     throw err;
   }
   if ((results[0]?.changes ?? 0) === 0) {
-    await classifyCreateTurnGuardFailure(db, { session_id: input.session_id, previous_turn_id: prevTurnId });
+    await classifyCreateTurnGuardFailure(db, {
+      session_id: input.session_id,
+      previous_turn_id: prevTurnId,
+      require_tip: input.require_tip,
+    });
   }
 }
 
-/** Statement 1 matched no session row, or the previous turn was running when the batch ran. */
+/**
+ * Statement 1 matched no session row, the tip moved on a `require_tip` write, or the previous
+ * turn was running when the batch ran.
+ */
 async function classifyCreateTurnGuardFailure(
   db: DbOrTrx,
-  args: { session_id: string; previous_turn_id: string | null },
+  args: { session_id: string; previous_turn_id: string | null; require_tip: boolean },
 ): Promise<never> {
   const session = await db
     .selectFrom('session')
-    .select(['session_id'])
+    .select(['session_id', 'last_turn_id'])
     .where('session_id', '=', args.session_id)
     .executeTakeFirst();
   if (!session) {
     throw new SessionNotFoundError(args.session_id);
+  }
+  if (args.require_tip && args.previous_turn_id !== null && session.last_turn_id !== args.previous_turn_id) {
+    throw new SessionTipMovedError(args.previous_turn_id);
   }
   if (args.previous_turn_id !== null) {
     throw new PreviousTurnRunningError(args.previous_turn_id);

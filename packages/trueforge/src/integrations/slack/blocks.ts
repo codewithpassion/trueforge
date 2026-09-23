@@ -3,7 +3,7 @@
  * decision is in. Every button carries the turn and tool call it belongs to, so nothing about
  * the pending turn has to be remembered between the post and the click.
  */
-import type { PendingQuestion, PendingToolApproval } from '../pendingActions';
+import type { PendingQuestion, PendingTakeoverRequest, PendingToolApproval } from '../pendingActions';
 import { SLACK_INTERACTION_ACTIONS } from './appCapabilities';
 import { escapeSlackText, toMrkdwn } from './mrkdwn';
 
@@ -208,6 +208,31 @@ export function buildQuestionMessage(input: {
   }
   blocks.push(context('Reply in this thread to answer in your own words.'));
   return { text: `Question: ${escapeSlackText(question.question)}`, blocks };
+}
+
+/**
+ * A request for a person to take over the computer's desktop. No buttons: it is settled on the
+ * agent's Screen page, where the person takes control and hands it back.
+ */
+export function buildTakeoverMessage(input: {
+  intro: string;
+  takeover: PendingTakeoverRequest;
+  /** Undefined when the server has no public base URL to link from. */
+  screen_url: string | undefined;
+}): SlackBlockMessage {
+  const reason = escapeSlackText(input.takeover.reason);
+  const where =
+    input.screen_url === undefined
+      ? 'Open this agent’s Screen page in TrueForge'
+      : `<${input.screen_url}|Open this agent’s screen>`;
+  return {
+    text: `A person is needed on the computer: ${reason}`,
+    blocks: [
+      ...introBlocks(input.intro),
+      section(`*A person is needed on the computer:* ${reason}`),
+      context(`${where}, take control, finish the step and hand it back. The agent carries on from there.`),
+    ],
+  };
 }
 
 /** Replaces the buttons with who decided and what, so the message cannot be acted on twice. */

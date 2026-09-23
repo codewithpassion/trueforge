@@ -170,6 +170,7 @@ export class PostgresSessionStore implements ISessionStore<SessionCustom, TurnCu
       capability_states: input.capability_states,
       last_activity_timestamp_ms: Date.now(),
       update_session_title_if_not_exist: input.update_session_title_if_not_exist,
+      require_tip: input.require_tip,
       mcp_servers: null,
       sandbox_info: null,
     });

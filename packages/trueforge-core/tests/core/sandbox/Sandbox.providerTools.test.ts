@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { InstructionBuilder } from '../../../src/core/InstructionBuilder';
-import { isCallToolResponseResult, toolResultResponse } from '../../../src/core/mcp/IMCPServer';
-import { defineTool } from '../../../src/core/mcp/LocalToolMCP';
+import { ClientSideTool } from '../../../src/core/mcp/ClientSideTool';
+import { isCallToolResponseResult, toolResultResponse, type IToolSet } from '../../../src/core/mcp/IMCPServer';
+import { defineTool, type ToolDefinition } from '../../../src/core/mcp/LocalToolMCP';
 import type { SandboxProvider } from '../../../src/core/sandbox/provider/Provider';
 import { Sandbox } from '../../../src/core/sandbox/Sandbox';
 import { NOOP_AGENT_TRACING } from '../../../src/core/tracing/NoopAgentTracing';
@@ -27,7 +28,28 @@ function makeProvider(createSandbox: SandboxProvider['createSandbox']): SandboxP
   };
 }
 
-function makeSandbox(input: { provider: SandboxProvider; existingSandboxId?: string; ran: string[] }): Sandbox {
+class AskAPerson extends ClientSideTool {
+  readonly name = 'ask-a-person';
+  readonly displayName = 'AskAPerson';
+
+  protected getTools(): ToolDefinition[] {
+    return [
+      defineTool({
+        name: 'ask_a_person',
+        description: 'Asks a person.',
+        schema: z.object({}),
+        handler: () => Promise.resolve(toolResultResponse({ text: 'client-side', isError: true })),
+      }),
+    ];
+  }
+}
+
+function makeSandbox(input: {
+  provider: SandboxProvider;
+  existingSandboxId?: string;
+  ran: string[];
+  clientSideToolSets?: IToolSet[];
+}): Sandbox {
   return new Sandbox({
     provider: input.provider,
     existingSandboxId: input.existingSandboxId,
@@ -47,6 +69,8 @@ function makeSandbox(input: { provider: SandboxProvider; existingSandboxId?: str
         }),
       ],
       instructions: 'You can look.',
+      clientSideToolSets: input.clientSideToolSets ?? [],
+      clientSideInstructions: 'Ask a person to log in.',
     },
     logger: makeSilentLogger(),
     tracing: NOOP_AGENT_TRACING,
@@ -64,6 +88,25 @@ describe('Sandbox provider tools', () => {
     const builder = new InstructionBuilder('root');
     sandbox.buildInstruction(builder);
     expect(builder.build()).toContain('You can look.');
+  });
+
+  it('keeps client-side tools and their instructions out of the shared prompt, for the root thread only', () => {
+    const none = makeSandbox({ provider: makeProvider(jest.fn()), ran: [] });
+    expect(none.providerRootCapability).toBeUndefined();
+
+    const askAPerson = new AskAPerson();
+    const sandbox = makeSandbox({ provider: makeProvider(jest.fn()), ran: [], clientSideToolSets: [askAPerson] });
+    const shared = new InstructionBuilder('root');
+    sandbox.buildInstruction(shared);
+    expect(shared.build()).not.toContain('Ask a person to log in.');
+
+    const root = sandbox.providerRootCapability;
+    expect(root?.systemToolSets).toEqual([askAPerson]);
+    const rootOnly = new InstructionBuilder('root');
+    for (const build of root?.instructionBuilders ?? []) {
+      build(rootOnly);
+    }
+    expect(rootOnly.build()).toContain('Ask a person to log in.');
   });
 
   it('creates the sandbox before the first call and reports it like exec does', async () => {

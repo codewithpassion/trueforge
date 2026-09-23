@@ -78,6 +78,7 @@ async function createApp() {
     resolveSandboxProviderStore: () => sandboxProviderStore,
     sandboxIntegration: undefined,
     computers: undefined,
+    humanTakeovers: undefined,
     clientCertificateMiddleware: undefined,
     sessionImport: undefined,
     resolveAgentStore: () => agentStore,

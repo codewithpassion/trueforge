@@ -394,6 +394,9 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       ? await deps.turnExecutor.startStreaming({ ...startInput, signal: clientGone.signal })
       : await deps.turnExecutor.start(startInput);
     if (!started.ok) {
+      if (started.status === 409) {
+        return c.json({ error: { message: started.message, code: started.code } }, 409);
+      }
       if (
         started.status === 400 ||
         started.status === 404 ||

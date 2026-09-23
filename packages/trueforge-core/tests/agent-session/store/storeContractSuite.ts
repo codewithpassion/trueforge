@@ -12,6 +12,7 @@ import {
   SessionStoreConflictError,
   SessionStoreInvariantError,
   SessionStoreNotFoundError,
+  SessionTipMovedError,
   TurnAlreadyExistsError,
   TurnNotFoundError,
   TurnNotRunningError,
@@ -1500,6 +1501,90 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
           makeCreateTurnInput({ sessionId, turnId: 'turn-2', previousTurnId: 'turn-1', firstTurnId: 'turn-1' }),
         ),
       ).rejects.toBeInstanceOf(PreviousTurnRunningError);
+    });
+
+    describe('require_tip', () => {
+      async function seedFinishedTip(store: ISessionStore): Promise<void> {
+        await seedSession(store);
+        await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'tip' }));
+        await finishTurn(store, 'tip');
+      }
+
+      function answer(turnId: string) {
+        return makeCreateTurnInput({
+          sessionId,
+          turnId,
+          previousTurnId: 'tip',
+          firstTurnId: 'tip',
+          new_context_appends: [
+            {
+              thread_id: MAIN_THREAD_ID,
+              context: [userMessage(turnId)],
+              current_context_usage: getEmptyCurrentContextUsage(),
+            },
+          ],
+          capability_states: [{ thread_id: MAIN_THREAD_ID, capability_state: { probe: turnId } }],
+          require_tip: true,
+        });
+      }
+
+      it('writes the turn while previous_turn_id is still the tip', async () => {
+        const store = createStore();
+        await seedFinishedTip(store);
+        await store.createTurn(answer('answer-1'));
+        const session = mustGet(await store.getSession({ tenant_id: tenant, session_id: sessionId }));
+        expect(session.last_turn_id).toBe('answer-1');
+        expect(session.metrics.total_turns).toBe(2);
+      });
+
+      it('rejects with SessionTipMovedError and writes nothing once the tip moved', async () => {
+        const store = createStore();
+        await seedFinishedTip(store);
+        await store.createTurn(answer('answer-1'));
+        const late = answer('answer-2');
+
+        await expect(store.createTurn(late)).rejects.toBeInstanceOf(SessionTipMovedError);
+        await expect(store.createTurn(late)).rejects.toBeInstanceOf(SessionStoreConflictError);
+        expect(await store.getTurn({ session_id: sessionId, turn_id: 'answer-2' })).toBeUndefined();
+        const session = mustGet(await store.getSession({ tenant_id: tenant, session_id: sessionId }));
+        expect(session.last_turn_id).toBe('answer-1');
+        expect(session.metrics.total_turns).toBe(2);
+
+        // No thread, context or capability rows of the refused turn are left behind to collide with.
+        await store.createTurn({ ...late, require_tip: false });
+        const created = mustGet(await store.getTurn({ session_id: sessionId, turn_id: 'answer-2' }));
+        expect(contextContents(created.snapshot.threads[MAIN_THREAD_ID]?.context)).toEqual(['answer-2']);
+      });
+
+      it('two racing answers to one tip: exactly one lands and becomes the tip', async () => {
+        const store = createStore();
+        await seedFinishedTip(store);
+        const results = await Promise.allSettled([
+          store.createTurn(answer('answer-a')),
+          store.createTurn(answer('answer-b')),
+        ]);
+
+        const fulfilled = results.filter(r => r.status === 'fulfilled');
+        const rejected = results.flatMap((r): unknown[] => (r.status === 'rejected' ? [r.reason] : []));
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0]).toBeInstanceOf(SessionTipMovedError);
+        const winner = results[0].status === 'fulfilled' ? 'answer-a' : 'answer-b';
+        const session = mustGet(await store.getSession({ tenant_id: tenant, session_id: sessionId }));
+        expect(session.last_turn_id).toBe(winner);
+        expect(session.metrics.total_turns).toBe(2);
+        const turns = await store.listTurns({ session_id: sessionId, limit: 10, page_token: undefined });
+        expect(turns.data.map(t => t.turn_id).sort()).toEqual(['tip', winner].sort());
+      });
+
+      it('an explicit fork from a turn that is no longer the tip still succeeds without it', async () => {
+        const store = createStore();
+        await seedFinishedTip(store);
+        await store.createTurn(answer('answer-1'));
+        await store.createTurn({ ...answer('fork'), require_tip: false });
+        const session = mustGet(await store.getSession({ tenant_id: tenant, session_id: sessionId }));
+        expect(session.last_turn_id).toBe('fork');
+      });
     });
 
     it('createTurn rejected for a running previous turn writes nothing for the rejected turn', async () => {

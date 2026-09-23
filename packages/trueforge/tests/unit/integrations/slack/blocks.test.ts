@@ -3,6 +3,7 @@ import {
   buildApprovalMessage,
   buildQuestionMessage,
   buildSettledMessage,
+  buildTakeoverMessage,
   decodeActionValue,
   encodeActionValue,
   type SlackBlock,
@@ -22,6 +23,31 @@ function texts(blocks: readonly SlackBlock[]): string[] {
     return block.type === 'context' ? block.elements.map(element => element.text) : [];
   });
 }
+
+describe('buildTakeoverMessage', () => {
+  const takeover = { thread_id: 'main', tool_call_id: 'call-1', reason: 'Log into <!channel> the portal' };
+
+  it('shows the reason escaped, links the Screen page and offers no buttons', () => {
+    const message = buildTakeoverMessage({
+      intro: '',
+      takeover,
+      screen_url: 'https://trueforge.test/agents/agent-1/screen',
+    });
+
+    expect(buttons(message.blocks)).toEqual([]);
+    expect(texts(message.blocks)).toEqual([
+      '*A person is needed on the computer:* Log into &lt;!channel&gt; the portal',
+      '<https://trueforge.test/agents/agent-1/screen|Open this agent’s screen>, take control, finish the step and hand it back. The agent carries on from there.',
+    ]);
+  });
+
+  it('names the Screen page in words when there is no public URL to link', () => {
+    const message = buildTakeoverMessage({ intro: 'Stuck at login.', takeover, screen_url: undefined });
+
+    expect(texts(message.blocks)[0]).toBe('Stuck at login.');
+    expect(texts(message.blocks)[2]).toMatch(/^Open this agent’s Screen page in TrueForge, take control/);
+  });
+});
 
 describe('buildApprovalMessage', () => {
   const approval = {

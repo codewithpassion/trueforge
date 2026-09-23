@@ -10,7 +10,9 @@ export const RequestErrorResponseSchema = z
         .string()
         .nullable()
         .optional()
-        .describe('Optional machine-readable error code; null when not applicable.'),
+        .describe(
+          'Optional machine-readable error code, such as `human_in_control` on a 423; null when not applicable.',
+        ),
       param: z
         .string()
         .nullable()

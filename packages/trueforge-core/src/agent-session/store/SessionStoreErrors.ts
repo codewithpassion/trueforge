@@ -86,6 +86,20 @@ export class PreviousTurnRunningError extends SessionStoreConflictError {
   }
 }
 
+/**
+ * A resume that must continue the session tip found another turn there, or found the tip still
+ * running: someone else answered first.
+ */
+export class SessionTipMovedError extends SessionStoreConflictError {
+  readonly expected_turn_id: string;
+
+  constructor(expected_turn_id: string) {
+    super(`Turn ${expected_turn_id} is no longer the finished tip of its session; it was already answered`);
+    this.name = 'SessionTipMovedError';
+    this.expected_turn_id = expected_turn_id;
+  }
+}
+
 export class TurnNotRunningError extends SessionStoreConflictError {
   readonly turn_id: string;
   readonly state: TerminalTurnState;

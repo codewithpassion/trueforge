@@ -4,7 +4,7 @@
  */
 import type { TerminalTurnState } from '@truefoundry/trueforge-core/agent-session';
 import type { IntegrationManifest, IntegrationType } from '../schemas/integration';
-import type { PendingQuestion, PendingToolApproval } from './pendingActions';
+import type { PendingQuestion, PendingTakeoverRequest, PendingToolApproval } from './pendingActions';
 
 /** Who sent the inbound message, as the channel names them. */
 export interface InboundSender {
@@ -49,7 +49,16 @@ export type DeliveryContent =
   /** The turn is held on tool calls a person has to allow or deny. `intro` is the model's own narration, if any. */
   | { type: 'approval_request'; turn_id: string; intro: string; approvals: readonly PendingToolApproval[] }
   /** The turn is held on a question the agent asked. */
-  | { type: 'question'; turn_id: string; intro: string; question: PendingQuestion };
+  | { type: 'question'; turn_id: string; intro: string; question: PendingQuestion }
+  /** The turn waits for a person to take over the computer's desktop, which happens on the Screen page. */
+  | {
+      type: 'takeover_request';
+      turn_id: string;
+      intro: string;
+      takeover: PendingTakeoverRequest;
+      /** Undefined when the server has no public base URL to link from. */
+      screen_url: string | undefined;
+    };
 
 /** One outbound message owed to a conversation. */
 export interface Delivery {

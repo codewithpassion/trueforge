@@ -83,7 +83,7 @@ async function retryOneDelivery<TTransaction>(
     });
     const turn = session === undefined ? undefined : await session.getTurn(row.turn_id);
     const turnState = turn?.state;
-    if (turn === undefined || turnState === undefined) {
+    if (session === undefined || turn === undefined || turnState === undefined) {
       logger.warn('Integration delivery has no turn to report', { deliveryId: row.id, turnId: row.turn_id });
       const orphan = await integrationStore.claimDeliveryForRetry({
         id: row.id,
@@ -118,6 +118,7 @@ async function retryOneDelivery<TTransaction>(
         turn,
         turn_id: row.turn_id,
         state: turnState,
+        agent: session.agent,
         // A rule delivery's channel is not the session's conversation, so it gets no buttons
         // on a retry either — the same comparison the first attempt made.
         interactive: deliveryIsInteractive(row),

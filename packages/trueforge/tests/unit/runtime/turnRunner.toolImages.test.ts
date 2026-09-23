@@ -316,6 +316,7 @@ describe('turn runner with tool-result images', () => {
       ],
       capability_states: [{ thread_id: MAIN_THREAD_ID, capability_state: null }],
       update_session_title_if_not_exist: null,
+      require_tip: false,
     });
     const completedAt = new Date().toISOString();
     await sessionStore.updateTurnState({

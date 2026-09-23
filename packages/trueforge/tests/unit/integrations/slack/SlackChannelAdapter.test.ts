@@ -277,6 +277,36 @@ describe('SlackChannelAdapter.deliver', () => {
     expect(posted[0]?.text).toBe('The run was cancelled (shutdown).');
   });
 
+  it('posts a takeover request with its reason and a link to the agent’s Screen page, and no buttons', async () => {
+    const posts: Record<string, unknown>[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      posts.push(JSON.parse(String(init?.body)));
+      return Response.json({ ok: true });
+    };
+    const adapter = new SlackChannelAdapter({ fetchImpl });
+
+    expect(
+      await adapter.deliver({
+        manifest: manifest(),
+        delivery: delivery({
+          type: 'takeover_request',
+          turn_id: 'turn-1',
+          intro: 'I reached the login page.',
+          takeover: { thread_id: 'main', tool_call_id: 'call-1', reason: 'Log into <the> portal' },
+          screen_url: 'https://trueforge.test/agents/agent-1/screen',
+        }),
+      }),
+    ).toEqual({ ok: true });
+
+    expect(posts).toHaveLength(1);
+    const body = JSON.stringify(posts[0]);
+    expect(posts[0]?.['thread_ts']).toBe('1700000000.000100');
+    expect(posts[0]?.['text']).toBe('A person is needed on the computer: Log into &lt;the&gt; portal');
+    expect(body).toContain('I reached the login page.');
+    expect(body).toContain('<https://trueforge.test/agents/agent-1/screen|Open this agent’s screen>');
+    expect(body).not.toContain('"actions"');
+  });
+
   it('stops at the chunk that failed and reports the reason', async () => {
     let call = 0;
     const fetchImpl: typeof fetch = async () => {

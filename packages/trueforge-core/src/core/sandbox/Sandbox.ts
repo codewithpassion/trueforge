@@ -1,6 +1,7 @@
 import { context, propagation } from '@opentelemetry/api';
 import dedent from 'dedent';
 import { z } from 'zod';
+import type { AgentCapability } from '../capabilities/AgentCapability';
 import { InstructionBuilder } from '../InstructionBuilder';
 import { estimateTokensForString } from '../llm/usage';
 import type { MappedMCPTool } from '../mcp/convertMCPServers';
@@ -112,6 +113,14 @@ export interface SandboxOptions {
 export interface SandboxProviderTools {
   tools: readonly ToolDefinition[];
   instructions: string;
+  /**
+   * Client-side tools that belong with `tools`, such as asking a person to take over. They are
+   * their own tool sets because a client-side tool never runs here, and only the root thread,
+   * which can pause for a person, is given them.
+   */
+  clientSideToolSets: readonly IToolSet[];
+  /** What the model needs to know about `clientSideToolSets`, given only where they are offered. */
+  clientSideInstructions: string;
 }
 
 export const SANDBOX_EXEC_TOOL_NAME = 'exec';
@@ -220,6 +229,8 @@ export class Sandbox extends LocalToolMCP {
   /** Cached from transport.getClientInstall after sandbox init (when Code Mode is configured). */
   private mcpClientInstall: CodeModeClientInstall | undefined;
   private readonly providerToolsInstructions: string | undefined;
+  /** The provider's client-side tools and what to say about them; for the root thread only. */
+  readonly providerRootCapability: AgentCapability | undefined;
 
   private tools: ToolDefinition[] = [
     defineTool({
@@ -245,6 +256,14 @@ export class Sandbox extends LocalToolMCP {
       this.existingSandboxInfo = { sandbox_id: this.existingSandboxId };
     }
     this.providerToolsInstructions = options.providerTools?.instructions;
+    const clientSide = options.providerTools;
+    this.providerRootCapability =
+      clientSide === undefined || clientSide.clientSideToolSets.length === 0
+        ? undefined
+        : {
+            systemToolSets: clientSide.clientSideToolSets,
+            instructionBuilders: [builder => builder.addContent(clientSide.clientSideInstructions)],
+          };
     for (const tool of options.providerTools?.tools ?? []) {
       this.tools.push(this.withSandbox(tool));
     }
