@@ -417,11 +417,14 @@ func TestConnectNeverDialsSomeoneElsesDisplay(t *testing.T) {
 // late and answer ErrUnavailable.
 func holdSlots(t *testing.T, slots chan struct{}, budget time.Duration) {
 	t.Helper()
+	held := 0
 	for len(slots) < cap(slots) {
 		slots <- struct{}{}
+		held++
 	}
+	// Exactly what was put in comes back out, never a slot the op under test took since.
 	timer := time.AfterFunc(budget+time.Second, func() {
-		for len(slots) > 0 {
+		for range held {
 			<-slots
 		}
 	})
