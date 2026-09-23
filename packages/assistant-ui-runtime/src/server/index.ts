@@ -180,6 +180,7 @@ export type {
   ToolInfo,
   ToolResponseEvent,
   ToolResponseRequiredEvent,
+  ToolTextContentPart,
   TurnCreatedEvent,
   TurnDoneEvent,
   TurnEvent,
