@@ -75,7 +75,9 @@ async function toImagePart({
     return imageNote('no file store');
   }
   const { files, maxBytes } = toolImages;
-  const declared = image.mimeType.toLowerCase();
+  const lowered = image.mimeType.toLowerCase();
+  // A common mislabel for JPEG; the check is there to catch data that is not what it claims.
+  const declared = lowered === 'image/jpg' ? 'image/jpeg' : lowered;
   // Four base64 characters carry three bytes, so an oversized image is refused before it is decoded.
   const approxBytes = Math.floor((image.data.length * 3) / 4);
   if (approxBytes > maxBytes) {

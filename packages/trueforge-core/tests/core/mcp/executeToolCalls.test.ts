@@ -133,6 +133,12 @@ describe('executeToolCalls image results', () => {
     expect(content).toEqual([IMAGE_PART]);
   });
 
+  it('takes image/jpg as JPEG', async () => {
+    const content = await run({ response: contentResponse([image(JPEG_B64, 'image/jpg')]), toolImages: settings() });
+
+    expect(content).toEqual([{ ...IMAGE_PART, media_type: 'image/jpeg' }]);
+  });
+
   it('turns an image larger than the cap into a note without storing it', async () => {
     const files = sessionFiles();
     const put = jest.spyOn(files, 'put');
