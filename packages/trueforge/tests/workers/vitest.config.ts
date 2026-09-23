@@ -3,6 +3,7 @@ import path from 'node:path';
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers';
 import { defineConfig } from 'vitest/config';
 import { handleMockLlmRequest } from './mockLlm';
+import { handleMockOidcRequest } from './mockOidc';
 
 const harnessDir = import.meta.dirname;
 
@@ -15,7 +16,7 @@ export default defineConfig(async () => {
         miniflare: {
           bindings: { TEST_MIGRATIONS: migrations },
           // Every subrequest the Worker or its Durable Objects make lands here.
-          outboundService: handleMockLlmRequest,
+          outboundService: (request: Request) => handleMockOidcRequest(request) ?? handleMockLlmRequest(request),
         },
       }),
     ],
