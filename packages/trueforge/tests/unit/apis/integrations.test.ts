@@ -105,6 +105,12 @@ const STRANGER: RequestContext = {
   user_credential: null,
 };
 
+/** A non-admin tenant user who creates, and so manages, an agent of their own. */
+const AGENT_OWNER: RequestContext = {
+  ...STRANGER,
+  subject: { id: 'agent-owner', type: 'user', display_name: 'Agent Owner' },
+};
+
 /** An admin who did not create the agent either. */
 const OTHER_ADMIN: RequestContext = {
   ...STRANGER,
@@ -640,6 +646,61 @@ describe('integration access by agent', () => {
     expect((await harness.api.request(`/${integration.id}/decisions`)).status).toBe(403);
     expect((await harness.api.request(`/${integration.id}`, { method: 'DELETE' })).status).toBe(403);
     expect(await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: integration.id })).toBeDefined();
+  });
+
+  it("lets an agent's non-admin owner see and edit an integration an admin connected to it", async () => {
+    harness = await createHarness();
+    const ownerSubject: CreatedBySubject = {
+      subject_id: AGENT_OWNER.subject.id,
+      subject_type: AGENT_OWNER.subject.type,
+      subject_display_name: AGENT_OWNER.subject.display_name,
+    };
+    const owned = await seedAgent({
+      db: harness.db,
+      tenant_id: TENANT,
+      name: 'owned-bot',
+      created_by_subject: ownerSubject,
+    });
+    // An admin who does not manage the agent cannot connect it through the API, so the row is seeded.
+    const integrationId = newId();
+    await harness.integrationStore.createIntegration({
+      id: integrationId,
+      tenant_id: TENANT,
+      agent_id: owned.id,
+      agent_name: owned.name,
+      type: 'slack',
+      external_account_id: `pending:${integrationId}`,
+      manifest: pendingManifest(),
+      created_by_subject: CREATED_BY,
+    });
+    const mine = await createFor(AGENT_NAME);
+
+    harness.actAs(AGENT_OWNER);
+    expect(await listedIds()).toEqual([integrationId]);
+    expect(await listedIds('?agent_names=owned-bot')).toEqual([integrationId]);
+    expect(await listedIds(`?agent_names=${AGENT_NAME}`)).toEqual([]);
+    expect((await harness.api.request(`/${integrationId}`)).status).toBe(200);
+    const updated = await harness.api.request(
+      `/${integrationId}`,
+      jsonInit('PUT', { manifest: pendingManifest({ bot_display_name: 'owner-bot' }) }),
+    );
+    expect(updated.status).toBe(200);
+    expect(GetIntegrationResponseSchema.parse(await updated.json()).data.manifest.bot_display_name).toBe('owner-bot');
+    expect((await harness.api.request(`/${integrationId}/app-manifest`)).status).toBe(200);
+    expect((await harness.api.request(`/${integrationId}/decisions`)).status).toBe(200);
+    expect((await harness.api.request(`/${mine.id}`)).status).toBe(403);
+
+    harness.actAs(STRANGER);
+    expect(await listedIds()).toEqual([]);
+    expect(await listedIds('?agent_names=owned-bot')).toEqual([]);
+    expect((await harness.api.request(`/${integrationId}`)).status).toBe(403);
+    expect(
+      (await harness.api.request(`/${integrationId}`, jsonInit('PUT', { manifest: pendingManifest() }))).status,
+    ).toBe(403);
+
+    harness.actAs(AGENT_OWNER);
+    expect((await harness.api.request(`/${integrationId}`, { method: 'DELETE' })).status).toBe(200);
+    expect(await harness.integrationStore.getIntegration({ tenant_id: TENANT, id: integrationId })).toBeUndefined();
   });
 
   it('lets an admin list and open every integration', async () => {

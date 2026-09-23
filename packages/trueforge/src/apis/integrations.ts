@@ -9,7 +9,7 @@ import {
   type RequestContext,
   type ResolveRequestContext,
 } from '../auth/identity';
-import type { IAgentStore } from '../db/agentStore';
+import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import {
   IntegrationConflictError,
   type IIntegrationStore,
@@ -50,7 +50,7 @@ import {
   resolveStoredSecretValue,
   toRedactedSecretValue,
 } from '../utils/secretRedaction';
-import { agentIfAccessible, canReadAgentBoundResource, resolveManagedAgentIds } from './agentAccess';
+import { agentIfAccessible } from './agentAccess';
 
 /** A settings surface shows a recent window, not the whole history. */
 const INTEGRATION_DECISIONS_PAGE_LIMIT = 50;
@@ -215,22 +215,58 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
   const authTest = deps.slackAuthTest ?? slackAuthTest;
 
   /**
-   * The creator or a manager of the bound agent, like a schedule. Admins held every integration
-   * while they lived in settings, and still see them all in the list, so they may open any.
+   * The creator, a manager of the bound agent, or an admin. Admins held every integration while
+   * they lived in settings, and still see them all in the list, so they may open any.
    */
   const canAccessIntegration = async (input: {
     c: Context;
     context: RequestContext;
     record: IntegrationRecord;
-  }): Promise<boolean> =>
-    hasAdminRole(input.context) ||
-    canReadAgentBoundResource({
-      store: deps.resolveAgentStore(input.c),
-      context: input.context,
-      authorizer: deps.authorizer,
-      created_by_subject_id: input.record.created_by_subject.subject_id,
-      agent_id: input.record.agent_id,
-    });
+  }): Promise<boolean> => {
+    if (hasAdminRole(input.context) || input.record.created_by_subject.subject_id === input.context.subject.id) {
+      return true;
+    }
+    const agent = await deps
+      .resolveAgentStore(input.c)
+      .getAgent({ tenant_id: input.context.tenant_id, id: input.record.agent_id });
+    return agent !== undefined && deps.authorizer.canAccessAgent({ context: input.context, action: 'manage', agent });
+  };
+
+  /**
+   * Internal ids of the agents the caller manages, limited to `agentNames` when given. An `all`
+   * list scope does not say who manages what, so each agent is asked instead; an explicit grant
+   * list is resolved in one query.
+   */
+  const listManagedAgentIds = async (input: {
+    c: Context;
+    context: RequestContext;
+    agentNames: readonly string[] | undefined;
+  }): Promise<string[]> => {
+    const store = deps.resolveAgentStore(input.c);
+    const tenantId = input.context.tenant_id;
+    let candidates: AgentRecord[];
+    if (input.agentNames !== undefined) {
+      const named = await Promise.all(input.agentNames.map(name => store.getAgent({ tenant_id: tenantId, name })));
+      candidates = named.filter(agent => agent !== undefined);
+    } else {
+      const access = await deps.authorizer.listAgentAccess({ context: input.context, action: 'manage' });
+      const { data } = await store.listAgents({
+        tenant_id: tenantId,
+        ...(access.kind === 'all' ? {} : { external_ids: access.agent_external_ids }),
+        agent_name: undefined,
+        limit: undefined,
+        page_token: undefined,
+      });
+      if (access.kind !== 'all') {
+        return data.map(agent => agent.id);
+      }
+      candidates = data;
+    }
+    const managed = await Promise.all(
+      candidates.map(agent => deps.authorizer.canAccessAgent({ context: input.context, action: 'manage', agent })),
+    );
+    return candidates.filter((_, index) => managed[index]).map(agent => agent.id);
+  };
 
   /**
    * Fills the workspace and bot ids from the channel so nobody copies them by hand, and
@@ -265,17 +301,11 @@ export function createIntegrationsRouter<TTransaction>(deps: IntegrationsRouterD
   const listHandler: RouteHandler<typeof listIntegrationsRoute> = async c => {
     const { agent_names: agentNames } = c.req.valid('query');
     const requestContext = deps.resolveRequestContext(c);
-    // An `all` agent scope is not an admin grant (see `resolveManagedAgentIds`), so the tenant-wide
-    // view keys on the admin role instead.
     const createdByOrAgentIds = hasAdminRole(requestContext)
       ? undefined
       : {
           created_by_subject_id: requestContext.subject.id,
-          agent_ids: await resolveManagedAgentIds({
-            store: deps.resolveAgentStore(c),
-            context: requestContext,
-            authorizer: deps.authorizer,
-          }),
+          agent_ids: await listManagedAgentIds({ c, context: requestContext, agentNames }),
         };
     const records = await deps.resolveIntegrationStore(c).listIntegrations({
       tenant_id: requestContext.tenant_id,
