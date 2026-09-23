@@ -113,6 +113,8 @@ export interface SandboxIntegration {
     existingSandboxId: string | undefined;
     /** From `spec.config.sandbox.desktop`; the desktop tools also need a computer that runs one. */
     desktop: boolean;
+    /** Whether the agent's model is shown images in tool results; the desktop instructions say so when not. */
+    modelAcceptsToolImages: boolean;
     tracing: AgentTracing;
   }): Sandbox;
 }

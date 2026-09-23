@@ -12,7 +12,7 @@ import {
   type TurnRecordWithoutSnapshot,
   type TurnStreamingEvent,
 } from '@truefoundry/trueforge-core/agent-session';
-import { VercelAILLM } from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
+import { VercelAILLM, providerAcceptsToolImages } from '@truefoundry/trueforge-core/core/llm/VercelAILLM';
 import { redisKey } from '@truefoundry/trueforge-core/core/redisKeys';
 import { isAgentInputUserMessage, isFileContentPart } from '@truefoundry/trueforge-core/core/runtime/UserInputMessage';
 import { existingSandboxIdForProvider } from '@truefoundry/trueforge-core/core/sandbox/sandboxRef';
@@ -222,6 +222,10 @@ function createTurnResolver(
               tenant_id,
               skills,
             });
+      // Only the desktop instructions ask whether the model takes images, so only they pay for the lookup.
+      const model = spec.config.sandbox.desktop
+        ? await getModelDetails({ tenant_id, name: spec.model.name, store: modelProviderStore })
+        : undefined;
       return sandboxIntegration.buildTurnSandbox({
         provider,
         logger,
@@ -229,6 +233,7 @@ function createTurnResolver(
         fileDownloadEnabled: spec.config.sandbox.file_downloads,
         existingSandboxId: carriedSandboxId,
         desktop: spec.config.sandbox.desktop,
+        modelAcceptsToolImages: model !== undefined && providerAcceptsToolImages(model.providerConfig.provider.type),
         tracing,
       });
     },

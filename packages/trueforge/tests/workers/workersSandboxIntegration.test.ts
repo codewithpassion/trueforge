@@ -238,6 +238,7 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
       fileDownloadEnabled: false,
       existingSandboxId: undefined,
       desktop: false,
+      modelAcceptsToolImages: true,
       tracing: NOOP_AGENT_TRACING,
     });
 
@@ -267,6 +268,7 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
       fileDownloadEnabled: false,
       existingSandboxId: `v1:${CLOUDFLARE_COMPUTER_PROVIDER_TYPE}:${SANDBOX_ID}`,
       desktop: false,
+      modelAcceptsToolImages: true,
       tracing: NOOP_AGENT_TRACING,
     });
 
@@ -284,6 +286,7 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
       fileDownloadEnabled: false,
       existingSandboxId: undefined,
       desktop: false,
+      modelAcceptsToolImages: true,
       tracing: NOOP_AGENT_TRACING,
     });
     const builder = new InstructionBuilder('root');
@@ -391,6 +394,7 @@ describe.each([undefined, 'cloudflare-computer' as const])(
         fileDownloadEnabled: false,
         existingSandboxId: undefined,
         desktop: false,
+        modelAcceptsToolImages: true,
         tracing: NOOP_AGENT_TRACING,
       });
 

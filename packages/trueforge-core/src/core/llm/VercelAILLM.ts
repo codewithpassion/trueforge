@@ -233,7 +233,7 @@ const TOOL_RESULT_IMAGE_SUPPORT = {
   truefoundry: false,
 } as const satisfies Record<VercelAIProviderName, boolean>;
 
-function providerAcceptsToolImages(providerType: VercelAIProviderName): boolean {
+export function providerAcceptsToolImages(providerType: VercelAIProviderName): boolean {
   return TOOL_RESULT_IMAGE_SUPPORT[providerType];
 }
 

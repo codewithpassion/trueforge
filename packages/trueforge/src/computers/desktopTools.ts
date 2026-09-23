@@ -1,6 +1,6 @@
 import {
+  toolImageResultResponse,
   toolResultResponse,
-  type CallToolResolvedResponse,
   type CallToolResponse,
 } from '@truefoundry/trueforge-core/core/mcp/IMCPServer';
 import { defineTool, type ToolDefinition } from '@truefoundry/trueforge-core/core/mcp/LocalToolMCP';
@@ -56,19 +56,14 @@ const SCROLL_SCHEMA = z
 const DRAG_SCHEMA = z.object({ from: POINT_SCHEMA, to: POINT_SCHEMA });
 const CLIPBOARD_WRITE_SCHEMA = z.object({ text: DesktopClipboardTextSchema });
 
-/**
- * The single place a screenshot becomes tool content. Images in tool results are not wired yet,
- * so it says what was captured instead of showing it.
- */
-export function screenshotToolContent(
-  shot: DesktopScreenshotResultPayload,
-): CallToolResolvedResponse['result']['content'] {
-  return [
-    {
-      type: 'text',
-      text: `[screenshot ${String(shot.width)}x${String(shot.height)} captured; this model does not receive images yet]`,
-    },
-  ];
+/** The single place a screenshot becomes a tool result. A model that cannot take images is sent a text stub instead. */
+function screenshotResult(shot: DesktopScreenshotResultPayload): CallToolResponse {
+  return toolImageResultResponse({
+    data_b64: shot.data_b64,
+    media_type: shot.media_type,
+    width: shot.width,
+    height: shot.height,
+  });
 }
 
 /** Written for the model: each tells it what to do next, not only what went wrong. */
@@ -106,7 +101,7 @@ async function screenshot(provider: RemoteComputerProvider): Promise<CallToolRes
   if (!shot.ok) {
     return failure(shot);
   }
-  return { result: { content: screenshotToolContent(shot.value) }, wasInitialized: undefined };
+  return screenshotResult(shot.value);
 }
 
 /**
@@ -116,7 +111,7 @@ async function screenshot(provider: RemoteComputerProvider): Promise<CallToolRes
 async function lookAfterActing(provider: RemoteComputerProvider): Promise<CallToolResponse> {
   const shot = await provider.desktopScreenshot();
   if (shot.ok) {
-    return { result: { content: screenshotToolContent(shot.value) }, wasInitialized: undefined };
+    return screenshotResult(shot.value);
   }
   return toolResultResponse({
     text: `The action already ran, but the screenshot after it was refused. ${desktopFailureText(shot)}`,
@@ -257,12 +252,22 @@ const BASE_INSTRUCTIONS = [
 const APPROVAL_INSTRUCTIONS =
   'This computer asks a person to approve each action, and desktop input cannot be approved yet, so only computer_screenshot and computer_clipboard_read are available.';
 
+const NO_IMAGES_INSTRUCTIONS =
+  'This model does not receive images, so every screenshot comes back as a one-line note of its size; read the screen through exec and the clipboard instead, and tell the user the desktop needs a model that accepts images if that is not enough.';
+
 /**
  * The desktop tools for one turn of an agent that asked for the desktop. A machine whose desktop is
  * down gets none, and the model is told why. With `requireApproval` set the input tools are
- * withheld, because nothing can yet ask a person before a click.
+ * withheld, because nothing can yet ask a person before a click. Spec validation has no way to warn,
+ * so a model that cannot take images learns it here rather than from blank screenshots.
  */
-export function desktopProviderTools(provider: RemoteComputerProvider): SandboxProviderTools {
+export function desktopProviderTools({
+  provider,
+  modelAcceptsToolImages,
+}: {
+  provider: RemoteComputerProvider;
+  modelAcceptsToolImages: boolean;
+}): SandboxProviderTools {
   if (!provider.supportsDesktop) {
     const reason = provider.desktopUnavailableReason;
     return {
@@ -274,8 +279,10 @@ export function desktopProviderTools(provider: RemoteComputerProvider): SandboxP
   const tools = provider.requiresApproval
     ? readTools({ provider, serial })
     : [...readTools({ provider, serial }), ...inputTools({ provider, serial })];
-  return {
-    tools,
-    instructions: provider.requiresApproval ? `${BASE_INSTRUCTIONS} ${APPROVAL_INSTRUCTIONS}` : BASE_INSTRUCTIONS,
-  };
+  const instructions = [
+    BASE_INSTRUCTIONS,
+    ...(provider.requiresApproval ? [APPROVAL_INSTRUCTIONS] : []),
+    ...(modelAcceptsToolImages ? [] : [NO_IMAGES_INSTRUCTIONS]),
+  ];
+  return { tools, instructions: instructions.join(' ') };
 }

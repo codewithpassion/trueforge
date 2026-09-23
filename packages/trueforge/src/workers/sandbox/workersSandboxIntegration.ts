@@ -159,7 +159,7 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
         skillMounter: skillMounterFor(input),
         providerTools:
           input.desktop && input.provider instanceof RemoteComputerProvider
-            ? desktopProviderTools(input.provider)
+            ? desktopProviderTools({ provider: input.provider, modelAcceptsToolImages: input.modelAcceptsToolImages })
             : undefined,
         tracing: input.tracing,
         logger: input.logger,

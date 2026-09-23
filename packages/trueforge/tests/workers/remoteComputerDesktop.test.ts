@@ -37,7 +37,13 @@ const logger = createConsoleLogger({ level: 'error', bindings: { component: 'des
 
 const OTHER_TENANT = 'another-tenant';
 const OK_EXEC = { exit_code: 0, stdout: '', stderr: '', bytes_total: 0, truncated: false, duration_ms: 1 };
-const SCREENSHOT = { data_b64: '/9j/4AAQ', width: 1280, height: 800, media_type: 'image/jpeg' };
+/** Just the JPEG header of a 1280x800 image: the harness reads the size from it before storing. */
+const SCREENSHOT = {
+  data_b64: '/9j/4AAQSkZJRgABAQAAAQABAAD/wAARCAMgBQADASIAAhEBAxEB/9k=',
+  width: 1280,
+  height: 800,
+  media_type: 'image/jpeg',
+};
 const WITH_DESKTOP: ComputerCapabilities = {
   python3: true,
   git: true,
@@ -747,9 +753,9 @@ describe('a desktop turn', () => {
 
     expect(finished?.state.status).toBe('done');
     expect(client.received.some(frame => frame['op'] === 'desktop_screenshot')).toBe(true);
-    // Images do not reach the model yet; the stub says what was captured.
-    expect(JSON.stringify(finished?.snapshot.threads ?? {})).toContain(
-      '[screenshot 1280x800 captured; this model does not receive images yet]',
+    // The screenshot is kept as an image part; the text stub for this model is made per request.
+    expect(JSON.stringify(finished?.snapshot.threads ?? {})).toMatch(
+      /"type":"image","file_id":"[^"]+","media_type":"image\/jpeg","width":1280,"height":800/,
     );
     // A screenshot-only session still records its sandbox, so its next turn works in the same directory.
     expect(finished?.snapshot.sandbox_info?.sandbox_id).toBe(`v1:remote-computer:${computerId}/${sessionId}`);
@@ -899,7 +905,7 @@ describe('a desktop agent spec', () => {
     if (!(provider instanceof RemoteComputerProvider)) {
       throw new Error('expected the remote computer provider');
     }
-    const offered = desktopProviderTools(provider);
+    const offered = desktopProviderTools({ provider, modelAcceptsToolImages: true });
     expect(offered.tools.map(candidate => candidate.name).sort()).toEqual([
       'computer_clipboard_read',
       'computer_screenshot',
