@@ -256,9 +256,8 @@ export const ListIntegrationDecisionsResponseSchema = z
 
 export const GetIntegrationResponseSchema = z.object({ data: IntegrationSchema }).openapi('GetIntegrationResponse');
 
-export const ListIntegrationsQuerySchema = z
+export const ListIntegrationsRequestQuerySchema = z
   .object({
-    // comma-separated string -> array of names
     agent_names: z
       .string()
       .optional()
@@ -269,7 +268,7 @@ export const ListIntegrationsQuerySchema = z
       .transform(value => parseCommaSeparatedQuery(value))
       .pipe(z.array(NameSchema).min(1).optional()),
   })
-  .openapi('ListIntegrationsQuery');
+  .openapi('ListIntegrationsRequestQuery');
 
 export const ListIntegrationsResponseSchema = z
   .object({ data: z.array(IntegrationSchema) })

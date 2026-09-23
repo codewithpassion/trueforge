@@ -11,7 +11,7 @@ import {
   GetIntegrationAppManifestResponseSchema,
   GetIntegrationResponseSchema,
   ListIntegrationDecisionsResponseSchema,
-  ListIntegrationsQuerySchema,
+  ListIntegrationsRequestQuerySchema,
   ListIntegrationsResponseSchema,
   UpdateIntegrationRequestSchema,
 } from '../schemas/integration';
@@ -31,7 +31,7 @@ export const listIntegrationsRoute = createRoute({
     'Manifest credentials are redacted.',
   'x-fern-sdk-group-name': ['integrations'],
   'x-fern-sdk-method-name': 'list',
-  request: { query: ListIntegrationsQuerySchema },
+  request: { query: ListIntegrationsRequestQuerySchema },
   responses: {
     200: {
       content: { 'application/json': { schema: ListIntegrationsResponseSchema } },

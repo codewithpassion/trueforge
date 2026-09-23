@@ -60,7 +60,7 @@ In `src/schemas/integration.ts`:
 - Remove `default_agent_name` from `SlackIntegrationManifestSchema`.
 - Add `agent_name: NameSchema` to `IntegrationSchema` and to `CreateIntegrationRequestSchema`, beside `manifest` and not inside it (the binding is a column, not part of the document).
 - `UpdateIntegrationRequestSchema` stays `{ manifest }`. An integration cannot be moved to another agent: its Slack app is named for the agent, and its threads map to that agent's sessions.
-- Add `ListIntegrationsQuerySchema` with `agent_names`, like `ListSchedulesQuery`.
+- Add `ListIntegrationsRequestQuerySchema` with `agent_names`, like `ListSchedulesQuery`.
 
 `IntegrationRecord`, `IIntegrationStore.createIntegration` and `listIntegrations` in `src/db/integrationStore.ts` gain `agent_id` / `agent_name`, and `listIntegrations` gains an `agent_ids` filter. The shared contract suite covers the filter, the cascade on agent delete, and two integrations for one workspace on two agents.
 
