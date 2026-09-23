@@ -1,5 +1,15 @@
-import { isCallToolResponseResult, type CallToolResponse } from '@truefoundry/trueforge-core/core/mcp/IMCPServer';
+import { InstructionBuilder } from '@truefoundry/trueforge-core/core/InstructionBuilder';
+import { textToolContent, toolContentText } from '@truefoundry/trueforge-core/core/llm/LLMTypes';
+import type { ToolCallResult } from '@truefoundry/trueforge-core/core/mcp/executeToolCalls';
+import {
+  isCallToolResponseResult,
+  type CallToolResponse,
+  type IToolSet,
+} from '@truefoundry/trueforge-core/core/mcp/IMCPServer';
 import type { ToolDefinition } from '@truefoundry/trueforge-core/core/mcp/LocalToolMCP';
+import { getEmptyCurrentContextUsage } from '@truefoundry/trueforge-core/core/runtime/contextUsage';
+import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
+import { NOOP_AGENT_TRACING } from '@truefoundry/trueforge-core/core/tracing/NoopAgentTracing';
 import { createLogger } from 'winston';
 import { desktopProviderTools } from '../../../src/computers/desktopTools';
 import {
@@ -9,6 +19,7 @@ import {
   type RequestOutcome,
 } from '../../../src/computers/protocol';
 import { RemoteComputerProvider } from '../../../src/computers/RemoteComputerProvider';
+import { RequestHumanTakeover } from '../../../src/computers/requestHumanTakeover';
 import { TurnDesktopLeases } from '../../../src/computers/turnDesktopLeases';
 import type { AppendComputerAuditInput } from '../../../src/db/computerStore';
 
@@ -235,32 +246,38 @@ describe('desktop tools', () => {
     });
   });
 
-  it('tells the model to ask for a takeover and stop, not retry, when a person is in control', async () => {
+  it('tells the model to stop and tell the user, not retry, when a person is in control', async () => {
     const { provider } = providerWith({ refuse: { desktop_screenshot: refused('human_in_control', 'paused') } });
     const result = text(
       await tool(desktopProviderTools({ provider, modelAcceptsToolImages: true }).tools, 'computer_screenshot').execute(
         {},
       ),
     );
+    // Every thread gets this text, and only the root thread has the takeover tool.
     expect(result).toEqual({
       text:
         'A person is using the desktop of this computer, so desktop actions and commands are paused. ' +
-        'Do not retry: if you need them to finish a step for you, call request_human_takeover with what they should do, then stop.',
+        'Do not retry: stop and tell the user that a person is using the desktop.',
       isError: true,
     });
   });
 
-  it('offers request_human_takeover as a client-side tool beside the desktop tools, and names it only then', async () => {
+  it('offers request_human_takeover to the root thread only, and names it only there', async () => {
     for (const requireApproval of [false, true]) {
       const offered = desktopProviderTools({
         provider: providerWith({ requireApproval }).provider,
         modelAcceptsToolImages: true,
       });
-      // Sub-agent threads share the sandbox instructions but not the tool, so only the tool's own text names it.
+      // Sub-agent threads share the sandbox instructions but not the tool, so only the root capability names it.
       expect(offered.instructions).not.toContain('request_human_takeover');
-      expect(offered.clientSideInstructions).toContain('call request_human_takeover');
-      expect(offered.clientSideToolSets).toHaveLength(1);
-      const takeover = offered.clientSideToolSets[0];
+      const root = offered.rootCapability;
+      const rootText = new InstructionBuilder('root');
+      for (const build of root?.instructionBuilders ?? []) {
+        build(rootText);
+      }
+      expect(rootText.build()).toContain('call request_human_takeover');
+      expect(root?.systemToolSets).toHaveLength(1);
+      const takeover = root?.systemToolSets?.[0];
       if (takeover === undefined) {
         throw new Error('expected the takeover tool set');
       }
@@ -278,9 +295,54 @@ describe('desktop tools', () => {
         .provider,
       modelAcceptsToolImages: true,
     });
-    expect(down.clientSideToolSets).toEqual([]);
+    expect(down.rootCapability).toBeUndefined();
     expect(down.instructions).not.toContain('request_human_takeover');
-    expect(down.clientSideInstructions).toBe('');
+  });
+
+  it('points the root thread, and only its desktop results, at request_human_takeover when a person is in control', async () => {
+    const { provider } = providerWith({ refuse: { desktop_screenshot: refused('human_in_control', 'paused') } });
+    const offered = desktopProviderTools({ provider, modelAcceptsToolImages: true });
+    const sandbox = new Sandbox({
+      provider,
+      blockDestructiveToolsInCodeMode: true,
+      mcpRequestTimeoutMs: 1000,
+      mcpConnectTimeoutMs: 1000,
+      providerTools: offered,
+      tracing: NOOP_AGENT_TRACING,
+      logger: createLogger({ silent: true }),
+    });
+    const refusal = text(await tool(offered.tools, 'computer_screenshot').execute({})).text;
+    // Wrapped the way the agent loop wraps an error result.
+    const asErrorResult = (toolSet: IToolSet): ToolCallResult => ({
+      message: {
+        role: 'tool',
+        tool_call_id: 'call_1',
+        content: textToolContent(JSON.stringify({ error: [{ type: 'text', text: refusal }] })),
+      },
+      info: { toolSet, originalToolName: 'computer_screenshot' },
+      failure: false,
+      isStructuredContent: false,
+      completedAt: new Date(0).toISOString(),
+    });
+    const fromSandbox = asErrorResult(sandbox);
+    const fromAnotherToolSet = asErrorResult(new RequestHumanTakeover());
+    const processor = offered.rootCapability?.toolResponseProcessors?.[0];
+    if (processor === undefined) {
+      throw new Error('expected the takeover hint processor');
+    }
+
+    await processor.process([fromSandbox, fromAnotherToolSet], {
+      threadId: 'main',
+      sandbox,
+      currentContextUsage: getEmptyCurrentContextUsage(),
+      context: [],
+    });
+
+    expect(toolContentText(fromSandbox.message.content)).toContain(
+      'Do not retry: if you need them to finish a step for you, call request_human_takeover with what they should do, then stop.',
+    );
+    expect(toolContentText(fromSandbox.message.content)).not.toContain('stop and tell the user');
+    expect(toolContentText(fromAnotherToolSet.message.content)).toContain('stop and tell the user');
   });
 
   it('says the action already ran when only the screenshot after it was refused', async () => {

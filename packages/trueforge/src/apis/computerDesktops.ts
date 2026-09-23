@@ -454,7 +454,10 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
       return c.json({ error: { message: 'Takeovers cannot be answered on this server' } }, 503);
     }
     if (sessionId !== undefined && !(await isScopedTakeover({ access, sessionId }))) {
-      return c.json({ error: { message: ANSWER_REFUSED.not_pending, code: 'not_pending' } }, 409);
+      return c.json(
+        { error: { message: ANSWER_REFUSED.not_pending, code: 'not_pending' }, data: await desktopStatus(access) },
+        409,
+      );
     }
     // Released before the answer, so the resumed turn does not find a person still in control.
     const released = await access.relay.releaseHumanLease({
@@ -479,7 +482,13 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
     if (!answered.ok) {
       // Control went back all the same; only an answered takeover is recorded by the service.
       await recordControl({ access, action: 'hand_back' });
-      return c.json({ error: { message: ANSWER_REFUSED[answered.code], code: answered.code } }, 409);
+      return c.json(
+        {
+          error: { message: ANSWER_REFUSED[answered.code], code: answered.code },
+          data: await desktopStatus(access),
+        },
+        409,
+      );
     }
     return c.json({ data: await desktopStatus(access) }, 200);
   };

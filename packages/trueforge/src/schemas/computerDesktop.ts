@@ -13,6 +13,7 @@ import {
   DesktopTypeActionSchema,
   fitsScrollBudget,
 } from '../computers/protocol';
+import { RequestErrorResponseSchema } from './errors';
 
 /** The takeover note the agent reads back, bounded like any other tool response a person writes. */
 const DESKTOP_NOTE_MAX_CHARS = 2000;
@@ -119,6 +120,11 @@ export const HandBackDesktopRequestSchema = z
   })
   .strict()
   .openapi('HandBackDesktopRequest');
+
+/** A refused hand-back still reports the desktop, since control may already have been released. */
+export const HandBackDesktopConflictResponseSchema = z
+  .object({ ...RequestErrorResponseSchema.shape, data: DesktopStatusSchema })
+  .openapi('HandBackDesktopConflictResponse');
 
 export const CancelDesktopTakeoverRequestSchema = z
   .object({

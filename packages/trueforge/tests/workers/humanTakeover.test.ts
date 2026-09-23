@@ -7,6 +7,7 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import { AgentSpecSchema, EventType, Sessions, type TurnInputItem } from '@truefoundry/trueforge-core/agent-session';
 import { runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { createComputerDesktopsRouter } from '../../src/apis/computerDesktops';
 import { createTurnsRouter } from '../../src/apis/turns';
 import { createAppErrorHandler } from '../../src/app';
 import { TrueForgeAuthorizer } from '../../src/auth/authorizer';
@@ -88,6 +89,52 @@ function turnsApp() {
     }),
   );
   return app;
+}
+
+/** The desktop routes over the real relay and the real takeover service, as a non-admin helper. */
+function desktopsApp() {
+  const app = new OpenAPIHono();
+  app.onError(createAppErrorHandler({ logger }));
+  app.route(
+    '/',
+    createComputerDesktopsRouter({
+      computers: workersComputersService(env),
+      humanTakeovers: takeovers(),
+      resolveRequestContext: () => ({
+        tenant_id: TENANT_ID,
+        subject: { id: HELPER, type: 'user', display_name: HELPER },
+        roles: [],
+        user_credential: null,
+      }),
+      resolveAgentStore: () => d1Persistence().agentStore,
+      authorizer: new TrueForgeAuthorizer(),
+      publicBaseUrl: () => undefined,
+      logger,
+    }),
+  );
+  return app;
+}
+
+/** A bearer caller, so the browser Origin check does not apply. */
+async function desktopCall(input: {
+  computerId: string;
+  agentId: string;
+  path: string;
+  method: 'GET' | 'POST';
+  body?: unknown;
+}): Promise<{ status: number; body: unknown }> {
+  const response = await desktopsApp().request(
+    `/${input.computerId}${input.path}?agent_id=${encodeURIComponent(input.agentId)}`,
+    {
+      method: input.method,
+      headers: {
+        Authorization: 'Bearer helper-token',
+        ...(input.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
+    },
+  );
+  return { status: response.status, body: await response.json() };
 }
 
 /** The creator answering the pending call in chat, the way the web client sends it. */
@@ -311,6 +358,55 @@ describe('a desktop takeover', () => {
       before_id: undefined,
     });
     expect(audit.map(row => row.command)).toContain(`computer.desktop.hand_back by ${HELPER}`);
+    agent.client.close();
+  });
+
+  it('takes control and hands back through the routes, resuming the named session exactly once', async () => {
+    const agent = await desktopAgent();
+    const { sessionId, turnId } = await waitingSession(agent);
+    const at = { computerId: agent.computerId, agentId: agent.agentId };
+
+    const before = await desktopCall({ ...at, path: '', method: 'GET' });
+    expect(before.status).toBe(200);
+    expect(before.body).toMatchObject({
+      data: {
+        pending_takeovers: [{ session_id: sessionId, turn_id: turnId, reason: REASON, agent_id: agent.agentId }],
+      },
+    });
+
+    const taken = await desktopCall({ ...at, path: '/take-control', method: 'POST' });
+    expect(taken.status).toBe(200);
+    expect(taken.body).toMatchObject({ data: { controller: { kind: 'human', user_id: HELPER, is_me: true } } });
+
+    const handedBack = await desktopCall({
+      ...at,
+      path: '/hand-back',
+      method: 'POST',
+      body: { session_id: sessionId, note: 'logged in' },
+    });
+    expect(handedBack.status).toBe(200);
+    expect(handedBack.body).toMatchObject({ data: { controller: { kind: 'none' }, pending_takeovers: [] } });
+    await drain(sessionId);
+
+    const turns = await turnsOf(sessionId);
+    expect(turns).toHaveLength(2);
+    const resumed = turns.find(turn => turn.turn_id !== turnId);
+    expect(resumed?.previous_turn_id).toBe(turnId);
+    expect(resumed?.input).toEqual([
+      {
+        type: EventType.USER_TOOL_RESPONSE,
+        thread_id: 'main',
+        tool_call_id: 'call_1',
+        content: JSON.stringify({ outcome: 'completed', note: 'logged in' }),
+      },
+    ]);
+    expect(resumed?.state.status).toBe('done');
+
+    // Control and the takeover are both gone, so a repeat changes nothing.
+    const again = await desktopCall({ ...at, path: '/hand-back', method: 'POST', body: { session_id: sessionId } });
+    expect(again.status).toBe(409);
+    expect(again.body).toMatchObject({ error: { code: 'not_pending' }, data: { controller: { kind: 'none' } } });
+    expect(await turnsOf(sessionId)).toHaveLength(2);
     agent.client.close();
   });
 

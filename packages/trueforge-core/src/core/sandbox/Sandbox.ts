@@ -114,13 +114,11 @@ export interface SandboxProviderTools {
   tools: readonly ToolDefinition[];
   instructions: string;
   /**
-   * Client-side tools that belong with `tools`, such as asking a person to take over. They are
-   * their own tool sets because a client-side tool never runs here, and only the root thread,
-   * which can pause for a person, is given them.
+   * What only the root thread, which can pause for a person, is given beside `tools`: client-side
+   * tools such as asking a person to take over, the text naming them, and any rewording of `tools`
+   * results that points at them. `tools` and `instructions` reach every thread.
    */
-  clientSideToolSets: readonly IToolSet[];
-  /** What the model needs to know about `clientSideToolSets`, given only where they are offered. */
-  clientSideInstructions: string;
+  rootCapability: AgentCapability | undefined;
 }
 
 export const SANDBOX_EXEC_TOOL_NAME = 'exec';
@@ -256,14 +254,7 @@ export class Sandbox extends LocalToolMCP {
       this.existingSandboxInfo = { sandbox_id: this.existingSandboxId };
     }
     this.providerToolsInstructions = options.providerTools?.instructions;
-    const clientSide = options.providerTools;
-    this.providerRootCapability =
-      clientSide === undefined || clientSide.clientSideToolSets.length === 0
-        ? undefined
-        : {
-            systemToolSets: clientSide.clientSideToolSets,
-            instructionBuilders: [builder => builder.addContent(clientSide.clientSideInstructions)],
-          };
+    this.providerRootCapability = options.providerTools?.rootCapability;
     for (const tool of options.providerTools?.tools ?? []) {
       this.tools.push(this.withSandbox(tool));
     }

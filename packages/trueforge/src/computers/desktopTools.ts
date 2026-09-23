@@ -1,3 +1,10 @@
+import type { AgentCapability } from '@truefoundry/trueforge-core/core/capabilities/AgentCapability';
+import type { AgentThreadExecutionContext } from '@truefoundry/trueforge-core/core/capabilities/AgentContextProcessor';
+import type {
+  ToolResponseProcessor,
+  ToolResponseProcessorResult,
+} from '@truefoundry/trueforge-core/core/capabilities/ToolResponseProcessor';
+import type { ToolCallResult } from '@truefoundry/trueforge-core/core/mcp/executeToolCalls';
 import {
   toolImageResultResponse,
   toolResultResponse,
@@ -67,13 +74,21 @@ function screenshotResult(shot: DesktopScreenshotResultPayload): CallToolRespons
   });
 }
 
+/**
+ * What a thread without the takeover tool is told to do when a person holds the desktop. The root
+ * thread sees `HUMAN_IN_CONTROL_TAKEOVER` in its place; no quotes or backslashes, so it survives
+ * the JSON the error result is wrapped in.
+ */
+const HUMAN_IN_CONTROL_STOP = 'Do not retry: stop and tell the user that a person is using the desktop.';
+const HUMAN_IN_CONTROL_TAKEOVER = `Do not retry: if you need them to finish a step for you, call ${REQUEST_HUMAN_TAKEOVER_TOOL} with what they should do, then stop.`;
+
 /** Written for the model: each tells it what to do next, not only what went wrong. */
 export function desktopFailureText({ code, message }: { code: DesktopFailureCode; message: string }): string {
   switch (code) {
     case 'human_in_control':
       return (
         'A person is using the desktop of this computer, so desktop actions and commands are paused. ' +
-        `Do not retry: if you need them to finish a step for you, call ${REQUEST_HUMAN_TAKEOVER_TOOL} with what they should do, then stop.`
+        HUMAN_IN_CONTROL_STOP
       );
     case 'desktop_busy':
       return (
@@ -251,6 +266,38 @@ const BASE_INSTRUCTIONS = [
 
 const TAKEOVER_INSTRUCTIONS = `For logins, CAPTCHAs and two-factor prompts, call ${REQUEST_HUMAN_TAKEOVER_TOOL} so a person does that step on the desktop, instead of guessing or asking for credentials.`;
 
+/**
+ * Desktop tools are shared by every thread, and a tool cannot tell which thread called it, so the
+ * root thread rewords the human-in-control refusal to point at the takeover tool only it has.
+ */
+class TakeoverHintProcessor implements ToolResponseProcessor {
+  process(
+    results: ToolCallResult[],
+    execution: Readonly<AgentThreadExecutionContext>,
+  ): Promise<ToolResponseProcessorResult> {
+    for (const result of results) {
+      // By identity: an MCP server may also be named "sandbox".
+      if (execution.sandbox === undefined || result.info?.toolSet !== execution.sandbox) {
+        continue;
+      }
+      result.message.content = result.message.content.map(part =>
+        part.type === 'text'
+          ? { ...part, text: part.text.replaceAll(HUMAN_IN_CONTROL_STOP, HUMAN_IN_CONTROL_TAKEOVER) }
+          : part,
+      );
+    }
+    return Promise.resolve({});
+  }
+}
+
+function takeoverRootCapability(): AgentCapability {
+  return {
+    systemToolSets: [new RequestHumanTakeover()],
+    instructionBuilders: [builder => builder.addContent(TAKEOVER_INSTRUCTIONS)],
+    toolResponseProcessors: [new TakeoverHintProcessor()],
+  };
+}
+
 const APPROVAL_INSTRUCTIONS =
   'This computer asks a person to approve each action, and desktop input cannot be approved yet, so only computer_screenshot and computer_clipboard_read are available.';
 
@@ -276,8 +323,7 @@ export function desktopProviderTools({
     return {
       tools: [],
       instructions: `This agent is set up to use the desktop of this computer, but the desktop is not running${reason === null ? '' : ` (${reason})`}, so no desktop tools are available.`,
-      clientSideToolSets: [],
-      clientSideInstructions: '',
+      rootCapability: undefined,
     };
   }
   const serial = serialQueue();
@@ -292,7 +338,6 @@ export function desktopProviderTools({
   return {
     tools,
     instructions: instructions.join(' '),
-    clientSideToolSets: [new RequestHumanTakeover()],
-    clientSideInstructions: TAKEOVER_INSTRUCTIONS,
+    rootCapability: takeoverRootCapability(),
   };
 }

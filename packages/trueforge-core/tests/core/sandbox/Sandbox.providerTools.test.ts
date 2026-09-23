@@ -1,7 +1,8 @@
 import { z } from 'zod';
+import type { AgentCapability } from '../../../src/core/capabilities/AgentCapability';
 import { InstructionBuilder } from '../../../src/core/InstructionBuilder';
 import { ClientSideTool } from '../../../src/core/mcp/ClientSideTool';
-import { isCallToolResponseResult, toolResultResponse, type IToolSet } from '../../../src/core/mcp/IMCPServer';
+import { isCallToolResponseResult, toolResultResponse } from '../../../src/core/mcp/IMCPServer';
 import { defineTool, type ToolDefinition } from '../../../src/core/mcp/LocalToolMCP';
 import type { SandboxProvider } from '../../../src/core/sandbox/provider/Provider';
 import { Sandbox } from '../../../src/core/sandbox/Sandbox';
@@ -48,7 +49,7 @@ function makeSandbox(input: {
   provider: SandboxProvider;
   existingSandboxId?: string;
   ran: string[];
-  clientSideToolSets?: IToolSet[];
+  rootCapability?: AgentCapability;
 }): Sandbox {
   return new Sandbox({
     provider: input.provider,
@@ -69,8 +70,7 @@ function makeSandbox(input: {
         }),
       ],
       instructions: 'You can look.',
-      clientSideToolSets: input.clientSideToolSets ?? [],
-      clientSideInstructions: 'Ask a person to log in.',
+      rootCapability: input.rootCapability,
     },
     logger: makeSilentLogger(),
     tracing: NOOP_AGENT_TRACING,
@@ -95,13 +95,17 @@ describe('Sandbox provider tools', () => {
     expect(none.providerRootCapability).toBeUndefined();
 
     const askAPerson = new AskAPerson();
-    const sandbox = makeSandbox({ provider: makeProvider(jest.fn()), ran: [], clientSideToolSets: [askAPerson] });
+    const rootCapability: AgentCapability = {
+      systemToolSets: [askAPerson],
+      instructionBuilders: [builder => builder.addContent('Ask a person to log in.')],
+    };
+    const sandbox = makeSandbox({ provider: makeProvider(jest.fn()), ran: [], rootCapability });
     const shared = new InstructionBuilder('root');
     sandbox.buildInstruction(shared);
     expect(shared.build()).not.toContain('Ask a person to log in.');
 
     const root = sandbox.providerRootCapability;
-    expect(root?.systemToolSets).toEqual([askAPerson]);
+    expect(root).toBe(rootCapability);
     const rootOnly = new InstructionBuilder('root');
     for (const build of root?.instructionBuilders ?? []) {
       build(rootOnly);

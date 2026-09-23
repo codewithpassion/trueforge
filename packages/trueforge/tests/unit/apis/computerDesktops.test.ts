@@ -723,8 +723,9 @@ describe('handing back', () => {
     const audited = await auditFromNow();
     const response = await call({ method: 'POST', path: '/hand-back', body: { session_id: 'ses_desk' } });
     expect(response.status).toBe(409);
-    expect((await errorOf(response)).code).toBe('takeover_already_answered');
-    // Control still went back, and nobody else recorded that.
+    expect((await errorOf(response.clone())).code).toBe('takeover_already_answered');
+    // Control still went back, and nobody else recorded that; the body says so.
+    expect(await statusOf(response)).toMatchObject({ controller: { kind: 'none' } });
     expect(await audited()).toEqual(['computer.desktop.hand_back by alice']);
   });
 
@@ -734,7 +735,9 @@ describe('handing back', () => {
     relay.control = { kind: 'human', user_id: 'alice', expires_at: Date.now() + 60_000 };
     const response = await call({ method: 'POST', path: '/hand-back', body: { session_id: 'ses_desk' } });
     expect(response.status).toBe(409);
-    expect((await errorOf(response)).code).toBe('not_pending');
+    expect((await errorOf(response.clone())).code).toBe('not_pending');
+    // Nothing changed: the caller still holds control.
+    expect(await statusOf(response)).toMatchObject({ controller: { kind: 'human', user_id: 'alice', is_me: true } });
     expect(takeovers.resolved).toHaveLength(0);
     expect(relay.releasedFor).toHaveLength(0);
   });
