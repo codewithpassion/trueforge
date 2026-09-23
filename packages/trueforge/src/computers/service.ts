@@ -3,12 +3,14 @@
  * runtime cannot serve them, which is how the Node build reports the feature off until phase 8c.
  */
 import type { IComputerStore } from '../db/computerStore';
-import type { ComputerRelayStatus, RequestOutcome } from './protocol';
+import type { ComputerRelayStatus, RelayRequestInput, RequestOutcome } from './protocol';
 import type { RateLimiter } from './rateLimit';
 
 /** The relay calls the API and the provider make, narrowed so a test can stand one in. */
 export interface ComputerRelayPort {
-  request(input: { tenant_id: string; op_json: string; timeout_ms: number }): Promise<RequestOutcome>;
+  request(input: RelayRequestInput): Promise<RequestOutcome>;
+  /** Drops the desktop lease when this session holds it; a no-op otherwise. */
+  releaseLease(input: { session_id: string }): Promise<{ released: boolean }>;
   /** Marks the machine revoked and closes its socket. Terminal for the client. */
   revoke(): Promise<{ closed: number }>;
   /** Closes the socket without revoking, so a re-enrolled machine can come back. */

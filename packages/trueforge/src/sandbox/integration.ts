@@ -23,6 +23,7 @@ export const SANDBOX_USABILITY_REASONS = [
   'computers_disabled',
   'computer_offline',
   'computer_no_skills',
+  'computer_no_desktop',
 ] as const;
 export type SandboxUsabilityReason = (typeof SANDBOX_USABILITY_REASONS)[number];
 
@@ -77,6 +78,8 @@ export interface SandboxIntegration {
     agent_id: string | undefined;
     /** Whether the spec asks for skills, which a computer may be unable to mount. */
     skills_requested: boolean;
+    /** Whether the spec asks for the desktop, which a computer may not run. */
+    desktop_requested: boolean;
   }): Promise<SandboxUsability>;
   /** Whether skills can be mounted into a sandbox on this runtime. */
   isSkillMountingSupported(): boolean;
@@ -108,6 +111,8 @@ export interface SandboxIntegration {
     skills: readonly Skill[];
     fileDownloadEnabled: boolean;
     existingSandboxId: string | undefined;
+    /** From `spec.config.sandbox.desktop`; the desktop tools also need a computer that runs one. */
+    desktop: boolean;
     tracing: AgentTracing;
   }): Sandbox;
 }

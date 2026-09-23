@@ -71,7 +71,15 @@ function toWireComputer(record: ComputerRecord): Computer {
     os: record.os,
     arch: record.arch,
     agent_version: record.agent_version,
-    tools: record.capabilities === null ? null : { python3: record.capabilities.python3, git: record.capabilities.git },
+    tools:
+      record.capabilities === null
+        ? null
+        : {
+            python3: record.capabilities.python3,
+            git: record.capabilities.git,
+            desktop: record.capabilities.desktop,
+            desktop_unavailable_reason: record.capabilities.desktop_unavailable_reason,
+          },
     run_as_user: record.run_as_user,
     require_approval: record.require_approval,
     last_seen_at: record.last_seen_at,

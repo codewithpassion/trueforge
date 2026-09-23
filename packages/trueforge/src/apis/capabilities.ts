@@ -35,6 +35,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
   router.openapi(getCapabilitiesRoute, async c => {
     const requestContext = deps.resolveRequestContext(c);
     const settingsEnabled = hasAdminRole(requestContext);
+    // A desktop lives on an enrolled machine, so it is on exactly where computers are.
     const computersEnabled = deps.computers !== undefined;
     const webSearchEnabled = resolveWebSearchProvider() !== undefined;
     const integration = deps.sandboxIntegration;
@@ -46,6 +47,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
             skill: { enabled: false, reason: 'Skills run in a sandbox, which this server does not support.' },
             settings: { enabled: settingsEnabled },
             computers: { enabled: computersEnabled },
+            desktop: { enabled: computersEnabled },
             web_search: { enabled: webSearchEnabled },
           },
         },
@@ -64,6 +66,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
         computer_id: undefined,
         agent_id: undefined,
         skills_requested: false,
+        desktop_requested: false,
       });
     } catch (error) {
       deps.logger.warn('Sandbox image status check failed; reporting sandbox disabled', extractErrorLogFields(error));
@@ -84,6 +87,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
               },
           settings: { enabled: settingsEnabled },
           computers: { enabled: computersEnabled },
+          desktop: { enabled: computersEnabled },
           web_search: { enabled: webSearchEnabled },
         },
       },

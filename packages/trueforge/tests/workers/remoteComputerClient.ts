@@ -164,7 +164,7 @@ export class FakeComputerClient {
       version: '0.1.0-test',
       run_as_user: 'trueforge',
       workdir: FAKE_WORKDIR,
-      capabilities: { python3: true, git: true, skills: true },
+      capabilities: { python3: true, git: true, skills: true, desktop: false, desktop_unavailable_reason: null },
       ...overrides,
     };
     this.#socket.send(JSON.stringify(hello));
@@ -179,6 +179,45 @@ export class FakeComputerClient {
     clearInterval(this.#heartbeat);
     this.#socket.close(code, 'test');
   }
+}
+
+/** Creates a computer through the API, enrolls it, and connects a client that has said hello. */
+export async function connectNewComputer({
+  name,
+  options,
+}: {
+  name: string;
+  options: FakeClientOptions;
+}): Promise<{ computerId: string; client: FakeComputerClient }> {
+  const app = computersApp({ computers: testComputersService() });
+  const created = await app.fetch(
+    new Request(`${PUBLIC_BASE_URL}/api/v1/computers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+    env,
+  );
+  const body = await created.json<{ data: { computer: { id: string }; enrollment: { enrollment_code: string } } }>();
+  const enrolled = await app.fetch(
+    new Request(`${PUBLIC_BASE_URL}/api/v1/computers/enroll`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        enrollment_code: body.data.enrollment.enrollment_code,
+        hostname: 'office-box',
+        os: 'linux',
+        arch: 'amd64',
+        version: '0.1.0-test',
+      }),
+    }),
+    env,
+  );
+  const credential = (await enrolled.json<{ data: { machine_credential: string } }>()).data.machine_credential;
+  const client = await FakeComputerClient.connect({ app, credential, options });
+  // The hello write is what turns the row online and tells the provider where sessions live.
+  await settle();
+  return { computerId: body.data.computer.id, client };
 }
 
 /** Waits for a condition rather than a fixed number of ticks, so a slow round trip is not a flake. */

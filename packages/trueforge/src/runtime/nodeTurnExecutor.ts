@@ -32,6 +32,7 @@ import {
 import {
   beginTurnExecution,
   drainTurnEvents,
+  runTurnDrainedHook,
   startTurnInProcess,
   toWireTurn,
   turnStreamId,
@@ -184,7 +185,7 @@ export interface NodeTurnExecutorDeps {
   /** Peering identity embedded in the turn ids this process mints. */
   executorId: string;
   requestReply: RequestReplyTimings;
-  /** Runs after a non-streaming turn's drain settles; undefined skips it. */
+  /** Runs after a turn's drain settles, streaming or not; undefined skips it. */
   onTurnDrained: TurnDrainedHook | undefined;
 }
 
@@ -212,15 +213,23 @@ export class NodeTurnExecutor implements TurnExecutor {
 
   async startStreaming(input: TurnStreamingStartInput): Promise<TurnEventsResult> {
     try {
-      const { drainInput } = await beginTurnExecution(this.#executionParams(input));
+      const { turn, drainInput } = await beginTurnExecution(this.#executionParams(input));
       // The drain waits on the client like an inline SSE write did, until the client goes away.
+      // It runs to its end either way, so the drained hook fires for a client that left early too.
       const events = eventRendezvous<SequencedEvent<TurnStreamingEvent>>({
         signal: input.signal,
-        produce: offer =>
-          drainTurnEvents({
+        produce: async offer => {
+          await drainTurnEvents({
             ...drainInput,
             onEvent: (event, sequenceNumber) => offer({ ...event, sequence_number: sequenceNumber }),
-          }),
+          });
+          await runTurnDrainedHook({
+            hook: this.#deps.onTurnDrained,
+            session: input.session,
+            turn_id: turn.id,
+            logger: this.#deps.logger,
+          });
+        },
       });
       return { ok: true, events };
     } catch (error) {

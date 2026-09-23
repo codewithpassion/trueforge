@@ -7,18 +7,25 @@ import {
   CLOSE_REVOKED,
   CLOSE_STALE,
   type ComputerRelayStatus,
+  DESKTOP_CLIPBOARD_TIMEOUT_MS,
   HEARTBEAT_PING,
   HEARTBEAT_PONG,
   type HelloMessage,
   HelloMessageSchema,
+  isDesktopOp,
   MAX_FRAME_BYTES,
   MAX_IN_FLIGHT_EXEC,
   MAX_QUEUE_DEPTH,
   offlineMessage,
   RELAY_GRACE_MS,
+  type RelayPrincipal,
+  type RelayRequestInput,
+  type RequestFailureReason,
   type RequestOutcome,
   STALE_AFTER_MS,
   STALENESS_POLL_MS,
+  stripControlCharacters,
+  type TakeHumanLeaseOutcome,
 } from '../computers/protocol';
 import { COMPUTER_NAME_HEADER, COMPUTER_TENANT_HEADER } from '../computers/relayHeaders';
 import configuration from '../config';
@@ -124,12 +131,71 @@ function parseOpRequest(raw: string): Record<string, unknown> | undefined {
   return forwarded;
 }
 
-/** What `request()` needs from its caller so the relay can refuse another tenant's computer. */
-export interface RelayRequestInput {
-  tenant_id: string;
-  op_json: string;
-  timeout_ms: number;
+const LEASE_KEY = 'desktop_lease';
+/** A crash backstop: a turn that took the lease releases it when it ends. */
+const AGENT_LEASE_IDLE_MS = 10 * 60_000;
+const HUMAN_LEASE_IDLE_MS = 5 * 60_000;
+/** Renewals live in memory and reach storage at most this often; a woken object may expire early by as much. */
+const LEASE_PERSIST_INTERVAL_MS = 30_000;
+
+type LeaseHolder = RelayPrincipal;
+
+/** The one controller of the desktop. `last_op_at` is when the holder last renewed it. */
+interface DesktopLease {
+  readonly holder: LeaseHolder;
+  readonly last_op_at: number;
 }
+
+function readLease(stored: unknown): DesktopLease | undefined {
+  if (typeof stored !== 'object' || stored === null) {
+    return undefined;
+  }
+  if (!('last_op_at' in stored) || typeof stored.last_op_at !== 'number' || !('holder' in stored)) {
+    return undefined;
+  }
+  const holder = stored.holder;
+  if (typeof holder !== 'object' || holder === null || !('kind' in holder)) {
+    return undefined;
+  }
+  if (holder.kind === 'agent' && 'session_id' in holder && typeof holder.session_id === 'string') {
+    return { holder: { kind: 'agent', session_id: holder.session_id }, last_op_at: stored.last_op_at };
+  }
+  if (holder.kind === 'human' && 'user_id' in holder && typeof holder.user_id === 'string') {
+    return { holder: { kind: 'human', user_id: holder.user_id }, last_op_at: stored.last_op_at };
+  }
+  return undefined;
+}
+
+function leaseExpiresAt(lease: DesktopLease): number {
+  return lease.last_op_at + (lease.holder.kind === 'agent' ? AGENT_LEASE_IDLE_MS : HUMAN_LEASE_IDLE_MS);
+}
+
+function sameHolder({ lease, principal }: { lease: DesktopLease; principal: RelayPrincipal }): boolean {
+  if (lease.holder.kind === 'agent') {
+    return principal.kind === 'agent' && principal.session_id === lease.holder.session_id;
+  }
+  return principal.kind === 'human' && principal.user_id === lease.holder.user_id;
+}
+
+/** Clears both selections, so nothing a person put there outlives their control. */
+const CLEAR_CLIPBOARD_OP: Record<string, unknown> = {
+  op: 'desktop_clipboard_set',
+  text: '',
+  selections: ['clipboard', 'primary'],
+};
+
+/** What the lease decided about one op: send it, send it and renew, or refuse it. */
+type LeaseDecision =
+  | { readonly kind: 'send' }
+  | { readonly kind: 'send_and_renew' }
+  | {
+      readonly kind: 'refuse';
+      readonly reason: 'desktop_busy' | 'human_in_control' | 'forbidden';
+      readonly message: string;
+    };
+
+const HUMAN_IN_CONTROL_MESSAGE =
+  'A person has taken control of this computer. Desktop actions and commands are paused until they hand it back.';
 
 /**
  * One relay per computer, addressed by `idFromName(computer_id)`. Holds a hibernatable WebSocket to the
@@ -148,6 +214,9 @@ export class RemoteComputerDO extends DurableObject {
   #hello: HelloMessage | null = null;
   /** In memory on purpose: a hibernation ends the connection's claim to have said hello already. */
   #helloGeneration: number | undefined;
+  /** Renewed in memory on every op and written back at most every LEASE_PERSIST_INTERVAL_MS. */
+  #lease: DesktopLease | undefined;
+  #leasePersistedAt = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -159,6 +228,8 @@ export class RemoteComputerDO extends DurableObject {
       // a half-read one would hand the provider a path it cannot use.
       const stored = HelloMessageSchema.safeParse(await ctx.storage.get('hello'));
       this.#hello = stored.success ? stored.data : null;
+      this.#lease = readLease(await ctx.storage.get(LEASE_KEY));
+      this.#leasePersistedAt = this.#lease?.last_op_at ?? 0;
     });
   }
 
@@ -396,7 +467,7 @@ export class RemoteComputerDO extends DurableObject {
    */
   async request(input: RelayRequestInput): Promise<RequestOutcome> {
     const startedAt = Date.now();
-    const refuse = (reason: 'bad_request' | 'revoked' | 'forbidden' | 'offline', message: string): RequestOutcome => ({
+    const refuse = (reason: RequestFailureReason, message: string): RequestOutcome => ({
       ok: false,
       reason,
       message,
@@ -423,8 +494,21 @@ export class RemoteComputerDO extends DurableObject {
     if (this.#meta.tenant_id !== input.tenant_id) {
       return refuse('forbidden', 'This computer belongs to another tenant');
     }
+    const opName = String(op['op']);
+    // An older client, or one whose desktop is down, is never sent an op it cannot run.
+    if (isDesktopOp(opName) && this.#hello?.capabilities.desktop !== true) {
+      return refuse('desktop_unavailable', this.#desktopUnavailableMessage());
+    }
+    // Decided and renewed before the first await, so two callers can never both take a free lease.
+    const decision = this.#decide({ op: opName, principal: input.principal, now: startedAt });
+    if (decision.kind === 'refuse') {
+      return refuse(decision.reason, decision.message);
+    }
+    if (decision.kind === 'send_and_renew') {
+      this.#renewLease({ holder: input.principal, now: startedAt });
+    }
 
-    const isExec = op['op'] === 'exec';
+    const isExec = opName === 'exec';
     if (isExec && this.#inFlightExec >= MAX_IN_FLIGHT_EXEC) {
       if (this.#queue.length >= MAX_QUEUE_DEPTH) {
         return {
@@ -448,11 +532,168 @@ export class RemoteComputerDO extends DurableObject {
       if (admitted !== undefined) {
         return admitted;
       }
+      // A person may have taken control while this command waited for a slot.
+      const late = this.#decide({ op: opName, principal: input.principal, now: Date.now() });
+      if (late.kind === 'refuse') {
+        this.#queue.shift()?.run();
+        return refuse(late.reason, late.message);
+      }
     }
     if (isExec) {
       this.#inFlightExec += 1;
     }
     return this.#dispatch({ op, timeoutMs: input.timeout_ms, isExec, startedAt });
+  }
+
+  #desktopUnavailableMessage(): string {
+    const reason = this.#hello?.capabilities.desktop_unavailable_reason;
+    const suffix = reason === null || reason === undefined ? '' : `: ${stripControlCharacters(reason)}`;
+    return `Computer ${this.#name()} has no desktop running${suffix}`;
+  }
+
+  /**
+   * The per-op check against the one desktop controller. Agent `exec` is refused under a human
+   * lease too: it runs with DISPLAY set, so it could read the screen or clipboard behind the tools.
+   */
+  #decide({ op, principal, now }: { op: string; principal: RelayPrincipal; now: number }): LeaseDecision {
+    const lease = this.#liveLease(now);
+    const desktop = isDesktopOp(op);
+    if (principal.kind === 'agent') {
+      if (lease?.holder.kind === 'human') {
+        return desktop || op === 'exec'
+          ? { kind: 'refuse', reason: 'human_in_control', message: HUMAN_IN_CONTROL_MESSAGE }
+          : { kind: 'send' };
+      }
+      if (!desktop) {
+        return { kind: 'send' };
+      }
+      if (lease === undefined || sameHolder({ lease, principal })) {
+        return { kind: 'send_and_renew' };
+      }
+      return {
+        kind: 'refuse',
+        reason: 'desktop_busy',
+        message: `Another session is using the desktop of computer ${this.#name()}`,
+      };
+    }
+    if (!desktop) {
+      return { kind: 'refuse', reason: 'forbidden', message: 'A person may only send desktop operations' };
+    }
+    if (lease?.holder.kind === 'human' && !sameHolder({ lease, principal })) {
+      return { kind: 'refuse', reason: 'human_in_control', message: 'Another person has control of this desktop' };
+    }
+    // Watching needs no lease and does not renew one: only input keeps a person in control.
+    if (op === 'desktop_screenshot') {
+      return { kind: 'send' };
+    }
+    if (lease !== undefined && sameHolder({ lease, principal })) {
+      return { kind: 'send_and_renew' };
+    }
+    return { kind: 'refuse', reason: 'forbidden', message: 'Take control of the desktop first' };
+  }
+
+  /** The lease as of `now`, expiring it first when its holder went quiet. */
+  #liveLease(now: number): DesktopLease | undefined {
+    const lease = this.#lease;
+    if (lease === undefined || now < leaseExpiresAt(lease)) {
+      return lease;
+    }
+    this.#lease = undefined;
+    this.ctx.waitUntil(this.ctx.storage.delete(LEASE_KEY));
+    if (lease.holder.kind === 'human') {
+      // Sent before anything the next holder does, so it cannot read what the person left there.
+      this.ctx.waitUntil(this.#clearClipboard());
+    }
+    return undefined;
+  }
+
+  /** A new holder is written at once; a renewal only when the stored time is getting stale. */
+  #renewLease({ holder, now }: { holder: RelayPrincipal; now: number }): void {
+    const previous = this.#lease;
+    this.#lease = { holder, last_op_at: now };
+    const changed = previous === undefined || !sameHolder({ lease: previous, principal: holder });
+    if (changed || now - this.#leasePersistedAt >= LEASE_PERSIST_INTERVAL_MS) {
+      this.#leasePersistedAt = now;
+      this.ctx.waitUntil(this.ctx.storage.put(LEASE_KEY, { holder, last_op_at: now }));
+    }
+  }
+
+  async #clearLease(): Promise<void> {
+    this.#lease = undefined;
+    await this.ctx.storage.delete(LEASE_KEY);
+  }
+
+  /** Best effort: an offline machine cannot be reached, and its clipboard is not readable either. */
+  async #clearClipboard(): Promise<boolean> {
+    if (this.#hello?.capabilities.desktop !== true) {
+      return false;
+    }
+    const outcome = await this.#dispatch({
+      op: CLEAR_CLIPBOARD_OP,
+      timeoutMs: DESKTOP_CLIPBOARD_TIMEOUT_MS,
+      isExec: false,
+      startedAt: Date.now(),
+    });
+    if (!outcome.ok) {
+      this.#logger.warn('Could not clear a remote desktop clipboard', {
+        computer_id: this.ctx.id.name,
+        reason: outcome.reason,
+      });
+    }
+    return outcome.ok;
+  }
+
+  /** Ends a turn's hold on the desktop. Only the session that holds it can let it go. */
+  async releaseLease({ session_id }: { session_id: string }): Promise<{ released: boolean }> {
+    const lease = this.#liveLease(Date.now());
+    if (lease?.holder.kind !== 'agent' || lease.holder.session_id !== session_id) {
+      return { released: false };
+    }
+    await this.#clearLease();
+    return { released: true };
+  }
+
+  /**
+   * A person takes control, preempting any agent. Taking it from another person clears the
+   * clipboard first, so one person never reads what another copied.
+   */
+  async takeHumanLease({ user_id }: { user_id: string }): Promise<TakeHumanLeaseOutcome> {
+    if (this.#meta.revoked) {
+      return { ok: false, reason: 'revoked', message: `Computer ${this.#name()} has been revoked` };
+    }
+    if (this.#hello?.capabilities.desktop !== true) {
+      return { ok: false, reason: 'desktop_unavailable', message: this.#desktopUnavailableMessage() };
+    }
+    const now = Date.now();
+    const previous = this.#liveLease(now);
+    const principal: RelayPrincipal = { kind: 'human', user_id };
+    this.#renewLease({ holder: principal, now });
+    if (previous?.holder.kind === 'human' && !sameHolder({ lease: previous, principal })) {
+      await this.#clearClipboard();
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Hands the desktop back. Both selections are cleared while the person still holds it, so no agent
+   * can read them in between.
+   */
+  async releaseHumanLease({
+    user_id,
+  }: {
+    user_id: string;
+  }): Promise<{ released: boolean; clipboard_cleared: boolean }> {
+    const lease = this.#liveLease(Date.now());
+    if (lease?.holder.kind !== 'human' || lease.holder.user_id !== user_id) {
+      return { released: false, clipboard_cleared: false };
+    }
+    const cleared = await this.#clearClipboard();
+    // Someone else may have taken control while the clear was in flight; theirs stays.
+    const current = this.#lease;
+    if (current !== undefined && sameHolder({ lease: current, principal: lease.holder })) {
+      await this.#clearLease();
+    }
+    return { released: true, clipboard_cleared: cleared };
   }
 
   async #dispatch({
@@ -643,6 +884,7 @@ export class RemoteComputerDO extends DurableObject {
     await this.ctx.storage.deleteAll();
     this.#meta = EMPTY_META;
     this.#hello = null;
+    this.#lease = undefined;
   }
 
   status(): ComputerRelayStatus {
@@ -662,6 +904,9 @@ export class RemoteComputerDO extends DurableObject {
 
   /** Records last-seen from the platform's heartbeat stamp; one write a minute, not one per heartbeat. */
   override async alarm(): Promise<void> {
+    // A person who walked away loses control here, with their clipboard cleared, even if nobody
+    // else asks for the desktop.
+    this.#liveLease(Date.now());
     const socket = this.#currentSocket();
     if (socket === undefined) {
       await this.#saveMeta({});

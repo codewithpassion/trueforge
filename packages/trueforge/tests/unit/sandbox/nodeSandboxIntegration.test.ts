@@ -54,6 +54,7 @@ describe('createNodeSandboxIntegration', () => {
         computer_id: undefined,
         agent_id: undefined,
         skills_requested: false,
+        desktop_requested: false,
       });
 
     await expect(usability(undefined)).resolves.toEqual({ usable: false, status: undefined });
@@ -82,6 +83,7 @@ describe('createNodeSandboxIntegration', () => {
           computer_id: undefined,
           agent_id: undefined,
           skills_requested: false,
+          desktop_requested: false,
         }),
       ).resolves.toEqual({
         usable: false,
@@ -103,6 +105,7 @@ describe('createNodeSandboxIntegration', () => {
           computer_id: undefined,
           agent_id: undefined,
           skills_requested: false,
+          desktop_requested: false,
         }),
       ).resolves.toEqual({
         usable: true,
@@ -129,6 +132,7 @@ describe('createNodeSandboxIntegration', () => {
         computer_id: undefined,
         agent_id: undefined,
         skills_requested: false,
+        desktop_requested: false,
       }),
     ).resolves.toEqual({
       usable: true,
@@ -149,6 +153,7 @@ describe('createNodeSandboxIntegration', () => {
         computer_id: undefined,
         agent_id: undefined,
         skills_requested: false,
+        desktop_requested: false,
       }),
     ).resolves.toEqual({
       usable: false,

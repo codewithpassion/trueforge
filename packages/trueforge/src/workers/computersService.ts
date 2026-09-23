@@ -40,6 +40,7 @@ export function workersComputersService(
       const stub = stubFor(computerId);
       return {
         request: input => stub.request(input),
+        releaseLease: input => stub.releaseLease(input),
         revoke: () => stub.revoke(),
         disconnect: () => stub.disconnect(),
         destroy: () => stub.destroy(),
