@@ -400,7 +400,7 @@ export function DesktopScreen({
   const showLeaseWarning = inControl && Number.isFinite(leaseLeftMs) && leaseLeftMs <= LEASE_WARNING_MS;
   const canTakeControl = status !== null && status.online && status.desktop && controller?.kind !== 'clearing';
 
-  const toolbarButton = (label: string, keys: string) => (
+  const toolbarButton = ({ label, keys }: { label: string; keys: string }) => (
     <Button.Secondary
       key={keys}
       type="button"
@@ -540,7 +540,7 @@ export function DesktopScreen({
           autoCorrect="off"
           spellCheck={false}
           readOnly={!inControl}
-          className="absolute left-0 top-0 h-px w-px resize-none overflow-hidden border-0 p-0 opacity-0"
+          className="absolute left-0 top-0 size-[0.0625rem] resize-none overflow-hidden border-0 p-0 opacity-0"
           onKeyDown={event => {
             if (!inControlRef.current) return;
             const native = event.nativeEvent;
@@ -579,7 +579,7 @@ export function DesktopScreen({
 
       <div className={cn('flex flex-wrap items-center gap-2', compact && 'flex-col items-stretch')}>
         <div className="flex flex-wrap gap-2" role="toolbar" aria-label="Keys the browser keeps">
-          {RESERVED_CHORDS.map(chord => toolbarButton(chord.label, chord.keys))}
+          {RESERVED_CHORDS.map(toolbarButton)}
         </div>
         <Button.Secondary type="button" size="small" disabled={!inControl || busy} onClick={copyFromRemote}>
           <Icon name="copy" size="1rem" className="mr-1" />
