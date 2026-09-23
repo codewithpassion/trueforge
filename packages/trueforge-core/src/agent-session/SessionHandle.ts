@@ -521,8 +521,8 @@ export class SessionHandle<
       }),
       ...(extraCapabilities ?? []),
       // Like the question builtin, only the root thread can pause for a person.
-      ...(!isChild && input.sandbox !== undefined && input.sandbox.providerClientSideToolSets.length > 0
-        ? [{ systemToolSets: input.sandbox.providerClientSideToolSets }]
+      ...(!isChild && input.sandbox?.providerRootCapability !== undefined
+        ? [input.sandbox.providerRootCapability]
         : []),
     ];
     return new AgentThread({

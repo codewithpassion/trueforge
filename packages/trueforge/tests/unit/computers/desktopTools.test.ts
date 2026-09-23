@@ -225,7 +225,9 @@ describe('desktop tools', () => {
   it('offers request_human_takeover as a client-side tool beside the desktop tools, and names it only then', async () => {
     for (const requireApproval of [false, true]) {
       const offered = desktopProviderTools(providerWith({ requireApproval }).provider);
-      expect(offered.instructions).toContain('call request_human_takeover');
+      // Sub-agent threads share the sandbox instructions but not the tool, so only the tool's own text names it.
+      expect(offered.instructions).not.toContain('request_human_takeover');
+      expect(offered.clientSideInstructions).toContain('call request_human_takeover');
       expect(offered.clientSideToolSets).toHaveLength(1);
       const takeover = offered.clientSideToolSets[0];
       if (takeover === undefined) {
@@ -245,6 +247,7 @@ describe('desktop tools', () => {
     );
     expect(down.clientSideToolSets).toEqual([]);
     expect(down.instructions).not.toContain('request_human_takeover');
+    expect(down.clientSideInstructions).toBe('');
   });
 
   it('says the action already ran when only the screenshot after it was refused', async () => {

@@ -252,8 +252,9 @@ const BASE_INSTRUCTIONS = [
   `This computer has a ${String(DESKTOP_WIDTH)}x${String(DESKTOP_HEIGHT)} desktop you can see and drive with the computer_* tools; coordinates are pixels from the top-left corner.`,
   'DISPLAY is already set for exec, so start applications with exec and a trailing &, for example `chromium https://example.com &` or `xterm &`.',
   'Prefer exec and the filesystem over the desktop whenever both can do the job.',
-  `For logins, CAPTCHAs and two-factor prompts, call ${REQUEST_HUMAN_TAKEOVER_TOOL} so a person does that step on the desktop, instead of guessing or asking for credentials.`,
 ].join(' ');
+
+const TAKEOVER_INSTRUCTIONS = `For logins, CAPTCHAs and two-factor prompts, call ${REQUEST_HUMAN_TAKEOVER_TOOL} so a person does that step on the desktop, instead of guessing or asking for credentials.`;
 
 const APPROVAL_INSTRUCTIONS =
   'This computer asks a person to approve each action, and desktop input cannot be approved yet, so only computer_screenshot and computer_clipboard_read are available.';
@@ -271,6 +272,7 @@ export function desktopProviderTools(provider: RemoteComputerProvider): SandboxP
       tools: [],
       instructions: `This agent is set up to use the desktop of this computer, but the desktop is not running${reason === null ? '' : ` (${reason})`}, so no desktop tools are available.`,
       clientSideToolSets: [],
+      clientSideInstructions: '',
     };
   }
   const serial = serialQueue();
@@ -281,5 +283,6 @@ export function desktopProviderTools(provider: RemoteComputerProvider): SandboxP
     tools,
     instructions: provider.requiresApproval ? `${BASE_INSTRUCTIONS} ${APPROVAL_INSTRUCTIONS}` : BASE_INSTRUCTIONS,
     clientSideToolSets: [new RequestHumanTakeover()],
+    clientSideInstructions: TAKEOVER_INSTRUCTIONS,
   };
 }

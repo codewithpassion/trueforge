@@ -6,4 +6,4 @@ A tool response that continues the session tip (`previous_turn_id` omitted or `'
 
 Store implementations: `CreateTurnInput` gains the required `require_tip: boolean`; when true, the turn is written only if `session.last_turn_id` equals `turn.previous_turn_id`, checked in the same atomic unit that advances the tip.
 
-Sandbox providers: `SandboxProviderTools` gains the required `clientSideToolSets` (pass `[]` for none). They are offered to the root thread only, next to the provider's tools.
+Sandbox providers: `SandboxProviderTools` gains the required `clientSideToolSets` (pass `[]` for none) and `clientSideInstructions` (pass `''` for none). Both are given to the root thread only, next to the provider's tools; `instructions` reaches every thread.
