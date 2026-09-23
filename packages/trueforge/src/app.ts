@@ -13,6 +13,7 @@ import { createAgentsRouter } from './apis/agents';
 import { createAuthRouter } from './apis/auth';
 import { createCapabilitiesRouter } from './apis/capabilities';
 import { createCatalogRouter } from './apis/catalog';
+import { createComputerDesktopsRouter } from './apis/computerDesktops';
 import {
   COMPUTERS_UNSUPPORTED,
   createComputerMachineRouter,
@@ -326,6 +327,22 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
     ),
   );
 
+  // Not admin-only: anyone who may use a desktop agent may watch and drive its computer's desktop.
+  app.route(
+    '/api/v1/computer-desktops',
+    withAuth(
+      createComputerDesktopsRouter({
+        computers: deps.computers,
+        humanTakeovers: deps.humanTakeovers,
+        resolveRequestContext,
+        resolveAgentStore: deps.resolveAgentStore,
+        authorizer: deps.authorizer,
+        publicBaseUrl: () => getPublicBaseUrlOrUndefined(),
+        logger: deps.logger,
+      }),
+      authMiddleware,
+    ),
+  );
   app.route(
     '/api/v1/auth',
     createAuthRouter({

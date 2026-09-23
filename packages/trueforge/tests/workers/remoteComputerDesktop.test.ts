@@ -12,6 +12,8 @@ import {
 } from '@truefoundry/trueforge-core/agent-session';
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { createComputerDesktopsRouter } from '../../src/apis/computerDesktops';
+import { TrueForgeAuthorizer } from '../../src/auth/authorizer';
 import { desktopProviderTools } from '../../src/computers/desktopTools';
 import {
   ClientOpRequestSchema,
@@ -31,7 +33,14 @@ import { workersComputersService } from '../../src/workers/computersService';
 import { createConsoleLogger } from '../../src/workers/logger';
 import { createWorkersSandboxIntegration } from '../../src/workers/sandbox/workersSandboxIntegration';
 import { d1Persistence, migrateDatabase, sessionStub, TENANT_ID, upsertMockProvider, USER_REF } from './harness';
-import { connectNewComputer, FAKE_WORKDIR, settle, waitFor, type FakeComputerClient } from './remoteComputerClient';
+import {
+  connectNewComputer,
+  FAKE_WORKDIR,
+  PUBLIC_BASE_URL,
+  settle,
+  waitFor,
+  type FakeComputerClient,
+} from './remoteComputerClient';
 
 const logger = createConsoleLogger({ level: 'error', bindings: { component: 'desktop-test' } });
 
@@ -622,6 +631,141 @@ describe('the desktop relay', () => {
     await settle();
     expect((await agentOn({ computerId, sessionId: 's-a' }).screenshot()).ok).toBe(true);
     client.close();
+  });
+
+  it('reports who controls the desktop in its status', async () => {
+    const { computerId, client } = await desktopComputer();
+    await expect(relay(computerId).status()).resolves.toMatchObject({ desktop_control: { kind: 'none' } });
+
+    expect((await agentOn({ computerId, sessionId: 's-a' }).screenshot()).ok).toBe(true);
+    await expect(relay(computerId).status()).resolves.toMatchObject({
+      desktop_control: { kind: 'agent', session_id: 's-a' },
+    });
+
+    const before = Date.now();
+    await takeControl({ computerId, userId: 'u-1' });
+    const held = (await relay(computerId).status()).desktop_control;
+    expect(held).toMatchObject({ kind: 'human', user_id: 'u-1' });
+    const expiresAt = held.kind === 'human' ? held.expires_at : 0;
+    expect(expiresAt).toBeGreaterThanOrEqual(before + 5 * 60_000);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 5 * 60_000);
+
+    client.answerWith(holding('desktop_clipboard_set'));
+    const handedBack = handBack({ computerId, userId: 'u-1' });
+    await waitFor(() => clears(client).length === 1);
+    await expect(relay(computerId).status()).resolves.toMatchObject({ desktop_control: { kind: 'clearing' } });
+    client.answerWith(answer);
+    client.releaseHeld({ ok: true });
+    await handedBack;
+    await expect(relay(computerId).status()).resolves.toMatchObject({ desktop_control: { kind: 'none' } });
+    client.close();
+  });
+});
+
+describe('the desktop routes over a real relay', () => {
+  /** A tenant admin, so the routes skip the agent checks the unit tests cover and reach the relay. */
+  function desktopsApp() {
+    return createComputerDesktopsRouter({
+      computers: workersComputersService(env),
+      humanTakeovers: undefined,
+      resolveRequestContext: c => {
+        const user = c.req.header('x-test-user') ?? 'u-1';
+        return {
+          tenant_id: TENANT_ID,
+          subject: { id: user, type: 'user', display_name: user },
+          roles: ['admin'],
+          user_credential: null,
+        };
+      },
+      resolveAgentStore: () => d1Persistence().agentStore,
+      authorizer: new TrueForgeAuthorizer(),
+      publicBaseUrl: () => PUBLIC_BASE_URL,
+      logger,
+    });
+  }
+
+  function send({
+    computerId,
+    path = '',
+    method = 'GET',
+    user = 'u-1',
+    body,
+  }: {
+    computerId: string;
+    path?: string;
+    method?: string;
+    user?: string;
+    body?: unknown;
+  }) {
+    return desktopsApp().request(`/${computerId}${path}`, {
+      method,
+      headers: {
+        'x-test-user': user,
+        Origin: PUBLIC_BASE_URL,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  it('lets a person take the desktop from an agent, drive it alone, and hand it back', async () => {
+    const { computerId, client } = await desktopComputer();
+    const agent = agentOn({ computerId, sessionId: 's-a' });
+    expect((await agent.screenshot()).ok).toBe(true);
+
+    const taken = await send({ computerId, method: 'POST', path: '/take-control' });
+    expect(taken.status).toBe(200);
+    await expect(taken.json()).resolves.toMatchObject({
+      data: { online: true, desktop: true, controller: { kind: 'human', user_id: 'u-1', is_me: true } },
+    });
+    expect(refusedWith(await agent.screenshot())).toBe('human_in_control');
+
+    const typed = await send({
+      computerId,
+      method: 'POST',
+      path: '/input',
+      body: { actions: [{ type: 'type', text: 'hello' }] },
+    });
+    expect(typed.status).toBe(200);
+    expect(typed.headers.get('Content-Type')).toBe('image/jpeg');
+    expect(
+      desktopFrames(client)
+        .slice(-2)
+        .map(frame => frame['op']),
+    ).toEqual(['desktop_input', 'desktop_screenshot']);
+
+    const watched = await send({ computerId, path: '/screenshot', user: 'u-2' });
+    expect(watched.status).toBe(423);
+    await expect(watched.json()).resolves.toMatchObject({ error: { code: 'human_in_control' } });
+    expect(
+      (
+        await send({
+          computerId,
+          method: 'POST',
+          path: '/input',
+          user: 'u-2',
+          body: { actions: [{ type: 'key', keys: 'a' }] },
+        })
+      ).status,
+    ).toBe(423);
+
+    const handedBack = await send({ computerId, method: 'POST', path: '/hand-back', body: {} });
+    expect(handedBack.status).toBe(200);
+    await expect(handedBack.json()).resolves.toMatchObject({ data: { controller: { kind: 'none' } } });
+    expect(clears(client)).toHaveLength(1);
+    expect((await agent.screenshot()).ok).toBe(true);
+    client.close();
+  });
+
+  it('answers 503 for a computer whose machine has gone', async () => {
+    const { computerId, client } = await desktopComputer();
+    client.close();
+    for (let attempt = 0; attempt < 200 && (await relay(computerId).status()).connected; attempt += 1) {
+      await settle(2);
+    }
+    const response = await send({ computerId, path: '/screenshot' });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'offline' } });
   });
 });
 
