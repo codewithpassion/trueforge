@@ -30,6 +30,8 @@ export type {
   ThemePreset,
 } from './theme/types.js';
 
+export { IntegrationsPage } from './atoms/integrations/IntegrationsPage.js';
+export type { IntegrationsPageProps } from './atoms/integrations/IntegrationsPage.js';
 export { PermissionGuard } from './atoms/PermissionGuard.js';
 export type { PermissionGuardProps } from './atoms/PermissionGuard.js';
 export { BottomSheet } from './atoms/primitives/BottomSheet.js';
@@ -305,9 +307,11 @@ export {
   useAgentMetricsServer,
   useAgentSessionsServer,
   useCatalogServer,
+  useIntegrationServer,
   useOptionalAgentMetricsServer,
   useOptionalAgentSessionsServer,
   useOptionalCatalogServer,
+  useOptionalIntegrationServer,
   useOptionalPermissionsServer,
   useOptionalScheduleServer,
   useOptionalServer,
@@ -386,10 +390,11 @@ export type {
   ImportGithubSkillRequest,
   IntegrationAuthInput,
   IntegrationBase,
-  IntegrationCatalogServer,
+  IntegrationServer,
   IntegrationSetupManifest,
   IntegrationStatus,
   ListComputerAuditParams,
+  ListIntegrationsParams,
   ListPermissionsRequest,
   ListPermissionsResponse,
   ListResult,

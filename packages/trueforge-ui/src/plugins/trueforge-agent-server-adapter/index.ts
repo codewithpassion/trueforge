@@ -9,12 +9,12 @@ import { createHarnessAgentSessionsServer } from './agentSessionsServer.js';
 import { createHarnessBuilderServer } from './builderServer.js';
 import { createComputerCatalog } from './catalogs/computerCatalog.js';
 import { createConnectorCatalog } from './catalogs/connectorCatalog.js';
-import { createIntegrationCatalog } from './catalogs/integrationCatalog.js';
 import { createModelProviderCatalog } from './catalogs/modelProviderCatalog.js';
 import { createSandboxProviderCatalog } from './catalogs/sandboxProviderCatalog.js';
 import { createSkillCatalog } from './catalogs/skillCatalog.js';
 import { createHarnessChatServer } from './chatServer.js';
 import { createTrueForgeClient, type CreateTrueForgeClientOptions } from './client.js';
+import { createIntegrationServer } from './integrations/integrationServer.js';
 import { createHarnessPermissionsServer } from './permissionsServer.js';
 import { createScheduleServer } from './schedules/scheduleServer.js';
 import type { HarnessAgentSpec } from './types.js';
@@ -43,7 +43,6 @@ export {
   toUiConnector,
   toUiConnectorFromReadEntry,
 } from './catalogs/connectorCatalog.js';
-export { createIntegrationCatalog, toUiIntegration, toUiSetupManifest } from './catalogs/integrationCatalog.js';
 export {
   createModelProviderCatalog,
   toHarnessModelProvider,
@@ -67,6 +66,7 @@ export {
 } from './chatServer.js';
 export { createTrueForgeClient } from './client.js';
 export type { CreateTrueForgeClientOptions } from './client.js';
+export { createIntegrationServer, toUiIntegration, toUiSetupManifest } from './integrations/integrationServer.js';
 export { getCapabilities, listConfiguredMcpServers, listModels, listSkills } from './lists.js';
 export { createHarnessPermissionsServer, type CreateHarnessPermissionsServerOptions } from './permissionsServer.js';
 export { createScheduleServer } from './schedules/scheduleServer.js';
@@ -95,7 +95,6 @@ export function createTrueForgeCatalog({
     connectorCatalog: createConnectorCatalog(client),
     skillCatalog: createSkillCatalog(client),
     sandboxCatalog: createSandboxProviderCatalog(client),
-    integrationCatalog: createIntegrationCatalog(client),
     ...(computers ? { computerCatalog: createComputerCatalog(client) } : {}),
   };
 }
@@ -115,6 +114,7 @@ export function createTrueForgeAgentUIServer(options: CreateTrueForgeAgentUIServ
     sessions: createHarnessAgentSessionsServer({ ...clientOptions, client }),
     metrics: createHarnessAgentMetricsServer({ ...clientOptions, client }),
     schedules: createScheduleServer({ client }),
+    integrations: createIntegrationServer({ client }),
     permissions: permissions ?? createHarnessPermissionsServer({ client }),
   });
 }

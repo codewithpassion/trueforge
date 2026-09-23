@@ -102,6 +102,7 @@ export type AgentDetailsTabsProps = {
   onTabChange: (tab: AgentDetailsTab) => void;
   showMetrics?: boolean;
   showSchedules?: boolean;
+  showIntegrations?: boolean;
   end?: ReactNode;
 };
 

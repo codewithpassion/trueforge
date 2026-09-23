@@ -815,7 +815,7 @@ export interface IntegrationNotificationRule {
 /** Whether a channel integration still needs the credentials its app issues. */
 export type IntegrationStatus = 'pending' | 'connected';
 
-/** One channel connection in settings. Credentials are never read back. */
+/** One channel connection owned by an agent. Credentials are never read back. */
 export interface IntegrationBase {
   id: string;
   /** Channel type (e.g. `"slack"`). */
@@ -823,8 +823,8 @@ export interface IntegrationBase {
   status: IntegrationStatus;
   /** Name the bot shows in the channel. */
   botDisplayName: string;
-  /** Agent that answers messages arriving on this channel. */
-  defaultAgentName: string;
+  /** Agent that answers messages arriving on this channel; fixed at creation. */
+  agentName: string;
   /** Allowlist; an empty list allows no channel. */
   allowedChannelIds: string[];
   allowDirectMessages: boolean;
@@ -844,8 +844,9 @@ export interface IntegrationAuthInput {
 
 export interface CreateIntegrationRequest {
   type: string;
+  /** Agent the integration belongs to; it cannot be changed later. */
+  agentName: string;
   botDisplayName: string;
-  defaultAgentName: string;
   allowedChannelIds: string[];
   allowDirectMessages: boolean;
   /** Channel users allowed to decide a tool approval. Empty allows nobody. */
@@ -857,7 +858,6 @@ export interface CreateIntegrationRequest {
 export interface UpdateIntegrationRequest {
   id: string;
   botDisplayName: string;
-  defaultAgentName: string;
   allowedChannelIds: string[];
   allowDirectMessages: boolean;
   /** Channel users allowed to decide a tool approval. Empty allows nobody. */
@@ -988,25 +988,8 @@ export interface ComputerCatalogServer<
 }
 
 /**
- * Channel integrations (Slack and the like): create one, read the app manifest it
- * needs, then save the credentials the installed app issues.
- */
-export interface IntegrationCatalogServer<
-  TIntegration extends IntegrationBase = IntegrationBase,
-  TCreate extends CreateIntegrationRequest = CreateIntegrationRequest,
-  TUpdate extends UpdateIntegrationRequest = UpdateIntegrationRequest,
-  TSetup extends IntegrationSetupManifest = IntegrationSetupManifest,
-> {
-  listIntegrations(): Promise<TIntegration[]>;
-  createIntegration(req: TCreate): Promise<TIntegration>;
-  updateIntegration(req: TUpdate): Promise<TIntegration>;
-  deleteIntegration(req: { id: string }): Promise<void>;
-  getIntegrationSetupManifest(req: { id: string }): Promise<TSetup>;
-}
-
-/**
  * Settings management aggregate — modelCatalog + connectorCatalog + optional
- * skill, sandbox, integration and computer catalogs.
+ * skill, sandbox and computer catalogs.
  * Hosts may pass the whole object to an app shell, or a focused sub-port to a page.
  */
 export interface CatalogServer<
@@ -1014,7 +997,6 @@ export interface CatalogServer<
   TConnectorCatalog extends ConnectorCatalogServer = ConnectorCatalogServer,
   TSkillCatalog extends SkillCatalogServer = SkillCatalogServer,
   TSandboxCatalog extends SandboxCatalogServer = SandboxCatalogServer,
-  TIntegrationCatalog extends IntegrationCatalogServer = IntegrationCatalogServer,
   TComputerCatalog extends ComputerCatalogServer = ComputerCatalogServer,
 > {
   modelCatalog: TModelCatalog;
@@ -1023,8 +1005,6 @@ export interface CatalogServer<
   skillCatalog?: TSkillCatalog;
   /** Optional — omit when the host has no sandboxes settings surface. */
   sandboxCatalog?: TSandboxCatalog;
-  /** Optional — omit when the host has no channel-integrations settings surface. */
-  integrationCatalog?: TIntegrationCatalog;
   /** Optional — omit when the host has no remote-computers settings surface. */
   computerCatalog?: TComputerCatalog;
 }
@@ -1211,6 +1191,32 @@ export interface ScheduleServer<
 }
 
 // ---------------------------------------------------------------------------
+// Integrations — optional per-agent channel connections (Slack and the like)
+// ---------------------------------------------------------------------------
+
+export interface ListIntegrationsParams {
+  /** Only integrations owned by these agents; omit for every integration the caller may see. */
+  agentNames?: string[];
+}
+
+/**
+ * Channel integrations of an agent: create one, read the app manifest it needs, then
+ * save the credentials the installed app issues.
+ */
+export interface IntegrationServer<
+  TIntegration extends IntegrationBase = IntegrationBase,
+  TCreate extends CreateIntegrationRequest = CreateIntegrationRequest,
+  TUpdate extends UpdateIntegrationRequest = UpdateIntegrationRequest,
+  TSetup extends IntegrationSetupManifest = IntegrationSetupManifest,
+> {
+  listIntegrations(req: ListIntegrationsParams): Promise<TIntegration[]>;
+  createIntegration(req: TCreate): Promise<TIntegration>;
+  updateIntegration(req: TUpdate): Promise<TIntegration>;
+  deleteIntegration(req: { id: string }): Promise<void>;
+  getIntegrationSetupManifest(req: { id: string }): Promise<TSetup>;
+}
+
+// ---------------------------------------------------------------------------
 // Permissions — optional resource mutation grants
 // ---------------------------------------------------------------------------
 
@@ -1305,7 +1311,8 @@ export interface AgentMetricsServer<
 
 /**
  * Composed host port: chat + builder + optional settings catalog + optional
- * agent-detail / sessions shell + optional schedules surface + optional metrics.
+ * agent-detail / sessions shell + optional schedules and integrations surfaces +
+ * optional metrics.
  *
  * `catalog` is optional — if the host passes it, settings UI can call
  * `useCatalogServer()` / show modelCatalog, connectorCatalog, and skillCatalog;
@@ -1318,6 +1325,9 @@ export interface AgentMetricsServer<
  * `schedules` is optional — if the host passes it, schedules UI can call
  * `useScheduleServer()` / list and manage schedules; if omitted, that surface
  * stays hidden.
+ *
+ * `integrations` is optional — if the host passes it, agent-detail UI shows an
+ * Integrations tab for the agent's channel connections; if omitted, it stays hidden.
  *
  * `metrics` is optional — if the host passes it, agent-detail UI can render
  * aggregate meter cards and time-series charts.
@@ -1332,11 +1342,13 @@ export type AgentUIServerPort<
   TSchedules extends ScheduleServer = ScheduleServer,
   TMetrics extends AgentMetricsServer = AgentMetricsServer,
   TPermissions extends PermissionsServer = PermissionsServer,
+  TIntegrations extends IntegrationServer = IntegrationServer,
 > = TChat &
   TBuilder & {
     catalog?: TCatalog;
     sessions?: TSessions;
     schedules?: TSchedules;
+    integrations?: TIntegrations;
     metrics?: TMetrics;
     permissions?: TPermissions;
   };

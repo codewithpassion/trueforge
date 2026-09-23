@@ -9,6 +9,7 @@ import type {
   AgentSpec,
   CatalogServer,
   ConnectorState,
+  IntegrationServer,
   ModelSelection,
   PermissionsServer,
   SaveAgentRequest,
@@ -30,6 +31,7 @@ export type CreateTrueForgeServerOptions<
   TMetrics extends AgentMetricsServer = AgentMetricsServer,
   TSchedules extends ScheduleServer = ScheduleServer,
   TPermissions extends PermissionsServer = PermissionsServer,
+  TIntegrations extends IntegrationServer = IntegrationServer,
 > = {
   /** Chat port — e.g. from `@truefoundry/agent-server-adapter`. */
   chatServer: AgentChatServer<TSpec>;
@@ -52,6 +54,8 @@ export type CreateTrueForgeServerOptions<
   schedules?: TSchedules;
   /** Per-resource grants. Omit to leave actions enabled. */
   permissions?: TPermissions;
+  /** Per-agent channel integrations. Optional. */
+  integrations?: TIntegrations;
 };
 
 export type TrueForgeServer<
@@ -67,6 +71,7 @@ export type TrueForgeServer<
   TMetrics extends AgentMetricsServer = AgentMetricsServer,
   TSchedules extends ScheduleServer = ScheduleServer,
   TPermissions extends PermissionsServer = PermissionsServer,
+  TIntegrations extends IntegrationServer = IntegrationServer,
 > = AgentChatServer<TSpec> &
   AgentBuilderServer<TSpec, TModel, TSkill, TMcp, TAgent, TSave, TCapabilities> & {
     catalog?: TCatalog;
@@ -74,6 +79,7 @@ export type TrueForgeServer<
     metrics?: TMetrics;
     schedules?: TSchedules;
     permissions?: TPermissions;
+    integrations?: TIntegrations;
   };
 
 /**
@@ -94,6 +100,7 @@ export function createTrueForgeServer<
   TMetrics extends AgentMetricsServer = AgentMetricsServer,
   TSchedules extends ScheduleServer = ScheduleServer,
   TPermissions extends PermissionsServer = PermissionsServer,
+  TIntegrations extends IntegrationServer = IntegrationServer,
 >(
   opts: CreateTrueForgeServerOptions<
     TSpec,
@@ -107,7 +114,8 @@ export function createTrueForgeServer<
     TSessions,
     TMetrics,
     TSchedules,
-    TPermissions
+    TPermissions,
+    TIntegrations
   >,
 ): TrueForgeServer<
   TSpec,
@@ -121,7 +129,8 @@ export function createTrueForgeServer<
   TSessions,
   TMetrics,
   TSchedules,
-  TPermissions
+  TPermissions,
+  TIntegrations
 > {
   const builder: AgentBuilderServer<TSpec, TModel, TSkill, TMcp, TAgent, TSave, TCapabilities> = {
     getCapabilities: opts.getCapabilities,
@@ -153,7 +162,8 @@ export function createTrueForgeServer<
     TSessions,
     TMetrics,
     TSchedules,
-    TPermissions
+    TPermissions,
+    TIntegrations
   > = {
     ...opts.chatServer,
     ...builder,
@@ -162,6 +172,7 @@ export function createTrueForgeServer<
     ...(opts.metrics != null ? { metrics: opts.metrics } : {}),
     ...(opts.schedules != null ? { schedules: opts.schedules } : {}),
     ...(opts.permissions != null ? { permissions: opts.permissions } : {}),
+    ...(opts.integrations != null ? { integrations: opts.integrations } : {}),
   };
   return server;
 }

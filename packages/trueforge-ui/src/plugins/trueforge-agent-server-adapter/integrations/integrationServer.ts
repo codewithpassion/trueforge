@@ -1,16 +1,15 @@
 /**
- * Maps trueforge-ui integration-settings calls onto Harness
- * `/api/v1/settings/integrations`.
+ * Maps trueforge-ui integration calls onto Harness `/api/v1/integrations`.
  *
  * UI: one flat row per channel connection, with credentials only ever written.
  * Harness: an `IntegrationManifest` document whose installed-only fields appear when the
- * channel app has been created and its credentials saved.
+ * channel app has been created and its credentials saved; the owning agent sits beside it.
  */
 import type { TrueForge, TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import type {
   CreateIntegrationRequest,
   IntegrationBase,
-  IntegrationCatalogServer,
+  IntegrationServer,
   IntegrationSetupManifest,
   UpdateIntegrationRequest,
 } from '../../../server/types.js';
@@ -24,7 +23,7 @@ export function toUiIntegration(integration: TrueForgeApi.Integration): Integrat
     type: integration.type,
     status: integration.status,
     botDisplayName: manifest.botDisplayName ?? '',
-    defaultAgentName: manifest.defaultAgentName,
+    agentName: integration.agentName,
     allowedChannelIds: manifest.allowedChannelIds,
     allowDirectMessages: manifest.allowDirectMessages,
     approverUserIds: manifest.approverSlackUserIds ?? [],
@@ -55,7 +54,6 @@ function toHarnessManifest(req: CreateIntegrationRequest | UpdateIntegrationRequ
   return {
     type: SLACK_TYPE,
     botDisplayName: req.botDisplayName,
-    defaultAgentName: req.defaultAgentName,
     allowedChannelIds: req.allowedChannelIds,
     allowDirectMessages: req.allowDirectMessages,
     approverSlackUserIds: req.approverUserIds,
@@ -69,26 +67,28 @@ function toHarnessManifest(req: CreateIntegrationRequest | UpdateIntegrationRequ
   };
 }
 
-/** Settings integration-catalog port for `createTrueFoundryServer`. */
-export function createIntegrationCatalog(client: TrueForge): IntegrationCatalogServer {
+export function createIntegrationServer(options: { client: TrueForge }): IntegrationServer {
+  const { client } = options;
   return {
-    listIntegrations: async () => {
-      const body = await client.settings.integrations.list();
+    listIntegrations: async req => {
+      const agentNames = (req.agentNames ?? []).filter(name => name !== '');
+      // The wire refuses an empty filter, so no names means no filter.
+      const body = await client.integrations.list(agentNames.length === 0 ? {} : { agentNames: agentNames.join(',') });
       return body.data.map(toUiIntegration);
     },
     createIntegration: async req => {
-      const body = await client.settings.integrations.create({ manifest: toHarnessManifest(req) });
+      const body = await client.integrations.create({ agentName: req.agentName, manifest: toHarnessManifest(req) });
       return toUiIntegration(body.data);
     },
     updateIntegration: async req => {
-      const body = await client.settings.integrations.update(req.id, { manifest: toHarnessManifest(req) });
+      const body = await client.integrations.update(req.id, { manifest: toHarnessManifest(req) });
       return toUiIntegration(body.data);
     },
     deleteIntegration: async req => {
-      await client.settings.integrations.delete(req.id);
+      await client.integrations.delete(req.id);
     },
     getIntegrationSetupManifest: async req => {
-      const body = await client.settings.integrations.getAppManifest(req.id);
+      const body = await client.integrations.getAppManifest(req.id);
       return toUiSetupManifest(body.data);
     },
   };

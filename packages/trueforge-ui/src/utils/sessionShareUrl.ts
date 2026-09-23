@@ -11,7 +11,7 @@ export const SESSION_CUSTOM_RANGE_MAX_DAYS = 70;
 export const DEFAULT_SESSION_TIME_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export const DEFAULT_METRICS_TIME_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-export type LibraryAgentTab = 'overview' | 'sessions' | 'schedules' | 'code' | 'metrics';
+export type LibraryAgentTab = 'overview' | 'sessions' | 'schedules' | 'integrations' | 'code' | 'metrics';
 
 export type SessionTimeRange = {
   startTs: number;
@@ -40,6 +40,7 @@ function parseLibraryAgentTab(value: string | null): LibraryAgentTab | null {
     value === 'overview' ||
     value === 'sessions' ||
     value === 'schedules' ||
+    value === 'integrations' ||
     value === 'code' ||
     value === 'metrics'
   ) {

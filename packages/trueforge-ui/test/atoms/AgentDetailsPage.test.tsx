@@ -11,6 +11,7 @@ import type {
   AgentDetail,
   AgentMetricsServer,
   CodeSnippet,
+  IntegrationServer,
   ListPermissionsResponse,
   ScheduleServer,
   Session,
@@ -18,7 +19,11 @@ import type {
   SessionListEntry,
 } from '@/server/types.js';
 import { SlotsProvider, type SlotOverrides } from '@/theme/SlotsProvider.js';
-import { createMockAgentUIServer, createMockScheduleServer } from '../server/mockServer.js';
+import {
+  createMockAgentUIServer,
+  createMockIntegrationServer,
+  createMockScheduleServer,
+} from '../server/mockServer.js';
 
 const intersectionObservers: IntersectionObserverMock[] = [];
 
@@ -146,6 +151,7 @@ function renderPage({
   withSessions = true,
   metrics,
   schedules,
+  integrations,
   overrides,
   initialEntries = ['/library/agent-1'],
   serverOverrides,
@@ -158,6 +164,7 @@ function renderPage({
   withSessions?: boolean;
   metrics?: AgentMetricsServer;
   schedules?: ScheduleServer;
+  integrations?: IntegrationServer;
   overrides?: SlotOverrides;
   initialEntries?: string[];
   serverOverrides?: Parameters<typeof createMockAgentUIServer>[0];
@@ -167,6 +174,7 @@ function renderPage({
     ...(withSessions ? { sessions: { getAgent, getCodeSnippets, listSessions, listSessionEvents } } : {}),
     ...(metrics == null ? {} : { metrics }),
     ...(schedules == null ? {} : { schedules }),
+    ...(integrations == null ? {} : { integrations }),
     ...serverOverrides,
   });
   render(
@@ -347,6 +355,31 @@ describe('AgentDetailsPage', () => {
     expect(screen.getByText('Schedules for agent-1')).toBeInTheDocument();
     expect(new URL(window.location.href).searchParams.get('tab')).toBe('schedules');
     expect(new URL(window.location.href).searchParams.get('agent')).toBeNull();
+  });
+
+  it('hides the Integrations tab without an integration server and falls back from tab=integrations', async () => {
+    window.history.replaceState(null, '', '/library/agent-1?tab=integrations');
+    renderPage({
+      initialEntries: ['/library/agent-1?tab=integrations'],
+      overrides: { IntegrationsPage: () => <div>Integrations body</div> },
+    });
+
+    expect(await screen.findByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tab', { name: 'Integrations' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Integrations body')).not.toBeInTheDocument();
+  });
+
+  it('shows an agent-scoped Integrations tab when supported', async () => {
+    renderPage({
+      integrations: createMockIntegrationServer(),
+      overrides: {
+        IntegrationsPage: ({ agentId }) => <div>Integrations for {agentId}</div>,
+      },
+    });
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Integrations' }));
+    expect(screen.getByText('Integrations for agent-1')).toBeInTheDocument();
+    expect(new URL(window.location.href).searchParams.get('tab')).toBe('integrations');
   });
 
   it('opens the create schedule drawer after redirecting from + Schedule', async () => {

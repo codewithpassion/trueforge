@@ -71,7 +71,7 @@ export type SelectLibraryAgentRequest = {
   agentSpec?: AgentSpec;
 };
 
-export type SettingsSection = 'models' | 'connectors' | 'skills' | 'sandbox' | 'integrations' | 'computers';
+export type SettingsSection = 'models' | 'connectors' | 'skills' | 'sandbox' | 'computers';
 
 export type HistoryAgentFilter = {
   agentId?: string;

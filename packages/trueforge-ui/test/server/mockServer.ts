@@ -3,6 +3,7 @@ import type {
   AgentSessionsServer,
   AgentUIServer,
   CatalogServer,
+  IntegrationServer,
   ScheduleServer,
 } from '@/server/types.js';
 
@@ -53,6 +54,17 @@ export function createMockScheduleServer(overrides: Partial<ScheduleServer> = {}
     deleteSchedule: unavailable,
     listScheduleRuns: async () => [],
     createScheduleRun: unavailable,
+    ...overrides,
+  };
+}
+
+export function createMockIntegrationServer(overrides: Partial<IntegrationServer> = {}): IntegrationServer {
+  return {
+    listIntegrations: async () => [],
+    createIntegration: unavailable,
+    updateIntegration: unavailable,
+    deleteIntegration: unavailable,
+    getIntegrationSetupManifest: unavailable,
     ...overrides,
   };
 }

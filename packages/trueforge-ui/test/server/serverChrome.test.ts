@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveRoutesConfig } from '@/routing/paths.js';
 import {
+  isIntegrationsChromeEnabled,
   isMetricsChromeEnabled,
   isSchedulesChromeEnabled,
   isSessionsChromeEnabled,
@@ -12,6 +13,7 @@ import {
   createMockAgentMetricsServer,
   createMockAgentSessionsServer,
   createMockCatalog,
+  createMockIntegrationServer,
   createMockScheduleServer,
 } from './mockServer.js';
 
@@ -20,6 +22,7 @@ describe('serverChrome', () => {
   const sessions = createMockAgentSessionsServer();
   const schedules = createMockScheduleServer();
   const metrics = createMockAgentMetricsServer();
+  const integrations = createMockIntegrationServer();
   const routes = resolveRoutesConfig();
 
   it('isSettingsChromeEnabled requires a catalog and explicit capability', () => {
@@ -40,11 +43,13 @@ describe('serverChrome', () => {
     ).toBe(false);
   });
 
-  it('gates sessions / schedules / metrics on port presence', () => {
+  it('gates sessions / schedules / integrations / metrics on port presence', () => {
     expect(isSessionsChromeEnabled({ sessions: null })).toBe(false);
     expect(isSessionsChromeEnabled({ sessions })).toBe(true);
     expect(isSchedulesChromeEnabled({ schedules: null })).toBe(false);
     expect(isSchedulesChromeEnabled({ schedules })).toBe(true);
+    expect(isIntegrationsChromeEnabled({ integrations: null })).toBe(false);
+    expect(isIntegrationsChromeEnabled({ integrations })).toBe(true);
     expect(isMetricsChromeEnabled({ metrics: null })).toBe(false);
     expect(isMetricsChromeEnabled({ metrics })).toBe(true);
   });

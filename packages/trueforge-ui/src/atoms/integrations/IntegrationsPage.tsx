@@ -1,22 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type ComponentType, type FormEvent } from 'react';
 import { z } from 'zod';
 
 import { cn } from '@/atoms/lib/cn.js';
 import { auiInputClass } from '@/atoms/lib/inputClasses.js';
 import { Button } from '@/atoms/primitives/Button.js';
 import { CenteredModal } from '@/atoms/primitives/CenteredModal.js';
+import { useToasterOptional } from '@/containers/ToasterContainer.js';
 import { Icon } from '@/icons/Icon.js';
-import { useCatalogServer, useOptionalScheduleServer } from '@/server/ServerContext.js';
-import type {
-  IntegrationBase,
-  IntegrationCatalogServer,
-  IntegrationNotificationRule,
-  IntegrationSetupManifest,
-} from '@/server/types.js';
+import { useAgentSessionsServer, useIntegrationServer, useOptionalScheduleServer } from '@/server/ServerContext.js';
+import type { IntegrationBase, IntegrationNotificationRule, IntegrationSetupManifest } from '@/server/types.js';
 import { getErrorMessage } from '@/utils/getErrorMessage.js';
-import { useToasterOptional } from '../ToasterContainer.js';
 import {
   completedNotificationRules,
   EMPTY_INTEGRATION_FORM,
@@ -32,6 +27,11 @@ import {
 
 /** Schedule names offered by the rule picker; one page is plenty for a datalist. */
 const SCHEDULE_PICKER_LIMIT = 25;
+
+export type IntegrationsPageProps = {
+  /** The agent whose integrations are listed and created. */
+  agentId: string;
+};
 
 const NOTIFICATION_OUTCOMES: { value: IntegrationNotificationRule['outcome']; label: string }[] = [
   { value: 'any', label: 'Every run' },
@@ -81,13 +81,14 @@ function FieldLabel({ htmlFor, children }: { htmlFor: string; children: string }
   );
 }
 
-const IntegrationSettings = () => {
-  const catalog = useCatalogServer();
-  // The section only renders when the host supplied this port (see SettingsBuilder/index.tsx).
-  const integrationCatalog: IntegrationCatalogServer | undefined = catalog.integrationCatalog;
+export function IntegrationsPage({ agentId }: IntegrationsPageProps) {
+  const integrationServer = useIntegrationServer();
+  const sessionsServer = useAgentSessionsServer();
   const scheduleServer = useOptionalScheduleServer();
   const toaster = useToasterOptional();
   const [scheduleNames, setScheduleNames] = useState<string[]>([]);
+  // Integrations are bound by agent name; the page is addressed by id.
+  const [agentName, setAgentName] = useState<string | null>(null);
 
   const [integrations, setIntegrations] = useState<IntegrationBase[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,18 +108,36 @@ const IntegrationSettings = () => {
   const selected = integrations.find(integration => integration.id === selectedId) ?? null;
   const botHandle = setup === null ? undefined : botHandleFrom(setup.manifestJson);
 
+  useEffect(() => {
+    let cancelled = false;
+    setAgentName(null);
+    void sessionsServer
+      .getAgent({ agentId })
+      .then(detail => {
+        if (!cancelled) setAgentName(detail.name);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(getErrorMessage(err, 'Could not load the agent'));
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, sessionsServer]);
+
   const refresh = useCallback(async () => {
-    if (integrationCatalog === undefined) return;
+    if (agentName === null) return;
     setLoading(true);
     setError(null);
     try {
-      setIntegrations(await integrationCatalog.listIntegrations());
+      setIntegrations(await integrationServer.listIntegrations({ agentNames: [agentName] }));
     } catch (err) {
       setError(getErrorMessage(err, 'Could not load integrations'));
     } finally {
       setLoading(false);
     }
-  }, [integrationCatalog]);
+  }, [agentName, integrationServer]);
 
   useEffect(() => {
     void refresh();
@@ -129,7 +148,7 @@ const IntegrationSettings = () => {
     if (scheduleServer === null) return;
     let cancelled = false;
     void scheduleServer
-      .listSchedules({ limit: SCHEDULE_PICKER_LIMIT })
+      .listSchedules({ limit: SCHEDULE_PICKER_LIMIT, agentIds: [agentId] })
       .then(page => {
         if (!cancelled) setScheduleNames(page.data.map(schedule => schedule.name));
       })
@@ -139,16 +158,16 @@ const IntegrationSettings = () => {
     return () => {
       cancelled = true;
     };
-  }, [scheduleServer]);
+  }, [agentId, scheduleServer]);
 
   // The manifest names the integration's own ingress URL, so it is fetched per selection.
   useEffect(() => {
-    if (integrationCatalog === undefined || selectedId === null) {
+    if (selectedId === null) {
       setSetup(null);
       return;
     }
     let cancelled = false;
-    void integrationCatalog
+    void integrationServer
       .getIntegrationSetupManifest({ id: selectedId })
       .then(manifest => {
         if (!cancelled) setSetup(manifest);
@@ -159,7 +178,7 @@ const IntegrationSettings = () => {
     return () => {
       cancelled = true;
     };
-  }, [integrationCatalog, selectedId]);
+  }, [integrationServer, selectedId]);
 
   const openDetail = (integration: IntegrationBase) => {
     setSelectedId(integration.id);
@@ -185,7 +204,7 @@ const IntegrationSettings = () => {
 
   const handleAdd = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (integrationCatalog === undefined) return;
+    if (agentName === null) return;
     const problem = validateIntegrationForm(addForm);
     if (problem !== undefined) {
       setFormError(problem);
@@ -193,10 +212,10 @@ const IntegrationSettings = () => {
     }
     setFormError(null);
     void runMutation(async () => {
-      const created = await integrationCatalog.createIntegration({
+      const created = await integrationServer.createIntegration({
         type: 'slack',
+        agentName,
         botDisplayName: addForm.botDisplayName.trim(),
-        defaultAgentName: addForm.defaultAgentName.trim(),
         allowedChannelIds: parseAllowedChannels(addForm.allowedChannels),
         allowDirectMessages: addForm.allowDirectMessages,
         approverUserIds: parseApproverUserIds(addForm.approverUserIds),
@@ -210,14 +229,14 @@ const IntegrationSettings = () => {
 
   const handleSave = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (integrationCatalog === undefined || selected === null) return;
+    if (selected === null) return;
     const problem = validateIntegrationForm(detailForm) ?? validateCredentials({ botToken, signingSecret });
     if (problem !== undefined) {
       setError(problem);
       return;
     }
     void runMutation(async () => {
-      const saved = await integrationCatalog.updateIntegration(
+      const saved = await integrationServer.updateIntegration(
         toUpdateIntegrationRequest({ id: selected.id, form: detailForm, botToken, signingSecret }),
       );
       setBotToken('');
@@ -227,9 +246,9 @@ const IntegrationSettings = () => {
   };
 
   const handleDisconnect = () => {
-    if (integrationCatalog === undefined || selected === null) return;
+    if (selected === null) return;
     void runMutation(async () => {
-      await integrationCatalog.deleteIntegration({ id: selected.id });
+      await integrationServer.deleteIntegration({ id: selected.id });
       setSelectedId(null);
     });
   };
@@ -251,8 +270,6 @@ const IntegrationSettings = () => {
     anchor.click();
     URL.revokeObjectURL(url);
   };
-
-  if (integrationCatalog === undefined) return null;
 
   const setRule = (index: number, next: IntegrationNotificationRule) => {
     setDetailForm({
@@ -349,18 +366,6 @@ const IntegrationSettings = () => {
         </p>
       </div>
       <div>
-        <FieldLabel htmlFor={`${idPrefix}-agent`}>Agent</FieldLabel>
-        <input
-          id={`${idPrefix}-agent`}
-          value={form.defaultAgentName}
-          onChange={event => {
-            setForm({ ...form, defaultAgentName: event.target.value });
-          }}
-          placeholder="support-bot"
-          className={auiInputClass('h-11')}
-        />
-      </div>
-      <div>
         <FieldLabel htmlFor={`${idPrefix}-channels`}>Allowed channels</FieldLabel>
         <input
           id={`${idPrefix}-channels`}
@@ -386,8 +391,9 @@ const IntegrationSettings = () => {
     </>
   );
 
+  let body;
   if (selected !== null) {
-    return (
+    body = (
       <>
         <div className="flex items-center gap-2">
           <Button.Ghost
@@ -589,115 +595,123 @@ const IntegrationSettings = () => {
         </div>
       </>
     );
+  } else {
+    body = (
+      <>
+        <h3 className="text-xl font-semibold tracking-tight text-text-primary">Integrations</h3>
+        <p className="mt-1 text-sm text-text-secondary">Let a Slack workspace talk to this agent.</p>
+
+        {error ? (
+          <p className="mt-3 rounded-md border border-failure-bg/30 bg-failure-bg/10 px-3 py-2 text-sm text-failure-bg">
+            {error}
+          </p>
+        ) : null}
+
+        <div className="mt-4 flex-1 overflow-y-hidden">
+          <div className="flex h-full flex-col gap-3">
+            <div className="flex justify-end">
+              <Button.Secondary
+                type="button"
+                disabled={agentName === null}
+                onClick={() => {
+                  setFormError(null);
+                  setAddForm(EMPTY_INTEGRATION_FORM);
+                  setAddOpen(true);
+                }}
+              >
+                <Icon name="plus" size="1rem" className="mr-1" />
+                Add Slack workspace
+              </Button.Secondary>
+            </div>
+
+            <div className="flex flex-1 flex-col gap-5 overflow-y-auto pb-1">
+              {loading ? <p className="py-8 text-center text-sm text-text-secondary">Loading…</p> : null}
+
+              {!loading && integrations.length > 0 ? (
+                <div className="overflow-hidden rounded-xl border border-border bg-card-bg">
+                  {integrations.map(integration => (
+                    <button
+                      key={integration.id}
+                      type="button"
+                      onClick={() => {
+                        openDetail(integration);
+                      }}
+                      className="flex min-h-16 w-full items-center gap-3 border-b border-border p-3 text-left last:border-b-0 hover:bg-ghost-button-hover/60"
+                    >
+                      <span
+                        className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary-bg"
+                        aria-hidden
+                      >
+                        <Icon name="message-square-text" className="size-4.5 text-text-primary" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium text-text-primary">
+                            {integration.botDisplayName}
+                          </span>
+                          <StatusBadge status={integration.status} />
+                        </span>
+                      </span>
+                      <Icon name="chevron-right" className="size-4 text-text-secondary" />
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {!loading && integrations.length === 0 ? (
+                <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-border p-8 text-center text-sm text-text-secondary">
+                  No integrations yet.
+                </div>
+              ) : null}
+            </div>
+
+            <CenteredModal
+              open={addOpen}
+              onOpenChange={open => {
+                setAddOpen(open);
+                if (!open) setFormError(null);
+              }}
+              title="Add a Slack workspace"
+              description="Name the bot; TrueForge then generates the Slack app manifest."
+              contentSized
+              className="md:max-w-xl"
+            >
+              <form onSubmit={handleAdd}>
+                <div className="flex flex-col gap-4 px-5 py-5">
+                  {settingsFields(addForm, setAddForm, 'add')}
+                  {formError ? <p className="text-sm text-failure-bg">{formError}</p> : null}
+                </div>
+                <footer className="flex justify-end gap-2 border-t border-border px-5 py-4">
+                  <Button.Ghost
+                    type="button"
+                    onClick={() => {
+                      setAddOpen(false);
+                    }}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </Button.Ghost>
+                  <Button.Primary type="submit" disabled={busy}>
+                    Create
+                  </Button.Primary>
+                </footer>
+              </form>
+            </CenteredModal>
+          </div>
+        </div>
+      </>
+    );
   }
 
   return (
-    <>
-      <h3 className="text-xl font-semibold tracking-tight text-text-primary">Integrations</h3>
-      <p className="mt-1 text-sm text-text-secondary">Let a Slack workspace talk to one of your agents.</p>
-
-      {error ? (
-        <p className="mt-3 rounded-md border border-failure-bg/30 bg-failure-bg/10 px-3 py-2 text-sm text-failure-bg">
-          {error}
-        </p>
-      ) : null}
-
-      <div className="mt-4 flex-1 overflow-y-hidden">
-        <div className="flex h-full flex-col gap-3">
-          <div className="flex justify-end">
-            <Button.Secondary
-              type="button"
-              onClick={() => {
-                setFormError(null);
-                setAddForm(EMPTY_INTEGRATION_FORM);
-                setAddOpen(true);
-              }}
-            >
-              <Icon name="plus" size="1rem" className="mr-1" />
-              Add Slack workspace
-            </Button.Secondary>
-          </div>
-
-          <div className="flex flex-1 flex-col gap-5 overflow-y-auto pb-1">
-            {loading ? <p className="py-8 text-center text-sm text-text-secondary">Loading…</p> : null}
-
-            {!loading && integrations.length > 0 ? (
-              <div className="overflow-hidden rounded-xl border border-border bg-card-bg">
-                {integrations.map(integration => (
-                  <button
-                    key={integration.id}
-                    type="button"
-                    onClick={() => {
-                      openDetail(integration);
-                    }}
-                    className="flex min-h-16 w-full items-center gap-3 border-b border-border p-3 text-left last:border-b-0 hover:bg-ghost-button-hover/60"
-                  >
-                    <span
-                      className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary-bg"
-                      aria-hidden
-                    >
-                      <Icon name="message-square-text" className="size-4.5 text-text-primary" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2">
-                        <span className="truncate text-sm font-medium text-text-primary">
-                          {integration.botDisplayName}
-                        </span>
-                        <StatusBadge status={integration.status} />
-                      </span>
-                      <span className="block truncate text-xs text-text-secondary">
-                        Answers as {integration.defaultAgentName}
-                      </span>
-                    </span>
-                    <Icon name="chevron-right" className="size-4 text-text-secondary" />
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            {!loading && integrations.length === 0 ? (
-              <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-border p-8 text-center text-sm text-text-secondary">
-                No integrations yet.
-              </div>
-            ) : null}
-          </div>
-
-          <CenteredModal
-            open={addOpen}
-            onOpenChange={open => {
-              setAddOpen(open);
-              if (!open) setFormError(null);
-            }}
-            title="Add a Slack workspace"
-            description="Name the bot and pick its agent; TrueForge then generates the Slack app manifest."
-            contentSized
-            className="md:max-w-xl"
-          >
-            <form onSubmit={handleAdd}>
-              <div className="flex flex-col gap-4 px-5 py-5">
-                {settingsFields(addForm, setAddForm, 'add')}
-                {formError ? <p className="text-sm text-failure-bg">{formError}</p> : null}
-              </div>
-              <footer className="flex justify-end gap-2 border-t border-border px-5 py-4">
-                <Button.Ghost
-                  type="button"
-                  onClick={() => {
-                    setAddOpen(false);
-                  }}
-                  disabled={busy}
-                >
-                  Cancel
-                </Button.Ghost>
-                <Button.Primary type="submit" disabled={busy}>
-                  Create
-                </Button.Primary>
-              </footer>
-            </form>
-          </CenteredModal>
-        </div>
-      </div>
-    </>
+    <div className="flex h-full min-h-0 flex-col bg-primary-bg px-6 py-4">
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-210 flex-col">{body}</div>
+    </div>
   );
-};
+}
 
-export default IntegrationSettings;
+declare module '../../theme/SlotsProvider.js' {
+  interface AtomSlots {
+    IntegrationsPage: ComponentType<IntegrationsPageProps>;
+  }
+}

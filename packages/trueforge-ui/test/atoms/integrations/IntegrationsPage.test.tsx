@@ -2,21 +2,28 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import IntegrationSettings from '@/containers/SettingsBuilder/IntegrationSettings.js';
+import { IntegrationsPage } from '@/atoms/integrations/IntegrationsPage.js';
 import { ServerProvider } from '@/server/ServerContext.js';
-import type { AgentUIServer, IntegrationBase, IntegrationCatalogServer, Schedule } from '@/server/types.js';
-import { createMockAgentUIServer, createMockCatalog, createMockScheduleServer } from '../../server/mockServer.js';
-
-async function unavailable(): Promise<never> {
-  throw new Error('Unexpected integration catalog call');
-}
+import type {
+  AgentUIServer,
+  IntegrationBase,
+  IntegrationServer,
+  ListIntegrationsParams,
+  Schedule,
+} from '@/server/types.js';
+import {
+  createMockAgentSessionsServer,
+  createMockAgentUIServer,
+  createMockIntegrationServer,
+  createMockScheduleServer,
+} from '../../server/mockServer.js';
 
 const PENDING: IntegrationBase = {
   id: 'int-1',
   type: 'slack',
   status: 'pending',
   botDisplayName: 'release-bot',
-  defaultAgentName: 'support-bot',
+  agentName: 'support-bot',
   allowedChannelIds: ['C0GENERAL'],
   allowDirectMessages: true,
   approverUserIds: [],
@@ -48,30 +55,39 @@ function schedule(name: string): Schedule {
 }
 
 function renderSection(
-  catalog: Partial<IntegrationCatalogServer> & { listIntegrations: () => Promise<IntegrationBase[]> },
+  port: Partial<IntegrationServer> & { listIntegrations: (req: ListIntegrationsParams) => Promise<IntegrationBase[]> },
   serverOverrides: Partial<AgentUIServer> = {},
 ) {
-  const integrationCatalog: IntegrationCatalogServer = {
-    createIntegration: unavailable,
-    updateIntegration: unavailable,
-    deleteIntegration: unavailable,
+  const integrations = createMockIntegrationServer({
     getIntegrationSetupManifest: async () => ({
       requestUrl: 'https://trueforge.test/api/v1/integrations/int-1/events',
       interactionsRequestUrl: 'https://trueforge.test/api/v1/integrations/int-1/interactions',
       manifestJson: MANIFEST_JSON,
       createAppUrl: 'https://api.slack.com/apps?new_app=1',
     }),
-    ...catalog,
-  };
+    ...port,
+  });
   const server = createMockAgentUIServer({
-    catalog: createMockCatalog({ integrationCatalog }),
+    integrations,
+    sessions: createMockAgentSessionsServer({
+      getAgent: async ({ agentId }) => ({ agentId, name: 'support-bot', agentSpec: { model: { name: 'm' } } }),
+    }),
     ...serverOverrides,
   });
   return render(
     <ServerProvider server={server}>
-      <IntegrationSettings />
+      <IntegrationsPage agentId="agent-1" />
     </ServerProvider>,
   );
+}
+
+/** The dialog opens once the page has resolved its agent's name. */
+async function openAddDialog() {
+  const add = await screen.findByRole('button', { name: /Add Slack workspace/ });
+  await waitFor(() => {
+    expect(add).toBeEnabled();
+  });
+  fireEvent.click(add);
 }
 
 beforeAll(() => {
@@ -84,7 +100,7 @@ beforeAll(() => {
   };
 });
 
-describe('IntegrationSettings', () => {
+describe('IntegrationsPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -100,24 +116,39 @@ describe('IntegrationSettings', () => {
 
     expect(await screen.findByText('Waiting for the Slack app')).toBeInTheDocument();
     expect(screen.getByText('Connected')).toBeInTheDocument();
-    expect(screen.getAllByText('Answers as support-bot')).toHaveLength(2);
   });
 
-  it('creates a pending integration from a bot name and an agent alone', async () => {
+  it("lists only the page agent's integrations, by the name it resolved from the id", async () => {
+    const listIntegrations = vi.fn(async (_req: ListIntegrationsParams) => [PENDING]);
+    renderSection({ listIntegrations });
+
+    expect(await screen.findByRole('button', { name: /release-bot/ })).toBeInTheDocument();
+    expect(listIntegrations).toHaveBeenCalledWith({ agentNames: ['support-bot'] });
+  });
+
+  it('offers no agent picker: the page agent is the only owner', async () => {
+    renderSection({ listIntegrations: async () => [] });
+
+    await openAddDialog();
+
+    expect(screen.getByLabelText('Bot name')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Agent')).not.toBeInTheDocument();
+  });
+
+  it('creates a pending integration for the page agent from a bot name alone', async () => {
     const createIntegration = vi.fn(async () => PENDING);
     renderSection({ listIntegrations: async () => [], createIntegration });
 
-    fireEvent.click(await screen.findByRole('button', { name: /Add Slack workspace/ }));
+    await openAddDialog();
     fireEvent.change(screen.getByLabelText('Bot name'), { target: { value: 'release-bot' } });
-    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'support-bot' } });
     fireEvent.change(screen.getByLabelText('Allowed channels'), { target: { value: 'C0GENERAL' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => {
       expect(createIntegration).toHaveBeenCalledWith({
         type: 'slack',
+        agentName: 'support-bot',
         botDisplayName: 'release-bot',
-        defaultAgentName: 'support-bot',
         allowedChannelIds: ['C0GENERAL'],
         allowDirectMessages: true,
         approverUserIds: [],
@@ -130,9 +161,8 @@ describe('IntegrationSettings', () => {
     const createIntegration = vi.fn(async () => PENDING);
     renderSection({ listIntegrations: async () => [], createIntegration });
 
-    fireEvent.click(await screen.findByRole('button', { name: /Add Slack workspace/ }));
+    await openAddDialog();
     fireEvent.change(screen.getByLabelText('Bot name'), { target: { value: 'TrueForge Bot' } });
-    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'support-bot' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => {
@@ -149,9 +179,8 @@ describe('IntegrationSettings', () => {
       },
     });
 
-    fireEvent.click(await screen.findByRole('button', { name: /Add Slack workspace/ }));
+    await openAddDialog();
     fireEvent.change(screen.getByLabelText('Bot name'), { target: { value: '???' } });
-    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'support-bot' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     expect(await screen.findByText(/letter or a digit/)).toBeInTheDocument();
@@ -214,7 +243,6 @@ describe('IntegrationSettings', () => {
       expect(updateIntegration).toHaveBeenCalledWith({
         id: 'int-1',
         botDisplayName: 'release-bot',
-        defaultAgentName: 'support-bot',
         allowedChannelIds: ['C0GENERAL'],
         allowDirectMessages: true,
         approverUserIds: [],
@@ -248,7 +276,6 @@ describe('IntegrationSettings', () => {
       expect(updateIntegration).toHaveBeenCalledWith({
         id: 'int-1',
         botDisplayName: 'release-bot',
-        defaultAgentName: 'support-bot',
         allowedChannelIds: ['C0GENERAL', 'C0RELEASES'],
         allowDirectMessages: true,
         approverUserIds: [],
@@ -287,7 +314,7 @@ describe('IntegrationSettings', () => {
   });
 });
 
-describe('IntegrationSettings approvals and notifications', () => {
+describe('IntegrationsPage approvals and notifications', () => {
   const WITH_RULE: IntegrationBase = {
     ...CONNECTED,
     approverUserIds: ['U0ADMIN'],
@@ -374,14 +401,11 @@ describe('IntegrationSettings approvals and notifications', () => {
     expect(updateIntegration).not.toHaveBeenCalled();
   });
 
-  it('offers the schedules the host can list, without demanding one of them', async () => {
+  it("offers the page agent's schedules, without demanding one of them", async () => {
+    const listSchedules = vi.fn(async () => ({ data: [schedule('nightly-report'), schedule('weekly-digest')] }));
     renderSection(
       { listIntegrations: async () => [CONNECTED] },
-      {
-        schedules: createMockScheduleServer({
-          listSchedules: async () => ({ data: [schedule('nightly-report'), schedule('weekly-digest')] }),
-        }),
-      },
+      { schedules: createMockScheduleServer({ listSchedules }) },
     );
 
     fireEvent.click(await screen.findByRole('button', { name: /release-bot/ }));
@@ -389,6 +413,7 @@ describe('IntegrationSettings approvals and notifications', () => {
 
     const options = await screen.findAllByRole('option', { hidden: true });
     expect(options.map(option => option.getAttribute('value'))).toContain('nightly-report');
+    expect(listSchedules).toHaveBeenCalledWith(expect.objectContaining({ agentIds: ['agent-1'] }));
     // Still a text box, so a schedule the host cannot list can be named by hand.
     expect(screen.getByLabelText('Schedule')).toHaveAttribute('list', 'integration-schedule-names');
   });

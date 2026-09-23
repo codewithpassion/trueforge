@@ -102,5 +102,6 @@ describe('sessionShareUrl', () => {
     assert.equal(libraryAgentTabFromSearch(readSessionShareSearch('?tab=code'), 'agent-1'), 'code');
     assert.equal(libraryAgentTabFromSearch(readSessionShareSearch('?tab=metrics'), 'agent-1'), 'metrics');
     assert.equal(libraryAgentTabFromSearch(readSessionShareSearch('?tab=schedules'), 'agent-1'), 'schedules');
+    assert.equal(libraryAgentTabFromSearch(readSessionShareSearch('?tab=integrations'), 'agent-1'), 'integrations');
   });
 });

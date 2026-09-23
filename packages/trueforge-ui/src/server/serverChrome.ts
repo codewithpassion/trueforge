@@ -1,5 +1,11 @@
 import type { ResolvedRoutes } from '../routing/types.js';
-import type { AgentMetricsServer, AgentSessionsServer, CatalogServer, ScheduleServer } from './types.js';
+import type {
+  AgentMetricsServer,
+  AgentSessionsServer,
+  CatalogServer,
+  IntegrationServer,
+  ScheduleServer,
+} from './types.js';
 
 /**
  * Whether Settings chrome is available: sidebar button and `/settings` route.
@@ -23,6 +29,15 @@ export function isSessionsChromeEnabled({ sessions }: { sessions: AgentSessionsS
 /** Schedules page + library schedules column. */
 export function isSchedulesChromeEnabled({ schedules }: { schedules: ScheduleServer | null | undefined }): boolean {
   return schedules != null;
+}
+
+/** Agent-details Integrations tab (no top-level path). */
+export function isIntegrationsChromeEnabled({
+  integrations,
+}: {
+  integrations: IntegrationServer | null | undefined;
+}): boolean {
+  return integrations != null;
 }
 
 /** Agent-details Metrics tab (no top-level path). */

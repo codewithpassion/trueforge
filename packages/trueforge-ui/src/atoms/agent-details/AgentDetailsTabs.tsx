@@ -8,6 +8,7 @@ const tabs: Array<{ id: AgentDetailsTab; label: string; icon: string }> = [
   { id: 'overview', label: 'Overview', icon: 'info' },
   { id: 'sessions', label: 'Sessions', icon: 'message-square-text' },
   { id: 'schedules', label: 'Schedules', icon: 'calendar-clock' },
+  { id: 'integrations', label: 'Integrations', icon: 'link' },
   { id: 'code', label: 'Use In Code', icon: 'code' },
   { id: 'metrics', label: 'Metrics', icon: 'chart' },
 ];
@@ -17,13 +18,19 @@ export function AgentDetailsTabs({
   onTabChange,
   showMetrics = false,
   showSchedules = false,
+  showIntegrations = false,
   end,
 }: AgentDetailsTabsProps) {
   return (
     <div className="flex shrink-0 items-center border-b border-border bg-primary-bg px-3">
       <div role="tablist" aria-label="Agent details" className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
         {tabs
-          .filter(tab => (tab.id !== 'metrics' || showMetrics) && (tab.id !== 'schedules' || showSchedules))
+          .filter(
+            tab =>
+              (tab.id !== 'metrics' || showMetrics) &&
+              (tab.id !== 'schedules' || showSchedules) &&
+              (tab.id !== 'integrations' || showIntegrations),
+          )
           .map(tab => (
             <button
               key={tab.id}

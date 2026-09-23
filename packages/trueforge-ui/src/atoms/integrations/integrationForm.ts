@@ -9,7 +9,6 @@ import type { IntegrationBase, IntegrationNotificationRule, UpdateIntegrationReq
 export interface IntegrationFormDraft {
   /** Name the bot takes in the channel; also the name of the app the manifest creates. */
   botDisplayName: string;
-  defaultAgentName: string;
   /** Comma or newline separated; an empty list allows no channel. */
   allowedChannels: string;
   allowDirectMessages: boolean;
@@ -21,7 +20,6 @@ export interface IntegrationFormDraft {
 
 export const EMPTY_INTEGRATION_FORM: IntegrationFormDraft = {
   botDisplayName: '',
-  defaultAgentName: '',
   allowedChannels: '',
   allowDirectMessages: true,
   approverUserIds: '',
@@ -46,7 +44,6 @@ export function parseAllowedChannels(value: string): string[] {
 export function toIntegrationForm(integration: IntegrationBase): IntegrationFormDraft {
   return {
     botDisplayName: integration.botDisplayName,
-    defaultAgentName: integration.defaultAgentName,
     allowedChannels: integration.allowedChannelIds.join(', '),
     allowDirectMessages: integration.allowDirectMessages,
     approverUserIds: integration.approverUserIds.join(', '),
@@ -79,9 +76,6 @@ export function validateIntegrationForm(form: IntegrationFormDraft): string | un
   }
   if (botName.length > BOT_NAME_MAX) {
     return `The bot name may be at most ${String(BOT_NAME_MAX)} characters.`;
-  }
-  if (form.defaultAgentName.trim().length === 0) {
-    return 'An agent name is required.';
   }
   if (parseAllowedChannels(form.allowedChannels).length === 0 && !form.allowDirectMessages) {
     return 'Allow direct messages, or list at least one channel, or the bot can never answer.';
@@ -119,7 +113,6 @@ export function toUpdateIntegrationRequest(input: {
   const base = {
     id: input.id,
     botDisplayName: input.form.botDisplayName.trim(),
-    defaultAgentName: input.form.defaultAgentName.trim(),
     allowedChannelIds: parseAllowedChannels(input.form.allowedChannels),
     allowDirectMessages: input.form.allowDirectMessages,
     approverUserIds: parseApproverUserIds(input.form.approverUserIds),

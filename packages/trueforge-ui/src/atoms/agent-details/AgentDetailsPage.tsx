@@ -5,10 +5,15 @@ import { useSessionShareSearch } from '../../hooks/useSessionShareSearch.js';
 import {
   useOptionalAgentMetricsServer,
   useOptionalAgentSessionsServer,
+  useOptionalIntegrationServer,
   useOptionalScheduleServer,
 } from '../../server/ServerContext.js';
 import { useShellMode } from '../../server/ShellModeContext.js';
-import { isMetricsChromeEnabled, isSchedulesChromeEnabled } from '../../server/serverChrome.js';
+import {
+  isIntegrationsChromeEnabled,
+  isMetricsChromeEnabled,
+  isSchedulesChromeEnabled,
+} from '../../server/serverChrome.js';
 import type { AgentDetail, CodeSnippet } from '../../server/types.js';
 import { useSlot } from '../../theme/SlotsProvider.js';
 import { defaultMetricsTimeRange, libraryAgentTabFromSearch } from '../../utils/sessionShareUrl.js';
@@ -19,14 +24,18 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
   const sessionsServer = useOptionalAgentSessionsServer();
   const metricsServer = useOptionalAgentMetricsServer();
   const scheduleServer = useOptionalScheduleServer();
+  const integrationServer = useOptionalIntegrationServer();
   const shell = useShellMode();
   const share = useSessionShareSearch();
   const { updateShareSearch } = share;
   const requestedTab = libraryAgentTabFromSearch(share, agentId);
   const showMetrics = isMetricsChromeEnabled({ metrics: metricsServer });
   const showSchedules = isSchedulesChromeEnabled({ schedules: scheduleServer });
+  const showIntegrations = isIntegrationsChromeEnabled({ integrations: integrationServer });
   const activeTab =
-    (requestedTab === 'metrics' && !showMetrics) || (requestedTab === 'schedules' && !showSchedules)
+    (requestedTab === 'metrics' && !showMetrics) ||
+    (requestedTab === 'schedules' && !showSchedules) ||
+    (requestedTab === 'integrations' && !showIntegrations)
       ? 'overview'
       : requestedTab;
   const AgentDetailsHeader = useSlot('AgentDetailsHeader');
@@ -35,6 +44,7 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
   const AgentOverview = useSlot('AgentOverview');
   const AgentSessions = useSlot('AgentSessions');
   const SchedulesPage = useSlot('SchedulesPage');
+  const IntegrationsPage = useSlot('IntegrationsPage');
   const AgentMetrics = useSlot('AgentMetrics');
   const AgentMetricsTimeRangeFilter = useSlot('AgentMetricsTimeRangeFilter');
   const AgentCodeSnippets = useSlot('AgentCodeSnippets');
@@ -128,6 +138,8 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
     content = <AgentSessions agentId={agentId} />;
   } else if (activeTab === 'schedules') {
     content = <SchedulesPage agentId={agentId} />;
+  } else if (activeTab === 'integrations') {
+    content = <IntegrationsPage agentId={agentId} />;
   } else if (activeTab === 'metrics') {
     content = (
       <AgentMetrics
@@ -158,6 +170,7 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
           activeTab={activeTab}
           showMetrics={showMetrics}
           showSchedules={showSchedules}
+          showIntegrations={showIntegrations}
           end={
             activeTab === 'metrics' ? (
               <AgentMetricsTimeRangeFilter timeRange={metricsTimeRange} onTimeRangeChange={setMetricsTimeRange} />

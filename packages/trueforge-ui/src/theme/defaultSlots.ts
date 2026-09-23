@@ -63,6 +63,7 @@ import { DraftComposerLeftSection, DraftComposerRightSection } from '../atoms/dr
 import { CatalogRow, ConnectorConnectButton, DraftCompositeSelector } from '../atoms/draft/DraftCompositeSelector.js';
 import { DraftModelSelector } from '../atoms/draft/DraftModelSelector.js';
 import { HistoryLoader } from '../atoms/HistoryLoader.js';
+import type { IntegrationsPageProps } from '../atoms/integrations/IntegrationsPage.js';
 import { Markdown } from '../atoms/Markdown.js';
 import { MessageActionBar } from '../atoms/MessageActionBar.js';
 import { MessageErrorBanner } from '../atoms/MessageErrorBanner.js';
@@ -118,6 +119,10 @@ const AgentCodeSnippets: ComponentType<AgentCodeSnippetsProps> = lazy(
 const SchedulesPage: ComponentType<SchedulesPageProps> = lazy(async () => {
   const mod = await import('../atoms/schedules/SchedulesPage.js');
   return { default: mod.SchedulesPage };
+});
+const IntegrationsPage: ComponentType<IntegrationsPageProps> = lazy(async () => {
+  const mod = await import('../atoms/integrations/IntegrationsPage.js');
+  return { default: mod.IntegrationsPage };
 });
 const AgentSessionEventTimeline: ComponentType<AgentSessionEventTimelineProps> = lazy(async () => {
   const mod = await import('../atoms/agent-details/AgentSessionEventTimeline.js');
@@ -239,6 +244,7 @@ export const defaultSlots = {
   AgentCodeBlock,
   SchedulesPage,
   SchedulesButton,
+  IntegrationsPage,
   SaveAgentButton,
   SaveAgentForm,
   SelectAgentEmptyState,

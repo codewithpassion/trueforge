@@ -11,13 +11,12 @@ import {
   validateCredentials,
   validateIntegrationForm,
   type IntegrationFormDraft,
-} from '@/containers/SettingsBuilder/integrationForm.js';
+} from '@/atoms/integrations/integrationForm.js';
 import type { IntegrationBase } from '@/server/types.js';
 
 function form(overrides: Partial<IntegrationFormDraft> = {}): IntegrationFormDraft {
   return {
     botDisplayName: 'release-bot',
-    defaultAgentName: 'support-bot',
     allowedChannels: 'C0GENERAL, C0RELEASES',
     allowDirectMessages: true,
     approverUserIds: 'U0ADMIN',
@@ -37,13 +36,13 @@ describe('parseAllowedChannels', () => {
 });
 
 describe('toIntegrationForm', () => {
-  it('fills the form from an integration and never prefills a credential', () => {
+  it('fills the form from an integration, leaving out the fixed agent and any credential', () => {
     const integration: IntegrationBase = {
       id: 'int-1',
       type: 'slack',
       status: 'connected',
       botDisplayName: 'release-bot',
-      defaultAgentName: 'support-bot',
+      agentName: 'support-bot',
       allowedChannelIds: ['C0GENERAL', 'C0RELEASES'],
       allowDirectMessages: false,
       approverUserIds: ['U0ADMIN', 'U0LEAD'],
@@ -53,7 +52,6 @@ describe('toIntegrationForm', () => {
 
     expect(toIntegrationForm(integration)).toEqual({
       botDisplayName: 'release-bot',
-      defaultAgentName: 'support-bot',
       allowedChannels: 'C0GENERAL, C0RELEASES',
       allowDirectMessages: false,
       approverUserIds: 'U0ADMIN, U0LEAD',
@@ -86,10 +84,6 @@ describe('validateIntegrationForm', () => {
   // it can without duplicating them, and surfaces the server's message for the rest.
   it.each(['???', '---', 'slackbot'])('leaves %p for the server to refuse', botDisplayName => {
     expect(validateIntegrationForm(form({ botDisplayName }))).toBeUndefined();
-  });
-
-  it('asks for an agent', () => {
-    expect(validateIntegrationForm(form({ defaultAgentName: ' ' }))).toBe('An agent name is required.');
   });
 
   it('refuses a configuration where the bot can never answer', () => {
@@ -155,7 +149,6 @@ describe('toUpdateIntegrationRequest', () => {
     expect(request).toEqual({
       id: 'int-1',
       botDisplayName: 'release-bot',
-      defaultAgentName: 'support-bot',
       allowedChannelIds: ['C0GENERAL', 'C0RELEASES'],
       allowDirectMessages: true,
       approverUserIds: ['U0ADMIN'],
@@ -175,7 +168,7 @@ describe('toUpdateIntegrationRequest', () => {
     expect(request.auth).toEqual({ botToken: 'xoxb-1', signingSecret: 'secret' });
   });
 
-  it('never sends a workspace or bot user id: the server reads those from Slack', () => {
+  it('never sends a workspace, bot user id or agent: the server reads the first two from Slack and the agent is fixed', () => {
     const request = toUpdateIntegrationRequest({
       id: 'int-1',
       form: form(),
@@ -189,7 +182,6 @@ describe('toUpdateIntegrationRequest', () => {
       'approverUserIds',
       'auth',
       'botDisplayName',
-      'defaultAgentName',
       'id',
       'notificationRules',
     ]);

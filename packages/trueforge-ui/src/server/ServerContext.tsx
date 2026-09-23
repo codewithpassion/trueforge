@@ -8,6 +8,7 @@ import type {
   AgentSessionsServer,
   AgentUIServer,
   CatalogServer,
+  IntegrationServer,
   PermissionsServer,
   ScheduleServer,
 } from './types.js';
@@ -133,6 +134,18 @@ export function useScheduleServer(): ScheduleServer {
 
 export function useOptionalScheduleServer(): ScheduleServer | null {
   return useOptionalServer()?.schedules ?? null;
+}
+
+export function useIntegrationServer(): IntegrationServer {
+  const integrations = useServer().integrations;
+  if (integrations == null) {
+    throw new Error('useIntegrationServer requires AgentUIServer.integrations.');
+  }
+  return integrations;
+}
+
+export function useOptionalIntegrationServer(): IntegrationServer | null {
+  return useOptionalServer()?.integrations ?? null;
 }
 
 export function useOptionalPermissionsServer(): PermissionsServer | null {

@@ -7,13 +7,7 @@ import { DraftCatalogProvider } from '@/atoms/draft/DraftCatalogProvider.js';
 import TruefoundrySettingsBuilder from '@/containers/SettingsBuilder/index.js';
 import { ServerProvider } from '@/server/ServerContext.js';
 import { ShellModeProvider, useShellMode } from '@/server/ShellModeContext.js';
-import type {
-  AgentUIServer,
-  ComputerCatalogServer,
-  IntegrationCatalogServer,
-  SandboxCatalogServer,
-  SkillCatalogServer,
-} from '@/server/types.js';
+import type { AgentUIServer, ComputerCatalogServer, SandboxCatalogServer, SkillCatalogServer } from '@/server/types.js';
 import { createMockAgentUIServer, createMockCatalog } from '../../server/mockServer.js';
 
 vi.mock('@/containers/SettingsBuilder/ModelSettings.js', () => ({
@@ -30,10 +24,6 @@ vi.mock('@/containers/SettingsBuilder/SkillSettings.js', () => ({
 
 vi.mock('@/containers/SettingsBuilder/SandboxSettings.js', () => ({
   default: () => <div>Sandbox settings content</div>,
-}));
-
-vi.mock('@/containers/SettingsBuilder/IntegrationSettings.js', () => ({
-  default: () => <div>Integration settings content</div>,
 }));
 
 vi.mock('@/containers/SettingsBuilder/ComputerSettings.js', () => ({
@@ -57,14 +47,6 @@ const sandboxCatalog: SandboxCatalogServer = {
   updateSandboxProvider: unavailable,
 };
 
-const integrationCatalog: IntegrationCatalogServer = {
-  listIntegrations: async () => [],
-  createIntegration: unavailable,
-  updateIntegration: unavailable,
-  deleteIntegration: unavailable,
-  getIntegrationSetupManifest: unavailable,
-};
-
 const computerCatalog: ComputerCatalogServer = {
   listComputers: async () => [],
   createComputer: unavailable,
@@ -83,7 +65,6 @@ function createServer(
     catalog?: boolean;
     skills?: boolean;
     sandbox?: boolean;
-    integrations?: boolean;
     computers?: boolean;
   } = {},
 ): AgentUIServer {
@@ -94,7 +75,6 @@ function createServer(
     catalog: createMockCatalog({
       ...(options.skills ? { skillCatalog } : {}),
       ...(options.sandbox ? { sandboxCatalog } : {}),
-      ...(options.integrations ? { integrationCatalog } : {}),
       ...(options.computers ? { computerCatalog } : {}),
     }),
   });
@@ -158,14 +138,13 @@ describe('TruefoundrySettingsBuilder', () => {
     expect(screen.getByRole('button', { name: 'Connectors' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Skills' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sandbox' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Integrations' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Computers' })).not.toBeInTheDocument();
     expect(screen.queryByText('Computer settings content')).not.toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText('Model settings content')).toBeInTheDocument();
     });
 
-    rerender(<TestShell server={createServer({ skills: true, sandbox: true, integrations: true, computers: true })} />);
+    rerender(<TestShell server={createServer({ skills: true, sandbox: true, computers: true })} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Skills' }));
     await waitFor(() => {
@@ -175,11 +154,6 @@ describe('TruefoundrySettingsBuilder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sandbox providers' }));
     await waitFor(() => {
       expect(screen.getByText('Sandbox settings content')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
-    await waitFor(() => {
-      expect(screen.getByText('Integration settings content')).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Computers' }));
@@ -207,22 +181,6 @@ describe('TruefoundrySettingsBuilder', () => {
       expect(screen.getByRole('button', { name: 'Models' })).toHaveAttribute('aria-current', 'page');
     });
     expect(screen.queryByRole('button', { name: 'Computers' })).not.toBeInTheDocument();
-  });
-
-  it('sends the integrations section back to models when its catalog disappears', async () => {
-    const { rerender } = render(<TestShell server={createServer({ integrations: true })} />);
-    await openSettings();
-    fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
-    await waitFor(() => {
-      expect(screen.getByText('Integration settings content')).toBeInTheDocument();
-    });
-
-    rerender(<TestShell server={createServer()} />);
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Models' })).toHaveAttribute('aria-current', 'page');
-    });
-    expect(screen.queryByRole('button', { name: 'Integrations' })).not.toBeInTheDocument();
   });
 
   it('resets a stale optional section when its catalog disappears', async () => {
