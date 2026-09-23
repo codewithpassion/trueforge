@@ -124,6 +124,42 @@ The unit sets `KillMode=control-group` on purpose. Without it, stopping the serv
 daemon only, and the commands it started stay running, reparented to PID 1, with nobody to
 collect them.
 
+### Desktop
+
+With `--desktop`, or after `enroll --desktop`, the daemon runs a virtual X display that agents can
+screenshot and drive and that a human can take over. It runs Xvfb at 1280×800 on `:99` with
+`-nolisten tcp` and a fresh cookie in `<state-dir>/desktop/Xauthority`, plus openbox, and
+restarts either with backoff. Every command gets `DISPLAY` and `XAUTHORITY`, so an agent starts
+`xterm &` or `chromium <url> &` itself. The desktop is Linux only.
+
+On bare metal it needs Xvfb, openbox, xterm, Chromium, xdotool and xclip
+(`sudo apt-get install -y xvfb openbox xterm chromium xdotool xclip`); `install.sh --desktop`
+checks for them. The hello tells the server `desktop: true` only once the display answers, the
+tools resolve and Chromium's sandbox self-test passes. Otherwise it sends `desktop: false` and a
+reason. Chromium's sandbox is never switched off.
+
+The desktop image adds all of that to the same binary. Chromium's sandbox needs user namespaces,
+which Docker's default seccomp profile refuses, so run it with the committed profile:
+
+```sh
+docker run -d --restart unless-stopped \
+  --name trueforge-computer-desktop \
+  --security-opt seccomp=packaging/desktop/seccomp.json \
+  -e TRUEFORGE_URL=https://trueforge.example.com \
+  -e TRUEFORGE_ENROLL_CODE=<code> \
+  -v trueforge-computer-desktop:/var/lib/trueforge-computer \
+  trueforge-computer-desktop:local
+```
+
+The profile is Docker's default plus `clone` and `unshare` without `CAP_SYS_ADMIN`. Without it the
+daemon still runs commands, but reports the desktop as unavailable. The image's `chromium` is a
+wrapper that keeps one profile in `<state-dir>/desktop/chromium-profile`, so logins survive
+restarts, and a managed policy turns the password manager off. Anything running as this user can
+read that profile, including every agent's `exec`.
+
+`pnpm --filter @truefoundry/trueforge-computer docker:build:desktop` builds the image, and
+`test:desktop-image` runs the desktop tests inside it.
+
 ## Commands
 
 | Command                   | What it does                                                                |
@@ -146,6 +182,7 @@ collect them.
 | `--name`       | the machine's own        | Hostname to report instead of this machine's |
 | `--state-dir`  | see below                | Where the credential and config are kept     |
 | `--log-format` | `text`                   | `text` or `json`                             |
+| `--desktop`    | off                      | Turn the desktop on for every later `run`    |
 
 `run`:
 
@@ -170,6 +207,8 @@ collect them.
 | `--audit-max-bytes`  | `8388608`                | Size at which the audit log rotates                                            |
 | `--audit-keep`       | `3`                      | Rotated audit logs to keep                                                     |
 | `--log-format`       | `json`                   | `json` or `text`                                                               |
+| `--desktop`          | the enrolled setting     | Run the virtual desktop (Linux only). See [Desktop](#desktop)                  |
+| `--desktop-display`  | `99`                     | X display number the desktop takes                                             |
 
 `status` also takes `--state-dir` and `--json`.
 

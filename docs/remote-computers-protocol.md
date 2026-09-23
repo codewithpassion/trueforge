@@ -3,7 +3,11 @@
 Treat it as frozen. The server half lives in `packages/trueforge/src/computers/protocol.ts`, which is
 the canonical owner of every constant, schema and close code below. The Go client in
 `packages/trueforge-computer` builds against this document. `hello.workdir` was added while no client
-had shipped; the next shape change breaks deployed clients and needs a new `protocol_version`.
+had shipped; the next shape change breaks deployed clients and needs a new `protocol_version`. The one
+exception is additive and capability-gated: a new op may join v1 when a new `hello.capabilities` field,
+defaulting to false when absent, says the client implements it, and the server sends the op to no
+client that did not say so. An old client never advertises it, and would answer `unknown_op` anyway.
+The desktop ops (section 7) arrived this way.
 
 ## 1. Enrollment
 
@@ -92,7 +96,13 @@ sharing one credential evict each other forever.
   "version": "0.1.0",
   "run_as_user": "trueforge",
   "workdir": "/var/lib/trueforge-computer/sessions",
-  "capabilities": { "python3": true, "git": true, "skills": true }
+  "capabilities": {
+    "python3": true,
+    "git": true,
+    "skills": true,
+    "desktop": false,
+    "desktop_unavailable_reason": null
+  }
 }
 ```
 
@@ -113,6 +123,9 @@ succeeds. The server mounts skills on a computer only when it is true, and sends
 when it is false — an agent with no skills still runs its commands there. The server does not
 re-derive the answer from `python3` and `git`: only the machine can import a package. The field
 defaults to false when a client omits it, which is why it did not need a new `protocol_version`.
+
+`capabilities.desktop` and `capabilities.desktop_unavailable_reason` belong to the desktop extension
+(section 7). A client that omits them has no desktop.
 
 ### Requests (server → client)
 
@@ -202,7 +215,7 @@ narrows it.
 | `file_get` | `data_b64`, `eof`, `size`, `sha256` (non-null on the `offset: 0` chunk only) |
 
 Error codes: `denied`, `read_only`, `queue_full`, `bad_request`, `not_found`, `is_a_directory`,
-`frame_too_large`, `unknown_op`, `op_failed`. The server maps `not_found` and `is_a_directory` onto
+`frame_too_large`, `unknown_op`, `op_failed`, and `desktop_unavailable` from the desktop extension. The server maps `not_found` and `is_a_directory` onto
 distinct sandbox errors, so they must stay separate; anything else reaches the caller verbatim.
 
 `cancel` is always answered, with `{"cancelled": false}` for an id the client does not know. The client's
@@ -255,3 +268,59 @@ trueforge-computer run
 
 `enroll` exchanges the code once and writes the credential; `run` dials and serves. The installer
 one-liner is served by the server at `GET /install.sh`.
+
+## 7. Desktop extension
+
+A Linux client started with `--desktop`, or enrolled with `enroll --desktop` (stored as
+`"desktop": true` in its `config.json`), runs a virtual X display: `Xvfb :<n> -screen 0 1280x800x24
+-nolisten tcp -auth <state-dir>/desktop/Xauthority` and `openbox`, each restarted with backoff. `<n>` is
+`--desktop-display`, 99 by default. Every `exec` gets `DISPLAY=:<n>` and
+`XAUTHORITY=<state-dir>/desktop/Xauthority` in its base environment; the server does not send them.
+
+### Capability
+
+`hello.capabilities.desktop` is `true` only once the display answers, `xdotool` and `xclip` resolve on
+`PATH`, and a Chromium sandbox self-test passes. When the desktop was requested but a check failed it is
+`false` and `desktop_unavailable_reason` (at most 256 characters) says why; otherwise the reason is
+`null`. Both default to "no desktop" when absent. The server sends the four ops below **only** to a
+computer whose hello said `desktop: true`. The capability is decided once, before `hello`; a display that
+dies later answers `desktop_unavailable` until the client restarts it.
+
+### Ops
+
+| op                      | request fields                                                  | `result`                                                   |
+| ----------------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
+| `desktop_screenshot`    | `quality`: 1–95, or `null` for 60                               | `data_b64`, `width`, `height`, `media_type` (`image/jpeg`) |
+| `desktop_input`         | `actions`: 1–64 `DesktopAction`s, run in order                  | `ok: true`                                                 |
+| `desktop_clipboard_get` | none                                                            | `text` (`""` when nobody owns CLIPBOARD)                   |
+| `desktop_clipboard_set` | `text` (≤ 65,536 UTF-8 bytes), `selections`: 1–2 unique entries | `ok: true`                                                 |
+
+```json
+{ "id": "…", "op": "desktop_input", "actions": [{ "type": "click", "x": 640, "y": 400, "button": "left", "count": 1 }] }
+```
+
+`DesktopAction` is discriminated on `type`, and each carries only its own fields:
+
+- `mouse_move {x, y}`; `mouse_down {button}` and `mouse_up {button}` at the current pointer position;
+- `click {x, y, button, count}`, count 1–3;
+- `scroll {x, y, dx, dy}` in wheel clicks, `dy > 0` down and `dx > 0` right, each within ±50;
+- `key {keys}`, one xdotool chord such as `ctrl+l` or `Return`, 1–64 characters and no whitespace;
+- `type {text}`, 1–512 characters, typed with `xdotool type --delay 2`.
+
+`button` is `left`, `middle` or `right`; `x` is 0–1279 and `y` 0–799, the fixed display in its own
+pixels. `selections` entries are `clipboard` and `primary`. The clipboard is read as CLIPBOARD only.
+
+### Errors and limits
+
+- Anything outside the limits above is `bad_request`.
+- A desktop op on a client with no running desktop is `desktop_unavailable`.
+- A screenshot over 3 MiB of base64 is `too_large`, and so is a clipboard over 64 KiB on read.
+- A `--read-only` client refuses `desktop_input` and `desktop_clipboard_set` with `read_only`. It still
+  serves `desktop_screenshot` and `desktop_clipboard_get`.
+- The server's timeouts are 5,000 ms for a screenshot, 3,000 ms for either clipboard op, and 2,000 ms
+  plus 5 ms per typed character for `desktop_input`. The client bounds its own work to the same budgets.
+- The client's audit log records a batch's action types and the clipboard's size, never typed text,
+  key names or clipboard contents.
+
+The shared fixtures are `testdata/protocol/server_to_client_desktop_*.json`,
+`client_to_server_reply_desktop_*.json` and `client_to_server_hello_desktop*.json`.

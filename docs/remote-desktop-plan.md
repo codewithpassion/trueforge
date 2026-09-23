@@ -518,11 +518,17 @@ Computer use is useless if a screenshot reaches the model as a string. **File st
 6. **Screenshot storage:** build a file store first (9a-1). Images are never stored inline.
 7. **Tool-result schema:** the clean shape. `content` is always `ToolContentPart[]`, legacy strings are normalized on read, and the SDK takes a major bump.
 
-**Still open (engineering, resolved inside a phase):**
-
-- which `docker run` flags let Chromium's sandbox work in the desktop image (9b spike).
-
 Resolved 2026-09-23: which providers accept images in tool results (5.2, checked against the installed adapters).
+
+Resolved 2026-09-23 (9b spike): which `docker run` flags let Chromium's sandbox work in the desktop image.
+
+- **The answer:** `--security-opt seccomp=packages/trueforge-computer/packaging/desktop/seccomp.json`, and nothing else. That profile is moby's default (`moby/profiles` `seccomp/v0.1.0`) plus one rule allowing `clone` and `unshare` without `CAP_SYS_ADMIN`. No `--cap-add`, `--privileged`, `seccomp=unconfined` or `apparmor=unconfined`, and `--no-sandbox` is never used.
+- **Tested on** an Ubuntu 24.04 host (kernel 7.0, `kernel.unprivileged_userns_clone=1`, `kernel.apparmor_restrict_unprivileged_userns=1`) with Docker 29.2.1, running the image as uid 1000:
+  - With Docker's default profile, Chromium 153 exits with `No usable sandbox!`. The default profile only allows namespace flags on `clone` and `unshare` with `CAP_SYS_ADMIN`.
+  - With the profile above, headless Chromium renders a page, and its renderer and zygote processes run in their own user and PID namespaces.
+  - The `docker-default` AppArmor profile did not block user-namespace creation, so the host's AppArmor restriction needed no flag.
+- **Tests.** `pnpm --filter @truefoundry/trueforge-computer test:desktop-image` repeats both runs: everything passes with the profile, and without it `capabilities.desktop` is false with the sandbox reason.
+- **Bare metal.** The same self-test runs at daemon start. A host that forbids unprivileged user namespaces reports `desktop: false` with Chromium's reason. The usual fixes are Chromium's own AppArmor profile or the `kernel.apparmor_restrict_unprivileged_userns` sysctl.
 
 ## 12. Review log
 
