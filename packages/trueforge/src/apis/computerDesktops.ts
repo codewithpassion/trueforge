@@ -22,7 +22,7 @@ import {
   type RequestOutcome,
 } from '../computers/protocol';
 import type { ComputerRelayPort, ComputersService } from '../computers/service';
-import type { HumanTakeoverService } from '../computers/takeover';
+import { recordDesktopControl, type HumanTakeoverService } from '../computers/takeover';
 import type { IAgentStore } from '../db/agentStore';
 import {
   cancelDesktopTakeoverRoute,
@@ -43,6 +43,10 @@ import { COMPUTERS_UNSUPPORTED } from './computers';
 const NO_SUCH_COMPUTER = 'No such computer';
 const NO_SUCH_AGENT = 'No such agent';
 const LEASE_REQUIRED_MESSAGE = 'Take control of the desktop first';
+const ANSWER_REFUSED = {
+  not_pending: 'No takeover is pending for that session',
+  takeover_already_answered: 'The takeover was already answered',
+} as const;
 
 export interface ComputerDesktopsRouterDeps {
   /** Undefined on a runtime that cannot reach a machine's relay; every route then answers 404. */
@@ -62,6 +66,7 @@ interface DesktopAccess {
   computerId: string;
   tenantId: string;
   relay: ComputerRelayPort;
+  store: ComputersService['store'];
   principal: Extract<RelayPrincipal, { kind: 'human' }>;
   /** Scopes the takeovers the caller sees and answers; undefined only for a tenant admin who named none. */
   agentId: string | undefined;
@@ -151,6 +156,7 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
         computerId,
         tenantId,
         relay: computers.relay(computerId),
+        store: computers.store,
         principal: { kind: 'human', user_id: context.subject.id },
         agentId,
       },
@@ -271,6 +277,18 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
     });
     return pending.some(takeover => takeover.session_id === sessionId);
   }
+
+  const recordControl = ({ access, action }: { access: DesktopAccess; action: 'take_control' | 'hand_back' }) =>
+    recordDesktopControl({
+      store: access.store,
+      logger: deps.logger,
+      tenant_id: access.tenantId,
+      computer_id: access.computerId,
+      session_id: null,
+      turn_id: null,
+      action,
+      acting_user_id: access.principal.user_id,
+    });
 
   const jpeg = (c: Context, frame: ArrayBuffer) =>
     c.body(frame, 200, {
@@ -415,6 +433,7 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
           return c.json({ error: { message: taken.message, code: 'offline' } }, 503);
       }
     }
+    await recordControl({ access, action: 'take_control' });
     return c.json({ data: await desktopStatus(access) }, 200);
   };
 
@@ -435,7 +454,7 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
       return c.json({ error: { message: 'Takeovers cannot be answered on this server' } }, 503);
     }
     if (sessionId !== undefined && !(await isScopedTakeover({ access, sessionId }))) {
-      return c.json({ error: { message: 'No takeover is pending for that session', code: 'not_pending' } }, 409);
+      return c.json({ error: { message: ANSWER_REFUSED.not_pending, code: 'not_pending' } }, 409);
     }
     // Released before the answer, so the resumed turn does not find a person still in control.
     const released = await access.relay.releaseHumanLease({
@@ -445,18 +464,22 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
     if (!released.released) {
       return c.json({ error: { message: LEASE_REQUIRED_MESSAGE, code: 'lease_required' } }, 423);
     }
-    if (sessionId !== undefined && takeovers !== undefined) {
-      const answered = await takeovers.resolveTakeover({
-        tenant_id: access.tenantId,
-        computer_id: computerId,
-        session_id: sessionId,
-        outcome: 'completed',
-        note: note ?? null,
-        acting_user_id: access.principal.user_id,
-      });
-      if (!answered.ok) {
-        return c.json({ error: { message: 'The takeover was already answered', code: answered.code } }, 409);
-      }
+    if (sessionId === undefined || takeovers === undefined) {
+      await recordControl({ access, action: 'hand_back' });
+      return c.json({ data: await desktopStatus(access) }, 200);
+    }
+    const answered = await takeovers.resolveTakeover({
+      tenant_id: access.tenantId,
+      computer_id: computerId,
+      session_id: sessionId,
+      outcome: 'completed',
+      note: note ?? null,
+      acting_user_id: access.principal.user_id,
+    });
+    if (!answered.ok) {
+      // Control went back all the same; only an answered takeover is recorded by the service.
+      await recordControl({ access, action: 'hand_back' });
+      return c.json({ error: { message: ANSWER_REFUSED[answered.code], code: answered.code } }, 409);
     }
     return c.json({ data: await desktopStatus(access) }, 200);
   };
@@ -478,7 +501,7 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
       return c.json({ error: { message: 'Takeovers cannot be answered on this server' } }, 503);
     }
     if (!(await isScopedTakeover({ access, sessionId }))) {
-      return c.json({ error: { message: 'No takeover is pending for that session', code: 'not_pending' } }, 409);
+      return c.json({ error: { message: ANSWER_REFUSED.not_pending, code: 'not_pending' } }, 409);
     }
     // Anyone who may use the agent may cancel; the caller's own control, if any, ends with it.
     await access.relay.releaseHumanLease({ tenant_id: access.tenantId, user_id: access.principal.user_id });
@@ -491,7 +514,7 @@ export function createComputerDesktopsRouter(deps: ComputerDesktopsRouterDeps) {
       acting_user_id: access.principal.user_id,
     });
     if (!answered.ok) {
-      return c.json({ error: { message: 'The takeover was already answered', code: answered.code } }, 409);
+      return c.json({ error: { message: ANSWER_REFUSED[answered.code], code: answered.code } }, 409);
     }
     return c.json({ data: await desktopStatus(access) }, 200);
   };

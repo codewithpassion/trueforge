@@ -360,6 +360,14 @@ async function statusOf(response: Response) {
   return body.data;
 }
 
+/** Returns the desktop audit commands written after this call; the store is shared across tests. */
+async function auditFromNow(): Promise<() => Promise<string[]>> {
+  const list = () =>
+    computerStore.listAudit({ tenant_id: TENANT, computer_id: COMPUTER_ID, limit: 500, before_id: undefined });
+  const seen = new Set((await list()).map(row => row.id));
+  return async () => (await list()).filter(row => !seen.has(row.id) && row.op === 'desktop').map(row => row.command);
+}
+
 const PENDING_DESK: PendingTakeover = {
   session_id: 'ses_desk',
   turn_id: 'turn_1',
@@ -622,9 +630,11 @@ describe('taking control', () => {
   it('preempts an agent and reports the caller in control', async () => {
     const { call, relay } = setup();
     relay.control = { kind: 'agent', session_id: 'ses_agent' };
+    const audited = await auditFromNow();
     const response = await call({ method: 'POST', path: '/take-control' });
     expect(response.status).toBe(200);
     expect(relay.taken).toEqual([{ tenant_id: TENANT, user_id: 'alice' }]);
+    expect(await audited()).toEqual(['computer.desktop.take_control by alice']);
     expect(await statusOf(response)).toMatchObject({
       controller: { kind: 'human', user_id: 'alice', is_me: true, expires_at: '2026-09-24T10:05:00.000Z' },
     });
@@ -640,10 +650,12 @@ describe('taking control', () => {
   it('answers 503 for an offline computer and takes nothing', async () => {
     const { call, relay } = setup();
     relay.connected = false;
+    const audited = await auditFromNow();
     const response = await call({ method: 'POST', path: '/take-control' });
     expect(response.status).toBe(503);
     expect((await errorOf(response)).code).toBe('offline');
     expect(relay.taken).toHaveLength(0);
+    expect(await audited()).toEqual([]);
   });
 
   it('answers 409 clearing when the last person clipboard could not be cleared', async () => {
@@ -660,12 +672,15 @@ describe('handing back', () => {
     const { call, relay, takeovers } = setup();
     takeovers.pending = [{ ...PENDING_DESK, agent_id: agents.desk }];
     relay.control = { kind: 'human', user_id: 'alice', expires_at: Date.now() + 60_000 };
+    const audited = await auditFromNow();
     const response = await call({
       method: 'POST',
       path: '/hand-back',
       body: { session_id: 'ses_desk', note: 'Logged in' },
     });
     expect(response.status).toBe(200);
+    // The takeover service records an answered takeover itself.
+    expect(await audited()).toEqual([]);
     expect(relay.releasedFor).toEqual([{ tenant_id: TENANT, user_id: 'alice' }]);
     expect(takeovers.resolved).toEqual([
       {
@@ -683,10 +698,12 @@ describe('handing back', () => {
   it('only releases control without a session', async () => {
     const { call, relay, takeovers } = setup();
     relay.control = { kind: 'human', user_id: 'alice', expires_at: Date.now() + 60_000 };
+    const audited = await auditFromNow();
     const response = await call({ method: 'POST', path: '/hand-back', body: {} });
     expect(response.status).toBe(200);
     expect(relay.releasedFor).toHaveLength(1);
     expect(takeovers.resolved).toHaveLength(0);
+    expect(await audited()).toEqual(['computer.desktop.hand_back by alice']);
   });
 
   it('needs control', async () => {
@@ -703,9 +720,12 @@ describe('handing back', () => {
     takeovers.pending = [{ ...PENDING_DESK, agent_id: agents.desk }];
     takeovers.answer = { ok: false, code: 'takeover_already_answered' };
     relay.control = { kind: 'human', user_id: 'alice', expires_at: Date.now() + 60_000 };
+    const audited = await auditFromNow();
     const response = await call({ method: 'POST', path: '/hand-back', body: { session_id: 'ses_desk' } });
     expect(response.status).toBe(409);
     expect((await errorOf(response)).code).toBe('takeover_already_answered');
+    // Control still went back, and nobody else recorded that.
+    expect(await audited()).toEqual(['computer.desktop.hand_back by alice']);
   });
 
   it('will not answer a session of another agent', async () => {
@@ -732,12 +752,14 @@ describe('cancelling a takeover', () => {
   it('works without control and answers the takeover as cancelled', async () => {
     const { call, takeovers } = setup();
     takeovers.pending = [{ ...PENDING_DESK, agent_id: agents.desk }];
+    const audited = await auditFromNow();
     const response = await call({
       method: 'POST',
       path: '/cancel-takeover',
       body: { session_id: 'ses_desk' },
     });
     expect(response.status).toBe(200);
+    expect(await audited()).toEqual([]);
     expect(takeovers.resolved).toEqual([
       {
         tenant_id: TENANT,

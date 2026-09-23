@@ -64,6 +64,46 @@ type Inspected =
   | { kind: 'gone' }
   | { kind: 'other_agent' };
 
+/**
+ * Who took the desktop, handed it back or cancelled a takeover is kept here only: turns carry no
+ * actor. Best-effort, so a failed write never undoes the change it describes.
+ */
+export async function recordDesktopControl(input: {
+  store: Pick<IComputerStore, 'getComputer' | 'appendAudit'>;
+  logger: Logger;
+  tenant_id: string;
+  computer_id: string;
+  session_id: string | null;
+  turn_id: string | null;
+  action: 'take_control' | 'hand_back' | 'cancel';
+  acting_user_id: string;
+}): Promise<void> {
+  try {
+    const computer = await input.store.getComputer({ tenant_id: input.tenant_id, computer_id: input.computer_id });
+    await input.store.appendAudit({
+      id: newId(),
+      computer_id: input.computer_id,
+      computer_name: computer?.name ?? input.computer_id,
+      tenant_id: input.tenant_id,
+      session_id: input.session_id,
+      turn_id: input.turn_id,
+      op: 'desktop',
+      command: `computer.desktop.${input.action} by ${input.acting_user_id}`,
+      exit_code: null,
+      outcome: 'ok',
+      duration_ms: 0,
+      bytes_out: 0,
+      created_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    input.logger.warn('Could not record a desktop control change', {
+      ...extractErrorLogFields(error),
+      computer_id: input.computer_id,
+      action: input.action,
+    });
+  }
+}
+
 /** Takeover requests live in turn state; the relay only remembers which sessions to look at. */
 export function createHumanTakeoverService(deps: HumanTakeoverServiceDeps): HumanTakeoverService {
   async function inspect({
@@ -110,44 +150,6 @@ export function createHumanTakeoverService(deps: HumanTakeoverServiceDeps): Huma
       takeover: pending.takeover,
       requested_at: state.completed_at,
     };
-  }
-
-  /** Who handed back or cancelled is kept here only: turns carry no actor. Best-effort. */
-  async function audit(input: {
-    tenant_id: string;
-    computer_id: string;
-    session_id: string;
-    turn_id: string;
-    outcome: 'completed' | 'cancelled';
-    acting_user_id: string;
-  }): Promise<void> {
-    try {
-      const computer = await deps.computers.store.getComputer({
-        tenant_id: input.tenant_id,
-        computer_id: input.computer_id,
-      });
-      await deps.computers.store.appendAudit({
-        id: newId(),
-        computer_id: input.computer_id,
-        computer_name: computer?.name ?? input.computer_id,
-        tenant_id: input.tenant_id,
-        session_id: input.session_id,
-        turn_id: input.turn_id,
-        op: 'desktop',
-        command: `computer.desktop.${input.outcome === 'completed' ? 'hand_back' : 'cancel'} by ${input.acting_user_id}`,
-        exit_code: null,
-        outcome: 'ok',
-        duration_ms: 0,
-        bytes_out: 0,
-        created_at: new Date().toISOString(),
-      });
-    } catch (error) {
-      deps.logger.warn('Could not record a desktop takeover resolution', {
-        ...extractErrorLogFields(error),
-        computer_id: input.computer_id,
-        session_id: input.session_id,
-      });
-    }
   }
 
   return {
@@ -221,7 +223,16 @@ export function createHumanTakeoverService(deps: HumanTakeoverServiceDeps): Huma
       }
 
       await relay.clearTakeoverPointer({ tenant_id, ...pointer });
-      await audit({ tenant_id, computer_id, session_id, turn_id: pointer.turn_id, outcome, acting_user_id });
+      await recordDesktopControl({
+        store: deps.computers.store,
+        logger: deps.logger,
+        tenant_id,
+        computer_id,
+        session_id,
+        turn_id: pointer.turn_id,
+        action: outcome === 'completed' ? 'hand_back' : 'cancel',
+        acting_user_id,
+      });
       return { ok: true };
     },
   };
