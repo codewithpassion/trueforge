@@ -13,6 +13,7 @@ import {
 } from '../../src/computers/protocol';
 import { ActiveTurnRegistry } from '../../src/runtime/activeTurns';
 import { EventSubscriptionRegistry } from '../../src/runtime/event-subscription';
+import { validateAgentSpec } from '../../src/runtime/sessionResources';
 import { createTurnDrainedHook } from '../../src/runtime/turnDrainedHook';
 import { startTurnInProcess } from '../../src/runtime/turnRunner';
 import { newId } from '../../src/utils/id';
@@ -250,6 +251,17 @@ describe('the desktop relay', () => {
   });
 });
 
+function computerIntegration() {
+  return createWorkersSandboxIntegration({
+    backend: undefined,
+    computers: workersComputersService(env),
+    namespace: env.COMPUTER_DO,
+    defaultExecTimeoutSeconds: 30,
+    fileMaxBytesForDownload: 1024 * 1024,
+    codeModeRegistry: undefined,
+  });
+}
+
 async function desktopAgentSession({
   computerId,
   requireApproval = false,
@@ -294,7 +306,7 @@ async function desktopAgentSession({
     external_id: null,
     source: null,
   });
-  return { stores, sessionId };
+  return { stores, sessionId, agentId: created.id, providerName };
 }
 
 /** A turn run in-process with whichever drained hook the case wants, or none. */
@@ -332,14 +344,7 @@ async function runDesktopTurn({
       activeTurns: new ActiveTurnRegistry(),
       eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
       logger,
-      sandboxIntegration: createWorkersSandboxIntegration({
-        backend: undefined,
-        computers,
-        namespace: env.COMPUTER_DO,
-        defaultExecTimeoutSeconds: 30,
-        fileMaxBytesForDownload: 1024 * 1024,
-        codeModeRegistry: undefined,
-      }),
+      sandboxIntegration: computerIntegration(),
       onTurnDrained: withHook
         ? createTurnDrainedHook({ deliver: () => Promise.resolve(), computers, logger })
         : undefined,
@@ -411,6 +416,55 @@ describe('a desktop turn', () => {
     expect(client.received.some(frame => frame['op'] === 'desktop_screenshot')).toBe(true);
     expect(await readLease()).toBeUndefined();
     expect((await send({ computerId, principal: agent('someone-else'), op: OPS.screenshot })).ok).toBe(true);
+    client.close();
+  });
+});
+
+describe('a desktop agent spec', () => {
+  async function validate({
+    grantedOn,
+    computerId,
+    desktop,
+  }: {
+    grantedOn: string;
+    computerId: string | undefined;
+    desktop: boolean;
+  }) {
+    const { stores, agentId, providerName } = await desktopAgentSession({ computerId: grantedOn });
+    return validateAgentSpec({
+      spec: AgentSpecSchema.parse({
+        model: { name: `${providerName}/mock-model` },
+        config: {
+          sandbox: { enabled: true, ...(computerId === undefined ? {} : { computer_id: computerId }), desktop },
+        },
+      }),
+      tenant_id: TENANT_ID,
+      agent_id: agentId,
+      modelProviderStore: stores.modelProviderStore,
+      mcpServerStore: stores.mcpServerStore,
+      skillStore: stores.skillStore,
+      sandboxProviderStore: stores.sandboxProviderStore,
+      sandboxIntegration: computerIntegration(),
+      logger,
+    });
+  }
+
+  it('is refused on a computer that reported no desktop, and accepted on one that did', async () => {
+    const without = await desktopComputer(WITHOUT_DESKTOP);
+    const withDesktop = await desktopComputer();
+    const on = (computerId: string, desktop: boolean) => validate({ grantedOn: computerId, computerId, desktop });
+    await expect(on(without.computerId, true)).rejects.toThrow(/has no desktop/);
+    await expect(on(without.computerId, false)).resolves.toBeUndefined();
+    await expect(on(withDesktop.computerId, true)).resolves.toBeUndefined();
+    without.client.close();
+    withDesktop.client.close();
+  });
+
+  it('is refused without a computer', async () => {
+    const { computerId, client } = await desktopComputer();
+    await expect(validate({ grantedOn: computerId, computerId: undefined, desktop: true })).rejects.toThrow(
+      /needs sandbox.computer_id/,
+    );
     client.close();
   });
 });

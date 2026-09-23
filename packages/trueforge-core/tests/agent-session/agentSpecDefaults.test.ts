@@ -4,7 +4,7 @@ describe('AgentSpec RuntimeConfig defaults', () => {
   it('materializes config when omitted', () => {
     const spec = AgentSpecSchema.parse({ model: { name: 'provider/model' } });
     expect(spec.config.iteration_limit).toBe(DEFAULT_AGENT_CONFIG_ITERATION_LIMIT);
-    expect(spec.config.sandbox).toEqual({ enabled: false, file_downloads: true });
+    expect(spec.config.sandbox).toEqual({ enabled: false, file_downloads: true, desktop: false });
     expect(spec.config.generative_ui).toEqual({ enabled: true });
     expect(spec.config.ask_user_questions).toEqual({ enabled: true });
     expect(spec.config.dynamic_sub_agents).toEqual({ enabled: true });

@@ -415,7 +415,13 @@ describe('a machine that cannot run the skill downloader', () => {
       await settle(2);
       stored = await readRow();
     }
-    expect(stored?.capabilities).toEqual({ python3: true, git: true, skills: false });
+    expect(stored?.capabilities).toEqual({
+      python3: true,
+      git: true,
+      skills: false,
+      desktop: false,
+      desktop_unavailable_reason: null,
+    });
 
     const expected = /cannot mount skills: it needs python3, git and the pydantic package/;
     await expect(

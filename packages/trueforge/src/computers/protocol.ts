@@ -263,7 +263,7 @@ export function desktopInputTimeoutMs(actions: readonly DesktopAction[]): number
   let typed = 0;
   for (const action of actions) {
     if (action.type === 'type') {
-      typed += [...action.text].length;
+      typed += action.text.length;
     }
   }
   return DESKTOP_INPUT_BASE_TIMEOUT_MS + DESKTOP_INPUT_MS_PER_TYPED_CHAR * typed;
