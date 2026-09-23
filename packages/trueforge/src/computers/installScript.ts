@@ -17,7 +17,7 @@ export function renderInstallScript({ baseUrl, releaseBaseUrl }: { baseUrl: stri
 # TrueForge remote computer installer.
 #   curl -fsSL ${baseUrl}/install.sh | sh -s -- --url ${baseUrl} --code <code>
 #
-# --desktop (Linux only) also runs a virtual desktop agents can see and drive. Its packages must
+# --desktop (Debian only) also runs a virtual desktop agents can see and drive. Its packages must
 # already be installed; the script names them and stops if any is missing.
 #
 # Downloads are checked against the SHA256SUMS published beside them. Signature verification
@@ -89,8 +89,24 @@ if [ "$DESKTOP" -eq 1 ]; then
   done
   if [ -n "$MISSING" ]; then
     echo "The desktop needs programs this machine does not have:$MISSING" >&2
-    echo "On Debian or Ubuntu, install them with:" >&2
+    echo "The desktop is supported on Debian only. There, install them with:" >&2
     echo "  ${DESKTOP_APT_LINE}" >&2
+    exit 1
+  fi
+  # Ubuntu ships chromium as a snap, or as a stub that asks for one. Snap confinement keeps the
+  # browser away from the daemon's X cookie and profile, so the desktop cannot use it.
+  CHROMIUM="$(command -v chromium)"
+  RESOLVED="$(readlink -f "$CHROMIUM" 2>/dev/null || echo "$CHROMIUM")"
+  SNAP=0
+  case "$CHROMIUM" in /snap/*) SNAP=1 ;; esac
+  case "$RESOLVED" in /snap/*|*/snap) SNAP=1 ;; esac
+  if grep -qs -e '/snap/bin/chromium' -e 'chromium snap' "$RESOLVED"; then
+    SNAP=1
+  fi
+  if [ "$SNAP" -eq 1 ]; then
+    echo "chromium on this machine ($CHROMIUM) is Ubuntu's snap, which cannot reach the desktop's" >&2
+    echo "X cookie or browser profile. The desktop is supported on Debian only, with Debian's" >&2
+    echo "chromium package; elsewhere, run the desktop image." >&2
     exit 1
   fi
   DESKTOP_FLAG="--desktop"
