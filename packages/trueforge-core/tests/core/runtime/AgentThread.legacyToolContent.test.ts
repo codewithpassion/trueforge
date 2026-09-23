@@ -71,4 +71,41 @@ describe('AgentThread context replay', () => {
     ]);
     expect(thread.toSnapshot().context[2]).toEqual(toolMessages[0]);
   });
+
+  it('replays a finished sub-agent whose snapshot holds its result as a plain string', async () => {
+    const modelClient: ILLM = { create: jest.fn(), createNonStream: jest.fn() };
+    const sendToParent: LLMToolMessage = { role: 'tool', tool_call_id: 'spawn-1', content: [] };
+    // Snapshots written before tool content became parts hold a string here.
+    Reflect.set(sendToParent, 'content', 'sub-agent answer');
+
+    const thread = new AgentThread({
+      threadId: 'child',
+      title: 'Child',
+      tracing: NOOP_AGENT_TRACING,
+      logger: makeSilentLogger(),
+      definition: { modelClient, instruction: 'test', toolSets: [] },
+      parent: { thread_id: 'main', tool_call_id: 'spawn-1' },
+      preComputedCompletion: {
+        type: 'done',
+        output: {
+          type: 'model.message',
+          id: 'evt-1',
+          thread_id: 'child',
+          created_at: '2026-09-24T00:00:00.000Z',
+          content: 'sub-agent answer',
+        },
+        send_to_parent: sendToParent,
+      },
+    });
+
+    const events = [];
+    for await (const event of thread.execute({ signal: new AbortController().signal })) {
+      events.push(event);
+    }
+
+    const normalized = { role: 'tool', tool_call_id: 'spawn-1', content: [{ type: 'text', text: 'sub-agent answer' }] };
+    expect(events).toEqual([expect.objectContaining({ status: 'done', send_to_parent: normalized })]);
+    expect(thread.toSnapshot().completion?.send_to_parent).toEqual(normalized);
+    expect(modelClient.create).not.toHaveBeenCalled();
+  });
 });
