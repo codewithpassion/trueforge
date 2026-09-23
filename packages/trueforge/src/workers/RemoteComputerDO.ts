@@ -9,6 +9,7 @@ import {
   CLOSE_STALE,
   type ComputerRelayStatus,
   DESKTOP_CLIPBOARD_TIMEOUT_MS,
+  type DesktopControlState,
   HEARTBEAT_PING,
   HEARTBEAT_PONG,
   type HelloMessage,
@@ -1040,7 +1041,23 @@ export class RemoteComputerDO extends DurableObject {
       in_flight_exec: this.#inFlightExec,
       queued: this.#queue.length,
       hello: this.#hello,
+      desktop_control: this.#desktopControlState(),
     };
+  }
+
+  /** Read through `#currentControl`, so a lapsed lease is reported, and handled, as lapsed. */
+  #desktopControlState(): DesktopControlState {
+    const control = this.#currentControl(Date.now());
+    if (control === undefined) {
+      return { kind: 'none' };
+    }
+    if (control.kind === 'clearing') {
+      return { kind: 'clearing' };
+    }
+    if (control.holder.kind === 'agent') {
+      return { kind: 'agent', session_id: control.holder.session_id };
+    }
+    return { kind: 'human', user_id: control.holder.user_id, expires_at: heldExpiresAt(control) };
   }
 
   /** Records last-seen from the platform's heartbeat stamp; one write a minute, not one per heartbeat. */

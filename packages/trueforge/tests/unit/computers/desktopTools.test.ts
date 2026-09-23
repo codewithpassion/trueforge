@@ -62,6 +62,8 @@ function providerWith({
         );
       },
       releaseLease: () => Promise.reject(new Error('not used')),
+      takeHumanLease: () => Promise.reject(new Error('not used')),
+      releaseHumanLease: () => Promise.reject(new Error('not used')),
       revoke: () => Promise.reject(new Error('not used')),
       disconnect: () => Promise.reject(new Error('not used')),
       destroy: () => Promise.reject(new Error('not used')),

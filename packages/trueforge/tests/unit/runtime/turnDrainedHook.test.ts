@@ -103,6 +103,8 @@ function recordingComputers(): { computers: Pick<ComputersService, 'relay'>; rel
       released.push(`${computerId}:${tenant_id}:${session_id}:${turn_id}`);
       return Promise.resolve({ released: true });
     },
+    takeHumanLease: () => Promise.reject(new Error('not used')),
+    releaseHumanLease: () => Promise.reject(new Error('not used')),
     revoke: () => Promise.reject(new Error('not used')),
     disconnect: () => Promise.reject(new Error('not used')),
     destroy: () => Promise.reject(new Error('not used')),

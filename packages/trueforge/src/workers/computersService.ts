@@ -41,6 +41,8 @@ export function workersComputersService(
       return {
         request: input => stub.request(input),
         releaseLease: input => stub.releaseLease(input),
+        takeHumanLease: input => stub.takeHumanLease(input),
+        releaseHumanLease: input => stub.releaseHumanLease(input),
         revoke: () => stub.revoke(),
         disconnect: () => stub.disconnect(),
         destroy: () => stub.destroy(),

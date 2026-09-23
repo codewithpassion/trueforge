@@ -13,6 +13,7 @@ import { createAgentsRouter } from './apis/agents';
 import { createAuthRouter } from './apis/auth';
 import { createCapabilitiesRouter } from './apis/capabilities';
 import { createCatalogRouter } from './apis/catalog';
+import { createComputerDesktopsRouter } from './apis/computerDesktops';
 import {
   COMPUTERS_UNSUPPORTED,
   createComputerMachineRouter,
@@ -50,6 +51,7 @@ import {
   renderInstallScript,
 } from './computers/installScript';
 import type { ComputersService } from './computers/service';
+import type { HumanTakeoverService } from './computers/takeover';
 import configuration, {
   getPublicBaseUrl,
   getPublicBaseUrlOrUndefined,
@@ -220,6 +222,8 @@ export interface ServerDeps<TTransaction> {
    * 404 and `GET /capabilities` reports computers off, which is the Node build until phase 8c.
    */
   computers: ComputersService | undefined;
+  /** Answers the takeovers agents wait on; undefined where no runtime wires one, so none are listed. */
+  humanTakeovers?: HumanTakeoverService;
   /** Rejects requests without a verified client certificate; set only when mTLS is on. */
   clientCertificateMiddleware: MiddlewareHandler | undefined;
   /** Per-request store: DB git skills, or TrueFoundry registry catalog in TrueFoundry mode. */
@@ -323,6 +327,22 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
     ),
   );
 
+  // Not admin-only: anyone who may use a desktop agent may watch and drive its computer's desktop.
+  app.route(
+    '/api/v1/computer-desktops',
+    withAuth(
+      createComputerDesktopsRouter({
+        computers: deps.computers,
+        humanTakeovers: deps.humanTakeovers,
+        resolveRequestContext,
+        resolveAgentStore: deps.resolveAgentStore,
+        authorizer: deps.authorizer,
+        publicBaseUrl: () => getPublicBaseUrlOrUndefined(),
+        logger: deps.logger,
+      }),
+      authMiddleware,
+    ),
+  );
   app.route(
     '/api/v1/auth',
     createAuthRouter({

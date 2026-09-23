@@ -153,7 +153,7 @@ export const DESKTOP_WIDTH = 1280;
 export const DESKTOP_HEIGHT = 800;
 export const DESKTOP_TYPE_MAX_CHARS = 512;
 const DESKTOP_CLIPBOARD_MAX_BYTES = 64 * 1024;
-const DESKTOP_MAX_ACTIONS = 64;
+export const DESKTOP_MAX_ACTIONS = 64;
 const DESKTOP_KEYS_MAX_CHARS = 64;
 const DESKTOP_SCROLL_MAX = 50;
 /** Wheel clicks one input batch may scroll in total, so the batch fits its timeout. */
@@ -189,26 +189,39 @@ export const DesktopClipboardTextSchema = z
     message: `Clipboard text is capped at ${String(DESKTOP_CLIPBOARD_MAX_BYTES)} bytes`,
   });
 
+// Each member is exported so the HTTP input route can name it in OpenAPI without restating it.
+export const DesktopMouseMoveActionSchema = z.object({
+  type: z.literal('mouse_move'),
+  x: DesktopXSchema,
+  y: DesktopYSchema,
+});
+export const DesktopMouseDownActionSchema = z.object({ type: z.literal('mouse_down'), button: DesktopButtonSchema });
+export const DesktopMouseUpActionSchema = z.object({ type: z.literal('mouse_up'), button: DesktopButtonSchema });
+export const DesktopClickActionSchema = z.object({
+  type: z.literal('click'),
+  x: DesktopXSchema,
+  y: DesktopYSchema,
+  button: DesktopButtonSchema,
+  count: DesktopClickCountSchema,
+});
+export const DesktopScrollActionSchema = z.object({
+  type: z.literal('scroll'),
+  x: DesktopXSchema,
+  y: DesktopYSchema,
+  dx: DesktopScrollDeltaSchema,
+  dy: DesktopScrollDeltaSchema,
+});
+export const DesktopKeyActionSchema = z.object({ type: z.literal('key'), keys: DesktopKeysSchema });
+export const DesktopTypeActionSchema = z.object({ type: z.literal('type'), text: DesktopTypeTextSchema });
+
 export const DesktopActionSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('mouse_move'), x: DesktopXSchema, y: DesktopYSchema }),
-  z.object({ type: z.literal('mouse_down'), button: DesktopButtonSchema }),
-  z.object({ type: z.literal('mouse_up'), button: DesktopButtonSchema }),
-  z.object({
-    type: z.literal('click'),
-    x: DesktopXSchema,
-    y: DesktopYSchema,
-    button: DesktopButtonSchema,
-    count: DesktopClickCountSchema,
-  }),
-  z.object({
-    type: z.literal('scroll'),
-    x: DesktopXSchema,
-    y: DesktopYSchema,
-    dx: DesktopScrollDeltaSchema,
-    dy: DesktopScrollDeltaSchema,
-  }),
-  z.object({ type: z.literal('key'), keys: DesktopKeysSchema }),
-  z.object({ type: z.literal('type'), text: DesktopTypeTextSchema }),
+  DesktopMouseMoveActionSchema,
+  DesktopMouseDownActionSchema,
+  DesktopMouseUpActionSchema,
+  DesktopClickActionSchema,
+  DesktopScrollActionSchema,
+  DesktopKeyActionSchema,
+  DesktopTypeActionSchema,
 ]);
 export type DesktopAction = z.infer<typeof DesktopActionSchema>;
 
@@ -216,6 +229,16 @@ export type DesktopAction = z.infer<typeof DesktopActionSchema>;
 export function scrollClicks({ dx, dy }: { dx: number; dy: number }): number {
   return Math.abs(dx) + Math.abs(dy);
 }
+
+/** Whether a batch stays within the wheel clicks one input op may scroll. */
+export function fitsScrollBudget(actions: readonly DesktopAction[]): boolean {
+  return (
+    actions.reduce((total, action) => total + (action.type === 'scroll' ? scrollClicks(action) : 0), 0) <=
+    DESKTOP_SCROLL_BATCH_MAX
+  );
+}
+
+export const DESKTOP_SCROLL_BUDGET_MESSAGE = `One batch scrolls at most ${String(DESKTOP_SCROLL_BATCH_MAX)} wheel clicks`;
 
 export const DesktopScreenshotRequestSchema = z.object({
   op: z.literal('desktop_screenshot'),
@@ -230,12 +253,7 @@ export const DesktopInputRequestSchema = z.object({
     .array(DesktopActionSchema)
     .min(1)
     .max(DESKTOP_MAX_ACTIONS)
-    .refine(
-      actions =>
-        actions.reduce((total, action) => total + (action.type === 'scroll' ? scrollClicks(action) : 0), 0) <=
-        DESKTOP_SCROLL_BATCH_MAX,
-      { message: `One batch scrolls at most ${String(DESKTOP_SCROLL_BATCH_MAX)} wheel clicks` },
-    ),
+    .refine(fitsScrollBudget, { message: DESKTOP_SCROLL_BUDGET_MESSAGE }),
 });
 export type DesktopInputRequest = z.infer<typeof DesktopInputRequestSchema>;
 
@@ -343,6 +361,9 @@ export const DesktopClipboardGetResultPayloadSchema = z.object({
 });
 export type DesktopClipboardGetResultPayload = z.infer<typeof DesktopClipboardGetResultPayloadSchema>;
 
+/** The error code a daemon answers a desktop op with once its desktop has gone down. */
+export const CLIENT_ERROR_DESKTOP_UNAVAILABLE = 'desktop_unavailable';
+
 export const ReplyErrorSchema = z.object({
   code: z.string(),
   message: z.string(),
@@ -423,6 +444,15 @@ export type TakeHumanLeaseOutcome =
       readonly message: string;
     };
 
+/** Who drives the desktop right now, as the relay sees it. `expires_at` is epoch milliseconds. */
+export const DesktopControlStateSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('none') }),
+  z.object({ kind: z.literal('agent'), session_id: z.string() }),
+  z.object({ kind: z.literal('human'), user_id: z.string(), expires_at: z.number() }),
+  z.object({ kind: z.literal('clearing') }),
+]);
+export type DesktopControlState = z.infer<typeof DesktopControlStateSchema>;
+
 export const ComputerRelayStatusSchema = z.object({
   connected: z.boolean(),
   revoked: z.boolean(),
@@ -432,6 +462,7 @@ export const ComputerRelayStatusSchema = z.object({
   in_flight_exec: z.number(),
   queued: z.number(),
   hello: HelloMessageSchema.nullable(),
+  desktop_control: DesktopControlStateSchema,
 });
 export type ComputerRelayStatus = z.infer<typeof ComputerRelayStatusSchema>;
 

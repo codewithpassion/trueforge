@@ -17,9 +17,11 @@ import { parseSandboxId } from '@truefoundry/trueforge-core/core/sandbox/sandbox
 import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/errorLogFields';
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { AppendComputerAuditInput, ComputerAuditOp, IComputerStore } from '../db/computerStore';
+import { fromBase64 } from '../utils/bytes';
 import { newId } from '../utils/id';
 import { desktopFailureText } from './desktopTools';
 import {
+  CLIENT_ERROR_DESKTOP_UNAVAILABLE,
   DESKTOP_CLIPBOARD_TIMEOUT_MS,
   DESKTOP_SCREENSHOT_TIMEOUT_MS,
   desktopInputTimeoutMs,
@@ -69,7 +71,6 @@ const CLIENT_ERROR_NOT_FOUND = 'not_found';
 const CLIENT_ERROR_IS_A_DIRECTORY = 'is_a_directory';
 const CLIENT_ERROR_NOT_A_REGULAR_FILE = 'not_a_regular_file';
 const CLIENT_ERROR_TOO_LARGE = 'too_large';
-const CLIENT_ERROR_DESKTOP_UNAVAILABLE = 'desktop_unavailable';
 
 /**
  * Why a desktop op did not happen. The first three are states the model can act on; `failed` is
@@ -166,15 +167,6 @@ function toBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary);
-}
-
-function fromBase64(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
 }
 
 /**
