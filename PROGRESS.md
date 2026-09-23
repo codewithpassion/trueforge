@@ -4,6 +4,35 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 33 — Per-agent integrations, P1 backend and P2 UI (2026-09-23)
+
+**Goal:** Bind each integration to one agent so one Slack workspace can hold one bot per agent, and manage integrations from the agent's page instead of Settings (phases P1 and P2 of `docs/integrations-per-agent-plan.md`, landed together on `dom/main` at `6bca1c85`).
+
+**What we did:**
+
+- **P1 backend (`0f980a27`).** `integration` gains `agent_id` (FK, cascade on agent delete) and an `agent_name` snapshot, backfilled from `manifest.default_agent_name`, which leaves the manifest. The unique key becomes (tenant, type, account, agent). Migrations on SQLite, Postgres and D1 stop on an integration whose agent is gone: Kysely throws a message naming the rows, D1 fails on `NOT NULL` and carries the listing query in its header.
+- **Routes moved** from `/api/v1/settings/integrations` to `/api/v1/integrations`, with auth bound to the CRUD paths only so Slack ingress stays unauthenticated. Access follows schedules: creator, manager of the bound agent, or admin. Notification rules now match only their own agent's schedules. OpenAPI and SDKs regenerated (`81269e35`); the SDK gets a minor changeset for the breaking `settings.integrations` -> `integrations` move and the required `agent_name`.
+- **P2 UI (`ebcd79c9`).** An `IntegrationServer` port on `AgentUIServer` beside `schedules`, a Harness adapter in `integrations/integrationServer.ts`, and an Integrations tab on agent details gated on the port. The page lists, creates and suggests schedules only for that agent. The Settings Integrations section is gone.
+- **Review fix rounds.** Backend: agent managers could not open integrations an admin connected (`5adf8e0f`); D1 retry guard added then removed (`2f6b18fe`, `7cdf7d3f`). UI: three rounds to stop one agent's state showing on the next agent's page (`1d9c2d14`, `88b3179f`, `94075907`).
+- **Docs and changesets.** `connect-slack.mdx` points at the agent tab and `agent_name`; stale Settings-section and `pnpm patch` changesets dropped; the Slack approvals changeset now names `/api/v1/integrations/{integration_id}/decisions`.
+- **Still open (P3):** `docs/integrations-slack-plan.md` Sections 2.1-2.5, 3 and 6 are not updated yet, and the live test on the Workers deploy (upgrade with an existing integration, two agents on one workspace, agent delete stops its bot) has not run.
+
+**Lessons learned:**
+
+- `TrueForgeAuthorizer` reports agent access as the scope `'all'`, and the shared related-resource helpers read `'all'` as "no manage grant". Item routes fell back to creator-or-admin while create asked `canAccessAgent(manage)`, so an agent's owner could not see an integration an admin connected to it. The fix loads the bound agent and asks `canAccessAgent(manage)` directly; the list resolves managed agents per named agent, per explicit grant, or per agent under `'all'`.
+- A D1 migration file runs as one batch under both `applyD1Migrations` and wrangler, and a failure rolls back the tables it created. The retry guard for a leftover `integration_new` solved a case that cannot happen, and it ignored the `*_keep` tables, so it came out again one commit later.
+- A page keyed by an agent id that loads data asynchronously leaks across agent switches in every piece of state it owns: the list, the open detail, the dialog, typed credentials, busy flags, error toasts, selection and schedule-name suggestions. Each review found the next piece.
+- Removing a route touches prose far from the code: a changeset for an unrelated feature still named the old `settings/integrations/.../decisions` path.
+
+**Avoid next time:**
+
+- Don't fix per-agent state leaks one field at a time. When a page switches on a key, discard in-flight results for the old key and reset all local state in one place (or remount on the key), then test the switch with a request still pending.
+- Don't add a "partial migration" retry guard before checking whether the runner is transactional; D1 migration files are atomic.
+- Don't trust the authorizer's `'all'` scope through the shared helpers for manage checks; ask `canAccessAgent(manage)` against the concrete agent.
+- When moving or deleting a route, grep `.changeset/` and `docs/` for the old path in the same change.
+
+---
+
 ## Cycle 32 — Phase 8b live test: the turn died on the caller, not on the relay (2026-09-22)
 
 **Goal:** Fix what the live test of remote computers found twice on version `418acfec`: a turn whose remote `exec` ran about 45 s ended `cancelled` with reason `client-cancelled`, and so did a turn whose exec output was 2 MB. Short commands with small output never failed.
