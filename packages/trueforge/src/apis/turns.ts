@@ -233,6 +233,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
           agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
           // Downloading a file the turn already wrote needs no skills, whatever the spec asked for.
           skills_requested: false,
+          desktop_requested: false,
         });
         if (!usability.usable) {
           return c.json(

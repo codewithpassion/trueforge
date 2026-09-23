@@ -254,6 +254,7 @@ async function resolveSandboxUsabilityOrThrow({
   computer_id,
   agent_id,
   skills_requested,
+  desktop_requested,
 }: {
   sandboxIntegration: SandboxIntegration;
   sandboxProviderStore: ISandboxProviderStore;
@@ -262,6 +263,7 @@ async function resolveSandboxUsabilityOrThrow({
   computer_id: string | undefined;
   agent_id: string | undefined;
   skills_requested: boolean;
+  desktop_requested: boolean;
 }): Promise<SandboxUsability> {
   try {
     return await sandboxIntegration.resolveSandboxUsability({
@@ -271,6 +273,7 @@ async function resolveSandboxUsabilityOrThrow({
       computer_id,
       agent_id,
       skills_requested,
+      desktop_requested,
     });
   } catch (error) {
     logger.error('Sandbox image status check failed while validating an agent spec', extractErrorLogFields(error));
@@ -355,6 +358,11 @@ export async function validateAgentSpec({
   const wantsSandbox = spec.config.sandbox.enabled;
   const hasSkills = requestedSkills.length > 0;
   const computerId = spec.config.sandbox.computer_id;
+  if (spec.config.sandbox.desktop && computerId === undefined) {
+    throw new HTTPException(422, {
+      message: 'sandbox.desktop needs sandbox.computer_id: only a remote computer has a desktop',
+    });
+  }
   if (wantsSandbox || hasSkills || computerId !== undefined) {
     // Without an integration a stored record is unusable, so it does not count as configured.
     // Same question GET /capabilities asks, so a spec is never admitted that a turn then rejects.
@@ -369,6 +377,7 @@ export async function validateAgentSpec({
             computer_id: computerId,
             agent_id,
             skills_requested: hasSkills,
+            desktop_requested: spec.config.sandbox.desktop,
           });
     if (usability?.usable !== true) {
       throw new HTTPException(422, {

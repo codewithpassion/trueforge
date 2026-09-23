@@ -8,7 +8,8 @@ import type { ComputerCapabilities } from '../computers/protocol';
 export const COMPUTER_STATUSES = ['pending', 'online', 'offline', 'revoked'] as const;
 export type ComputerStatus = (typeof COMPUTER_STATUSES)[number];
 
-export const COMPUTER_AUDIT_OPS = ['exec', 'file_put', 'file_get'] as const;
+/** `desktop` covers every desktop op; the row's command names which one. */
+export const COMPUTER_AUDIT_OPS = ['exec', 'file_put', 'file_get', 'desktop'] as const;
 export type ComputerAuditOp = (typeof COMPUTER_AUDIT_OPS)[number];
 
 export interface ComputerRecord {

@@ -78,6 +78,7 @@ function storeInput() {
     turn_id: null,
     agent_id: undefined,
     skills_requested: false,
+    desktop_requested: false,
   };
 }
 
@@ -124,6 +125,7 @@ function build(backend: 'cloudflare-computer' | undefined) {
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024,
     codeModeRegistry: undefined,
+    desktopLeases: undefined,
   });
 }
 
@@ -235,6 +237,7 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
       skills,
       fileDownloadEnabled: false,
       existingSandboxId: undefined,
+      desktop: false,
       tracing: NOOP_AGENT_TRACING,
     });
 
@@ -263,6 +266,7 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
       skills: [],
       fileDownloadEnabled: false,
       existingSandboxId: `v1:${CLOUDFLARE_COMPUTER_PROVIDER_TYPE}:${SANDBOX_ID}`,
+      desktop: false,
       tracing: NOOP_AGENT_TRACING,
     });
 
@@ -279,6 +283,7 @@ describe('createWorkersSandboxIntegration with TRUEFORGE_SANDBOX_BACKEND=cloudfl
       skills: [SKILL],
       fileDownloadEnabled: false,
       existingSandboxId: undefined,
+      desktop: false,
       tracing: NOOP_AGENT_TRACING,
     });
     const builder = new InstructionBuilder('root');
@@ -385,6 +390,7 @@ describe.each([undefined, 'cloudflare-computer' as const])(
         skills: [],
         fileDownloadEnabled: false,
         existingSandboxId: undefined,
+        desktop: false,
         tracing: NOOP_AGENT_TRACING,
       });
 

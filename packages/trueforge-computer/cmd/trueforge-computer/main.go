@@ -60,7 +60,7 @@ func usage(to *os.File) {
 	fmt.Fprint(to, `trueforge-computer — connect a machine you own to TrueForge
 
 Usage:
-  trueforge-computer enroll --url <base> --code <code> [--name <name>] [--state-dir <dir>]
+  trueforge-computer enroll --url <base> --code <code> [--name <name>] [--state-dir <dir>] [--desktop]
   trueforge-computer run [--url <base>] [--code <code>] [flags]
   trueforge-computer status [--state-dir <dir>]
   trueforge-computer version

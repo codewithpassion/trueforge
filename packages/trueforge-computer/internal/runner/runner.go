@@ -51,7 +51,10 @@ type Options struct {
 	DefaultCwd string
 	// StateDir holds the process-group records the next start sweeps.
 	StateDir string
-	Logger   *slog.Logger
+	// BaseEnv is set by the daemon itself, never by the server, such as the desktop's DISPLAY
+	// and XAUTHORITY. It joins the scrubbed base, and the request's variables still apply on top.
+	BaseEnv map[string]string
+	Logger  *slog.Logger
 }
 
 // Completion is what happened to one request. Result is the wire shape; Started says whether a
@@ -288,7 +291,7 @@ func (r *Runner) execute(ctx context.Context, id string, request protocol.ExecRe
 	// descendants that the shell itself backgrounded.
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	command.Dir = r.workingDirectory(request)
-	command.Env = ScrubbedEnv(request.Env)
+	command.Env = ScrubbedEnv(r.commandEnv(request.Env))
 	command.WaitDelay = r.options.WaitDelay
 
 	stdout := newCapped(headCap, tailCap)
@@ -344,6 +347,21 @@ func (r *Runner) execute(ctx context.Context, id string, request protocol.ExecRe
 		result.ExitCode = ExitTimedOut
 	}
 	return Completion{Result: result, Started: true}
+}
+
+// commandEnv layers the request's variables over the daemon's own additions.
+func (r *Runner) commandEnv(requested map[string]string) map[string]string {
+	if len(r.options.BaseEnv) == 0 {
+		return requested
+	}
+	merged := make(map[string]string, len(r.options.BaseEnv)+len(requested))
+	for key, value := range r.options.BaseEnv {
+		merged[key] = value
+	}
+	for key, value := range requested {
+		merged[key] = value
+	}
+	return merged
 }
 
 // workingDirectory prefers the directory the caller settled on and falls back to the configured

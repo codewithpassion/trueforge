@@ -9,10 +9,16 @@ export const INSTALL_SCRIPT_UNCONFIGURED =
 export const INSTALL_SCRIPT_NO_BASE_URL =
   'This server does not know its own public URL, so it cannot write an installer that points back at it.';
 
+/** The packages `install.sh --desktop` needs, as one line the user can paste. */
+export const DESKTOP_APT_LINE = 'sudo apt-get install -y xvfb openbox xterm chromium xdotool xclip';
+
 export function renderInstallScript({ baseUrl, releaseBaseUrl }: { baseUrl: string; releaseBaseUrl: string }): string {
   return `#!/bin/sh
 # TrueForge remote computer installer.
 #   curl -fsSL ${baseUrl}/install.sh | sh -s -- --url ${baseUrl} --code <code>
+#
+# --desktop (Linux only) also runs a virtual desktop agents can see and drive. Its packages must
+# already be installed; the script names them and stops if any is missing.
 #
 # Downloads are checked against the SHA256SUMS published beside them. Signature verification
 # (cosign) is not here yet; it arrives with the signed releases in a later phase.
@@ -24,6 +30,7 @@ CODE=""
 ALLOW_ROOT=0
 SKIP_VERIFY=0
 SYSTEM=0
+DESKTOP=0
 RUN_AS=trueforge
 
 while [ $# -gt 0 ]; do
@@ -37,6 +44,7 @@ while [ $# -gt 0 ]; do
     --allow-root) ALLOW_ROOT=1; shift ;;
     --insecure-skip-verify) SKIP_VERIFY=1; shift ;;
     --system) SYSTEM=1; shift ;;
+    --desktop) DESKTOP=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -66,6 +74,27 @@ case "$(uname -m)" in
   arm64|aarch64) ARCH=arm64 ;;
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
+
+DESKTOP_FLAG=""
+if [ "$DESKTOP" -eq 1 ]; then
+  if [ "$OS" != linux ]; then
+    echo "--desktop is only supported on Linux." >&2
+    exit 1
+  fi
+  MISSING=""
+  for tool in Xvfb openbox xterm chromium xdotool xclip; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      MISSING="$MISSING $tool"
+    fi
+  done
+  if [ -n "$MISSING" ]; then
+    echo "The desktop needs programs this machine does not have:$MISSING" >&2
+    echo "On Debian or Ubuntu, install them with:" >&2
+    echo "  ${DESKTOP_APT_LINE}" >&2
+    exit 1
+  fi
+  DESKTOP_FLAG="--desktop"
+fi
 
 ARTIFACT="trueforge-computer_\${OS}_\${ARCH}"
 WORK="$(mktemp -d)"
@@ -120,7 +149,7 @@ if [ "$SYSTEM" -eq 1 ]; then
   echo
   echo "Installed at \${BIN}, to run as '\${RUN_AS}'."
   echo "Enrolling…"
-  TRUEFORGE_ENROLL_CODE="$CODE" su -s /bin/sh "$RUN_AS" -c "TRUEFORGE_ENROLL_CODE=\\"\\$TRUEFORGE_ENROLL_CODE\\" \\"$BIN\\" enroll --url \\"$TRUEFORGE_URL\\""
+  TRUEFORGE_ENROLL_CODE="$CODE" su -s /bin/sh "$RUN_AS" -c "TRUEFORGE_ENROLL_CODE=\\"\\$TRUEFORGE_ENROLL_CODE\\" \\"$BIN\\" enroll --url \\"$TRUEFORGE_URL\\" $DESKTOP_FLAG"
   echo
   echo "Enrolled. Start it with:"
   echo "  su -s /bin/sh \${RUN_AS} -c '\${BIN} run'"
@@ -132,7 +161,8 @@ mkdir -p "$BIN_DIR"
 BIN="\${BIN_DIR}/trueforge-computer"
 mv "\${WORK}/\${ARTIFACT}" "$BIN"
 
-TRUEFORGE_ENROLL_CODE="$CODE" "$BIN" enroll --url "$TRUEFORGE_URL"
+# --desktop is stored in the config, so every later run starts the desktop too.
+TRUEFORGE_ENROLL_CODE="$CODE" "$BIN" enroll --url "$TRUEFORGE_URL" $DESKTOP_FLAG
 
 echo
 echo "Enrolled as $(id -un). Starting in the foreground; press Ctrl-C to stop."

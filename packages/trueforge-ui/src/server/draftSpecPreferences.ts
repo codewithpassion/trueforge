@@ -58,12 +58,14 @@ export function selectChatDraftSpecPreferences(spec: AgentSpec): AgentSpec {
 /**
  * A computer is granted to one saved agent by id, so any spec that will create another agent —
  * a clone, a new agent seeded from this one — must not carry it: the server refuses a computer
- * at create, and an unnamed draft holding one cannot be offered it back.
+ * at create, and an unnamed draft holding one cannot be offered it back. The desktop goes with it:
+ * only a computer has one.
  */
 export function withoutComputer(config: AgentRuntimeConfig): AgentRuntimeConfig {
-  if (config.sandbox?.computerId === undefined) return config;
+  if (config.sandbox?.computerId === undefined && config.sandbox?.desktop === undefined) return config;
   const sandbox = { ...config.sandbox };
   delete sandbox.computerId;
+  delete sandbox.desktop;
   return { ...config, sandbox };
 }
 

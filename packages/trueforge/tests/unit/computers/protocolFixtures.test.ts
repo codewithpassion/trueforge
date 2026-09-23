@@ -5,11 +5,19 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { z } from 'zod';
 import {
   CancelRequestSchema,
   CancelResultPayloadSchema,
   classifyClientFrame,
   ClientOpRequestSchema,
+  DesktopClipboardGetRequestSchema,
+  DesktopClipboardGetResultPayloadSchema,
+  DesktopClipboardSetRequestSchema,
+  DesktopInputRequestSchema,
+  DesktopOkResultPayloadSchema,
+  DesktopScreenshotRequestSchema,
+  DesktopScreenshotResultPayloadSchema,
   ExecRequestSchema,
   ExecResultPayloadSchema,
   FileGetRequestSchema,
@@ -50,6 +58,33 @@ const REPLY_FIXTURES = [
 
 const OTHER_FIXTURES = ['client_to_server_hello.json', 'client_to_server_reply_error.json', 'error_codes.json'];
 
+/** The desktop extension's fixtures. */
+const DESKTOP_REQUEST_FIXTURES = [
+  ['server_to_client_desktop_screenshot.json', DesktopScreenshotRequestSchema],
+  ['server_to_client_desktop_screenshot_null_quality.json', DesktopScreenshotRequestSchema],
+  ['server_to_client_desktop_input.json', DesktopInputRequestSchema],
+  ['server_to_client_desktop_clipboard_get.json', DesktopClipboardGetRequestSchema],
+  ['server_to_client_desktop_clipboard_set.json', DesktopClipboardSetRequestSchema],
+] as const;
+
+const DESKTOP_REPLY_FIXTURES = [
+  ['client_to_server_reply_desktop_screenshot.json', DesktopScreenshotResultPayloadSchema],
+  ['client_to_server_reply_desktop_input.json', DesktopOkResultPayloadSchema],
+  ['client_to_server_reply_desktop_clipboard_get.json', DesktopClipboardGetResultPayloadSchema],
+  ['client_to_server_reply_desktop_clipboard_set.json', DesktopOkResultPayloadSchema],
+] as const;
+
+const DESKTOP_HELLO_FIXTURES = [
+  'client_to_server_hello_desktop.json',
+  'client_to_server_hello_desktop_unavailable.json',
+];
+
+const DESKTOP_FIXTURES = [
+  ...DESKTOP_REQUEST_FIXTURES.map(([name]) => name),
+  ...DESKTOP_REPLY_FIXTURES.map(([name]) => name),
+  ...DESKTOP_HELLO_FIXTURES,
+];
+
 describe('every fixture the client publishes is checked here', () => {
   it('leaves none of them unaccounted for', () => {
     const onDisk = readdirSync(path.join(FIXTURES, 'protocol')).sort();
@@ -57,6 +92,7 @@ describe('every fixture the client publishes is checked here', () => {
       ...REQUEST_FIXTURES.map(([name]) => name),
       ...REPLY_FIXTURES.map(([name]) => name),
       ...OTHER_FIXTURES,
+      ...DESKTOP_FIXTURES,
     ].sort();
     // A fixture the client adds without a check here is a shape nobody is holding to the contract.
     expect(onDisk).toEqual(covered);
@@ -109,6 +145,55 @@ describe('frames the client sends', () => {
   it('an error reply keeps the code the client chose, including one the server does not know', () => {
     const frame = classifyClientFrame(fixture('protocol/client_to_server_reply_error.json'));
     expect(frame).toMatchObject({ kind: 'reply', reply: { ok: false, error: { code: 'denied' } } });
+  });
+});
+
+describe('the desktop extension', () => {
+  it('every desktop request matches its op schema and the op union', () => {
+    for (const [name, schema] of DESKTOP_REQUEST_FIXTURES) {
+      const value = parsed(`protocol/${name}`);
+      expect({ name, ok: schema.safeParse(value).success }).toEqual({ name, ok: true });
+      expect({ name, ok: ClientOpRequestSchema.safeParse(value).success }).toEqual({ name, ok: true });
+    }
+  });
+
+  it('the input fixture exercises every action type', () => {
+    const input = DesktopInputRequestSchema.parse(parsed('protocol/server_to_client_desktop_input.json'));
+    expect(new Set(input.actions.map(action => action.type))).toEqual(
+      new Set(['mouse_move', 'mouse_down', 'mouse_up', 'click', 'scroll', 'key', 'type']),
+    );
+  });
+
+  it('every desktop reply is a reply whose result matches its payload schema', () => {
+    for (const [name, schema] of DESKTOP_REPLY_FIXTURES) {
+      const frame = classifyClientFrame(fixture(`protocol/${name}`));
+      if (frame.kind !== 'reply' || !frame.reply.ok) {
+        throw new Error(`expected a successful reply in ${name}`);
+      }
+      expect({ name, ok: schema.safeParse(JSON.parse(frame.reply.result_json)).success }).toEqual({ name, ok: true });
+    }
+  });
+
+  it('a desktop hello says so, and one whose desktop failed says why', () => {
+    const plain = HelloMessageSchema.parse(parsed('protocol/client_to_server_hello.json'));
+    expect(plain.capabilities).toMatchObject({ desktop: false, desktop_unavailable_reason: null });
+    const desktop = HelloMessageSchema.parse(parsed('protocol/client_to_server_hello_desktop.json'));
+    expect(desktop.capabilities.desktop).toBe(true);
+    const unavailable = HelloMessageSchema.parse(parsed('protocol/client_to_server_hello_desktop_unavailable.json'));
+    expect(unavailable.capabilities.desktop).toBe(false);
+    expect(unavailable.capabilities.desktop_unavailable_reason).toEqual(expect.any(String));
+  });
+
+  it('the client can answer desktop_unavailable, which the server maps', () => {
+    const codes = z.object({ codes: z.array(z.string()) }).parse(parsed('protocol/error_codes.json'));
+    expect(codes.codes).toContain('desktop_unavailable');
+  });
+
+  it('a hello from before the desktop reads as no desktop', () => {
+    const legacy: Record<string, unknown> = JSON.parse(fixture('protocol/client_to_server_hello.json'));
+    const capabilities = { python3: true, git: true, skills: true };
+    const hello = HelloMessageSchema.parse({ ...legacy, capabilities });
+    expect(hello.capabilities).toEqual({ ...capabilities, desktop: false, desktop_unavailable_reason: null });
   });
 });
 

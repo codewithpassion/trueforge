@@ -3,9 +3,11 @@ import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import type { Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { SkillMounter } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { HTTPException } from 'hono/http-exception';
+import { desktopProviderTools } from '../../computers/desktopTools';
 import { RemoteComputerProvider } from '../../computers/RemoteComputerProvider';
 import { buildRemoteComputerProvider, resolveComputerUsability } from '../../computers/resolveComputer';
 import type { ComputersService } from '../../computers/service';
+import type { TurnDesktopLeases } from '../../computers/turnDesktopLeases';
 import configuration from '../../config';
 import type { ISandboxProviderStore } from '../../db/sandboxProviderStore';
 import type { SandboxIntegration } from '../../sandbox/integration';
@@ -44,12 +46,15 @@ export interface WorkersSandboxIntegrationOptions {
    * HTTP app leaves it unset and its providers report Code Mode as unsupported.
    */
   codeModeRegistry: CodeModeBridgeRegistry | undefined;
+  /** Where providers record the desktops a turn may hold. Only the object that runs turns releases them. */
+  desktopLeases: TurnDesktopLeases | undefined;
 }
 
 /** The deploy-configured integration, shared by the HTTP app and the session Durable Object. */
 export function workersSandboxIntegrationFromEnv(params: {
   env: Pick<Env, 'COMPUTER_DO' | 'DB' | 'REMOTE_COMPUTER_DO' | 'RATE_LIMIT_DO'>;
   codeModeRegistry?: CodeModeBridgeRegistry | undefined;
+  desktopLeases?: TurnDesktopLeases | undefined;
 }): SandboxIntegration {
   return createWorkersSandboxIntegration({
     backend: configuration.TRUEFORGE_SANDBOX_BACKEND,
@@ -58,6 +63,7 @@ export function workersSandboxIntegrationFromEnv(params: {
     defaultExecTimeoutSeconds: configuration.SANDBOX_EXEC_TIMEOUT_SECONDS,
     fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
     codeModeRegistry: params.codeModeRegistry,
+    desktopLeases: params.desktopLeases,
   });
 }
 
@@ -95,6 +101,7 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
               turnId: turn_id,
               defaultExecTimeoutSeconds: options.defaultExecTimeoutSeconds,
               fileMaxBytesForDownload: options.fileMaxBytesForDownload,
+              desktopLeases: options.desktopLeases,
               logger,
             });
       }
@@ -120,6 +127,7 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
             computer_id: input.computer_id,
             agent_id: input.agent_id,
             skills_requested: input.skills_requested,
+            desktop_requested: input.desktop_requested,
           },
         });
       }
@@ -149,6 +157,10 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
         // init. A machine that cannot run the downloader gets none at all: its init exec would
         // die on `import pydantic` and take every plain command down with it.
         skillMounter: skillMounterFor(input),
+        providerTools:
+          input.desktop && input.provider instanceof RemoteComputerProvider
+            ? desktopProviderTools(input.provider)
+            : undefined,
         tracing: input.tracing,
         logger: input.logger,
       }),

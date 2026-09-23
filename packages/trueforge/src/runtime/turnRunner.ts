@@ -154,6 +154,8 @@ function createTurnResolver(
           computer_id: computerId,
           agent_id: session.agent.type === 'reference' ? session.agent.id : undefined,
           skills_requested: (spec.skills ?? []).length > 0,
+          // A desktop that went down since the agent was saved costs the desktop tools, not the turn.
+          desktop_requested: false,
         });
         if (!usability.usable) {
           throw new HTTPException(422, {
@@ -221,6 +223,7 @@ function createTurnResolver(
         skills: mountSkills,
         fileDownloadEnabled: spec.config.sandbox.file_downloads,
         existingSandboxId: carriedSandboxId,
+        desktop: spec.config.sandbox.desktop,
         tracing,
       });
     },
@@ -454,20 +457,40 @@ export async function startTurnInProcess(params: {
       markFirstEventDualWritten(undefined);
     })
     // Inside `drained` so a runtime that holds the turn until it settles also holds this.
-    .then(async () => {
-      if (onTurnDrained === undefined) {
-        return;
-      }
-      try {
-        await onTurnDrained({ session: params.session, turn_id: turn.id });
-      } catch (error) {
-        params.deps.logger.error('Turn drained hook failed', {
-          sessionId: params.session.session_id,
-          turnId: turn.id,
-          ...extractErrorLogFields(error),
-        });
-      }
-    });
+    .then(() =>
+      runTurnDrainedHook({
+        hook: onTurnDrained,
+        session: params.session,
+        turn_id: turn.id,
+        logger: params.deps.logger,
+      }),
+    );
   await firstEventDualWritten;
   return { turn, drained };
+}
+
+/** Every path that drains a turn ends here, so post-turn work runs for streaming turns too. Never throws. */
+export async function runTurnDrainedHook({
+  hook,
+  session,
+  turn_id,
+  logger,
+}: {
+  hook: TurnDrainedHook | undefined;
+  session: SessionHandle;
+  turn_id: string;
+  logger: Logger;
+}): Promise<void> {
+  if (hook === undefined) {
+    return;
+  }
+  try {
+    await hook({ session, turn_id });
+  } catch (error) {
+    logger.error('Turn drained hook failed', {
+      sessionId: session.session_id,
+      turnId: turn_id,
+      ...extractErrorLogFields(error),
+    });
+  }
 }

@@ -7,6 +7,7 @@ import type { SandboxUsability, SandboxUsabilityReason } from '../sandbox/integr
 import type { ComputerRelayStatus } from './protocol';
 import { RemoteComputerProvider } from './RemoteComputerProvider';
 import type { ComputersService } from './service';
+import type { TurnDesktopLeases } from './turnDesktopLeases';
 
 function refuse(reason: SandboxUsability['reason']): SandboxUsability {
   return { usable: false, status: undefined, reason };
@@ -36,6 +37,8 @@ export function computerNotUsableMessage({
       return `Computer "${computerId}" is offline`;
     case 'computer_no_skills':
       return `Computer "${computerId}" cannot mount skills: it needs python3, git and the pydantic package`;
+    case 'computer_no_desktop':
+      return `Computer "${computerId}" has no desktop: start its client with --desktop, or turn the desktop off for this agent`;
   }
 }
 
@@ -50,6 +53,8 @@ export interface ComputerSelection {
   tenant_id: string;
   /** Whether the spec asks for skills. A machine that cannot mount them may still run commands. */
   skills_requested: boolean;
+  /** Whether the spec asks for the desktop. */
+  desktop_requested: boolean;
 }
 
 /**
@@ -95,6 +100,9 @@ export async function resolveComputerUsability({
   if (selection.skills_requested && computer.capabilities !== null && !computer.capabilities.skills) {
     return refuse('computer_no_skills');
   }
+  if (selection.desktop_requested && computer.capabilities !== null && !computer.capabilities.desktop) {
+    return refuse('computer_no_desktop');
+  }
   return computer.status === 'online'
     ? { usable: true, status: 'ready', reason: undefined }
     : { usable: true, status: 'ready', reason: 'computer_offline' };
@@ -112,6 +120,7 @@ export async function buildRemoteComputerProvider({
   turnId,
   defaultExecTimeoutSeconds,
   fileMaxBytesForDownload,
+  desktopLeases,
   logger,
 }: {
   computers: ComputersService;
@@ -121,6 +130,7 @@ export async function buildRemoteComputerProvider({
   turnId: string | null;
   defaultExecTimeoutSeconds: number;
   fileMaxBytesForDownload: number;
+  desktopLeases: TurnDesktopLeases | undefined;
   logger: Logger;
 }): Promise<RemoteComputerProvider | undefined> {
   const computer = await computers.store.getComputer({ tenant_id: tenantId, computer_id: computerId });
@@ -149,9 +159,11 @@ export async function buildRemoteComputerProvider({
     turnId,
     workdir: hello?.workdir ?? null,
     capabilities: hello?.capabilities ?? computer.capabilities,
+    requireApproval: computer.require_approval,
     defaultExecTimeoutSeconds,
     fileMaxBytesForDownload,
     store: computers.store,
+    desktopLeases,
     logger,
   });
 }

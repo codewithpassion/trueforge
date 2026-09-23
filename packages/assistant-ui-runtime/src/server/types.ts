@@ -125,6 +125,8 @@ export interface AgentSandboxConfig extends AgentCapabilityConfig {
   fileDownloads?: boolean;
   /** Run on this enrolled machine instead of the tenant sandbox provider. */
   computerId?: string;
+  /** Let the agent see and drive that machine's desktop. */
+  desktop?: boolean;
 }
 
 export interface AgentInputTokensCompactionTrigger {
@@ -430,6 +432,7 @@ export interface AgentBuilderCapabilitiesResponse {
     skill: { enabled: boolean; reason?: string };
     settings?: { enabled: boolean };
     webSearch?: { enabled: boolean };
+    desktop?: { enabled: boolean };
   };
 }
 
@@ -884,7 +887,7 @@ export interface IntegrationSetupManifest {
 export type ComputerStatus = 'pending' | 'online' | 'offline' | 'revoked';
 
 /** Kinds of operation the audit records. */
-export type ComputerAuditOp = 'exec' | 'file_put' | 'file_get';
+export type ComputerAuditOp = 'exec' | 'file_put' | 'file_get' | 'desktop';
 
 /** What the machine reported it has. */
 export interface ComputerTools {

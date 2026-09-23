@@ -9,9 +9,11 @@ import { createAuthMiddleware } from '../../../src/auth/middleware';
 import { disableOidcAuth, enableOidcAuth, initOidc } from '../../../src/auth/oidc';
 import { OidcAuthenticator } from '../../../src/auth/oidcAuthenticator';
 import { StandaloneAuthenticator } from '../../../src/auth/standaloneAuthenticator';
+import type { ComputersService } from '../../../src/computers/service';
 import type { OIDCConfig } from '../../../src/config';
 import { migrateSqliteToLatest } from '../../../src/db/migrateSqlite';
-import { createSqliteDb } from '../../../src/db/sqlite/client';
+import { BetterSqliteAtomicRunner, createSqliteDb } from '../../../src/db/sqlite/client';
+import { SqliteComputerStore } from '../../../src/db/sqlite/computer-store/SqliteComputerStore';
 import { SqliteSandboxProviderStore } from '../../../src/db/sqlite/sandbox-provider-store/SqliteSandboxProviderStore';
 import type { SandboxIntegration, SandboxUsability } from '../../../src/sandbox/integration';
 import type { LocalSandboxSupportResult } from '../../../src/sandbox/local/provider/LocalSandboxProvider';
@@ -79,10 +81,23 @@ describe('capabilities routers', () => {
 
   // Options object so an explicit `sandboxIntegration: undefined` is not replaced by the default.
   function makeRouter(
-    options: { sandboxIntegration: SandboxIntegration | undefined } = { sandboxIntegration: stubIntegration() },
+    options: { sandboxIntegration: SandboxIntegration | undefined; withComputers?: boolean } = {
+      sandboxIntegration: stubIntegration(),
+    },
     authenticator: Authenticator = new StandaloneAuthenticator(),
   ): OpenAPIHono {
     const db = createSqliteDb(':memory:');
+    const computers: ComputersService | undefined =
+      options.withComputers === true
+        ? {
+            store: new SqliteComputerStore(db, new BetterSqliteAtomicRunner(db)),
+            rateLimiter: undefined,
+            relay: () => {
+              throw new Error('not used');
+            },
+            relayFetch: () => Promise.reject(new Error('not used')),
+          }
+        : undefined;
     return withAuth(
       createCapabilitiesRouter({
         resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
@@ -90,7 +105,7 @@ describe('capabilities routers', () => {
         logger: silentLogger,
         resolveRequestContext,
         sandboxIntegration: options.sandboxIntegration,
-        computers: undefined,
+        computers,
       }),
       authenticator,
     );
@@ -112,6 +127,7 @@ describe('capabilities routers', () => {
         },
         settings: { enabled: true },
         computers: { enabled: false },
+        desktop: { enabled: false },
         web_search: { enabled: false },
       },
     });
@@ -132,6 +148,7 @@ describe('capabilities routers', () => {
         },
         settings: { enabled: true },
         computers: { enabled: false },
+        desktop: { enabled: false },
         web_search: { enabled: false },
       },
     });
@@ -151,6 +168,7 @@ describe('capabilities routers', () => {
         skill: { enabled: true },
         settings: { enabled: true },
         computers: { enabled: false },
+        desktop: { enabled: false },
         web_search: { enabled: false },
       },
     });
@@ -169,6 +187,7 @@ describe('capabilities routers', () => {
         skill: { enabled: true },
         settings: { enabled: true },
         computers: { enabled: false },
+        desktop: { enabled: false },
         web_search: { enabled: false },
       },
     });
@@ -189,8 +208,19 @@ describe('capabilities routers', () => {
         skill: { enabled: false, reason: 'Skills are not available on this server.' },
         settings: { enabled: true },
         computers: { enabled: false },
+        desktop: { enabled: false },
         web_search: { enabled: false },
       },
+    });
+  });
+
+  it('reports the desktop wherever remote computers are served', async () => {
+    disableOidcAuth();
+    const router = makeRouter({ sandboxIntegration: stubIntegration(), withComputers: true });
+
+    const response = await router.request('/');
+    expect(await response.json()).toMatchObject({
+      data: { computers: { enabled: true }, desktop: { enabled: true } },
     });
   });
 
@@ -324,6 +354,7 @@ describe('capabilities routers', () => {
           },
           settings: { enabled: true },
           computers: { enabled: false },
+          desktop: { enabled: false },
           web_search: { enabled: false },
         },
       });
@@ -341,6 +372,7 @@ describe('capabilities routers', () => {
           },
           settings: { enabled: false },
           computers: { enabled: false },
+          desktop: { enabled: false },
           web_search: { enabled: false },
         },
       });

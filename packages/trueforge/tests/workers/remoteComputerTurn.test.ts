@@ -20,7 +20,14 @@ import { workersComputersService } from '../../src/workers/computersService';
 import { createConsoleLogger } from '../../src/workers/logger';
 import { createWorkersSandboxIntegration } from '../../src/workers/sandbox/workersSandboxIntegration';
 import { d1Persistence, migrateDatabase, TENANT_ID, upsertMockProvider, USER_REF } from './harness';
-import { computersApp, FAKE_WORKDIR, FakeComputerClient, PUBLIC_BASE_URL, settle } from './remoteComputerClient';
+import {
+  computersApp,
+  connectNewComputer,
+  FAKE_WORKDIR,
+  FakeComputerClient,
+  PUBLIC_BASE_URL,
+  settle,
+} from './remoteComputerClient';
 
 const logger = createConsoleLogger({ level: 'error', bindings: { component: 'computer-turn-test' } });
 
@@ -37,6 +44,7 @@ function computerIntegration(computers: ComputersService = workersComputersServi
     defaultExecTimeoutSeconds: 30,
     fileMaxBytesForDownload: 1024 * 1024,
     codeModeRegistry: undefined,
+    desktopLeases: undefined,
   });
 }
 
@@ -46,48 +54,18 @@ async function onlineComputer(
   /** What the machine says about the skill downloader. The default machine can run it. */
   skills = true,
 ): Promise<{ computerId: string; client: FakeComputerClient }> {
-  const computers = workersComputersService(env);
-  const app = computersApp({ computers });
-  const created = await app.fetch(
-    new Request(`${PUBLIC_BASE_URL}/api/v1/computers`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name }),
-    }),
-    env,
-  );
-  const body = await created.json<{ data: { computer: { id: string }; enrollment: { enrollment_code: string } } }>();
-  const enrolled = await app.fetch(
-    new Request(`${PUBLIC_BASE_URL}/api/v1/computers/enroll`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        enrollment_code: body.data.enrollment.enrollment_code,
-        hostname: 'office-box',
-        os: 'linux',
-        arch: 'amd64',
-        version: '0.1.0-test',
-      }),
-    }),
-    env,
-  );
-  const credential = (await enrolled.json<{ data: { machine_credential: string } }>()).data.machine_credential;
-  const client = await FakeComputerClient.connect({
-    app,
-    credential,
+  return connectNewComputer({
+    name,
     options: {
       // python3 and git are always there: the machine the live test found had both and no
       // pydantic, so only `skills` varies — a server that re-derived it would still pass.
-      hello: { capabilities: { python3: true, git: true, skills } },
+      hello: { capabilities: { python3: true, git: true, skills, desktop: false, desktop_unavailable_reason: null } },
       onRequest: frame =>
         frame['op'] === 'exec'
           ? { ...OK_EXEC, stdout: String(frame['command']).includes('uname') ? UNAME_OUTPUT : '' }
           : undefined,
     },
   });
-  // The hello write is what turns the row online and tells the provider where sessions live.
-  await settle();
-  return { computerId: body.data.computer.id, client };
 }
 
 function computerSpec({
@@ -358,6 +336,7 @@ describe('a turn on a remote computer', () => {
       relayFetch: computers.relayFetch.bind(computers),
       relay: id => ({
         request: () => Promise.reject(new Error('Durable Object reset because its code was updated')),
+        releaseLease: input => computers.relay(id).releaseLease(input),
         revoke: () => Promise.resolve({ closed: 0 }),
         disconnect: () => Promise.resolve({ closed: 0 }),
         destroy: () => Promise.resolve(),
@@ -443,7 +422,13 @@ describe('a machine that cannot run the skill downloader', () => {
       await settle(2);
       stored = await readRow();
     }
-    expect(stored?.capabilities).toEqual({ python3: true, git: true, skills: false });
+    expect(stored?.capabilities).toEqual({
+      python3: true,
+      git: true,
+      skills: false,
+      desktop: false,
+      desktop_unavailable_reason: null,
+    });
 
     const expected = /cannot mount skills: it needs python3, git and the pydantic package/;
     await expect(

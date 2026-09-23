@@ -22,6 +22,7 @@ type enrollFlags struct {
 	name      string
 	stateDir  string
 	logFormat string
+	desktop   bool
 }
 
 func bindEnrollFlags(set *flag.FlagSet) *enrollFlags {
@@ -32,6 +33,7 @@ func bindEnrollFlags(set *flag.FlagSet) *enrollFlags {
 	set.StringVar(&flags.name, "name", "", "hostname to report instead of this machine's own")
 	set.StringVar(&flags.stateDir, "state-dir", state.DefaultDir(), "where the credential and config are kept")
 	set.StringVar(&flags.logFormat, "log-format", "text", "json or text")
+	set.BoolVar(&flags.desktop, "desktop", false, "turn the virtual desktop on for every later run (Linux only)")
 	return flags
 }
 
@@ -121,7 +123,7 @@ func performEnrollment(ctx context.Context, flags *enrollFlags) (enroll.Result, 
 	if err != nil {
 		return enroll.Result{}, err
 	}
-	config := state.Config{URL: canonical, ComputerID: result.ComputerID, Name: hostname}
+	config := state.Config{URL: canonical, ComputerID: result.ComputerID, Name: hostname, Desktop: flags.desktop}
 	if err := state.SaveConfig(flags.stateDir, config); err != nil {
 		return enroll.Result{}, fmt.Errorf("store the config: %w", err)
 	}

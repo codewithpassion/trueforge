@@ -108,10 +108,12 @@ function providerFor({
     sessionId,
     turnId: 'turn-1',
     workdir,
-    capabilities: { python3: true, git: true, skills: true },
+    capabilities: { python3: true, git: true, skills: true, desktop: false, desktop_unavailable_reason: null },
+    requireApproval: false,
     defaultExecTimeoutSeconds: 10,
     fileMaxBytesForDownload: 1024 * 1024,
     store: computers.store,
+    desktopLeases: undefined,
     logger: silentLogger,
   });
 }
@@ -483,6 +485,7 @@ describe('the tenant check', () => {
       tenant_id: OTHER_TENANT,
       op_json: JSON.stringify({ op: 'exec', command: 'whoami', cwd: null, env: {}, timeout_ms: 1000 }),
       timeout_ms: 1000,
+      principal: { kind: 'agent', session_id: 'session-1', turn_id: 'turn-1' },
     });
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
@@ -604,6 +607,7 @@ describe('offline', () => {
       relayFetch: computers.relayFetch.bind(computers),
       relay: () => ({
         request: () => Promise.reject(new Error('Durable Object reset because its code was updated')),
+        releaseLease: () => Promise.reject(new Error('reset')),
         revoke: () => Promise.resolve({ closed: 0 }),
         disconnect: () => Promise.resolve({ closed: 0 }),
         destroy: () => Promise.resolve(),

@@ -94,6 +94,7 @@ import { ActiveTurnRegistry } from './runtime/activeTurns';
 import { createServerRuntime, type ServerPersistence } from './runtime/createServerRuntime';
 import { EventSubscriptionRegistry } from './runtime/event-subscription';
 import { NodeTurnExecutor } from './runtime/nodeTurnExecutor';
+import { createTurnDrainedHook } from './runtime/turnDrainedHook';
 import type { SandboxIntegration } from './sandbox/integration';
 import type { LocalSandboxSupportResult } from './sandbox/local/provider/LocalSandboxProvider';
 import { createNodeSandboxIntegration } from './sandbox/nodeSandboxIntegration';
@@ -497,7 +498,12 @@ async function createNodeServerRuntime<TTransaction>(options: {
   });
   const turnExecutor = new NodeTurnExecutor({
     activeTurns,
-    onTurnDrained: input => notifier.deliverForTurn(input),
+    // No remote computers on this runtime yet, so there is no desktop lease to release.
+    onTurnDrained: createTurnDrainedHook({
+      deliver: input => notifier.deliverForTurn(input),
+      desktop: undefined,
+      logger,
+    }),
     eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(redis),
     sessionStore: persistence.sessionStore,
     redis,
