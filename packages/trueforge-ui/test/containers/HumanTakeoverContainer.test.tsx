@@ -40,7 +40,7 @@ describe('HumanTakeoverContainer', () => {
 
     expect(screen.getByText('Log into the supplier portal')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: /Open screen/ });
-    expect(link).toHaveAttribute('href', '/tf/library/agent-1?tab=screen');
+    expect(link).toHaveAttribute('href', '/tf/agents/agent-1/screen');
   });
 
   it('opens the Screen tab inside the app on a plain click', () => {

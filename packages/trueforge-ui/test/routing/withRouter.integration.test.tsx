@@ -54,12 +54,15 @@ vi.mock('@truefoundry/trueforge-assistant-ui-runtime', () => ({
   useTrueForgeUpdateAgentSpec: () => vi.fn(),
 }));
 
+import { AgentDetailsPage } from '@/atoms/agent-details/AgentDetailsPage.js';
+import type { AgentScreenProps } from '@/atoms/desktop/AgentScreen.js';
 import { CompactLayoutProvider } from '@/atoms/lib/CompactLayoutContext.js';
 import { SessionsBrowserButton } from '@/atoms/SessionsBrowserButton.js';
 import type { ThreadListRowProps } from '@/atoms/ThreadListRow.js';
 import { ThreadListContainer } from '@/containers/ThreadListContainer.js';
 import { TrueForgeUI } from '@/containers/TrueForgeUI.js';
 import { useShellMode } from '@/server/ShellModeContext.js';
+import type { AgentDetail, ComputerDesktopServer } from '@/server/types.js';
 import { DEFAULT_SESSION_TIME_WINDOW_MS } from '@/utils/sessionShareUrl.js';
 
 beforeAll(() => {
@@ -209,6 +212,56 @@ describe('withRouter end to end', () => {
       expect(params.get('s_tw')).toBe(String(DEFAULT_SESSION_TIME_WINDOW_MS));
       expect(params.get('s_sts')).toBeNull();
       expect(params.get('s_ets')).toBeNull();
+    });
+  });
+
+  it('opens the agent Screen link on the Screen tab', async () => {
+    window.history.replaceState(null, '', '/agents/agent-1/screen');
+    const detail: AgentDetail = {
+      agentId: 'agent-1',
+      name: 'portal-bot',
+      agentSpec: {
+        model: { name: 'openai/gpt-5.1' },
+        config: { sandbox: { enabled: true, computerId: 'computer-1', desktop: true } },
+      },
+    };
+    const unused = async (): Promise<never> => {
+      throw new Error('Unexpected desktop call');
+    };
+    const computerDesktop: ComputerDesktopServer = {
+      getDesktopStatus: unused,
+      getDesktopScreenshot: unused,
+      sendDesktopInput: unused,
+      getDesktopClipboard: unused,
+      setDesktopClipboard: unused,
+      takeDesktopControl: unused,
+      handBackDesktop: unused,
+      cancelDesktopTakeover: unused,
+    };
+    function AgentPage() {
+      const shell = useShellMode();
+      return shell.libraryAgentId === null ? null : <AgentDetailsPage agentId={shell.libraryAgentId} />;
+    }
+    render(
+      <TrueForgeUI
+        server={createMockAgentUIServer({
+          sessions: createMockAgentSessionsServer({ getAgent: async () => detail }),
+          computerDesktop,
+        })}
+        agentConfig={{ mode: 'AgentLibraryWithComposer' }}
+        withRouter
+        layout={() => <AgentPage />}
+        overrides={{
+          AgentScreen: ({ computerId }: AgentScreenProps) => <div data-testid="agent-screen">{computerId}</div>,
+        }}
+      />,
+    );
+
+    expect(await screen.findByTestId('agent-screen')).toHaveTextContent('computer-1');
+    expect(screen.getByRole('tab', { name: 'Screen' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/library/agent-1');
+      expect(new URLSearchParams(window.location.search).get('tab')).toBe('screen');
     });
   });
 });

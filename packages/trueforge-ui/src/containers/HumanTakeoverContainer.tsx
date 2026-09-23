@@ -1,7 +1,7 @@
 'use client';
 
 import { useDesktopAgent } from '../hooks/useDesktopAgent.js';
-import { buildPath } from '../routing/paths.js';
+import { buildAgentScreenHref } from '../routing/paths.js';
 import { useOptionalResolvedRoutes } from '../routing/ResolvedRoutesContext.js';
 import { useOptionalComputerDesktopServer } from '../server/ServerContext.js';
 import { useOptionalShellMode } from '../server/ShellModeContext.js';
@@ -26,15 +26,13 @@ export function HumanTakeoverContainer({ argsText, result }: { argsText: string;
 
   const reason = parseTakeoverReason(argsText) ?? 'The agent asked for a person to take over its desktop.';
   const agentId = agent?.agentId;
-  const libraryPath =
-    agentId === undefined || routes === null ? null : buildPath({ type: 'libraryAgent', agentId }, routes);
-  const basename = routes?.basename.replace(/\/$/, '') ?? '';
+  const screenHref = agentId === undefined || routes === null ? null : buildAgentScreenHref({ agentId, routes });
 
   return (
     <HumanTakeoverCard
       reason={reason}
       {...(answer === undefined ? {} : { answer })}
-      {...(libraryPath === null ? {} : { screenHref: `${basename}${libraryPath}?tab=screen` })}
+      {...(screenHref === null ? {} : { screenHref })}
       {...(agentId === undefined || shell === null
         ? {}
         : {

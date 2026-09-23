@@ -412,4 +412,21 @@ describe('DesktopScreen', () => {
     await settle();
     expect(screen.queryByDisplayValue('copied text')).toBeNull();
   });
+
+  it('shows how old the last frame is and warns once it stops updating', async () => {
+    const getDesktopScreenshot = vi.fn(async (): Promise<Blob> => new Blob(['frame']));
+    const server = createServer({ getDesktopScreenshot });
+    render(<DesktopScreen server={server} computerId="computer-1" agentId="agent-1" />);
+    expect(screen.getByText('No frame yet')).toBeInTheDocument();
+    await settle();
+    getDesktopScreenshot.mockImplementation(() => new Promise<Blob>(() => undefined));
+
+    await settle(500);
+    expect(screen.getByTestId('desktop-frame-age')).toHaveTextContent('Frame 0.5 s old');
+    expect(screen.getByTestId('desktop-frame-age')).not.toHaveTextContent('not updating');
+    await settle(5000);
+    expect(screen.getByTestId('desktop-frame-age')).toHaveTextContent('Frame 5.5 s old, not updating');
+    await settle(10_000);
+    expect(screen.getByTestId('desktop-frame-age')).toHaveTextContent('Frame 16 s old, not updating');
+  });
 });

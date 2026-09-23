@@ -40,6 +40,8 @@ import { Button } from '../primitives/Button.js';
 /** A human lease lasts 5 minutes without input; warn in its last minute. */
 const LEASE_WARNING_MS = 60_000;
 const NOTE_MAX_CHARS = 2000;
+/** Frames come about every half second; one this old means the view has stopped following. */
+const STALE_FRAME_MS = 5000;
 
 /** Chords the local browser keeps for itself, so they can only reach the desktop from here. */
 const RESERVED_CHORDS: { label: string; keys: string }[] = [
@@ -87,10 +89,20 @@ function controllerLabel(controller: DesktopController): string {
   }
 }
 
-function frameAgeLabel({ frame, now }: { frame: DesktopFrame | null; now: number }): string {
-  if (frame === null) return 'No frame yet';
-  const seconds = Math.max(0, Math.round((now - frame.receivedAt) / 1000));
-  return seconds <= 1 ? 'Live' : `Frame ${String(seconds)}s old`;
+/** Its own clock, so the age ticks without re-rendering the whole view. */
+function FrameAge({ frame }: { frame: DesktopFrame | null }) {
+  const now = useNow(250);
+  if (frame === null) return <span>No frame yet</span>;
+  const ageMs = Math.max(0, now - frame.receivedAt);
+  const seconds = ageMs / 1000;
+  const text = `Frame ${seconds < 10 ? seconds.toFixed(1) : String(Math.round(seconds))} s old`;
+  if (ageMs < STALE_FRAME_MS) return <span data-testid="desktop-frame-age">{text}</span>;
+  return (
+    <span data-testid="desktop-frame-age" className="inline-flex items-center gap-1 text-warning-bg">
+      <Icon name="triangle-exclamation" className="size-3.5 shrink-0" />
+      {text}, not updating
+    </span>
+  );
 }
 
 /** Why the view is not live, or null while it is. */
@@ -466,9 +478,11 @@ export function DesktopScreen({
       ) : null}
 
       <div className={cn('flex flex-wrap items-center gap-2', compact && 'flex-col items-stretch')}>
-        <p className="min-w-0 flex-1 text-xs text-text-secondary" aria-live="polite">
-          {status === null ? (screen.statusError ?? 'Loading…') : controllerLabel(status.controller)} ·{' '}
-          {frameAgeLabel({ frame, now })}
+        <p className="min-w-0 flex-1 text-xs text-text-secondary">
+          <span aria-live="polite">
+            {status === null ? (screen.statusError ?? 'Loading…') : controllerLabel(status.controller)}
+          </span>{' '}
+          · <FrameAge frame={frame} />
         </p>
         <div className="flex flex-wrap gap-2">
           {inControl ? (

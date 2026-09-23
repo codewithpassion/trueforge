@@ -316,7 +316,10 @@ export function ShellRouteSync({
       ? effectiveRoutes.basename.slice(0, -1)
       : effectiveRoutes.basename;
     const browserPathname = `${basename}${location.pathname}` || '/';
-    const latestSearch = window.location.pathname === browserPathname ? window.location.search : location.search;
+    // A boot redirect (the agent Screen link) may already sit at the target before the router re-renders.
+    const browserIsCurrent =
+      window.location.pathname === browserPathname || window.location.pathname === (`${basename}${target}` || '/');
+    const latestSearch = browserIsCurrent ? window.location.search : location.search;
     const ownsHistoryAgentSearch = placeOwnsHistoryAgentSearch(place);
     const historyAgentSearch = ownsHistoryAgentSearch
       ? shell.historyAgentFilter == null

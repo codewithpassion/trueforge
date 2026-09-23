@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildAgentScreenHref,
   buildPath,
   buildSessionResumeHref,
   matchLocation,
@@ -231,5 +232,23 @@ describe('agent Screen deep link', () => {
   it('is off when agent details are', () => {
     const disabled = resolveRoutesConfig({ paths: { libraryAgent: false } });
     expect(matchPath('/agents/agent-1/screen', disabled)).toBeNull();
+  });
+});
+
+describe('buildAgentScreenHref', () => {
+  it('links the agent Screen route under the basename, as the server links it', () => {
+    expect(buildAgentScreenHref({ agentId: 'a b', routes: resolveRoutesConfig({ basename: '/tf/' }) })).toBe(
+      '/tf/agents/a%20b/screen',
+    );
+    expect(buildAgentScreenHref({ agentId: 'agent-1', routes: resolveRoutesConfig() })).toBe('/agents/agent-1/screen');
+  });
+
+  it('has no link while agent details have no URL', () => {
+    expect(
+      buildAgentScreenHref({ agentId: 'agent-1', routes: resolveRoutesConfig({ paths: { libraryAgent: false } }) }),
+    ).toBeNull();
+    expect(
+      buildAgentScreenHref({ agentId: 'agent-1', routes: resolveRoutesConfig({ paths: { agentScreen: false } }) }),
+    ).toBeNull();
   });
 });

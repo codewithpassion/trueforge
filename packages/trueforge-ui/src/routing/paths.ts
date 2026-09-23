@@ -87,6 +87,16 @@ export function buildPath(place: RoutePlace, routes: ResolvedRoutes): string | n
 }
 
 /**
+ * The agent's Screen page link, with `routes.basename`, or `null` when agent details have no URL.
+ * Opening it lands on the agent page with its Screen tab selected.
+ */
+export function buildAgentScreenHref({ agentId, routes }: { agentId: string; routes: ResolvedRoutes }): string | null {
+  if (routes.agentScreen == null || routes.libraryAgent == null) return null;
+  const basename = routes.basename.endsWith('/') ? routes.basename.slice(0, -1) : routes.basename;
+  return `${basename}${fillTemplate(routes.agentScreen, agentId)}`;
+}
+
+/**
  * Absolute href that boots the shell on a history session (`/sessions/:id`).
  * Includes `routes.basename` and clears place-owned share query keys.
  */
