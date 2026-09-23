@@ -27,4 +27,5 @@ WHERE a.id IS NULL;
 ```
 
 On Postgres use `i.manifest->>'default_agent_name'` in place of `json_extract(...)`. Then recreate
-each missing agent under that name, or delete the integration in Settings → Integrations.
+each missing agent under that name, or delete the integration with
+`DELETE /api/v1/integrations/{integration_id}`.

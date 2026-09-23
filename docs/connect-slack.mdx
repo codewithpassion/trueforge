@@ -26,11 +26,12 @@ You need:
 
 - Permission to create and install a Slack app in the workspace.
 - A TrueForge deployment reachable from Slack over HTTPS, with `PUBLIC_BASE_URL` set to that URL.
-- An agent to answer with. Its name goes in the integration.
+- An agent to answer with, and permission to manage it. The integration belongs to that agent.
 
 ## 1. Create the integration
 
-Open **Settings → Integrations → Add Slack workspace** and fill in:
+Open the agent that should answer (**Agents → your agent**), go to its **Integrations** tab, choose
+**Add Slack workspace** and fill in:
 
 - **Bot name** — what Slack calls the app, up to 35 characters and written however you like:
   `TrueForge Bot` is fine. Slack restricts the bot user's own display name to `a-z`, `0-9`, `.`,
@@ -39,7 +40,6 @@ Open **Settings → Integrations → Add Slack workspace** and fill in:
   `TrueForge Bot` becomes `@trueforge-bot` and `Straße Bot` becomes `@strasse-bot`. The
   integration's page shows the handle once it exists. A name with no letter or digit left, such as
   `???` or `___`, is refused, and so is any name containing "slack", which Slack reserves.
-- **Agent** — the agent that answers.
 - **Allowed channels** — channel ids, comma separated. This is an allowlist, not a filter: an empty
   list allows no channel.
 - **Answer direct messages** — leave on to let people DM the bot.
@@ -111,8 +111,9 @@ token belongs to a different workspace than the one already stored, the change i
 than silently rebinding the integration.
 
 Editing later leaves both credential fields blank: blank keeps what is stored, and a new pair
-rotates it. Allowed channels, the direct-message policy, the agent, the approver list and the
-notification rules stay editable at any time.
+rotates it. Allowed channels, the direct-message policy, the approver list and the notification
+rules stay editable at any time. The agent does not change: an integration stays with the agent it
+was created for.
 Renaming the bot changes the manifest this page generates, not an app Slack has already created —
 rename that one in Slack.
 
@@ -142,7 +143,7 @@ Who approved or denied is recorded on the TrueForge side as well as in the threa
 survives an edit to the Slack message:
 
 ```bash
-curl "$PUBLIC_BASE_URL/api/v1/settings/integrations/$ID/decisions" \
+curl "$PUBLIC_BASE_URL/api/v1/integrations/$ID/decisions" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -189,14 +190,14 @@ question with a button per option — or you can simply reply in the thread in y
 
 ```bash
 # 1. Create it pending.
-curl -X POST "$PUBLIC_BASE_URL/api/v1/settings/integrations" \
+curl -X POST "$PUBLIC_BASE_URL/api/v1/integrations" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
+    "agent_name": "support-bot",
     "manifest": {
       "type": "slack",
       "bot_display_name": "TrueForge Bot",
-      "default_agent_name": "support-bot",
       "allowed_channel_ids": ["C0EXAMPLE"],
       "allow_direct_messages": true,
       "reply_mode": "thread"
@@ -204,18 +205,17 @@ curl -X POST "$PUBLIC_BASE_URL/api/v1/settings/integrations" \
   }'
 
 # 2. Read the manifest to paste into Slack.
-curl "$PUBLIC_BASE_URL/api/v1/settings/integrations/$ID/app-manifest" \
+curl "$PUBLIC_BASE_URL/api/v1/integrations/$ID/app-manifest" \
   -H "Authorization: Bearer $TOKEN"
 
 # 3. Save the credentials the installed app issued.
-curl -X PUT "$PUBLIC_BASE_URL/api/v1/settings/integrations/$ID" \
+curl -X PUT "$PUBLIC_BASE_URL/api/v1/integrations/$ID" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "manifest": {
       "type": "slack",
       "bot_display_name": "TrueForge Bot",
-      "default_agent_name": "support-bot",
       "allowed_channel_ids": ["C0EXAMPLE"],
       "allow_direct_messages": true,
       "reply_mode": "thread",
@@ -272,7 +272,7 @@ Deleting the integration stops ingress at once. Sessions it opened stay.
 
 ## Who the bot acts as
 
-Turns run as the admin who connected the integration, with that person's agent access — the same
+Turns run as the person who connected the integration, with that person's agent access — the same
 model schedules use. Anyone who can post in an allowed channel can therefore use that agent, so keep
 the allowed channels tight. Per-sender identity is not available yet; the Slack sender's id and
 display name are recorded on the session for provenance only.
