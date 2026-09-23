@@ -84,7 +84,9 @@ describe('orchestration: pause then resume on tool approval', () => {
       {
         type: InternalEventType.AGENT_CONTEXT_APPEND,
         thread_id: ROOT_ID,
-        context: [{ role: 'tool', tool_call_id: WRITE_NOTE_CALL_ID, content: WRITE_NOTE_RESULT }],
+        context: [
+          { role: 'tool', tool_call_id: WRITE_NOTE_CALL_ID, content: [{ type: 'text', text: WRITE_NOTE_RESULT }] },
+        ],
       },
       { type: EventType.MODEL_MESSAGE, thread_id: ROOT_ID },
       { type: EventType.MODEL_MESSAGE_DELTA, thread_id: ROOT_ID, content: ROOT_FINAL },
@@ -117,7 +119,7 @@ describe('orchestration: pause then resume on tool approval', () => {
             },
           ],
         },
-        { role: 'tool', tool_call_id: WRITE_NOTE_CALL_ID, content: WRITE_NOTE_RESULT },
+        { role: 'tool', tool_call_id: WRITE_NOTE_CALL_ID, content: [{ type: 'text', text: WRITE_NOTE_RESULT }] },
       ],
     };
 
@@ -164,7 +166,9 @@ describe('orchestration: pause then resume on tool approval', () => {
       {
         type: InternalEventType.AGENT_CONTEXT_APPEND,
         thread_id: ROOT_ID,
-        context: [{ role: 'tool', tool_call_id: WRITE_NOTE_CALL_ID, content: DENY_TOOL_CONTENT }],
+        context: [
+          { role: 'tool', tool_call_id: WRITE_NOTE_CALL_ID, content: [{ type: 'text', text: DENY_TOOL_CONTENT }] },
+        ],
       },
       { type: EventType.MODEL_MESSAGE, thread_id: ROOT_ID },
       { type: EventType.MODEL_MESSAGE_DELTA, thread_id: ROOT_ID, content: ROOT_FINAL },
@@ -197,7 +201,7 @@ describe('orchestration: pause then resume on tool approval', () => {
             },
           ],
         },
-        { role: 'tool', tool_call_id: WRITE_NOTE_CALL_ID, content: DENY_TOOL_CONTENT },
+        { role: 'tool', tool_call_id: WRITE_NOTE_CALL_ID, content: [{ type: 'text', text: DENY_TOOL_CONTENT }] },
       ],
     };
 

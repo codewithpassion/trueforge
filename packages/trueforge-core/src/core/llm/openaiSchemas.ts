@@ -131,7 +131,7 @@ export const ChatCompletionAssistantMessageParamSchema = z
   })
   .openapi('ChatCompletionAssistantMessageParam');
 
-// `content` is wider here than in our pipeline; `LLMToolMessageSchema` narrows it to string.
+// `content` is OpenAI's shape; `LLMToolMessageSchema` replaces it with text and image parts.
 export const ChatCompletionToolMessageParamSchema = z
   .object({
     role: z.literal('tool').describe('Tool message role.'),

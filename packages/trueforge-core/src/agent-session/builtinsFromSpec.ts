@@ -9,6 +9,7 @@ import { currentDateTime } from '../core/capabilities/builtins/CurrentDateTime';
 import { dynamicSubAgents } from '../core/capabilities/builtins/DynamicSubAgents';
 import { largeToolResponse } from '../core/capabilities/builtins/LargeToolResponse';
 import { openUI } from '../core/capabilities/builtins/OpenUI';
+import { toolImageTrimming } from '../core/capabilities/builtins/ToolImageTrimming';
 import { webSearch } from '../core/capabilities/builtins/WebSearch';
 import type { AgentDefinition } from '../core/runtime/AgentDefinition';
 import type { AgentTracing } from '../core/tracing/AgentTracing';
@@ -68,6 +69,10 @@ export function builtinsFromSpec(input: {
 
   if (webSearchProvider && config.web_search.enabled) {
     capabilities.push(webSearch({ provider: webSearchProvider, tracing }));
+  }
+
+  if (definition.toolImages !== undefined) {
+    capabilities.push(toolImageTrimming({ keep: definition.toolImages.keep }));
   }
 
   return capabilities;

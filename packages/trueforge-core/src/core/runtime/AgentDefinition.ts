@@ -1,3 +1,4 @@
+import type { SessionFiles } from '../files/SessionFiles';
 import type { ILLM } from '../llm/ILLM';
 import type { LLMUserMessage } from '../llm/LLMTypes';
 import type { ResponseFormat } from '../llm/responseFormat';
@@ -28,4 +29,18 @@ export interface AgentDefinition {
   iterationLimit?: number | undefined;
 
   toolSets?: readonly IToolSet[] | undefined;
+
+  /** Where tool-result images are stored. Without it, image results reach the model as text notes. */
+  toolImages?: ToolImageSettings | undefined;
+}
+
+export interface ToolImageSettings {
+  files: SessionFiles;
+  /**
+   * Once a model request would carry more than twice this many tool images, the oldest become
+   * text stubs down to this many. Stubbing in batches keeps the cached prompt prefix stable.
+   */
+  keep: number;
+  /** Larger tool-result images reach the model as a text note instead. */
+  maxBytes: number;
 }

@@ -3,6 +3,7 @@ import {
   EventType,
   SessionStoreNotFoundError,
   TurnResourceResolver,
+  scopeFileStore,
   type IFileStore,
   type SessionHandle,
   type Turn,
@@ -71,6 +72,7 @@ export type TurnDrainedHook = (input: { session: SessionHandle; turn_id: string 
 function createTurnResolver(
   deps: TurnStores & {
     sandboxIntegration: SandboxIntegration | undefined;
+    fileStore: IFileStore;
     logger: Logger;
     signal: AbortSignal;
     userRef: string;
@@ -87,6 +89,7 @@ function createTurnResolver(
     agentStore,
     modelProviderStore,
     sandboxIntegration,
+    fileStore,
     logger,
     signal,
     userRef,
@@ -97,6 +100,7 @@ function createTurnResolver(
   } = deps;
   const tenant_id = session.tenant_id;
   const sessionId = session.session_id;
+  const files = scopeFileStore({ fileStore, tenant_id, session_id: sessionId });
 
   return new TurnResourceResolver({
     llm: async name => {
@@ -113,6 +117,7 @@ function createTurnResolver(
           },
           logger,
           signal,
+          files,
         }),
         defaultModelParams: resolved.defaultModelParams,
         modelProperties: resolved.modelProperties,
@@ -235,6 +240,11 @@ function createTurnResolver(
       return record.manifest;
     },
     webSearchProvider,
+    toolImages: {
+      files,
+      keep: configuration.TOOL_RESULT_IMAGES_KEEP,
+      maxBytes: configuration.TOOL_RESULT_IMAGE_MAX_BYTES,
+    },
     logger,
   });
 }
@@ -373,6 +383,7 @@ export async function beginTurnExecution(params: {
     agentStore: deps.agentStore,
     modelProviderStore: deps.modelProviderStore,
     sandboxIntegration: deps.sandboxIntegration,
+    fileStore: deps.fileStore,
     logger: deps.logger,
     signal: abortController.signal,
     userRef,

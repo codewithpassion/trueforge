@@ -77,7 +77,6 @@ export type {
   PutFileInput,
   PutFileResult,
   SessionFileRecord,
-  StoredFile,
 } from './store/IFileStore';
 export { InMemoryFileObjectStore, createInMemoryFileStore } from './store/InMemoryFileStore';
 export { InMemorySessionStore } from './store/InMemorySessionStore';
@@ -109,7 +108,7 @@ export type {
   UpdateSessionInput,
   UpdateTurnStateInput,
 } from './store/ISessionStore';
-export { FILE_ID_PATTERN, SessionFileStore } from './store/SessionFileStore';
+export { FILE_ID_PATTERN, SessionFileStore, scopeFileStore } from './store/SessionFileStore';
 export {
   InvalidPageTokenError,
   PreviousTurnRunningError,

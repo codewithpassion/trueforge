@@ -3,7 +3,9 @@
  * user content parts, assistant messages (text + tool_calls + reasoning replay),
  * message list assembly, and tool definitions.
  */
-import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat';
+import type { ChatCompletionTool } from 'openai/resources/chat';
+import type { LLMRequestMessage } from '../../../src/core/llm/ILLM';
+import type { RawAssistantMessage } from '../../../src/core/llm/LLMTypes';
 import {
   convertMessages,
   convertTools,
@@ -118,7 +120,7 @@ describe('toUserContent', () => {
 
 describe('toAssistantModelMessage', () => {
   it('produces a text part for string content', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: 'hello',
     };
@@ -128,7 +130,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('joins array text content parts into one text part', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: [
         { type: 'text', text: 'a' },
@@ -140,7 +142,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('falls back to empty text part when content is null/empty', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };
@@ -149,7 +151,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('converts tool_calls with parsed JSON arguments', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
       tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'my_tool', arguments: '{"x":1}' } }],
@@ -165,7 +167,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('falls back to empty input object for malformed tool_call arguments', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
       tool_calls: [{ id: 'call-2', type: 'function', function: { name: 'bad', arguments: 'not-json' } }],
@@ -176,7 +178,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('places thinking_blocks as reasoning parts — openai provider → reasoningEncryptedContent', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };
@@ -193,7 +195,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('places thinking_blocks as reasoning parts — anthropic provider → signature', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };
@@ -208,7 +210,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('places thinking_blocks as reasoning parts — custom provider carries no replay token', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };
@@ -224,7 +226,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('omits providerOptions on reasoning part when provider is google-gemini', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };
@@ -241,7 +243,7 @@ describe('toAssistantModelMessage', () => {
   it('places provider_specific_fields.thought_signature → providerOptions.google.thoughtSignature on tool-call', () => {
     const toolCall = { id: 'call-1', type: 'function' as const, function: { name: 'fn', arguments: '{}' } };
     Reflect.set(toolCall, 'provider_specific_fields', { thought_signature: 'gemini-sig' });
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
       tool_calls: [toolCall],
@@ -255,7 +257,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('omits providerOptions on tool-call when no thought_signature', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
       tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'fn', arguments: '{}' } }],
@@ -267,7 +269,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('attaches signature when source type and provider name match, ignoring model_name', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };
@@ -282,7 +284,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('omits signature providerOptions when source provider type differs', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };
@@ -332,7 +334,7 @@ describe('toAssistantModelMessage', () => {
   });
 
   it('omits signature providerOptions when source is missing', () => {
-    const msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const msg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };
@@ -349,12 +351,13 @@ describe('toAssistantModelMessage', () => {
 
 describe('convertMessages', () => {
   it('extracts system messages as instructions (joined with double newlines)', () => {
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: LLMRequestMessage[] = [
       { role: 'system', content: 'Prompt A' },
       { role: 'system', content: 'Prompt B' },
       { role: 'user', content: 'hi' },
     ];
     const { instructions, messages: result } = convertMessages({
+      images: new Map(),
       messages: messages,
       provider: 'google-gemini',
       providerName: 'google-gemini',
@@ -366,6 +369,7 @@ describe('convertMessages', () => {
 
   it('returns undefined instructions when there are no system messages', () => {
     const { instructions } = convertMessages({
+      images: new Map(),
       messages: [{ role: 'user', content: 'hi' }],
       provider: 'google-gemini',
       providerName: 'google-gemini',
@@ -374,16 +378,17 @@ describe('convertMessages', () => {
   });
 
   it('preserves user/assistant/tool message ordering', () => {
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: LLMRequestMessage[] = [
       { role: 'user', content: 'q1' },
       {
         role: 'assistant',
         content: 'a1',
         tool_calls: [{ id: 'c1', type: 'function', function: { name: 'fn', arguments: '{}' } }],
       },
-      { role: 'tool', tool_call_id: 'c1', content: 'result' },
+      { role: 'tool', tool_call_id: 'c1', content: [{ type: 'text', text: 'result' }] },
     ];
     const { messages: result } = convertMessages({
+      images: new Map(),
       messages: messages,
       provider: 'google-gemini',
       providerName: 'google-gemini',
@@ -395,15 +400,16 @@ describe('convertMessages', () => {
   });
 
   it('looks up toolName for tool result messages from assistant tool_calls', () => {
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: LLMRequestMessage[] = [
       {
         role: 'assistant',
         content: null,
         tool_calls: [{ id: 'c1', type: 'function', function: { name: 'search', arguments: '{}' } }],
       },
-      { role: 'tool', tool_call_id: 'c1', content: 'found it' },
+      { role: 'tool', tool_call_id: 'c1', content: [{ type: 'text', text: 'found it' }] },
     ];
     const { messages: result } = convertMessages({
+      images: new Map(),
       messages: messages,
       provider: 'google-gemini',
       providerName: 'google-gemini',
@@ -413,8 +419,11 @@ describe('convertMessages', () => {
   });
 
   it('falls back to empty string toolName for unresolvable tool_call_id', () => {
-    const messages: ChatCompletionMessageParam[] = [{ role: 'tool', tool_call_id: 'unknown-id', content: 'data' }];
+    const messages: LLMRequestMessage[] = [
+      { role: 'tool', tool_call_id: 'unknown-id', content: [{ type: 'text', text: 'data' }] },
+    ];
     const { messages: result } = convertMessages({
+      images: new Map(),
       messages: messages,
       provider: 'google-gemini',
       providerName: 'google-gemini',
@@ -423,12 +432,13 @@ describe('convertMessages', () => {
   });
 
   it('skips developer and function role messages', () => {
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: LLMRequestMessage[] = [
       { role: 'user', content: 'x' },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- simulating unrecognised roles at runtime
       { role: 'developer', content: 'internal' } as any,
     ];
     const { messages: result } = convertMessages({
+      images: new Map(),
       messages: messages,
       provider: 'google-gemini',
       providerName: 'google-gemini',
@@ -438,11 +448,16 @@ describe('convertMessages', () => {
   });
 
   it('threads the provider into assistant message reasoning parts', () => {
-    const msg: ChatCompletionMessageParam = { role: 'assistant', content: null };
+    const msg: RawAssistantMessage = { role: 'assistant', content: null };
     Reflect.set(msg, 'thinking_blocks', [{ type: 'thinking', thinking: 'thought', signature: 'sig' }]);
     Reflect.set(msg, 'source', 'anthropic/anthropic/test');
 
-    const { messages: result } = convertMessages({ messages: [msg], provider: 'anthropic', providerName: 'anthropic' });
+    const { messages: result } = convertMessages({
+      messages: [msg],
+      provider: 'anthropic',
+      providerName: 'anthropic',
+      images: new Map(),
+    });
     const assistantMsg = result.find(m => m.role === 'assistant');
     const reasoningPart = (
       assistantMsg?.content as Array<{ type: string; providerOptions?: unknown }> | undefined

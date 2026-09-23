@@ -336,7 +336,11 @@ describe('foldPeerThreads', () => {
       createdAt,
       threadId: ROOT_THREAD_ID,
       toolCallId: 'question-1',
-      content: 'A',
+      // Cards show the text parts; image parts are left for the thumbnail renderer.
+      content: [
+        { type: 'text', text: 'A' },
+        { type: 'image', fileId: 'f1', mediaType: 'image/jpeg', width: 1280, height: 800 },
+      ],
     });
 
     const bucket = state.threads.get(ROOT_THREAD_ID)!;

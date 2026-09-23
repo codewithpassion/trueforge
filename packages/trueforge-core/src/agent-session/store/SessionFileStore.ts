@@ -1,3 +1,4 @@
+import type { SessionFiles, StoredFile } from '../../core/files/SessionFiles';
 import type {
   GetFileInput,
   IFileObjectStore,
@@ -5,7 +6,6 @@ import type {
   ISessionFileMetadataStore,
   PutFileInput,
   PutFileResult,
-  StoredFile,
 } from './IFileStore';
 import type { DeleteSessionInput } from './ISessionStore';
 
@@ -92,4 +92,23 @@ export class SessionFileStore implements IFileStore {
     await this.#objects.deletePrefix(sessionFilesPrefix(input));
     await this.#metadata.deleteSession(input);
   }
+}
+
+/** The store as one session sees it. */
+export function scopeFileStore({
+  fileStore,
+  tenant_id,
+  session_id,
+}: {
+  fileStore: IFileStore;
+  tenant_id: string;
+  session_id: string;
+}): SessionFiles {
+  return {
+    put: async ({ media_type, bytes }) => {
+      const { file_id } = await fileStore.put({ tenant_id, session_id, media_type, bytes });
+      return { file_id };
+    },
+    get: file_id => fileStore.get({ tenant_id, session_id, file_id }),
+  };
 }

@@ -1,6 +1,7 @@
 import type { MessageStatus, ThreadMessage } from '@assistant-ui/core';
 import {
   isEventDelta,
+  toolResponseText,
   type ThreadCreatedEvent,
   type ToolResponseRequiredEvent,
   type TurnEvent,
@@ -143,7 +144,7 @@ function ingestEventIntoBucket(bucket: ThreadBucket, message: TurnStreamingEvent
   }
 
   if (message.type === 'tool.response') {
-    bucket.toolResults.set(message.toolCallId, message.content);
+    bucket.toolResults.set(message.toolCallId, toolResponseText(message.content));
     bucket.pendingResponses.delete(message.toolCallId);
     return;
   }

@@ -1,4 +1,5 @@
 import { EventType, type TurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session';
+import { normalizeTurnStreamingEvent } from '@truefoundry/trueforge-core/agent-session/schemas/events';
 import type { SequencedEvent } from '../runtime/event-subscription';
 
 /** Our own serialized events read back from storage or RPC: a shape check, not schema validation. */
@@ -79,7 +80,7 @@ export async function* decodeTurnEvents({
         if (!isSequencedTurnStreamingEvent(event)) {
           throw new Error('Session Durable Object sent a malformed turn event');
         }
-        yield event;
+        yield { ...normalizeTurnStreamingEvent(event), sequence_number: event.sequence_number };
       }
     }
   } finally {

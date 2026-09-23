@@ -12,8 +12,11 @@
  * that gap for every provider that has a replay token.
  */
 import type { LanguageModelUsage, ProviderMetadata, StepResultPerformance, TextStreamPart, ToolSet } from 'ai';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat';
-import type { ExtendedChatCompletionChunk, RawAssistantMessageWithUsage } from '../../../src/core/llm/LLMTypes';
+import type {
+  ExtendedChatCompletionChunk,
+  RawAssistantMessage,
+  RawAssistantMessageWithUsage,
+} from '../../../src/core/llm/LLMTypes';
 import {
   mapStreamToChunks,
   toAssistantModelMessage,
@@ -93,7 +96,7 @@ describe('Gemini tool thoughtSignature replay round-trip', () => {
     });
 
     // Simulate how AgentThread reconstructs the assistant message for the next-turn request.
-    const assistantMsg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const assistantMsg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
       ...(output.tool_calls !== undefined ? { tool_calls: output.tool_calls } : {}),
@@ -123,7 +126,7 @@ describe('Gemini tool thoughtSignature replay round-trip', () => {
 
     expect(output.tool_calls?.[0]).not.toHaveProperty('provider_specific_fields');
 
-    const assistantMsg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const assistantMsg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
       ...(output.tool_calls !== undefined ? { tool_calls: output.tool_calls } : {}),
@@ -204,7 +207,7 @@ describe.each(REASONING_CASES)(
       });
 
       // Simulate AgentThread reconstructing the assistant message for the next-turn request.
-      const assistantMsg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+      const assistantMsg: RawAssistantMessage = {
         role: 'assistant',
         content: null,
       };
@@ -239,7 +242,7 @@ describe('anthropic reasoning replay, on the shape Anthropic actually sends', ()
       }),
     );
 
-    const assistantMsg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const assistantMsg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
       ...(output.tool_calls !== undefined ? { tool_calls: output.tool_calls } : {}),
@@ -270,7 +273,7 @@ describe('anthropic reasoning replay, on the shape Anthropic actually sends', ()
       }),
     );
 
-    const assistantMsg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const assistantMsg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };
@@ -310,7 +313,7 @@ describe('google-gemini reasoning replay round-trip', () => {
     expect(output.thinking_blocks?.[0]).toMatchObject({ type: 'thinking', thinking: 'gemini thought' });
     expect(output.thinking_blocks?.[0]).not.toHaveProperty('signature');
 
-    const assistantMsg: Extract<ChatCompletionMessageParam, { role: 'assistant' }> = {
+    const assistantMsg: RawAssistantMessage = {
       role: 'assistant',
       content: null,
     };

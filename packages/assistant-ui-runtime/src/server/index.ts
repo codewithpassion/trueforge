@@ -175,9 +175,12 @@ export type {
   ToolCall,
   ToolCallFunction,
   ToolCallRef,
+  ToolContentPart,
+  ToolImageContentPart,
   ToolInfo,
   ToolResponseEvent,
   ToolResponseRequiredEvent,
+  ToolTextContentPart,
   TurnCreatedEvent,
   TurnDoneEvent,
   TurnEvent,
@@ -185,4 +188,4 @@ export type {
   TurnStreamingEvent,
 } from './events.js';
 
-export { isEventDelta, mergeEventDelta } from './eventUtils.js';
+export { isEventDelta, mergeEventDelta, toolResponseText } from './eventUtils.js';

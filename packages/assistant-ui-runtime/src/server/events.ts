@@ -88,12 +88,28 @@ export interface ModelMessageDeltaEvent {
   }[];
 }
 
+export interface ToolTextContentPart {
+  type: 'text';
+  text: string;
+}
+
+/** An image the tool returned, stored as a session file. */
+export interface ToolImageContentPart {
+  type: 'image';
+  fileId: string;
+  mediaType: string;
+  width: number;
+  height: number;
+}
+
+export type ToolContentPart = ToolTextContentPart | ToolImageContentPart;
+
 export interface ToolResponseEvent {
   type: 'tool.response';
   id: string;
   threadId: string;
   toolCallId: string;
-  content: string;
+  content: ToolContentPart[];
   createdAt: string;
 }
 

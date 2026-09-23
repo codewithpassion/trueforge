@@ -3,6 +3,5 @@
 export interface ChatCompletionContentPartText {
     /** Plain-text content. */
     text: string;
-    /** Text content part. */
     type: "text";
 }

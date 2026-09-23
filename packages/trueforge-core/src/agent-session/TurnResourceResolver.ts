@@ -3,7 +3,7 @@ import type { ToolSource } from '../core/mcp/IMCPServer';
 import { RemoteMCP, type RemoteMcpHeaders } from '../core/mcp/RemoteMCP';
 import type { ToolSelectorConfig } from '../core/mcp/ToolSelectorPolicy';
 import { ToolSet } from '../core/mcp/ToolSet';
-import type { AgentDefinition, ModelParams } from '../core/runtime/AgentDefinition';
+import type { AgentDefinition, ModelParams, ToolImageSettings } from '../core/runtime/AgentDefinition';
 import type { AgentInfo } from '../core/runtime/AgentThread.types';
 import type { Sandbox, SandboxInfo } from '../core/sandbox/Sandbox';
 import type { AgentTracing } from '../core/tracing/AgentTracing';
@@ -86,6 +86,8 @@ export class TurnResourceResolver<
       agent?: ((agentId: string) => Promise<AgentSpec>) | undefined;
       /** Host web-search backend; omit when not configured. */
       webSearchProvider?: IWebSearchProvider | undefined;
+      /** The session's files for tool-result images; omit and images reach the model as text notes. */
+      toolImages?: ToolImageSettings | undefined;
       /** Forwarded to RemoteMCP / AgentThread (required by their constructors). */
       logger: Logger;
     },
@@ -230,6 +232,7 @@ export class TurnResourceResolver<
         responseFormat: agentInfo ? undefined : spec.response_format,
         iterationLimit: spec.config.iteration_limit,
         toolSets,
+        toolImages: this.deps.toolImages,
       },
     };
   }

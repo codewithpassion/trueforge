@@ -5,10 +5,15 @@ import typing
 import pydantic
 from ..core.pydantic_utilities import IS_PYDANTIC_V2
 from ..core.unchecked_base_model import UncheckedBaseModel
+from .tool_content_part import ToolContentPart
 
 
 class ToolResponseEvent(UncheckedBaseModel):
-    content: str
+    content: typing.List[ToolContentPart] = pydantic.Field()
+    """
+    Tool result as text and image parts.
+    """
+
     created_at: str = pydantic.Field()
     """
     ISO 8601 event timestamp.

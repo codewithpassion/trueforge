@@ -1,3 +1,4 @@
+import type { StoredFile } from '../../core/files/SessionFiles';
 import type { DeleteSessionInput } from './ISessionStore';
 
 export interface PutFileInput {
@@ -16,11 +17,6 @@ export interface GetFileInput {
   tenant_id: string;
   session_id: string;
   file_id: string;
-}
-
-export interface StoredFile {
-  bytes: Uint8Array;
-  media_type: string;
 }
 
 /**

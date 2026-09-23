@@ -2,7 +2,7 @@ import type { AgentThreadSnapshot } from '../../core/runtime/AgentThread.types';
 import { getEmptyCurrentContextUsage } from '../../core/runtime/contextUsage';
 import type { SessionRecord } from '../models/SessionRecord';
 import type { TurnRecord, TurnSnapshot } from '../models/TurnRecord';
-import type { PersistedTurnEvent, SessionEventItem } from '../schemas/events';
+import { normalizePersistedTurnEvent, type PersistedTurnEvent, type SessionEventItem } from '../schemas/events';
 import type { TokenPagination } from '../schemas/pagination';
 import type { TerminalTurnState } from '../schemas/turn';
 import { assertCreateTurnThreadDelta } from './assertCreateTurnThreadDelta';
@@ -615,7 +615,7 @@ export class InMemorySessionStore<
       input.order === 'desc' ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id),
     );
     const page = paginate(ordered, input.limit, input.page_token);
-    return { data: deepCopy(page.data), pagination: page.pagination };
+    return { data: deepCopy(page.data).map(normalizePersistedTurnEvent), pagination: page.pagination };
   }
 
   async listSessionEvents(input: ListSessionEventsInput): Promise<{
@@ -654,7 +654,10 @@ export class InMemorySessionStore<
       input.limit,
       cursor,
     );
-    return { data: deepCopy(page.data), pagination: page.pagination };
+    return {
+      data: deepCopy(page.data).map(item => ({ ...item, event: normalizePersistedTurnEvent(item.event) })),
+      pagination: page.pagination,
+    };
   }
 
   /**

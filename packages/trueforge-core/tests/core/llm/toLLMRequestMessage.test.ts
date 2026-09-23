@@ -3,10 +3,11 @@ import type {
   ExtendedChatCompletionChunk,
   InternalEnrichedAssistantMessage,
   RawAssistantMessageWithUsage,
+  ToolContentPart,
 } from '../../../src/core/llm/LLMTypes';
 import { getEmptyUsage } from '../../../src/core/llm/LLMTypes';
 import { ResponseFormatSchema, toOpenAIResponseFormat } from '../../../src/core/llm/responseFormat';
-import { toOpenAIChatMessage } from '../../../src/core/llm/toOpenAIChatMessage';
+import { toLLMRequestMessage } from '../../../src/core/llm/toLLMRequestMessage';
 import { AgentThread } from '../../../src/core/runtime/AgentThread';
 import { NOOP_AGENT_TRACING } from '../../../src/core/tracing/NoopAgentTracing';
 import { makeSilentLogger } from '../harnessMocks';
@@ -18,7 +19,7 @@ const toolInfo = {
   original_tool_name: 'do_thing',
 };
 
-/** Assert extension fields that sit outside the OpenAI SDK message type. */
+/** Reads fields by name so the assertions cover what reaches the client, not just the type. */
 function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
@@ -45,10 +46,10 @@ function makeAssistantWithReplayFields(): InternalEnrichedAssistantMessage {
   };
 }
 
-describe('toOpenAIChatMessage', () => {
+describe('toLLMRequestMessage', () => {
   it('preserves thinking_blocks, reasoning_content, and tool-call provider_specific_fields; strips only tool_info', () => {
     const msg = makeAssistantWithReplayFields();
-    const mapped = asRecord(toOpenAIChatMessage(msg));
+    const mapped = asRecord(toLLMRequestMessage(msg));
 
     expect(mapped['role']).toBe('assistant');
     expect(mapped['content']).toBe('hello');
@@ -80,8 +81,8 @@ describe('toOpenAIChatMessage', () => {
       reasoning_content: 'r',
     };
 
-    const mappedEmpty = asRecord(toOpenAIChatMessage(emptyCalls));
-    const mappedOmitted = asRecord(toOpenAIChatMessage(omitted));
+    const mappedEmpty = asRecord(toLLMRequestMessage(emptyCalls));
+    const mappedOmitted = asRecord(toLLMRequestMessage(omitted));
 
     expect(mappedEmpty).not.toHaveProperty('tool_calls');
     expect(mappedEmpty['thinking_blocks']).toEqual(emptyCalls.thinking_blocks);
@@ -90,14 +91,18 @@ describe('toOpenAIChatMessage', () => {
   });
 
   it('leaves user and tool messages content intact', () => {
-    expect(toOpenAIChatMessage({ role: 'user', content: 'hi' })).toEqual({
+    expect(toLLMRequestMessage({ role: 'user', content: 'hi' })).toEqual({
       role: 'user',
       content: 'hi',
     });
-    expect(toOpenAIChatMessage({ role: 'tool', tool_call_id: 'call-1', content: 'result' })).toEqual({
+    const toolContent: ToolContentPart[] = [
+      { type: 'text', text: 'result' },
+      { type: 'image', file_id: 'f1', media_type: 'image/jpeg', width: 1280, height: 800 },
+    ];
+    expect(toLLMRequestMessage({ role: 'tool', tool_call_id: 'call-1', content: toolContent })).toEqual({
       role: 'tool',
       tool_call_id: 'call-1',
-      content: 'result',
+      content: toolContent,
     });
   });
 });

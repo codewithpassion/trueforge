@@ -20,7 +20,7 @@ const toolResponse = {
   tool_call_id: 'tc1',
   content: 'ok',
 } satisfies UserToolResponseMessage;
-const llmTool: LLMToolMessage = { role: 'tool', tool_call_id: 'tc1', content: 'ok' };
+const llmTool: LLMToolMessage = { role: 'tool', tool_call_id: 'tc1', content: [{ type: 'text', text: 'ok' }] };
 
 const _userBatch: AgentThreadSendBatch = [userMsg];
 const _approvalBatch: AgentThreadSendBatch = [approval, toolResponse];

@@ -19,6 +19,8 @@ import {
   ToolResponseEventSchema,
   ToolResponseRequiredEventSchema,
 } from '../../core/events/schema';
+import { normalizeToolContent } from '../../core/llm/LLMTypes';
+import type { TurnStreamingEvent } from '../TurnHandle';
 import {
   TurnInputItemSchema,
   TurnStateCancelledSchema,
@@ -138,4 +140,20 @@ export type PersistedTurnEvent = WithRegisteredPassthrough<SessionEvent> & {
 export interface SessionEventItem {
   turn_id: string;
   event: PersistedTurnEvent;
+}
+
+/**
+ * Stores apply this to every event they read: `tool.response` events persisted before tool content
+ * became parts hold a plain string.
+ */
+export function normalizePersistedTurnEvent(event: PersistedTurnEvent): PersistedTurnEvent {
+  if (event.type !== HarnessEventType.TOOL_RESPONSE) {
+    return event;
+  }
+  return { ...event, content: normalizeToolContent(event.content) };
+}
+
+/** For live streams, which can replay events an older release wrote. */
+export function normalizeTurnStreamingEvent(event: TurnStreamingEvent): TurnStreamingEvent {
+  return event.type === HarnessEventType.MODEL_MESSAGE_DELTA ? event : normalizePersistedTurnEvent(event);
 }

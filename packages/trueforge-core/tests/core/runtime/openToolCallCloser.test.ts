@@ -41,7 +41,7 @@ describe('getClosableOpenToolCallIds', () => {
   it('excludes tool calls that already have a matching tool response', () => {
     const context: ContextMessage[] = [
       ...assistantWithToolCalls([makeToolCall('tc-1'), makeToolCall('tc-2')]),
-      { role: 'tool', tool_call_id: 'tc-1', content: 'done' },
+      { role: 'tool', tool_call_id: 'tc-1', content: [{ type: 'text', text: 'done' }] },
     ];
     expect(getClosableOpenToolCallIds(context)).toEqual(new Set(['tc-2']));
   });
@@ -88,7 +88,7 @@ describe('getClosableOpenToolCallIds', () => {
         content: '',
         tool_calls: [makeToolCall('old-tc')],
       },
-      { role: 'tool', tool_call_id: 'old-tc', content: 'resolved' },
+      { role: 'tool', tool_call_id: 'old-tc', content: [{ type: 'text', text: 'resolved' }] },
       {
         role: 'assistant',
         content: '',

@@ -13,10 +13,7 @@ class ChatCompletionContentPartText(UncheckedBaseModel):
     Plain-text content.
     """
 
-    type: typing.Literal["text"] = pydantic.Field(default="text")
-    """
-    Text content part.
-    """
+    type: typing.Literal["text"] = "text"
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow")  # type: ignore # Pydantic v2

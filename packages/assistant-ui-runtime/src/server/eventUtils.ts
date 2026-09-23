@@ -8,10 +8,19 @@ import type {
   ModelMessageDeltaEvent,
   ModelMessageEvent,
   ToolCall,
+  ToolContentPart,
   ToolInfo,
   TurnEvent,
   TurnStreamingEvent,
 } from './events.js';
+
+/** A tool result's text parts joined by newlines; image parts are left out. */
+export function toolResponseText(content: readonly ToolContentPart[]): string {
+  return content
+    .filter(part => part.type === 'text')
+    .map(part => part.text)
+    .join('\n');
+}
 
 /** True for `.delta` streaming events. */
 export function isEventDelta(event: TurnStreamingEvent): event is DeltaEvents {

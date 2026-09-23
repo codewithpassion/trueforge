@@ -129,18 +129,23 @@ believing the turn is still running.
 
   <Accordion title="tool.response — the result of a tool call">
     ```ts
+    type ToolContentPart =
+      | { type: "text"; text: string }
+      | { type: "image"; fileId: string; mediaType: string; width: number; height: number };
+
     interface ToolResponseEvent {
       type: "tool.response";
       id: string;
       threadId: string;
       toolCallId: string;
-      content: string;
+      content: ToolContentPart[];
       createdAt: string;
     }
     ```
 
-    `toolCallId` must match the `id` of the `ToolCall` this responds to. `content` is a string —
-    serialize structured results yourself.
+    `toolCallId` must match the `id` of the `ToolCall` this responds to. `content` is a list of
+    parts: text (serialize structured results yourself) and images, which reference a session file
+    by `fileId`. Tool cards show the text parts.
   </Accordion>
 </AccordionGroup>
 

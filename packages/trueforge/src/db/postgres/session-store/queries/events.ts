@@ -1,4 +1,8 @@
-import type { PersistedTurnEvent, SessionEventItem } from '@truefoundry/trueforge-core/agent-session/schemas/events';
+import {
+  normalizePersistedTurnEvent,
+  type PersistedTurnEvent,
+  type SessionEventItem,
+} from '@truefoundry/trueforge-core/agent-session/schemas/events';
 import type { TokenPagination } from '@truefoundry/trueforge-core/agent-session/schemas/pagination';
 import type {
   AppendToEventsInput,
@@ -106,7 +110,7 @@ export async function listTurnEvents(
   const events: PersistedTurnEvent[] = [];
   for (const row of rows) {
     if (row.event !== null) {
-      events.push(row.event);
+      events.push(normalizePersistedTurnEvent(row.event));
     }
   }
 
@@ -161,7 +165,11 @@ export async function listSessionEvents(
     .offset(cursor.offset)
     .execute();
 
-  return paginateSessionEventRows(rows, limit, cursor);
+  return paginateSessionEventRows(
+    rows.map(row => ({ turn_id: row.turn_id, event: normalizePersistedTurnEvent(row.event) })),
+    limit,
+    cursor,
+  );
 }
 
 /** Anchor turn fields needed for chain resolution. */

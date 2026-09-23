@@ -239,6 +239,8 @@ export * from "./TokenPagination.js";
 export * from "./ToolApprovalRequiredEvent.js";
 export * from "./ToolCall.js";
 export * from "./ToolCallRef.js";
+export * from "./ToolContentPart.js";
+export * from "./ToolImageContentPart.js";
 export * from "./ToolInfo.js";
 export * from "./ToolResponseEvent.js";
 export * from "./ToolResponseRequiredEvent.js";

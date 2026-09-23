@@ -247,6 +247,8 @@ if typing.TYPE_CHECKING:
     from .tool_approval_required_event import ToolApprovalRequiredEvent
     from .tool_call import ToolCall
     from .tool_call_ref import ToolCallRef
+    from .tool_content_part import ToolContentPart
+    from .tool_image_content_part import ToolImageContentPart
     from .tool_info import ToolInfo
     from .tool_response_event import ToolResponseEvent
     from .tool_response_required_event import ToolResponseRequiredEvent
@@ -523,6 +525,8 @@ _dynamic_imports: typing.Dict[str, str] = {
     "ToolApprovalRequiredEvent": ".tool_approval_required_event",
     "ToolCall": ".tool_call",
     "ToolCallRef": ".tool_call_ref",
+    "ToolContentPart": ".tool_content_part",
+    "ToolImageContentPart": ".tool_image_content_part",
     "ToolInfo": ".tool_info",
     "ToolResponseEvent": ".tool_response_event",
     "ToolResponseRequiredEvent": ".tool_response_required_event",
@@ -823,6 +827,8 @@ __all__ = [
     "ToolApprovalRequiredEvent",
     "ToolCall",
     "ToolCallRef",
+    "ToolContentPart",
+    "ToolImageContentPart",
     "ToolInfo",
     "ToolResponseEvent",
     "ToolResponseRequiredEvent",

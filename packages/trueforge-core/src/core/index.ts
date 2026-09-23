@@ -4,7 +4,7 @@
  */
 
 // Runtime
-export type { AgentDefinition, ModelParams } from './runtime/AgentDefinition';
+export type { AgentDefinition, ModelParams, ToolImageSettings } from './runtime/AgentDefinition';
 export { AgentThread } from './runtime/AgentThread';
 export type {
   AgentInfo,
@@ -58,7 +58,7 @@ export {
 // MCP contracts
 export type { ApprovalDecision } from './events/schema';
 export { ClientSideTool } from './mcp/ClientSideTool';
-export { isAuthRequired, toolResultResponse } from './mcp/IMCPServer';
+export { isAuthRequired, toolImageResultResponse, toolResultResponse } from './mcp/IMCPServer';
 export type {
   AgentToolSchema,
   AuthRequiredResponse,
@@ -90,7 +90,8 @@ export {
 export { ToolSet } from './mcp/ToolSet';
 
 // LLM contracts
-export type { AgentMetadata, ILLM, LLMCreateParams, LLMCreateParamsStreaming } from './llm/ILLM';
+export type { SessionFiles, StoredFile } from './files/SessionFiles';
+export type { AgentMetadata, ILLM, LLMCreateParams, LLMCreateParamsStreaming, LLMRequestMessage } from './llm/ILLM';
 export { ResponseFormatSchema, toOpenAIResponseFormat } from './llm/responseFormat';
 export type { ResponseFormat } from './llm/responseFormat';
 export { SUPPORTED_REASONING_EFFORTS, VERCEL_AI_PROVIDER_NAMES, VercelAILLM } from './llm/VercelAILLM';
@@ -125,8 +126,13 @@ export type {
   ThreadDoneEvent,
   ThreadOverwriteContextEvent,
 } from './events/schema';
-export { CompletionUsageSchema } from './llm/LLMTypes';
-export type { CompletionUsage } from './llm/LLMTypes';
+export {
+  CompletionUsageSchema,
+  ToolContentPartSchema,
+  ToolImageContentPartSchema,
+  normalizeToolContent,
+} from './llm/LLMTypes';
+export type { CompletionUsage, ToolContentPart, ToolImageContentPart, ToolTextContentPart } from './llm/LLMTypes';
 export { InternalEventType } from './runtime/AgentThread.types';
 export type { AgentThreadSendBatch, ContextMessage } from './runtime/AgentThread.types';
 export { AgentThreadMetricsSchema } from './runtime/metrics';

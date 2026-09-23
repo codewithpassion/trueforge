@@ -2290,6 +2290,45 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       expect(data.map(e => e.id)).toEqual([created.id, model.id]);
     });
 
+    // Rows written before tool content became parts hold a plain string; every read normalizes them.
+    it('reads a legacy string tool.response as one text part', async () => {
+      const store = createStore();
+      await seedSession(store);
+      await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-1' }));
+      const legacy: PersistedTurnEvent = {
+        type: EventType.TOOL_RESPONSE,
+        id: newEventId(),
+        created_at: new Date().toISOString(),
+        thread_id: MAIN_THREAD_ID,
+        tool_call_id: 'tc-legacy',
+        content: [],
+      };
+      // The current type forbids the old shape, so write it the way an old row reads back.
+      Reflect.set(legacy, 'content', 'legacy result');
+      await store.appendToEvents({ session_id: sessionId, turn_id: 'turn-1', events: [legacy] });
+      await finishTurn(store, 'turn-1');
+
+      const expected = [{ type: 'text', text: 'legacy result' }];
+      const turnEvents = await store.listTurnEvents({
+        session_id: sessionId,
+        turn_id: 'turn-1',
+        limit: 10,
+        page_token: undefined,
+        order: undefined,
+      });
+      const fromTurn = turnEvents.data.find(e => e.type === EventType.TOOL_RESPONSE);
+      expect(fromTurn).toMatchObject({ tool_call_id: 'tc-legacy', content: expected });
+
+      const sessionEvents = await store.listSessionEvents({
+        session_id: sessionId,
+        limit: 10,
+        page_token: undefined,
+        last_turn_id: undefined,
+      });
+      const fromSession = sessionEvents.data.find(item => item.event.type === EventType.TOOL_RESPONSE);
+      expect(fromSession?.event).toMatchObject({ tool_call_id: 'tc-legacy', content: expected });
+    });
+
     it('add/remove threads and append/overwrite context', async () => {
       const store = createStore();
       await seedSession(store);

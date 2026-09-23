@@ -3,12 +3,13 @@
 import type * as TrueForge from "../../api/index.js";
 import * as core from "../../core/index.js";
 import type * as serializers from "../index.js";
+import { ToolContentPart } from "./ToolContentPart.js";
 
 export const ToolResponseEvent: core.serialization.ObjectSchema<
     serializers.ToolResponseEvent.Raw,
     TrueForge.ToolResponseEvent
 > = core.serialization.object({
-    content: core.serialization.string(),
+    content: core.serialization.list(ToolContentPart),
     createdAt: core.serialization.property("created_at", core.serialization.string()),
     id: core.serialization.string(),
     threadId: core.serialization.property("thread_id", core.serialization.string()),
@@ -18,7 +19,7 @@ export const ToolResponseEvent: core.serialization.ObjectSchema<
 
 export declare namespace ToolResponseEvent {
     export interface Raw {
-        content: string;
+        content: ToolContentPart.Raw[];
         created_at: string;
         id: string;
         thread_id: string;

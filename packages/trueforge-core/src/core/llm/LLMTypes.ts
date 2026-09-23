@@ -12,6 +12,7 @@ import {
   ChatCompletionChunkDeltaSchema,
   ChatCompletionChunkDeltaToolCallSchema,
   ChatCompletionChunkFinishReasonSchema,
+  ChatCompletionContentPartTextSchema,
   ChatCompletionMessageToolCallSchema,
   ChatCompletionToolMessageParamSchema,
   ChatCompletionUserMessageParamSchema,
@@ -130,10 +131,23 @@ export const LLMUserMessageSchema = ChatCompletionUserMessageParamSchema.pick({
   content: true,
 }).openapi('LLMUserMessage');
 
+export const ToolImageContentPartSchema = z
+  .object({
+    type: z.literal('image').describe('Image content part.'),
+    file_id: z.string().describe('Session file id; the bytes are served by the session file route.'),
+    media_type: z.string().describe('Image media type, for example image/jpeg.'),
+    width: z.number().int().nonnegative().describe('Image width in pixels.'),
+    height: z.number().int().nonnegative().describe('Image height in pixels.'),
+  })
+  .openapi('ToolImageContentPart');
+
+export const ToolContentPartSchema = z
+  .discriminatedUnion('type', [ChatCompletionContentPartTextSchema, ToolImageContentPartSchema])
+  .openapi('ToolContentPart');
+
 export const LLMToolMessageSchema = ChatCompletionToolMessageParamSchema.omit({ content: true })
   .extend({
-    // TODO(agent): Where do I update the Zod code for this change?
-    content: z.string(),
+    content: z.array(ToolContentPartSchema).describe('Tool result as text and image parts.'),
   })
   .openapi('LLMToolMessage');
 
@@ -165,9 +179,34 @@ export type EnrichedAssistantMessage = z.infer<typeof EnrichedAssistantMessageSc
 export type ExtendedDeltaToolCall = z.infer<typeof ExtendedChunkDeltaToolCallSchema>;
 export type ExtendedDelta = z.infer<typeof ExtendedChunkDeltaSchema>;
 export type LLMUserMessage = z.infer<typeof LLMUserMessageSchema>;
+export type ToolTextContentPart = z.infer<typeof ChatCompletionContentPartTextSchema>;
+export type ToolImageContentPart = z.infer<typeof ToolImageContentPartSchema>;
+export type ToolContentPart = z.infer<typeof ToolContentPartSchema>;
 export type LLMToolMessage = z.infer<typeof LLMToolMessageSchema>;
 export type CompletionUsage = z.infer<typeof CompletionUsageSchema>;
 export type FinishReason = z.infer<typeof FinishReasonSchema>;
+
+/** Tool results persisted before content became parts hold a plain string. */
+export function normalizeToolContent(content: string | ToolContentPart[]): ToolContentPart[] {
+  return typeof content === 'string' ? [{ type: 'text', text: content }] : content;
+}
+
+export function textToolContent(text: string): ToolContentPart[] {
+  return [{ type: 'text', text }];
+}
+
+/** A text part standing in for an image the model will not see. */
+export function toolImageStub({ image, reason }: { image: ToolImageContentPart; reason: string }): ToolTextContentPart {
+  return { type: 'text', text: `[screenshot ${String(image.width)}x${String(image.height)} omitted: ${reason}]` };
+}
+
+/** The text parts joined by newlines; image parts are skipped. */
+export function toolContentText(content: readonly ToolContentPart[]): string {
+  return content
+    .filter(part => part.type === 'text')
+    .map(part => part.text)
+    .join('\n');
+}
 
 export function getEmptyUsage(): CompletionUsage {
   return { input_tokens: 0, output_tokens: 0, total_tokens: 0 };

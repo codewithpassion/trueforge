@@ -685,6 +685,70 @@ class RawSessionsClient:
             )
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    @contextlib.contextmanager
+    def get_file(
+        self, *, session_id: str, file_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> typing.Iterator[HttpResponse[typing.Iterator[bytes]]]:
+        """
+        Download a file the session produced, such as a tool-result screenshot, with its stored media type. Readable by whoever may read the session's turns; anyone else gets 404.
+
+        Parameters
+        ----------
+        session_id : str
+            Session identifier.
+
+        file_id : str
+            File identifier.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
+
+        Returns
+        -------
+        typing.Iterator[HttpResponse[typing.Iterator[bytes]]]
+            File contents, served with the stored media type.
+        """
+        with self._client_wrapper.httpx_client.stream(
+            f"api/v1/sessions/{encode_path_param(session_id)}/files/{encode_path_param(file_id)}",
+            method="GET",
+            request_options=request_options,
+        ) as _response:
+
+            def _stream() -> HttpResponse[typing.Iterator[bytes]]:
+                try:
+                    if 200 <= _response.status_code < 300:
+                        _chunk_size = request_options.get("chunk_size", None) if request_options is not None else None
+                        return HttpResponse(
+                            response=_response, data=(_chunk for _chunk in _response.iter_bytes(chunk_size=_chunk_size))
+                        )
+                    _response.read()
+                    if _response.status_code == 404:
+                        raise NotFoundError(
+                            headers=dict(_response.headers),
+                            body=typing.cast(
+                                RequestErrorResponse,
+                                construct_type(
+                                    type_=RequestErrorResponse,  # type: ignore
+                                    object_=_response.json(),
+                                ),
+                            ),
+                        )
+                    _response_json = _response.json()
+                except JSONDecodeError:
+                    raise ApiError(
+                        status_code=_response.status_code, headers=dict(_response.headers), body=_response.text
+                    )
+                except ValidationError as e:
+                    raise ParsingError(
+                        status_code=_response.status_code,
+                        headers=dict(_response.headers),
+                        body=_response.json(),
+                        cause=e,
+                    )
+                raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+            yield _stream()
+
     def list_turns(
         self,
         *,
@@ -2223,6 +2287,71 @@ class AsyncRawSessionsClient:
                 status_code=_response.status_code, headers=dict(_response.headers), body=_response.json(), cause=e
             )
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    @contextlib.asynccontextmanager
+    async def get_file(
+        self, *, session_id: str, file_id: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> typing.AsyncIterator[AsyncHttpResponse[typing.AsyncIterator[bytes]]]:
+        """
+        Download a file the session produced, such as a tool-result screenshot, with its stored media type. Readable by whoever may read the session's turns; anyone else gets 404.
+
+        Parameters
+        ----------
+        session_id : str
+            Session identifier.
+
+        file_id : str
+            File identifier.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
+
+        Returns
+        -------
+        typing.AsyncIterator[AsyncHttpResponse[typing.AsyncIterator[bytes]]]
+            File contents, served with the stored media type.
+        """
+        async with self._client_wrapper.httpx_client.stream(
+            f"api/v1/sessions/{encode_path_param(session_id)}/files/{encode_path_param(file_id)}",
+            method="GET",
+            request_options=request_options,
+        ) as _response:
+
+            async def _stream() -> AsyncHttpResponse[typing.AsyncIterator[bytes]]:
+                try:
+                    if 200 <= _response.status_code < 300:
+                        _chunk_size = request_options.get("chunk_size", None) if request_options is not None else None
+                        return AsyncHttpResponse(
+                            response=_response,
+                            data=(_chunk async for _chunk in _response.aiter_bytes(chunk_size=_chunk_size)),
+                        )
+                    await _response.aread()
+                    if _response.status_code == 404:
+                        raise NotFoundError(
+                            headers=dict(_response.headers),
+                            body=typing.cast(
+                                RequestErrorResponse,
+                                construct_type(
+                                    type_=RequestErrorResponse,  # type: ignore
+                                    object_=_response.json(),
+                                ),
+                            ),
+                        )
+                    _response_json = _response.json()
+                except JSONDecodeError:
+                    raise ApiError(
+                        status_code=_response.status_code, headers=dict(_response.headers), body=_response.text
+                    )
+                except ValidationError as e:
+                    raise ParsingError(
+                        status_code=_response.status_code,
+                        headers=dict(_response.headers),
+                        body=_response.json(),
+                        cause=e,
+                    )
+                raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+            yield await _stream()
 
     async def list_turns(
         self,

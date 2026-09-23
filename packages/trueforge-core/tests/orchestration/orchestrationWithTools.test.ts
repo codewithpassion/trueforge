@@ -60,7 +60,7 @@ const EXPECTED_EVENTS = [
   {
     type: InternalEventType.AGENT_CONTEXT_APPEND,
     thread_id: ROOT_ID,
-    context: [{ role: 'tool', tool_call_id: TOOL_CALL_ID, content: CHILD_REPLY }],
+    context: [{ role: 'tool', tool_call_id: TOOL_CALL_ID, content: [{ type: 'text', text: CHILD_REPLY }] }],
   },
   { type: InternalEventType.AGENT_DONE, thread_id: expect.any(String), status: 'done' },
   { type: EventType.MODEL_MESSAGE, thread_id: ROOT_ID },
@@ -103,7 +103,7 @@ const EXPECTED_ROOT_LLM_INPUT = [
           },
         ],
       },
-      { role: 'tool', tool_call_id: TOOL_CALL_ID, content: CHILD_REPLY },
+      { role: 'tool', tool_call_id: TOOL_CALL_ID, content: [{ type: 'text', text: CHILD_REPLY }] },
     ],
   },
 ];

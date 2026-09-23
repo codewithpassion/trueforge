@@ -179,7 +179,15 @@ function createSummarizationCandidate(context: ContextMessage[]) {
         }
         break;
       case 'tool':
-        candidate += `<${String(index)}><tool-response id=${m.tool_call_id}>:` + m.content;
+        candidate +=
+          `<${String(index)}><tool-response id=${m.tool_call_id}>:` +
+          m.content
+            .map(part =>
+              part.type === 'text'
+                ? part.text
+                : `[tool returned a ${String(part.width)}x${String(part.height)} image here, no longer available after summarization]`,
+            )
+            .join('\n');
         break;
       case 'assistant':
         for (const block of m.thinking_blocks ?? []) {

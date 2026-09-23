@@ -8,7 +8,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { JSONObject } from '@ai-sdk/provider';
-import type { ProviderOptions, ReasoningPart } from '@ai-sdk/provider-utils';
+import type { ProviderOptions, ReasoningPart, ToolResultOutput } from '@ai-sdk/provider-utils';
 import type {
   AssistantContent,
   CallWarning,
@@ -27,23 +27,23 @@ import type {
   UserContent,
 } from 'ai';
 import { APICallError, jsonSchema, Output, streamText } from 'ai';
-import type {
-  ChatCompletionContentPart,
-  ChatCompletionCreateParamsStreaming,
-  ChatCompletionMessageParam,
-  ChatCompletionTool,
-} from 'openai/resources/chat';
+import type { ChatCompletionCreateParamsStreaming, ChatCompletionTool } from 'openai/resources/chat';
+import type { SessionFiles, StoredFile } from '../files/SessionFiles';
 import { describeUnknownError, extractErrorLogFields } from '../util/errorLogFields';
 import type { Logger } from '../util/logger';
 import { outboundFetch } from '../util/outboundFetch';
-import type { ILLM, LLMCreateParams, LLMCreateParamsStreaming } from './ILLM';
+import type { ILLM, LLMCreateParams, LLMCreateParamsStreaming, LLMRequestMessage } from './ILLM';
 import {
   type CompletionUsage,
   type ExtendedChatCompletionChunk,
   getEmptyUsage,
+  type LLMUserMessage,
   type RawAssistantMessage,
   type RawAssistantMessageWithUsage,
   type ThinkingBlock,
+  type ToolContentPart,
+  toolContentText,
+  toolImageStub,
 } from './LLMTypes';
 
 // ---------------------------------------------------------------------------
@@ -96,6 +96,8 @@ export interface VercelAILLMConfig {
   providerConfig: VercelAIProviderConfig;
   logger: Logger;
   signal?: AbortSignal;
+  /** Where tool-result images are read from; without it they reach the model as text stubs. */
+  files?: SessionFiles | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,11 +112,6 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 /** OpenAI SDK v7 unions function + custom tools; harness only emits function tools. */
 function isFunctionTool(tool: ChatCompletionTool): tool is Extract<ChatCompletionTool, { type: 'function' }> {
   return tool.type === 'function';
-}
-
-/** OpenAI SDK v7 unions function + custom tool calls; harness only consumes function calls. */
-function isFunctionToolCall<T extends { type: string }>(toolCall: T): toolCall is Extract<T, { type: 'function' }> {
-  return toolCall.type === 'function';
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +209,122 @@ export function buildLanguageModel(config: VercelAIProviderConfig): LanguageMode
       throw new Error(`Unknown provider "${String(_exhaustive)}"`);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Images in tool results
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a provider type's adapter carries an image inside a tool result, checked against the
+ * installed adapters. The rest JSON-stringify the whole result, which would hand the model base64
+ * text, so they get a text stub instead.
+ */
+const TOOL_RESULT_IMAGE_SUPPORT = {
+  openai: true,
+  anthropic: true,
+  'google-gemini': true,
+  fireworks: false,
+  zai: false,
+  moonshot: false,
+  alibaba: false,
+  together: false,
+  custom: false,
+  truefoundry: false,
+} as const satisfies Record<VercelAIProviderName, boolean>;
+
+function providerAcceptsToolImages(providerType: VercelAIProviderName): boolean {
+  return TOOL_RESULT_IMAGE_SUPPORT[providerType];
+}
+
+/**
+ * Loads every tool-result image the provider will be shown, keyed by file id, reusing `cached`
+ * ones. A file that is gone or fails to load is left out, and the converted request stubs it.
+ */
+async function loadToolImages({
+  messages,
+  provider,
+  files,
+  cached,
+  logger,
+}: {
+  messages: readonly LLMRequestMessage[];
+  provider: VercelAIProviderName;
+  files: SessionFiles | undefined;
+  cached: ReadonlyMap<string, StoredFile>;
+  logger: Logger;
+}): Promise<Map<string, StoredFile>> {
+  const loaded = new Map<string, StoredFile>();
+  if (files === undefined || !providerAcceptsToolImages(provider)) {
+    return loaded;
+  }
+  const fileIds = new Set(
+    messages.flatMap(msg =>
+      msg.role === 'tool' ? msg.content.flatMap(part => (part.type === 'image' ? [part.file_id] : [])) : [],
+    ),
+  );
+  await Promise.all(
+    [...fileIds].map(async fileId => {
+      const hit = cached.get(fileId);
+      if (hit !== undefined) {
+        loaded.set(fileId, hit);
+        return;
+      }
+      try {
+        const file = await files.get(fileId);
+        if (file === undefined) {
+          logger.warn('Tool-result image not found; sending a stub', { file_id: fileId });
+          return;
+        }
+        loaded.set(fileId, file);
+      } catch (error) {
+        logger.warn('Tool-result image could not be loaded; sending a stub', {
+          file_id: fileId,
+          ...extractErrorLogFields(error),
+        });
+      }
+    }),
+  );
+  return loaded;
+}
+
+/**
+ * Text-only results keep the plain text output they always had. Images become `file` parts for the
+ * providers that carry them and text stubs for the rest.
+ */
+function toToolResultOutput({
+  content,
+  provider,
+  images,
+}: {
+  content: readonly ToolContentPart[];
+  provider: VercelAIProviderName;
+  images: ReadonlyMap<string, StoredFile>;
+}): ToolResultOutput {
+  if (!content.some(part => part.type === 'image')) {
+    return { type: 'text', value: toolContentText(content) };
+  }
+  if (!providerAcceptsToolImages(provider)) {
+    const stubbed = content.map(part =>
+      part.type === 'text'
+        ? part
+        : toolImageStub({ image: part, reason: 'model does not accept images in tool results' }),
+    );
+    return { type: 'text', value: toolContentText(stubbed) };
+  }
+  return {
+    type: 'content',
+    value: content.map(part => {
+      if (part.type === 'text') {
+        return { type: 'text', text: part.text };
+      }
+      const file = images.get(part.file_id);
+      if (file === undefined) {
+        return toolImageStub({ image: part, reason: 'the image file could not be loaded' });
+      }
+      return { type: 'file', mediaType: file.media_type, data: { type: 'data', data: file.bytes } };
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -601,7 +714,7 @@ export function toFilePart(file: {
 }
 
 /** Converts a user content array from OpenAI format to Vercel AI SDK UserContent. */
-export function toUserContent(content: string | ChatCompletionContentPart[]): UserContent {
+export function toUserContent(content: LLMUserMessage['content']): UserContent {
   if (typeof content === 'string') {
     return content;
   }
@@ -650,7 +763,7 @@ export function toAssistantModelMessage({
   providerName,
   logger,
 }: {
-  msg: Extract<ChatCompletionMessageParam, { role: 'assistant' }>;
+  msg: RawAssistantMessage;
   provider: VercelAIProviderName;
   /** Configured provider resource name. */
   providerName: string;
@@ -658,28 +771,17 @@ export function toAssistantModelMessage({
 }): ModelMessage {
   const parts: AssistantContent = [];
 
-  // `thinking_blocks` / `source` are attached at runtime by AgentThread and absent from the OpenAI SDK type.
-  const rawThinking: unknown = Reflect.get(msg, 'thinking_blocks');
   const attachSignature = shouldAttachReasoningSignature({
-    source: Reflect.get(msg, 'source'),
+    source: msg.source,
     provider,
     providerName,
     logger,
   });
   // Alibaba appends replayed thinking to the visible answer, and Qwen signs nothing to preserve.
-  if (Array.isArray(rawThinking) && provider !== 'alibaba') {
-    // Widen any[] → unknown[] so the in-guards below narrow safely.
-    const blocks: unknown[] = rawThinking;
-    for (const tb of blocks) {
-      if (
-        typeof tb === 'object' &&
-        tb !== null &&
-        'type' in tb &&
-        'thinking' in tb &&
-        tb.type === 'thinking' &&
-        typeof tb.thinking === 'string'
-      ) {
-        const signature = 'signature' in tb && typeof tb.signature === 'string' ? tb.signature : undefined;
+  if (msg.thinking_blocks !== undefined && provider !== 'alibaba') {
+    for (const tb of msg.thinking_blocks) {
+      if (tb.type === 'thinking') {
+        const signature = tb.signature;
         let reasoningProviderOptions: ProviderOptions | undefined;
         if (signature !== undefined && attachSignature) {
           if (provider === 'openai') {
@@ -715,9 +817,6 @@ export function toAssistantModelMessage({
 
   if (msg.tool_calls?.length) {
     for (const tc of msg.tool_calls) {
-      if (!isFunctionToolCall(tc)) {
-        continue;
-      }
       let input: Record<string, unknown> = {};
       try {
         const parsed: unknown = JSON.parse(tc.function.arguments);
@@ -727,11 +826,8 @@ export function toAssistantModelMessage({
       } catch {
         // malformed arguments — leave empty record
       }
-      const rawProviderFields: unknown = Reflect.get(tc, 'provider_specific_fields');
-      const thoughtSignature =
-        isPlainObject(rawProviderFields) && typeof rawProviderFields['thought_signature'] === 'string'
-          ? rawProviderFields['thought_signature']
-          : undefined;
+      const rawSignature = tc.provider_specific_fields?.['thought_signature'];
+      const thoughtSignature = typeof rawSignature === 'string' ? rawSignature : undefined;
       const toolCallPart: ToolCallPart = {
         type: 'tool-call',
         toolCallId: tc.id,
@@ -803,20 +899,20 @@ export function convertMessages({
   messages,
   provider,
   providerName,
+  images,
   logger,
 }: {
-  messages: ChatCompletionMessageParam[];
+  messages: LLMRequestMessage[];
   provider: VercelAIProviderName;
   providerName: string;
+  /** Tool-result image bytes by file id, from {@link loadToolImages}. */
+  images: ReadonlyMap<string, StoredFile>;
   logger?: Logger | undefined;
 }): ConvertedMessages {
   const toolNameById = new Map<string, string>();
   for (const msg of messages) {
     if (msg.role === 'assistant' && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
-        if (!isFunctionToolCall(tc)) {
-          continue;
-        }
         toolNameById.set(tc.id, tc.function.name);
       }
     }
@@ -825,36 +921,34 @@ export function convertMessages({
   const systemParts: string[] = [];
   const result: ModelMessage[] = [];
   for (const msg of messages) {
-    if (msg.role === 'system') {
-      const content = typeof msg.content === 'string' ? msg.content : msg.content.map(p => p.text).join('');
-      systemParts.push(content);
-      continue;
-    }
-    if (msg.role === 'user') {
-      result.push({ role: 'user', content: toUserContent(msg.content) });
-      continue;
-    }
-    if (msg.role === 'assistant') {
-      result.push(toAssistantModelMessage({ msg, provider, providerName, logger }));
-      continue;
-    }
-    if (msg.role === 'tool') {
-      const toolName = toolNameById.get(msg.tool_call_id) ?? '';
-      const toolContent: ToolContent = [
-        {
-          type: 'tool-result',
-          toolCallId: msg.tool_call_id,
-          toolName,
-          output: {
-            type: 'text',
-            value: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+    switch (msg.role) {
+      case 'system':
+        systemParts.push(msg.content);
+        break;
+      case 'user':
+        result.push({ role: 'user', content: toUserContent(msg.content) });
+        break;
+      case 'assistant':
+        result.push(toAssistantModelMessage({ msg, provider, providerName, logger }));
+        break;
+      case 'tool': {
+        const toolContent: ToolContent = [
+          {
+            type: 'tool-result',
+            toolCallId: msg.tool_call_id,
+            toolName: toolNameById.get(msg.tool_call_id) ?? '',
+            output: toToolResultOutput({ content: msg.content, provider, images }),
           },
-        },
-      ];
-      result.push({ role: 'tool', content: toolContent });
-      continue;
+        ];
+        result.push({ role: 'tool', content: toolContent });
+        break;
+      }
+      default: {
+        // Roles outside the harness message type (developer, function) are skipped.
+        const _skipped: never = msg;
+        void _skipped;
+      }
     }
-    // 'developer' / 'function' roles — not used in the harness pipeline; skip.
   }
   return { instructions: systemParts.length > 0 ? systemParts.join('\n\n') : undefined, messages: result };
 }
@@ -1372,6 +1466,11 @@ export class VercelAILLM implements ILLM {
   private readonly config: VercelAILLMConfig;
   private readonly logger: Logger;
   private readonly signal: AbortSignal | undefined;
+  /**
+   * The previous request's tool-result images, since consecutive requests mostly resend the same
+   * ones. Holding only the latest request's bounds memory.
+   */
+  private toolImageCache: ReadonlyMap<string, StoredFile> = new Map();
 
   constructor(config: VercelAILLMConfig) {
     this.config = config;
@@ -1386,10 +1485,19 @@ export class VercelAILLM implements ILLM {
     const languageModel = buildLanguageModel(providerConfig);
     const { provider, model } = providerConfig;
 
+    const images = await loadToolImages({
+      messages: body.messages,
+      provider: provider.type,
+      files: this.config.files,
+      cached: this.toolImageCache,
+      logger: this.logger,
+    });
+    this.toolImageCache = images;
     const { instructions, messages } = convertMessages({
       messages: body.messages,
       provider: provider.type,
       providerName: provider.name,
+      images,
       logger: this.logger,
     });
     const tools = convertTools(body.tools ?? undefined);
