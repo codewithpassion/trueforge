@@ -280,8 +280,14 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
         flushWaitersRef.current = [];
         const actions = queueRef.current;
         queueRef.current = [];
+        const passStart = Date.now();
         if (actions.length > 0) await sendBatches({ actions, generation });
         for (const resolve of waiters) resolve();
+        // A fast link still sends at most about ten requests a second, unless someone is waiting on a flush.
+        const early = INPUT_BATCH_MS - (Date.now() - passStart);
+        if (early > 0 && queueRef.current.length > 0 && flushWaitersRef.current.length === 0) {
+          await new Promise(resolve => setTimeout(resolve, early));
+        }
       }
     } finally {
       inputInFlightRef.current = false;

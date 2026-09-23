@@ -387,6 +387,26 @@ describe('useDesktopScreen input pacing', () => {
     for (const batch of sent) expect(batch.length).toBeLessThanOrEqual(4);
   });
 
+  it('still sends about ten requests a second on a fast link', async () => {
+    // 30 ms round trips, shorter than the batch window but longer than the gap between moves.
+    const sendDesktopInput = vi.fn(
+      () => new Promise<Blob>(resolve => setTimeout(() => resolve(new Blob(['after-input'])), 30)),
+    );
+    const server = createServer({
+      sendDesktopInput,
+      getDesktopScreenshot: vi.fn(() => new Promise<Blob>(() => undefined)),
+    });
+    const { result } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+
+    for (let t = 0; t < 1000; t += 16) {
+      act(() => result.current.sendInput([{ type: 'mouse_move', x: t, y: 10 }]));
+      await advance(16);
+    }
+    await advance(200);
+    expect(sendDesktopInput.mock.calls.length).toBeLessThanOrEqual(11);
+  });
+
   it('flushes for hand back without the queued moves, keeping presses and keys', async () => {
     const { server, sent } = slowServer();
     const { result } = renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
