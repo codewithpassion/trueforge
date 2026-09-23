@@ -13,6 +13,7 @@ import { createIntegrationAdapters } from '../integrations/registry';
 import { TurnCompletionNotifier } from '../integrations/TurnCompletionNotifier';
 import { ActiveTurnRegistry } from '../runtime/activeTurns';
 import { StreamGoneError } from '../runtime/event-subscription';
+import { createTurnDrainedHook } from '../runtime/turnDrainedHook';
 import {
   freezeTurnIgnoringMissing,
   turnStartFailure,
@@ -23,6 +24,7 @@ import { startTurnInProcess, toWireTurn, turnStreamId } from '../runtime/turnRun
 import type { SandboxIntegration } from '../sandbox/integration';
 import { newId } from '../utils/id';
 import { ALARM_PASS_BUDGET_MS } from './alarmBudget';
+import { workersComputersService } from './computersService';
 import { DurableObjectEventSubscriptions } from './durableObjectEventSubscriptions';
 import type { Env } from './env';
 import { WORKERS_EXECUTOR_ID } from './executorId';
@@ -195,7 +197,11 @@ export class SessionDO extends DurableObject {
           logger: this.#logger,
           sandboxIntegration: this.sandboxIntegration,
           // Awaited inside `drained`, so the alarm invocation that holds the turn holds this too.
-          onTurnDrained: input => notifier.deliverForTurn(input),
+          onTurnDrained: createTurnDrainedHook({
+            deliver: input => notifier.deliverForTurn(input),
+            computers: workersComputersService(this.env),
+            logger: this.#logger,
+          }),
         },
       });
     } catch (error) {

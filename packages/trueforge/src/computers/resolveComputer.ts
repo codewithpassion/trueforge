@@ -36,6 +36,8 @@ export function computerNotUsableMessage({
       return `Computer "${computerId}" is offline`;
     case 'computer_no_skills':
       return `Computer "${computerId}" cannot mount skills: it needs python3, git and the pydantic package`;
+    case 'computer_no_desktop':
+      return `Computer "${computerId}" has no desktop: start its client with --desktop, or turn the desktop off for this agent`;
   }
 }
 
@@ -50,6 +52,8 @@ export interface ComputerSelection {
   tenant_id: string;
   /** Whether the spec asks for skills. A machine that cannot mount them may still run commands. */
   skills_requested: boolean;
+  /** Whether the spec asks for the desktop. */
+  desktop_requested: boolean;
 }
 
 /**
@@ -94,6 +98,9 @@ export async function resolveComputerUsability({
   // still worth saving an agent for, and the turn checks again against the live hello.
   if (selection.skills_requested && computer.capabilities !== null && !computer.capabilities.skills) {
     return refuse('computer_no_skills');
+  }
+  if (selection.desktop_requested && computer.capabilities !== null && !computer.capabilities.desktop) {
+    return refuse('computer_no_desktop');
   }
   return computer.status === 'online'
     ? { usable: true, status: 'ready', reason: undefined }
@@ -149,6 +156,7 @@ export async function buildRemoteComputerProvider({
     turnId,
     workdir: hello?.workdir ?? null,
     capabilities: hello?.capabilities ?? computer.capabilities,
+    requireApproval: computer.require_approval,
     defaultExecTimeoutSeconds,
     fileMaxBytesForDownload,
     store: computers.store,

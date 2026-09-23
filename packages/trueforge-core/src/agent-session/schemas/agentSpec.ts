@@ -171,6 +171,10 @@ const SandboxConfigSchema = z
       .min(1)
       .optional()
       .describe('Run this agent on the named remote computer instead of the tenant sandbox provider.'),
+    desktop: z
+      .boolean()
+      .default(false)
+      .describe("Let the agent see and drive the remote computer's desktop. Needs `computer_id`. Default: false."),
   })
   .openapi('SandboxConfig');
 
@@ -223,7 +227,7 @@ export const RuntimeConfigSchema = z
       .describe(
         `Max agent-loop iterations per turn (1–1024). Default: ${String(DEFAULT_AGENT_CONFIG_ITERATION_LIMIT)}.`,
       ),
-    sandbox: SandboxConfigSchema.default(() => ({ enabled: false, file_downloads: true })),
+    sandbox: SandboxConfigSchema.default(() => ({ enabled: false, file_downloads: true, desktop: false })),
     dynamic_sub_agents: DynamicSubAgentsConfigSchema.default(() => ({ enabled: true })),
     context_management: ContextManagementConfigSchema.default(() => ({
       compaction: { enabled: true },

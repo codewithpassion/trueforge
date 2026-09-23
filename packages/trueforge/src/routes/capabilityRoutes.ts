@@ -28,6 +28,11 @@ const ComputersCapabilitySchema = z
     enabled: z.boolean().describe('Whether agents can be run on machines this tenant has enrolled.'),
   })
   .openapi('ComputersCapability');
+const DesktopCapabilitySchema = z
+  .object({
+    enabled: z.boolean().describe("Whether agents can see and drive an enrolled machine's desktop."),
+  })
+  .openapi('DesktopCapability');
 const WebSearchCapabilitySchema = z
   .object({
     enabled: z.boolean().describe('Whether a host web-search provider is configured.'),
@@ -40,6 +45,7 @@ const CapabilitiesDataSchema = z
     skill: SkillCapabilitySchema,
     settings: SettingsCapabilitySchema,
     computers: ComputersCapabilitySchema,
+    desktop: DesktopCapabilitySchema,
     web_search: WebSearchCapabilitySchema,
   })
   .openapi('CapabilitiesData');

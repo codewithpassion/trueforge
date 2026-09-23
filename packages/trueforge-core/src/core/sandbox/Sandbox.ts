@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { InstructionBuilder } from '../InstructionBuilder';
 import { estimateTokensForString } from '../llm/usage';
 import type { MappedMCPTool } from '../mcp/convertMCPServers';
-import { toolResultResponse, type CallToolResponse, type IToolSet } from '../mcp/IMCPServer';
-import { defineTool, LocalToolMCP } from '../mcp/LocalToolMCP';
+import { isCallToolResponseResult, toolResultResponse, type CallToolResponse, type IToolSet } from '../mcp/IMCPServer';
+import { defineTool, LocalToolMCP, type ToolDefinition } from '../mcp/LocalToolMCP';
 import {
   DEFERRED_TOOLS_SERVER_ID,
   GET_TOOL_INFO_NAME,
@@ -100,8 +100,18 @@ export interface SandboxOptions {
   /** Used to derive the Code Mode NATS wait as request + connect. */
   mcpRequestTimeoutMs: number;
   mcpConnectTimeoutMs: number;
+  /**
+   * Tools the provider adds beside `exec`, with the prompt text that explains them. Each call makes
+   * sure the sandbox exists first, so a session that only uses these still records its sandbox.
+   */
+  providerTools?: SandboxProviderTools | undefined;
   tracing: AgentTracing;
   logger: Logger;
+}
+
+export interface SandboxProviderTools {
+  tools: readonly ToolDefinition[];
+  instructions: string;
 }
 
 export const SANDBOX_EXEC_TOOL_NAME = 'exec';
@@ -209,8 +219,9 @@ export class Sandbox extends LocalToolMCP {
   private codeModeTransport: CodeModeTransport | undefined;
   /** Cached from transport.getClientInstall after sandbox init (when Code Mode is configured). */
   private mcpClientInstall: CodeModeClientInstall | undefined;
+  private readonly providerToolsInstructions: string | undefined;
 
-  private tools = [
+  private tools: ToolDefinition[] = [
     defineTool({
       name: SANDBOX_EXEC_TOOL_NAME,
       description: SANDBOX_EXEC_DESCRIPTION,
@@ -233,6 +244,32 @@ export class Sandbox extends LocalToolMCP {
     if (this.existingSandboxId) {
       this.existingSandboxInfo = { sandbox_id: this.existingSandboxId };
     }
+    this.providerToolsInstructions = options.providerTools?.instructions;
+    for (const tool of options.providerTools?.tools ?? []) {
+      this.tools.push(this.withSandbox(tool));
+    }
+  }
+
+  /** Creates the sandbox before a provider tool runs, and reports it the way `exec` does. */
+  private withSandbox(tool: ToolDefinition): ToolDefinition {
+    return {
+      ...tool,
+      execute: async (raw, approvalDecision) => {
+        let created: { sandboxInfo: SandboxInfo; sandboxCreated: SandboxInfo | undefined };
+        try {
+          created = await this.ensureSandboxCreated();
+        } catch (e) {
+          this.logger.error('Sandbox creation failed', extractErrorLogFields(e));
+          const message = e instanceof Error ? e.message : 'Sandbox creation failed';
+          return toolResultResponse({ text: `Sandbox initialization failed: ${message}`, isError: true });
+        }
+        const response = await tool.execute(raw, approvalDecision);
+        if (!isCallToolResponseResult(response)) {
+          return response;
+        }
+        return { ...response, sandboxCreated: created.sandboxCreated !== undefined, sandboxInfo: created.sandboxInfo };
+      },
+    };
   }
 
   /** Provider-facing id (unwraps `v1:type:raw`; legacy ids pass through). */
@@ -312,6 +349,9 @@ export class Sandbox extends LocalToolMCP {
 
     if (providerInstructions) {
       sandboxInstructions.addContent(providerInstructions);
+    }
+    if (this.providerToolsInstructions) {
+      sandboxInstructions.addContent(this.providerToolsInstructions);
     }
   }
 

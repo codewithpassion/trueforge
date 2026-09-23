@@ -3,6 +3,7 @@ import { Sandbox } from '@truefoundry/trueforge-core/core/sandbox/Sandbox';
 import type { Skill } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { SkillMounter } from '@truefoundry/trueforge-core/core/sandbox/skills/SkillMounter';
 import { HTTPException } from 'hono/http-exception';
+import { desktopProviderTools } from '../../computers/desktopTools';
 import { RemoteComputerProvider } from '../../computers/RemoteComputerProvider';
 import { buildRemoteComputerProvider, resolveComputerUsability } from '../../computers/resolveComputer';
 import type { ComputersService } from '../../computers/service';
@@ -120,6 +121,7 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
             computer_id: input.computer_id,
             agent_id: input.agent_id,
             skills_requested: input.skills_requested,
+            desktop_requested: input.desktop_requested,
           },
         });
       }
@@ -149,6 +151,10 @@ export function createWorkersSandboxIntegration(options: WorkersSandboxIntegrati
         // init. A machine that cannot run the downloader gets none at all: its init exec would
         // die on `import pydantic` and take every plain command down with it.
         skillMounter: skillMounterFor(input),
+        providerTools:
+          input.desktop && input.provider instanceof RemoteComputerProvider
+            ? desktopProviderTools(input.provider)
+            : undefined,
         tracing: input.tracing,
         logger: input.logger,
       }),

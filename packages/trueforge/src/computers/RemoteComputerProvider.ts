@@ -18,14 +18,23 @@ import { extractErrorLogFields } from '@truefoundry/trueforge-core/core/util/err
 import type { Logger } from '@truefoundry/trueforge-core/core/util/logger';
 import type { AppendComputerAuditInput, ComputerAuditOp, IComputerStore } from '../db/computerStore';
 import { newId } from '../utils/id';
+import { desktopFailureText } from './desktopTools';
 import {
+  DESKTOP_CLIPBOARD_TIMEOUT_MS,
+  DESKTOP_SCREENSHOT_TIMEOUT_MS,
+  desktopInputTimeoutMs,
   FILE_CHUNK_BYTES,
   offlineMessage,
+  parseDesktopClipboardGetResult,
+  parseDesktopOkResult,
+  parseDesktopScreenshotResult,
   parseExecResult,
   parseFileGetResult,
   parseFilePutResult,
   stripControlCharacters,
   type ComputerCapabilities,
+  type DesktopAction,
+  type DesktopScreenshotResultPayload,
   type RequestOutcome,
 } from './protocol';
 import { computerSessionDirectory, isInsideDirectory, type ComputerRelayPort } from './service';
@@ -59,6 +68,20 @@ const CLIENT_ERROR_NOT_FOUND = 'not_found';
 const CLIENT_ERROR_IS_A_DIRECTORY = 'is_a_directory';
 const CLIENT_ERROR_NOT_A_REGULAR_FILE = 'not_a_regular_file';
 const CLIENT_ERROR_TOO_LARGE = 'too_large';
+const CLIENT_ERROR_DESKTOP_UNAVAILABLE = 'desktop_unavailable';
+
+/**
+ * Why a desktop op did not happen. The first three are states the model can act on; `failed` is
+ * everything else, with the relay's own wording.
+ */
+export type DesktopFailureCode = 'desktop_busy' | 'human_in_control' | 'desktop_unavailable' | 'failed';
+
+export type DesktopCallResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly code: DesktopFailureCode; readonly message: string };
+
+/** Both selections, so a paste with ctrl+v and one with a middle click see the same text. */
+const DESKTOP_CLIPBOARD_SELECTIONS = ['clipboard', 'primary'] as const;
 
 /** A user's machine is not built from an image, so there is nothing to wait for. */
 const READY_BUILD: SandboxBuild = { status: 'ready', reason: null, metadata: null };
@@ -110,6 +133,8 @@ export interface RemoteComputerProviderOptions {
   workdir: string | null;
   /** Null until the machine has said what it has; skills stay off in that case. */
   capabilities: ComputerCapabilities | null;
+  /** The computer asks a person before each action; desktop input is withheld until that gate exists. */
+  requireApproval: boolean;
   defaultExecTimeoutSeconds: number;
   fileMaxBytesForDownload: number;
   store: Pick<IComputerStore, 'appendAudit'>;
@@ -194,6 +219,85 @@ export class RemoteComputerProvider implements SandboxProvider {
     return this.#options.computerName;
   }
 
+  /** The machine's own verdict that its desktop is up and drivable. */
+  get supportsDesktop(): boolean {
+    return this.#options.capabilities?.desktop === true;
+  }
+
+  get desktopUnavailableReason(): string | null {
+    const reason = this.#options.capabilities?.desktop_unavailable_reason ?? null;
+    return reason === null ? null : stripControlCharacters(reason);
+  }
+
+  get requiresApproval(): boolean {
+    return this.#options.requireApproval;
+  }
+
+  async desktopScreenshot(): Promise<DesktopCallResult<DesktopScreenshotResultPayload>> {
+    const outcome = await this.#call({
+      op: { op: 'desktop_screenshot', quality: null },
+      timeoutMs: DESKTOP_SCREENSHOT_TIMEOUT_MS,
+    });
+    return this.#desktopResult({ outcome, parse: parseDesktopScreenshotResult });
+  }
+
+  async desktopInput(actions: readonly DesktopAction[]): Promise<DesktopCallResult<{ ok: true }>> {
+    const outcome = await this.#call({
+      op: { op: 'desktop_input', actions },
+      timeoutMs: desktopInputTimeoutMs(actions),
+    });
+    return this.#desktopResult({ outcome, parse: parseDesktopOkResult });
+  }
+
+  async desktopClipboardGet(): Promise<DesktopCallResult<{ text: string }>> {
+    const outcome = await this.#call({ op: { op: 'desktop_clipboard_get' }, timeoutMs: DESKTOP_CLIPBOARD_TIMEOUT_MS });
+    return this.#desktopResult({ outcome, parse: parseDesktopClipboardGetResult });
+  }
+
+  async desktopClipboardSet(text: string): Promise<DesktopCallResult<{ ok: true }>> {
+    const outcome = await this.#call({
+      op: { op: 'desktop_clipboard_set', text, selections: DESKTOP_CLIPBOARD_SELECTIONS },
+      timeoutMs: DESKTOP_CLIPBOARD_TIMEOUT_MS,
+    });
+    return this.#desktopResult({ outcome, parse: parseDesktopOkResult });
+  }
+
+  /**
+   * The relay refuses on the lease itself; a daemon whose desktop went down answers with its own
+   * `desktop_unavailable` code, which arrives as `bad_request` with the code in front.
+   */
+  #desktopResult<T>({
+    outcome,
+    parse,
+  }: {
+    outcome: RequestOutcome;
+    parse: (json: string) => T | undefined;
+  }): DesktopCallResult<T> {
+    if (outcome.ok) {
+      const value = parse(outcome.result_json);
+      return value === undefined
+        ? {
+            ok: false,
+            code: 'failed',
+            message: `Computer ${this.#options.computerName} sent a reply this server cannot read`,
+          }
+        : { ok: true, value };
+    }
+    switch (outcome.reason) {
+      case 'desktop_busy':
+      case 'human_in_control':
+      case 'desktop_unavailable':
+        return { ok: false, code: outcome.reason, message: outcome.message };
+      case 'bad_request':
+        if (outcome.message.startsWith(`${CLIENT_ERROR_DESKTOP_UNAVAILABLE}:`)) {
+          return { ok: false, code: 'desktop_unavailable', message: outcome.message };
+        }
+        return { ok: false, code: 'failed', message: outcome.message };
+      default:
+        return { ok: false, code: 'failed', message: outcome.message };
+    }
+  }
+
   buildImage(): Promise<SandboxBuild> {
     return Promise.resolve(READY_BUILD);
   }
@@ -274,7 +378,12 @@ export class RemoteComputerProvider implements SandboxProvider {
         bytesOut: 0,
         outcome: outcome.reason,
       });
-      return { success: false, error: outcome.message };
+      // Worded like the desktop tools' refusal, so the model stops rather than retrying the command.
+      const error =
+        outcome.reason === 'human_in_control'
+          ? desktopFailureText({ code: 'human_in_control', message: outcome.message })
+          : outcome.message;
+      return { success: false, error };
     }
     const result = parseExecResult(outcome.result_json);
     if (result === undefined) {
@@ -477,6 +586,7 @@ export class RemoteComputerProvider implements SandboxProvider {
         tenant_id: this.#options.tenantId,
         op_json: JSON.stringify(op),
         timeout_ms: timeoutMs,
+        principal: { kind: 'agent', session_id: this.#options.sessionId },
       });
     } catch (error) {
       this.#options.logger.warn('Remote computer relay call was interrupted', {
