@@ -3,6 +3,7 @@ import {
   isEventDelta,
   toolResponseText,
   type ThreadCreatedEvent,
+  type ToolImageContentPart,
   type ToolResponseRequiredEvent,
   type TurnEvent,
   type TurnStreamingEvent,
@@ -56,6 +57,8 @@ export interface ThreadBucket {
   events: Map<string, TurnEvent>;
   modelMessageIds: string[];
   toolResults: Map<string, string>;
+  /** Image parts of a tool result, keyed like `toolResults`; absent when the result had none. */
+  toolImages: Map<string, ToolImageContentPart[]>;
   pendingApprovals: Map<string, { id: string }>;
   approvalDecisions: Map<string, ApprovalDecisionRef>;
   pendingResponses: Map<string, PendingResponseRef>;
@@ -104,6 +107,7 @@ export class PeerThreadFoldState {
         events: new Map(),
         modelMessageIds: [],
         toolResults: new Map(),
+        toolImages: new Map(),
         pendingApprovals: new Map(),
         approvalDecisions: new Map(),
         pendingResponses: new Map(),
@@ -145,6 +149,10 @@ function ingestEventIntoBucket(bucket: ThreadBucket, message: TurnStreamingEvent
 
   if (message.type === 'tool.response') {
     bucket.toolResults.set(message.toolCallId, toolResponseText(message.content));
+    const images = message.content.filter(part => part.type === 'image');
+    if (images.length > 0) {
+      bucket.toolImages.set(message.toolCallId, images);
+    }
     bucket.pendingResponses.delete(message.toolCallId);
     return;
   }
@@ -407,6 +415,7 @@ function buildThreadAssistantParts(
     }
     for (const part of buildAssistantContent(event, {
       toolResults: bucket.toolResults,
+      toolImages: bucket.toolImages,
       pendingApprovals: bucket.pendingApprovals,
       approvalDecisions: bucket.approvalDecisions,
       pendingResponses: bucket.pendingResponses,

@@ -394,6 +394,9 @@ export interface AgentChatServer<
     sandboxId?: string;
     path: string;
   }): Promise<Blob>;
+
+  /** Reads a file a tool result stored for the session, such as a screenshot. */
+  getSessionFile?(req: { sessionId: string; fileId: string }): Promise<Blob>;
 }
 
 /** Request body for `AgentBuilderServer.saveAgent`. */
@@ -994,6 +997,114 @@ export interface ComputerCatalogServer<
   listComputerAudit(req: ListComputerAuditParams): Promise<ListResult<TAudit>>;
 }
 
+// ---------------------------------------------------------------------------
+// ComputerDesktop — optional live view and control of a computer's desktop
+// ---------------------------------------------------------------------------
+
+export type DesktopControllerNone = { kind: 'none' };
+export type DesktopControllerAgent = { kind: 'agent'; sessionId: string };
+export type DesktopControllerHuman = {
+  kind: 'human';
+  userId: string;
+  /** Whether the caller is the person in control. */
+  isMe: boolean;
+  /** ISO-8601 instant control lapses without further input. */
+  expiresAt: string;
+};
+/** The last person's clipboard is being cleared; nobody may drive the desktop yet. */
+export type DesktopControllerClearing = { kind: 'clearing' };
+
+export type DesktopController =
+  DesktopControllerNone | DesktopControllerAgent | DesktopControllerHuman | DesktopControllerClearing;
+
+/** A session whose agent asked a person to do a step on the desktop. */
+export interface PendingDesktopTakeover {
+  sessionId: string;
+  turnId: string;
+  toolCallId: string;
+  /** Why the agent asked for a person. */
+  reason: string;
+  requestedAt: string;
+  agentId: string;
+}
+
+export interface DesktopStatus {
+  computerId: string;
+  online: boolean;
+  /** Whether the computer reports a running desktop. */
+  desktop: boolean;
+  controller: DesktopController;
+  pendingTakeovers: PendingDesktopTakeover[];
+}
+
+export type DesktopMouseButton = 'left' | 'middle' | 'right';
+
+/** One input step; coordinates are desktop pixels on the fixed 1280x800 screen. */
+export type DesktopAction =
+  | { type: 'mouse_move'; x: number; y: number }
+  | { type: 'mouse_down'; button: DesktopMouseButton }
+  | { type: 'mouse_up'; button: DesktopMouseButton }
+  | { type: 'click'; x: number; y: number; button: DesktopMouseButton; count: number }
+  | { type: 'scroll'; x: number; y: number; dx: number; dy: number }
+  /** An xdotool chord such as `ctrl+l` or `Return`. */
+  | { type: 'key'; keys: string }
+  | { type: 'type'; text: string };
+
+/** How answering a pending takeover went; the desktop is released either way. */
+export type DesktopTakeoverResultKind = 'resumed' | 'already_answered' | 'not_pending' | 'resume_failed';
+
+export interface DesktopTakeoverResult {
+  sessionId: string;
+  result: DesktopTakeoverResultKind;
+  /** Says what happened, for the person who answered. */
+  message: string;
+}
+
+/** Hand-back and cancel answer: the desktop after the call, and the takeover outcome when one was named. */
+export interface DesktopTakeoverAnswer {
+  status: DesktopStatus;
+  takeover: DesktopTakeoverResult | null;
+}
+
+/**
+ * What a `ComputerDesktopServer` call rejects with when the server refused it, so the UI can
+ * branch: 423 `human_in_control` / `lease_required`, 409 `clearing`, 503 `offline` /
+ * `desktop_unavailable`, 502 `desktop_failed`.
+ */
+export interface DesktopRequestFailure {
+  statusCode: number;
+  code: string | null;
+  message: string;
+}
+
+/**
+ * Watch and drive a computer's shared desktop. `agentId` names the saved agent whose desktop it is;
+ * tenant admins may omit it. Frames are JPEG blobs the caller must not keep.
+ */
+export interface ComputerDesktopServer {
+  getDesktopStatus(req: { computerId: string; agentId?: string }): Promise<DesktopStatus>;
+  getDesktopScreenshot(req: { computerId: string; agentId?: string; signal?: AbortSignal }): Promise<Blob>;
+  /** Needs control; answers with a fresh frame. */
+  sendDesktopInput(req: { computerId: string; agentId?: string; actions: DesktopAction[] }): Promise<Blob>;
+  getDesktopClipboard(req: { computerId: string; agentId?: string }): Promise<{ text: string }>;
+  setDesktopClipboard(req: { computerId: string; agentId?: string; text: string }): Promise<void>;
+  takeDesktopControl(req: { computerId: string; agentId?: string }): Promise<DesktopStatus>;
+  /** With `sessionId`, also answers that pending takeover as completed. */
+  handBackDesktop(req: {
+    computerId: string;
+    agentId?: string;
+    sessionId?: string;
+    note?: string;
+  }): Promise<DesktopTakeoverAnswer>;
+  /** Answers a pending takeover as cancelled; needs no control. */
+  cancelDesktopTakeover(req: {
+    computerId: string;
+    agentId?: string;
+    sessionId: string;
+    note?: string;
+  }): Promise<DesktopTakeoverAnswer>;
+}
+
 /**
  * Settings management aggregate — modelCatalog + connectorCatalog + optional
  * skill, sandbox and computer catalogs.
@@ -1339,6 +1450,9 @@ export interface AgentMetricsServer<
  * `metrics` is optional — if the host passes it, agent-detail UI can render
  * aggregate meter cards and time-series charts.
  *
+ * `computerDesktop` is optional — if the host passes it, the agent Screen tab, the session
+ * Screen panel and the Settings desktop view appear for desktop agents; if omitted, they stay hidden.
+ *
  * trueforge-ui re-exports this as `AgentUIServer`.
  */
 export type AgentUIServerPort<
@@ -1350,6 +1464,7 @@ export type AgentUIServerPort<
   TMetrics extends AgentMetricsServer = AgentMetricsServer,
   TPermissions extends PermissionsServer = PermissionsServer,
   TIntegrations extends IntegrationServer = IntegrationServer,
+  TDesktop extends ComputerDesktopServer = ComputerDesktopServer,
 > = TChat &
   TBuilder & {
     catalog?: TCatalog;
@@ -1358,6 +1473,7 @@ export type AgentUIServerPort<
     integrations?: TIntegrations;
     metrics?: TMetrics;
     permissions?: TPermissions;
+    computerDesktop?: TDesktop;
   };
 
 /** Host-facing alias used by trueforge-ui. */

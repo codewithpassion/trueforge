@@ -42,6 +42,7 @@ function McpAuthHarness({
       respondToToolResponse: () => {},
       resumeMcpAuth,
       downloadSandboxFile: async () => new Blob(),
+      getSessionFile: async () => new Blob(),
       cancel: async () => {},
       resetFromTurn: async () => {},
       reload: () => {},

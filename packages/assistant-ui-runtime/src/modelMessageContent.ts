@@ -1,12 +1,14 @@
 import type { ThreadAssistantMessagePart } from '@assistant-ui/core';
 import type { PendingResponseRef } from './foldPeerThreads.js';
 import { extractImagePartsFromModelMessage } from './modelMessageImageContent.js';
-import type { ModelMessageEvent } from './server/index.js';
+import type { ModelMessageEvent, ToolImageContentPart } from './server/index.js';
+import type { ToolResultImagesArtifact } from './toolResultImages.js';
 
 export type AssistantContentPart = ThreadAssistantMessagePart;
 
 export interface ToolCallContext {
   toolResults?: ReadonlyMap<string, string>;
+  toolImages?: ReadonlyMap<string, ToolImageContentPart[]>;
   pendingApprovals?: ReadonlyMap<string, { id: string }>;
   approvalDecisions?: ReadonlyMap<string, { id: string; approved: boolean; reason?: string }>;
   pendingResponses?: ReadonlyMap<string, PendingResponseRef>;
@@ -58,6 +60,9 @@ function parseToolArgs(argsText: string): ToolCallPart['args'] {
 function toolCallToPart(toolCall: SdkToolCall, context?: ToolCallContext): ToolCallPart {
   const argsText = toolCall.function.arguments;
   const toolResult = context?.toolResults?.get(toolCall.id);
+  const toolImages = context?.toolImages?.get(toolCall.id);
+  const artifact: ToolResultImagesArtifact | undefined =
+    toolImages != null && toolImages.length > 0 ? { toolImages } : undefined;
   const pendingResponse = context?.pendingResponses?.get(toolCall.id);
   const pendingApproval = context?.pendingApprovals?.get(toolCall.id);
   const approvalDecision = context?.approvalDecisions?.get(toolCall.id);
@@ -108,6 +113,7 @@ function toolCallToPart(toolCall: SdkToolCall, context?: ToolCallContext): ToolC
     ...(isError ? { isError: true } : {}),
     ...(approval != null ? { approval } : {}),
     ...(interrupt != null ? { interrupt } : {}),
+    ...(artifact != null ? { artifact } : {}),
   };
 }
 

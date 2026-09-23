@@ -107,6 +107,13 @@ export const useTrueForgeDownloadSandboxFile = () => {
   };
 };
 
+/**
+ * Returns a function reading a file a tool result stored for the current session, or undefined
+ * outside a TrueForge runtime (for example a read-only timeline).
+ */
+export const useTrueForgeSessionFile = (): ((fileId: string) => Promise<Blob>) | undefined =>
+  useTrueForgeRuntimeExtras()?.getSessionFile;
+
 /** Returns a function to cancel the current run from any render context. */
 export const useTrueForgeCancel = () => {
   const aui = useAui();

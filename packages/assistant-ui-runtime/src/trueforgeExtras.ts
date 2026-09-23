@@ -34,6 +34,8 @@ export interface TrueForgeRuntimeExtras {
   respondToToolResponse: (response: RespondToToolResponseOptions) => void;
   resumeMcpAuth: () => Promise<void>;
   downloadSandboxFile: (req: { turnId: string; path: string }) => Promise<Blob>;
+  /** Reads a file a tool result stored for this session, such as a screenshot. */
+  getSessionFile: (fileId: string) => Promise<Blob>;
   cancel: () => Promise<void>;
   resetFromTurn: (turnId: string) => Promise<void>;
   reload: () => void;
