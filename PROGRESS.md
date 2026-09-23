@@ -4,6 +4,32 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 36 — Agent description made optional (2026-09-23)
+
+**Goal:** Make the agent description optional, as the user asked ("make it not mandatory unless that would mean a db change"). No DB change was needed: the column is already `TEXT NOT NULL DEFAULT ''`.
+
+**What we did:**
+
+- **Feature (`02b17493`) and SDK regen (`2e0312cc`).** API: creating an agent without a description stores `''`, sending `''` on update clears it, leaving it out on update keeps the old value, and the 1024-character limit stays. OpenAPI and the SDKs were regenerated in their own commit.
+- **UI.** The field is labelled "Description (optional)" and Save works without it. Leaving it blank on Update Agent clears it. Save and clone share one helper, `agentDescriptionField.ts` (`b8cd10ec`).
+- **Fable review, first fix round (`cdcc9ba1`).** No blockers, but two bugs. Clearing the description in Update Agent did nothing, because the UI compared against stale shell state instead of the server value. Import still copied the name into the description; it now stores `''`.
+- **Re-review, second fix round (`6f7327a8`).** Found that `clearChat` dropped the description. Fixed that. Also, older rows where the description equals the name now show a blank description in the list row and on Edit.
+- **Verification.** The reviewer ran the Postgres store tests on a throwaway container (256 pass). A Sonnet agent drove agent-browser (headless Chrome) against a local standalone build and passed 7/7 checks. Landed on `dom/main` at `6f7327a8` and deployed as Workers version `eeffec00`.
+- **Not fixed:** cloning from the library still pre-fills the description with the name on older agents where the two match. We chose to leave it.
+
+**Lessons learned:**
+
+- For a "make it optional" change, three cases need separate handling: field omitted, field sent empty, and field sent with a value. The first version got the API right but the UI never sent `''`, so a cleared field looked unchanged and nothing was written.
+- The UI state held by the client shell can lag behind the server. Comparing against it to decide what to send quietly dropped a real edit.
+- Old data still carries the previous rule (description set to the name), so every place that displays or copies it (row, Edit, import, clone) has to be checked, not only the form.
+- The fix to how descriptions are saved introduced a new bug in `clearChat`, and only the re-review caught it. Re-reviewing after the fix round paid off again.
+
+**Avoid next time:**
+
+- Don't use client shell state to decide whether a field changed; compare against the server value, or send the field explicitly.
+- Don't stop at the form when relaxing a required field. Grep every path that creates or copies the entity (import, clone, clear/reset) for the old default.
+- Don't skip the re-review after a fix round that changes how shared state is rebuilt.
+
 ## Cycle 35 — Integrations section in the agent builder (2026-09-23)
 
 **Goal:** Let users manage an agent's Slack integrations from the agent builder config panel (`/build-agent`). The user had expected to find them on the agent configuration screen.
