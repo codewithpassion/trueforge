@@ -13,7 +13,8 @@ import type { MCPAuthRequired } from '../mcp/IMCPServer';
 import type { AgentThreadCreateSubAgent } from '../runtime/AgentThread.types';
 import { InternalEventType } from '../runtime/AgentThread.types';
 import type { SandboxInfo } from '../sandbox/Sandbox';
-import { describeUnknownError } from '../util/errorLogFields';
+import { extractErrorLogFields } from '../util/errorLogFields';
+import type { Logger } from '../util/logger';
 import type { MappedMCPTool } from './convertMCPServers';
 import {
   isApprovalRequiredResponse,
@@ -55,9 +56,11 @@ function imageDimension(meta: ImageContent['_meta'], key: 'width' | 'height'): n
 async function toImagePart({
   image,
   files,
+  logger,
 }: {
   image: ImageContent;
   files: SessionFiles | undefined;
+  logger: Logger;
 }): Promise<ToolContentPart> {
   const width = imageDimension(image._meta, 'width');
   const height = imageDimension(image._meta, 'height');
@@ -71,10 +74,9 @@ async function toImagePart({
     const { file_id } = await files.put({ media_type: image.mimeType, bytes: Buffer.from(image.data, 'base64') });
     return { type: 'image', file_id, media_type: image.mimeType, width, height };
   } catch (error) {
-    return {
-      type: 'text',
-      text: `[image ${String(width)}x${String(height)} omitted: storing it failed (${describeUnknownError(error)})]`,
-    };
+    // The model and the event log get a note; the cause stays in the logs.
+    logger.warn('Could not store a tool-result image', extractErrorLogFields(error));
+    return { type: 'text', text: `[image ${String(width)}x${String(height)} omitted: storing it failed]` };
   }
 }
 
@@ -82,16 +84,18 @@ async function toImagePart({
 async function toToolContent({
   blocks,
   files,
+  logger,
 }: {
   blocks: ContentBlock[];
   files: SessionFiles | undefined;
+  logger: Logger;
 }): Promise<ToolContentPart[]> {
   const text = blocks
     .filter(block => block.type === 'text')
     .map(block => block.text)
     .join('\n');
   const images = await Promise.all(
-    blocks.filter(block => block.type === 'image').map(image => toImagePart({ image, files })),
+    blocks.filter(block => block.type === 'image').map(image => toImagePart({ image, files, logger })),
   );
   if (text === '' && images.length === 0) {
     return textToolContent(JSON.stringify(blocks));
@@ -105,6 +109,7 @@ export async function executeToolCalls({
   threadId,
   approvalDecisions,
   files,
+  logger,
 }: {
   assistantMessage: InternalEnrichedAssistantMessage;
   toolMapping: Map<string, MappedMCPTool>;
@@ -112,6 +117,7 @@ export async function executeToolCalls({
   approvalDecisions: Map<string, ApprovalDecision>;
   /** Where image results are stored; without it they reach the model as a text note. */
   files: SessionFiles | undefined;
+  logger: Logger;
 }): Promise<ExecuteToolCallsResult> {
   const toolMessages: ToolCallResult[] = [];
   const initializationInfo: MCPServerInitInfo[] = [];
@@ -225,7 +231,7 @@ export async function executeToolCalls({
       isStructuredContent = true;
       content = textToolContent(JSON.stringify(result.structuredContent));
     } else if (Array.isArray(result.content)) {
-      content = await toToolContent({ blocks: result.content, files });
+      content = await toToolContent({ blocks: result.content, files, logger });
     } else {
       content = textToolContent(JSON.stringify(result.content));
     }

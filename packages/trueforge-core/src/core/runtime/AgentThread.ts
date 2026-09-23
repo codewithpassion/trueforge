@@ -1183,6 +1183,7 @@ export class AgentThread {
       threadId: this.threadId,
       approvalDecisions: decisions,
       files: this.definition.toolImages?.files,
+      logger: this.logger,
     });
     void clientSideToolCalls;
     if (approvalRequiredToolCalls.length > 0) {

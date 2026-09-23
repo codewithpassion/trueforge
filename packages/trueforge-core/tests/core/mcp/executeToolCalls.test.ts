@@ -10,6 +10,7 @@ import {
   type CallToolResponse,
   type IToolSet,
 } from '../../../src/core/mcp/IMCPServer';
+import { makeSilentLogger } from '../harnessMocks';
 
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
 const JPEG_B64 = Buffer.from(JPEG_BYTES).toString('base64');
@@ -56,6 +57,7 @@ async function run({ response, files }: { response: CallToolResponse; files: Ses
     threadId: 'main',
     approvalDecisions: new Map(),
     files,
+    logger: makeSilentLogger(),
   });
   const [result] = toolCallResults;
   if (result === undefined) throw new Error('expected one tool result');
@@ -136,6 +138,19 @@ describe('executeToolCalls image results', () => {
     const content = await run({ response, files: sessionFiles() });
 
     expect(content).toEqual([{ type: 'text', text: JSON.stringify({ error: [] }) }]);
+  });
+
+  it('turns an image it could not store into a text note without the cause', async () => {
+    const failing: SessionFiles = {
+      put: () => Promise.reject(new Error('bucket https://internal.example/files is down')),
+      get: () => Promise.resolve(undefined),
+    };
+    const content = await run({
+      response: toolImageResultResponse({ data_b64: JPEG_B64, width: 1280, height: 800, media_type: 'image/jpeg' }),
+      files: failing,
+    });
+
+    expect(content).toEqual([{ type: 'text', text: '[image 1280x800 omitted: storing it failed]' }]);
   });
 
   it('leaves a text-only result as one text part', async () => {
