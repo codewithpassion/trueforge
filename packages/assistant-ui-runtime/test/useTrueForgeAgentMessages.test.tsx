@@ -1311,6 +1311,27 @@ describe('useTrueForgeAgentMessages', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it('lets the answer handle a failure that happens before the stream starts', async () => {
+    vi.mocked(loadSessionSnapshot).mockResolvedValue(snapshotWithAskUserPendingInFold());
+    const failure = new Error('headers unavailable');
+    const onError = vi.fn();
+    const getTurnHeaders = vi.fn(async (): Promise<Record<string, string> | undefined> => {
+      throw failure;
+    });
+    const { result } = renderHook(() =>
+      useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1', onError, getTurnHeaders }),
+    );
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    const handled = vi.fn(() => true);
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: handled });
+    });
+    await waitFor(() => expect(handled).toHaveBeenCalledWith(failure));
+    expect(streamTurnContent).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it('reloads after a handled send failure so the other answer streams in', async () => {
     const continuation: Turn = {
       id: 'turn-continuation',
