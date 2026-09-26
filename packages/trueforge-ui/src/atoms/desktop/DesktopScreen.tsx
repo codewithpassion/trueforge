@@ -599,6 +599,8 @@ export function DesktopScreen({
           ref={keyboardRef}
           data-desktop-keyboard=""
           aria-label="Desktop keyboard"
+          // Out of the Tab order, so after Ctrl+Alt+Shift Tab moves through the page, not back in.
+          tabIndex={-1}
           autoCapitalize="off"
           autoComplete="off"
           autoCorrect="off"
@@ -644,7 +646,8 @@ export function DesktopScreen({
       {inControl ? (
         <p className="text-xs text-text-secondary">
           Click the screen to type into it; press Ctrl+Alt+Shift to give the keyboard back to this page. Pasting sends
-          your clipboard to the desktop and presses Ctrl+V.
+          your clipboard to the desktop and presses Ctrl+V. Leaving this view hands back control, also in any other view
+          of this desktop you have open.
         </p>
       ) : (
         <p className="text-xs text-text-secondary">Take control to use the mouse and keyboard on this desktop.</p>

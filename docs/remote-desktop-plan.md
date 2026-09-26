@@ -423,7 +423,8 @@ Computer use is useless if a screenshot reaches the model as a string. **File st
 **Input while in control**
 
 - **Pointer.** Pointer events are mapped from the displayed size to 1280×800. The wheel maps to scroll.
-- **Keyboard.** Focus is trapped in the view; Ctrl+Alt+Shift gives it back to the page. Printable text is taken from `beforeinput`/`input` events and sent as `type`, so non-US layouts and dead keys work. Only chords (a modifier plus a key) and non-printing keys come from `keydown`, translated to X keysyms. On a Mac, Cmd+C/X/V/A/Z/L go as the Ctrl chords and Option+letter types its composed character.
+- **Leaving the view.** Leaving the Screen view while in control hands control back. Control belongs to the user, not the browser tab, so this ends it in every view of that desktop the user has open.
+- **Keyboard.** Focus is trapped in the view; Ctrl+Alt+Shift gives it back to the page, and the keyboard sink is outside the Tab order so Tab then moves through the page. Clicking the frame or **Take control** focuses it again. Printable text is taken from `beforeinput`/`input` events and sent as `type`, so non-US layouts and dead keys work. Only chords (a modifier plus a key) and non-printing keys come from `keydown`, translated to X keysyms. On a Mac, Cmd+C/X/V/A/Z/L go as the Ctrl chords and Option+letter types its composed character.
 - **Browser-reserved chords.** A toolbar sends chords the local browser would otherwise take: Ctrl+W, Ctrl+T, Ctrl+L and Super.
 
 **Clipboard, both ways**
