@@ -172,7 +172,8 @@ opens either way; a fixed `--hostname` also keeps the name the daemon reports st
 `--no-sandbox` and `--disable-setuid-sandbox` and says so on stderr.
 
 In the image's xterm, a selection goes to CLIPBOARD, and Ctrl+V, Ctrl+Shift+V and Shift+Insert paste
-CLIPBOARD, which is what a paste from the Screen view sets.
+CLIPBOARD, which is what a paste from the Screen view sets. The Ctrl+V binding replaces what Ctrl+V
+otherwise does inside xterm, such as bash's quoted-insert and vim's block-visual mode.
 
 `pnpm --filter @truefoundry/trueforge-computer docker:build:desktop` builds the image, and
 `test:desktop-image` runs the desktop tests inside it.

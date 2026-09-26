@@ -18,7 +18,8 @@ if ! pgrep -f -- "--user-data-dir=$profile( |\$)" >/dev/null 2>&1; then
   rm -f "$profile/SingletonLock" "$profile/SingletonCookie" "$profile/SingletonSocket"
 fi
 
-# Agents often add --no-sandbox out of habit; the sandbox this image promises stays on regardless.
+# Agents often add --no-sandbox out of habit, so the habitual sandbox-disabling flags are stripped.
+# This is a guard against habit, not a security boundary: /usr/bin/chromium and other flags stay reachable.
 ignored=""
 for arg do
   shift
