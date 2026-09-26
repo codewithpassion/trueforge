@@ -864,8 +864,23 @@ export function useTrueForgeAgentMessages({
       }
       const inputs = collectRequiredActionInputs(paused);
       if (inputs.length > 0) {
+        // A handled failure means the session moved on without this answer (someone else answered
+        // first). Reload so the unsent answer is dropped and the running continuation streams in.
+        const resyncOnHandled =
+          onSendError === undefined
+            ? undefined
+            : (error: unknown) => {
+                if (!onSendError(error)) {
+                  return false;
+                }
+                lazilyCreatedSessionIdRef.current = undefined;
+                setLoadRetryTrigger(n => n + 1);
+                return true;
+              };
         // sendTurn/runStream already report via onError; swallow to avoid duplicates.
-        void sendTurn({ inputs, ...(onSendError === undefined ? {} : { onSendError }) }).catch(() => undefined);
+        void sendTurn({ inputs, ...(resyncOnHandled === undefined ? {} : { onSendError: resyncOnHandled }) }).catch(
+          () => undefined,
+        );
       }
     },
     [projectOptions, sendTurn],

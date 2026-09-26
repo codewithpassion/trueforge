@@ -1311,6 +1311,88 @@ describe('useTrueForgeAgentMessages', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it('reloads after a handled send failure so the other answer streams in', async () => {
+    const continuation: Turn = {
+      id: 'turn-continuation',
+      sessionId: 'session-1',
+      input: [{ type: 'user.tool_response', threadId: ROOT_THREAD_ID, toolCallId: 'question-1', content: 'B' }],
+      state: { status: 'running' },
+      createdAt: new Date().toISOString(),
+    };
+    vi.mocked(loadSessionSnapshot)
+      .mockResolvedValueOnce(snapshotWithAskUserPendingInFold())
+      .mockResolvedValueOnce(replaceSessionSnapshot(snapshotWithAskUserPendingInFold(), { runningTurn: continuation }));
+    const { result } = renderHook(() => useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1' }));
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw Object.assign(new Error('already answered'), { statusCode: 409 });
+      })(),
+    );
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: () => true });
+    });
+
+    await waitFor(() => expect(loadSessionSnapshot).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(resumeTurnStream).toHaveBeenCalledWith(
+        mockServer,
+        'session-1',
+        continuation.id,
+        expect.any(PeerThreadFoldState),
+        expect.any(AbortSignal),
+        undefined,
+        undefined,
+      ),
+    );
+  });
+
+  it('drops the unsent answer when the handled failure reloads the session', async () => {
+    vi.mocked(loadSessionSnapshot)
+      .mockResolvedValueOnce(snapshotWithAskUserPendingInFold())
+      .mockResolvedValueOnce(snapshotWithAskUserPendingInFold());
+    const { result } = renderHook(() => useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1' }));
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw Object.assign(new Error('already answered'), { statusCode: 409 });
+      })(),
+    );
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: () => true });
+    });
+
+    await waitFor(() => expect(loadSessionSnapshot).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    // The reloaded pause is open again, with no local answer overlaid on it.
+    expect(collectPendingToolResponses(result.current.messages)).toHaveLength(1);
+  });
+
+  it('does not reload after a failed send the answer leaves unhandled', async () => {
+    vi.mocked(loadSessionSnapshot).mockResolvedValue(snapshotWithAskUserPendingInFold());
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1', onError }),
+    );
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw new Error('boom');
+      })(),
+    );
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: () => false });
+    });
+    await waitFor(() => expect(result.current.isRunning).toBe(false));
+    expect(loadSessionSnapshot).toHaveBeenCalledTimes(1);
+  });
+
   it('still reports a failed send the answer leaves unhandled', async () => {
     vi.mocked(loadSessionSnapshot).mockResolvedValue(snapshotWithAskUserPendingInFold());
     const failure = new Error('boom');

@@ -27,7 +27,8 @@ export type RespondToToolResponseOptions = Pick<UserToolResponseEvent, 'toolCall
 export interface RespondToToolResponseSendOptions {
   /**
    * Sees a failure of the send this answer starts, before the runtime's `onError`. Return true
-   * once handled, so it is not reported again.
+   * once handled, so it is not reported again; the runtime then drops the unsent answer and
+   * reloads the session.
    */
   onSendError?: (error: unknown) => boolean;
 }
