@@ -170,6 +170,9 @@ Chromium's profile lock names the hostname that took it, and a container recreat
 `--hostname` gets a new one. The wrapper clears a lock no running Chromium holds, so the profile
 opens either way; a fixed `--hostname` also keeps the name the daemon reports stable.
 
+In the image's xterm, a selection goes to CLIPBOARD, and Ctrl+V, Ctrl+Shift+V and Shift+Insert paste
+CLIPBOARD, which is what a paste from the Screen view sets.
+
 `pnpm --filter @truefoundry/trueforge-computer docker:build:desktop` builds the image, and
 `test:desktop-image` runs the desktop tests inside it.
 

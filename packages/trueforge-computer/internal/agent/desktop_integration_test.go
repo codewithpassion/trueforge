@@ -433,6 +433,36 @@ func TestDesktopEndToEnd(t *testing.T) {
 		}
 	})
 
+	// The Screen view pastes by setting CLIPBOARD and pressing Ctrl+V. Only CLIPBOARD is set and
+	// PRIMARY holds something else, so xterm's default PRIMARY paste would fail each check.
+	t.Run("ctrl+v, ctrl+shift+v and shift+Insert paste CLIPBOARD into xterm", func(t *testing.T) {
+		primary := h.exec(t, "primary-decoy", "printf decoy | xclip -selection primary -i >/dev/null 2>&1")
+		if primary.ExitCode != 0 {
+			t.Fatalf("xclip: %+v", primary)
+		}
+		// One focusing click: clicks in quick succession count as a multi-click, and xterm would
+		// select the line into CLIPBOARD over the text under test.
+		h.input(t, map[string]any{"type": "click", "x": 640, "y": 400, "button": "left", "count": 1})
+		for index, chord := range []string{"ctrl+v", "ctrl+shift+v", "shift+Insert"} {
+			text := fmt.Sprintf("paste-7-%d", index)
+			reply := h.dispatch(t, "paste-set-"+text, protocol.OpDesktopClipboardSet, map[string]any{"text": text, "selections": []string{"clipboard"}})
+			if reply.Error != nil {
+				t.Fatalf("clipboard_set: %+v", reply.Error)
+			}
+			proof := filepath.Join(h.workdir, "pasted-"+text)
+			h.input(t,
+				map[string]any{"type": "type", "text": "echo "},
+				map[string]any{"type": "key", "keys": chord},
+				map[string]any{"type": "type", "text": " > " + proof},
+				map[string]any{"type": "key", "keys": "Return"},
+			)
+			waitUntil(t, chord+" to paste into xterm", 5*time.Second, func() bool {
+				raw, err := os.ReadFile(proof)
+				return err == nil && strings.TrimSpace(string(raw)) == text
+			})
+		}
+	})
+
 	t.Run("a clipboard over 64 KiB is too_large, not cut", func(t *testing.T) {
 		set := h.exec(t, "big-clipboard", `head -c 70000 /dev/zero | tr '\0' a | xclip -selection clipboard -i >/dev/null 2>&1`)
 		if set.ExitCode != 0 {
