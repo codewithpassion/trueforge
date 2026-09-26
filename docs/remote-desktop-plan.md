@@ -1,6 +1,6 @@
 # Remote desktops: computer use and human takeover on a remote computer (Phase 9 PRD)
 
-Status: owner decisions recorded 2026-09-23 (Section 11). Revised four times after adversarial review (Section 12). Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. Builds on Phase 8 (`docs/remote-computers-plan.md`) and the v1 wire contract (`docs/remote-computers-protocol.md`).
+Status: 9a-1, 9a-2, 9b and 9c implemented and deployed to the Workers deploy (2026-09-26); 9d not started because polled frames proved adequate in browser QA (about 0.5 s keystroke echo); 9e deferred. Owner decisions recorded 2026-09-23 (Section 11). Revised four times after adversarial review (Section 12). Engineering plan, not user documentation. Intentionally left out of `docs.json` navigation. Builds on Phase 8 (`docs/remote-computers-plan.md`) and the v1 wire contract (`docs/remote-computers-protocol.md`).
 
 ## 1. Problem, goal, non-goals
 
