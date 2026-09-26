@@ -4,6 +4,34 @@ Reverse-chronological log of implementation cycles: what we did, what went wrong
 
 ---
 
+## Cycle 41 — Phase 9c polish and Phase 9 close-out (2026-09-26)
+
+**Goal:** Fix what the live browser QA found in phase 9c of `docs/remote-desktop-plan.md`, then record where Phase 9 stands.
+
+**What we did:**
+
+- **Desktop image.** xterm app-defaults now bind ctrl+v, ctrl+shift+v and shift+Insert to paste CLIPBOARD, because the Screen sends the clipboard and then ctrl+v. The chromium wrapper strips `--no-sandbox` / `--disable-setuid-sandbox`. That is defence in depth, not a boundary, and the docs say so.
+- **Screen input.** The keyboard sink uses `tabIndex -1`, so Tab leaves the Screen after the Ctrl+Alt+Shift release. While another person has control, frame polling pauses and only status is polled every 2 s, so there is no stream of 423s in the console.
+- **Session panel.** Below `md` the session Screen panel is paused instead of unmounted. Unmounting ran the hand-back-on-unmount path and gave control back to the agent.
+- **Race wording.** A lost takeover-answer race now shows neutral wording and reloads the session so the chat catches up. Error parsing goes through one `readApiError` helper.
+- **Reviews and QA.** The adversarial review found one major (the breakpoint unmount handing back control), which was fixed. Regression browser QA passed 6 of 6.
+- **Shipped.** Landed on `dom/main` at `7a2b6933`, with the status doc in `3634602a`, and deployed as Workers version `fb6b4065`.
+- **Phase 9 status.** 9a-1, 9a-2, 9b and 9c are done. 9d has not started: polled frames are good enough, with about 0.5 s echo. The owner deferred 9e. Still owner-only: a production live test (Google login, enroll a machine with the desktop image or `install.sh --desktop`, run the takeover flow).
+
+**Lessons learned:**
+
+- An Agent-tool worktree again started on `origin/main`, and the agent sat idle until it was told to reset to `dom/main`.
+- A usage-limit cut-off in the middle of a task leaves uncommitted work behind in the worktree.
+- eslint scans `.claude/worktrees`, so lint results are wrong while agent worktrees exist.
+- The takeover race 409 path was not flaky, but two relay clipboard tests time out under full-suite load. They pass 3 of 3 when run alone.
+
+**Avoid next time:**
+
+- Check an agent worktree's base commit in its first minutes, not after it reports.
+- After a usage-limit cut-off, commit the partial work as WIP and split the rest across smaller agents.
+- Lint with `--ignore-pattern '.claude/**'` while worktrees exist.
+- Do not unmount a component whose unmount has side effects (like handing back control) just to hide it at a breakpoint. Pause it instead.
+
 ## Cycle 40 — Phase 9c: live view, human takeover, clipboard, chat cards (2026-09-24)
 
 **Goal:** Ship phase 9c of `docs/remote-desktop-plan.md`: users can watch the agent's desktop, take over control, and hand it back, and chat shows computer tool calls with thumbnails.
