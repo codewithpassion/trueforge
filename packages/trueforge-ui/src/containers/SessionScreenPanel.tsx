@@ -4,6 +4,7 @@ import { useAuiState } from '@assistant-ui/react';
 
 import { DesktopScreen } from '../atoms/desktop/DesktopScreen.js';
 import { auiButtonClass } from '../atoms/lib/buttonClasses.js';
+import { useIsMobile } from '../atoms/lib/useIsMobile.js';
 import { useDesktopAgent, type DesktopAgent } from '../hooks/useDesktopAgent.js';
 import { useActiveSessionCanManage } from '../hooks/useResourcePermissions.js';
 import { Icon } from '../icons/Icon.js';
@@ -51,11 +52,13 @@ export function SessionScreenToggle({ open, onToggle }: { open: boolean; onToggl
 /** Right-side panel beside the chat with the live desktop the agent is using. */
 export function SessionScreenPanel({ screen, onClose }: { screen: SessionScreen; onClose: () => void }) {
   const server = useOptionalComputerDesktopServer();
-  if (server === null) return null;
+  // Below md there is no room beside the chat; unmounting also stops the view polling the desktop.
+  const narrow = useIsMobile();
+  if (server === null || narrow) return null;
   return (
     <aside
       aria-label="Screen"
-      className="hidden min-h-0 w-[30rem] shrink-0 flex-col border-l border-border bg-primary-bg md:flex 2xl:w-[40rem]"
+      className="flex min-h-0 w-[30rem] shrink-0 flex-col border-l border-border bg-primary-bg 2xl:w-[40rem]"
     >
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-3">
         <h2 className="text-sm font-semibold text-text-primary">Screen</h2>
