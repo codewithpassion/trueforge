@@ -150,6 +150,21 @@ describe('useDesktopScreen frame polling', () => {
     expect(getDesktopScreenshot).toHaveBeenCalledTimes(3);
   });
 
+  it("refreshes status at once when a frame is refused as another person's while status says nobody controls", async () => {
+    const getDesktopStatus = vi.fn(async () => onlineStatus);
+    const getDesktopScreenshot = vi.fn(async (): Promise<Blob> => new Blob(['frame']));
+    const server = createServer({ getDesktopStatus, getDesktopScreenshot });
+    renderHook(() => useDesktopScreen({ server, computerId: 'computer-1' }));
+    await advance(0);
+    expect(getDesktopStatus).toHaveBeenCalledTimes(1);
+
+    getDesktopScreenshot.mockRejectedValue(lockedError());
+    // The refusal lands at 500 ms, well before the next 3 s status tick.
+    await advance(500);
+    expect(getDesktopScreenshot).toHaveBeenCalledTimes(2);
+    expect(getDesktopStatus).toHaveBeenCalledTimes(2);
+  });
+
   it('stops asking for frames while status says another person controls, and resumes when they let go', async () => {
     const otherStatus: DesktopStatus = {
       ...onlineStatus,
@@ -531,6 +546,32 @@ describe('useDesktopScreen leaving', () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(sent).toHaveLength(1);
+  });
+
+  it('pauses without handing back while in control, and resumes polling when unpaused', async () => {
+    const getDesktopScreenshot = vi.fn(async () => new Blob(['frame']));
+    const getDesktopStatus = vi.fn(async () => mineStatus);
+    const server = createServer({ getDesktopScreenshot, getDesktopStatus });
+    const { result, rerender } = renderHook(
+      ({ paused }: { paused: boolean }) => useDesktopScreen({ server, computerId: 'computer-1', paused }),
+      { initialProps: { paused: false } },
+    );
+    await advance(0);
+    act(() => result.current.applyStatus(mineStatus));
+
+    rerender({ paused: true });
+    const frames = getDesktopScreenshot.mock.calls.length;
+    const statuses = getDesktopStatus.mock.calls.length;
+    await advance(10_000);
+    expect(server.handBackDesktop).not.toHaveBeenCalled();
+    expect(getDesktopScreenshot).toHaveBeenCalledTimes(frames);
+    expect(getDesktopStatus).toHaveBeenCalledTimes(statuses);
+
+    rerender({ paused: false });
+    await advance(0);
+    expect(getDesktopScreenshot).toHaveBeenCalledTimes(frames + 1);
+    expect(getDesktopStatus).toHaveBeenCalledTimes(statuses + 1);
+    expect(server.handBackDesktop).not.toHaveBeenCalled();
   });
 
   it('does not hand back a desktop it was only watching', async () => {

@@ -10,12 +10,14 @@ import { readApiError } from '../utils/readApiError.js';
 import { REQUEST_HUMAN_TAKEOVER_TOOL_NAME } from '../utils/toolCallParsing.js';
 import { useToasterOptional } from './ToasterContainer.js';
 
-const ANSWERED_ELSEWHERE_NOTICE = 'Someone else already answered this request; the agent is continuing.';
+// `tip_running` also covers the pausing turn itself not having finished, so this must not claim who answered.
+const ANSWERED_ELSEWHERE_NOTICE =
+  'This request was already answered, or the agent is still busy. Refresh to see where it is.';
 
-/** Codes the turn route answers with when another answer to the same pause got in first. */
+/** Codes the turn route answers with when the pause cannot be answered right now. */
 const ANSWERED_ELSEWHERE_CODES = new Set(['tip_running', 'already_answered']);
 
-/** A 409 whose `{ error: { code } }` body says the paused turn was already continued. */
+/** A 409 whose `{ error: { code } }` body says the paused turn is not waiting for this answer. */
 function isAnsweredElsewhere(error: unknown): boolean {
   const { status, code } = readApiError(error);
   return status === 409 && code !== undefined && ANSWERED_ELSEWHERE_CODES.has(code);
@@ -34,7 +36,8 @@ export function TakeoverPauseContainer({ disabled = false }: { disabled?: boolea
   if (item == null) return null;
 
   const answer = (outcome: 'completed' | 'cancelled') => {
-    const trimmed = note.trim();
+    const sent = note;
+    const trimmed = sent.trim();
     respond(
       {
         toolCallId: item.toolCallId,
@@ -43,6 +46,8 @@ export function TakeoverPauseContainer({ disabled = false }: { disabled?: boolea
       {
         // Losing the race to someone on the Screen page is expected, not a failure.
         onSendError: error => {
+          // A refused answer keeps what was typed, unless something new was typed since.
+          setNote(current => (current === '' ? sent : current));
           if (toaster === null || !isAnsweredElsewhere(error)) return false;
           toaster.showSuccess({ title: ANSWERED_ELSEWHERE_NOTICE });
           return true;

@@ -60,6 +60,8 @@ export type DesktopScreenProps = {
   sessionId?: string;
   /** Stacks the controls for a narrow panel. */
   compact?: boolean;
+  /** Stops polling while the view is hidden, keeping control of the desktop. */
+  paused?: boolean;
   className?: string;
 };
 
@@ -196,9 +198,10 @@ export function DesktopScreen({
   agentId,
   sessionId,
   compact = false,
+  paused = false,
   className,
 }: DesktopScreenProps) {
-  const screen = useDesktopScreen({ server, computerId, ...(agentId === undefined ? {} : { agentId }) });
+  const screen = useDesktopScreen({ server, computerId, paused, ...(agentId === undefined ? {} : { agentId }) });
   const { status, frame, frameProblem } = screen;
   const now = useNow(1000);
   const scope = { computerId, ...(agentId === undefined ? {} : { agentId }) };

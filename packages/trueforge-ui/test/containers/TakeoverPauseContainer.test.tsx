@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Respond = (
@@ -68,14 +68,14 @@ describe('TakeoverPauseContainer', () => {
   });
 
   it.each(['tip_running', 'already_answered'])(
-    'says someone else already answered when the send is refused with 409 %s',
+    'says the request was answered or the agent is busy when the send is refused with 409 %s',
     code => {
       render(<TakeoverPauseContainer />);
       fireEvent.click(screen.getByRole('button', { name: 'It’s done' }));
 
       expect(lastSendErrorHandler()(conflict(code))).toBe(true);
       expect(mocks.showSuccess).toHaveBeenCalledWith({
-        title: 'Someone else already answered this request; the agent is continuing.',
+        title: 'This request was already answered, or the agent is still busy. Refresh to see where it is.',
       });
     },
   );
@@ -88,6 +88,19 @@ describe('TakeoverPauseContainer', () => {
     expect(handle(conflict('fork_conflict'))).toBe(false);
     expect(handle(Object.assign(new Error('boom'), { statusCode: 500 }))).toBe(false);
     expect(mocks.showSuccess).not.toHaveBeenCalled();
+  });
+
+  it('clears the note on send and restores it when the send fails', () => {
+    render(<TakeoverPauseContainer />);
+    const input = screen.getByLabelText('Note for the agent');
+    fireEvent.change(input, { target: { value: 'Logged in' } });
+    fireEvent.click(screen.getByRole('button', { name: 'It’s done' }));
+    expect(input).toHaveValue('');
+
+    act(() => {
+      lastSendErrorHandler()(Object.assign(new Error('boom'), { statusCode: 500 }));
+    });
+    expect(input).toHaveValue('Logged in');
   });
 
   it('is read-only for someone who cannot answer in this session', () => {

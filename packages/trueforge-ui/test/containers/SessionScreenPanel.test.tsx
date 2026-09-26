@@ -2,7 +2,18 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/server/ServerContext.js', () => ({ useOptionalComputerDesktopServer: () => ({}) }));
-vi.mock('@/atoms/desktop/DesktopScreen.js', () => ({ DesktopScreen: () => <div data-testid="desktop-screen" /> }));
+const mounts = vi.fn();
+vi.mock('@/atoms/desktop/DesktopScreen.js', async () => {
+  const { useEffect } = await import('react');
+  return {
+    DesktopScreen: ({ paused }: { paused?: boolean }) => {
+      useEffect(() => {
+        mounts();
+      }, []);
+      return <div data-testid="desktop-screen" data-paused={String(paused)} />;
+    },
+  };
+});
 
 import { SessionScreenPanel, SessionScreenToggle } from '@/containers/SessionScreenPanel.js';
 
@@ -42,24 +53,34 @@ describe('SessionScreenPanel', () => {
     listeners.clear();
   });
 
-  it('does not mount the desktop view below md, so nothing polls while it cannot be seen', () => {
+  it('keeps the desktop view mounted but paused below md, where it cannot be seen', () => {
     narrow = true;
     stubMatchMedia();
     render(<SessionScreenPanel screen={panelScreen} onClose={() => undefined} />);
-    expect(screen.queryByRole('complementary', { name: 'Screen' })).toBeNull();
-    expect(screen.queryByTestId('desktop-screen')).toBeNull();
+    expect(screen.getByTestId('desktop-screen')).toHaveAttribute('data-paused', 'true');
+    expect(screen.getByLabelText('Screen')).toHaveClass('hidden');
   });
 
-  it('unmounts the desktop view when the window narrows below md', () => {
+  it('pauses rather than unmounts when the window narrows, and resumes when it widens', () => {
     narrow = false;
+    mounts.mockClear();
     stubMatchMedia();
     render(<SessionScreenPanel screen={panelScreen} onClose={() => undefined} />);
-    expect(screen.getByTestId('desktop-screen')).toBeInTheDocument();
+    expect(screen.getByTestId('desktop-screen')).toHaveAttribute('data-paused', 'false');
 
     act(() => {
       narrow = true;
       for (const listener of listeners) listener();
     });
-    expect(screen.queryByTestId('desktop-screen')).toBeNull();
+    expect(screen.getByTestId('desktop-screen')).toHaveAttribute('data-paused', 'true');
+
+    act(() => {
+      narrow = false;
+      for (const listener of listeners) listener();
+    });
+    expect(screen.getByTestId('desktop-screen')).toHaveAttribute('data-paused', 'false');
+    expect(screen.getByLabelText('Screen')).toHaveClass('flex');
+    // One mount throughout, so the view's leave-cleanup never hands back control.
+    expect(mounts).toHaveBeenCalledTimes(1);
   });
 });

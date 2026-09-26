@@ -29,6 +29,8 @@ export type DesktopScreenTarget = {
   computerId: string;
   /** Omitted only by a tenant admin looking at the computer itself. */
   agentId?: string;
+  /** Stops frame and status requests while the view cannot be seen; control is kept, not handed back. */
+  paused?: boolean;
 };
 
 export type DesktopFrame = { url: string; receivedAt: number };
@@ -44,7 +46,7 @@ function sameProblem({ a, b }: { a: DesktopFrameProblem | null; b: DesktopFrameP
  * Frames live only as the one object URL on screen; each replaces and revokes the last.
  * Input goes out one request at a time; whatever queues meanwhile goes in the next one.
  */
-export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenTarget) {
+export function useDesktopScreen({ server, computerId, agentId, paused = false }: DesktopScreenTarget) {
   const [status, setStatus] = useState<DesktopStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [frame, setFrame] = useState<DesktopFrame | null>(null);
@@ -118,6 +120,7 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
 
   // Status: one request at a time, slower while the tab is hidden.
   useEffect(() => {
+    if (paused) return;
     activeRef.current = true;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -159,10 +162,11 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
       activeRef.current = false;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [computerId, agentId, setKnownStatus]);
+  }, [computerId, agentId, paused, setKnownStatus]);
 
   // Frames: one request at a time, every 500 ms while visible and every 2 s while hidden.
   useEffect(() => {
+    if (paused) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let inFlight = false;
@@ -230,7 +234,7 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
       document.removeEventListener('visibilitychange', onVisibilityChange);
       pollFrameSoonRef.current = () => undefined;
     };
-  }, [computerId, agentId, showFrame, dropFrame, reportProblem]);
+  }, [computerId, agentId, paused, showFrame, dropFrame, reportProblem]);
 
   // Released frames and queued input belong to this desktop only, and so does control of it.
   useEffect(() => {
