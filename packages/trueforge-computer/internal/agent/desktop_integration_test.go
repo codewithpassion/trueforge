@@ -478,8 +478,10 @@ func TestDesktopEndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("chromium started with exec keeps running", func(t *testing.T) {
-		result := h.exec(t, "chromium", "chromium about:blank &")
+	// Asked for --no-sandbox, as agents often do, the wrapper drops it and says so.
+	t.Run("chromium started with exec keeps running, sandboxed even when asked not to be", func(t *testing.T) {
+		stderr := filepath.Join(h.workdir, "chromium-stderr")
+		result := h.exec(t, "chromium", "chromium --no-sandbox --disable-setuid-sandbox about:blank 2>"+stderr+" &")
 		if result.ExitCode != 0 || result.DurationMS >= 3000 {
 			t.Fatalf("exec = exit %d after %d ms", result.ExitCode, result.DurationMS)
 		}
@@ -500,6 +502,13 @@ func TestDesktopEndToEnd(t *testing.T) {
 		sandboxed := h.exec(t, "sandboxed", `self=$(readlink /proc/self/ns/user); for pid in $(pgrep -f -- '--type=renderer'); do [ "$(readlink /proc/$pid/ns/user)" != "$self" ] && echo sandboxed; done`)
 		if !strings.Contains(sandboxed.Stdout, "sandboxed") {
 			t.Fatalf("no chromium renderer runs in its own user namespace: %+v", sandboxed)
+		}
+		if bypassed := h.exec(t, "no-sandbox", "pgrep -af -- '--(no|disable-setuid)-sandbox'"); bypassed.ExitCode == 0 {
+			t.Fatalf("a chromium process still carries a sandbox-disabling flag: %s", bypassed.Stdout)
+		}
+		raw, err := os.ReadFile(stderr)
+		if want := "chromium: ignored --no-sandbox --disable-setuid-sandbox; the sandbox stays on"; err != nil || !strings.Contains(string(raw), want) {
+			t.Fatalf("chromium's stderr = %q, %v; want the line %q", raw, err, want)
 		}
 	})
 
