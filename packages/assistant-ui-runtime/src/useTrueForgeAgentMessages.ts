@@ -46,6 +46,7 @@ import {
   applyUserToolResponsesToFold,
   TOOL_RESPONSE_THREAD_ID_CUSTOM_KEY,
   type RespondToToolResponseOptions,
+  type RespondToToolResponseSendOptions,
 } from './toolResponse.js';
 import type { TurnStreamUpdate } from './turnStreamUpdate.js';
 
@@ -85,7 +86,7 @@ export type SendTurnOptions =
       /** Original history restored when a branch fails before turn.created. */
       branchRollbackSnapshot?: SessionSnapshot;
     }
-  | { inputs: RequiredActionInput[] }
+  | { inputs: RequiredActionInput[]; onSendError?: RespondToToolResponseSendOptions['onSendError'] }
   | { resumeMcpAuth: true };
 
 function buildCompletedTurnState(
@@ -379,6 +380,7 @@ export function useTrueForgeAgentMessages({
        */
       turnIdRef: { current: string },
       isContinuation: boolean,
+      onSendError?: RespondToToolResponseSendOptions['onSendError'],
     ): Promise<void> => {
       const streamGeneration = ++streamGenerationRef.current;
       abortControllerRef.current?.abort();
@@ -436,7 +438,9 @@ export function useTrueForgeAgentMessages({
           if (error instanceof Error && error.name === 'AbortError') {
             return;
           }
-          onErrorRef.current?.(error);
+          if (onSendError?.(error) !== true) {
+            onErrorRef.current?.(error);
+          }
           throw error;
         } finally {
           cancelScheduledAnimationFrame(streamUpdateRaf);
@@ -781,6 +785,7 @@ export function useTrueForgeAgentMessages({
           },
           turnIdRef,
           isContinuation,
+          'inputs' in options ? options.onSendError : undefined,
         );
       } catch (error) {
         if ('userMessage' in options && !gatewayTurnAccepted.current) {
@@ -806,7 +811,7 @@ export function useTrueForgeAgentMessages({
           }
           options.onPreTurnFailure?.();
         }
-        if (!runStreamStarted) {
+        if (!runStreamStarted && !('inputs' in options && options.onSendError?.(error) === true)) {
           onErrorRef.current?.(error);
         }
         throw error;
@@ -848,7 +853,7 @@ export function useTrueForgeAgentMessages({
   isRunningRef.current = isRunning;
 
   const trySendCollectedRequiredActions = useCallback(
-    (nextSnapshot: SessionSnapshot) => {
+    (nextSnapshot: SessionSnapshot, onSendError?: RespondToToolResponseSendOptions['onSendError']) => {
       if (isRunningRef.current) {
         return;
       }
@@ -860,7 +865,7 @@ export function useTrueForgeAgentMessages({
       const inputs = collectRequiredActionInputs(paused);
       if (inputs.length > 0) {
         // sendTurn/runStream already report via onError; swallow to avoid duplicates.
-        void sendTurn({ inputs }).catch(() => undefined);
+        void sendTurn({ inputs, ...(onSendError === undefined ? {} : { onSendError }) }).catch(() => undefined);
       }
     },
     [projectOptions, sendTurn],
@@ -887,7 +892,7 @@ export function useTrueForgeAgentMessages({
   );
 
   const respondToToolResponse = useCallback(
-    (response: RespondToToolResponseOptions) => {
+    (response: RespondToToolResponseOptions, options: RespondToToolResponseSendOptions = {}) => {
       const prev = snapshotRef.current;
       const toolResponses = new Map(prev.requiredActions.toolResponses);
       toolResponses.set(response.toolCallId, { content: response.content });
@@ -898,7 +903,7 @@ export function useTrueForgeAgentMessages({
         },
       });
       setSnapshot(nextSnapshot);
-      trySendCollectedRequiredActions(nextSnapshot);
+      trySendCollectedRequiredActions(nextSnapshot, options.onSendError);
     },
     [trySendCollectedRequiredActions],
   );

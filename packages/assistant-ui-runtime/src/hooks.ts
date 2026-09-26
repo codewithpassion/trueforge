@@ -4,7 +4,7 @@ import { useAui, useAuiState } from '@assistant-ui/store';
 import { useMemo } from 'react';
 
 import type { RespondToToolApprovalOptions } from './toolApproval.js';
-import type { RespondToToolResponseOptions } from './toolResponse.js';
+import type { RespondToToolResponseOptions, RespondToToolResponseSendOptions } from './toolResponse.js';
 import {
   EMPTY_DRAFT_EXTRAS,
   getTrueForgeExtras,
@@ -70,8 +70,8 @@ export const useTrueForgeRespondToToolApproval = () => {
 /** Returns a function to respond to a pending tool response from any render context. */
 export const useTrueForgeRespondToToolResponse = () => {
   const aui = useAui();
-  return (response: RespondToToolResponseOptions) => {
-    getTrueForgeExtras(aui).respondToToolResponse(response);
+  return (response: RespondToToolResponseOptions, options?: RespondToToolResponseSendOptions) => {
+    getTrueForgeExtras(aui).respondToToolResponse(response, options);
   };
 };
 

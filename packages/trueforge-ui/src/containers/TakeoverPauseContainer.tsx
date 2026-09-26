@@ -7,6 +7,25 @@ import { useState } from 'react';
 import { auiInputClass } from '../atoms/lib/inputClasses.js';
 import { Button } from '../atoms/primitives/Button.js';
 import { REQUEST_HUMAN_TAKEOVER_TOOL_NAME } from '../utils/toolCallParsing.js';
+import { useToasterOptional } from './ToasterContainer.js';
+
+const ANSWERED_ELSEWHERE_NOTICE = 'Someone else already answered this request; the agent is continuing.';
+
+/** Codes the turn route answers with when another answer to the same pause got in first. */
+const ANSWERED_ELSEWHERE_CODES = new Set(['tip_running', 'already_answered']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+/** A 409 whose `{ error: { code } }` body says the paused turn was already continued. */
+function isAnsweredElsewhere(error: unknown): boolean {
+  if (!isRecord(error) || error['statusCode'] !== 409) return false;
+  const body = error['body'];
+  const envelope = isRecord(body) ? body['error'] : undefined;
+  const code = isRecord(envelope) ? envelope['code'] : undefined;
+  return typeof code === 'string' && ANSWERED_ELSEWHERE_CODES.has(code);
+}
 
 /**
  * The composer while the agent waits for a person on its screen. The session's owner can answer
@@ -15,16 +34,27 @@ import { REQUEST_HUMAN_TAKEOVER_TOOL_NAME } from '../utils/toolCallParsing.js';
 export function TakeoverPauseContainer({ disabled = false }: { disabled?: boolean }) {
   const { pending, respond } = useTrueForgeToolResponses();
   const isRunning = useThreadIsRunning();
+  const toaster = useToasterOptional();
   const [note, setNote] = useState('');
   const item = pending.find(candidate => candidate.toolName === REQUEST_HUMAN_TAKEOVER_TOOL_NAME);
   if (item == null) return null;
 
   const answer = (outcome: 'completed' | 'cancelled') => {
     const trimmed = note.trim();
-    respond({
-      toolCallId: item.toolCallId,
-      content: JSON.stringify({ outcome, note: trimmed === '' ? null : trimmed }),
-    });
+    respond(
+      {
+        toolCallId: item.toolCallId,
+        content: JSON.stringify({ outcome, note: trimmed === '' ? null : trimmed }),
+      },
+      {
+        // Losing the race to someone on the Screen page is expected, not a failure.
+        onSendError: error => {
+          if (toaster === null || !isAnsweredElsewhere(error)) return false;
+          toaster.showSuccess({ title: ANSWERED_ELSEWHERE_NOTICE });
+          return true;
+        },
+      },
+    );
     setNote('');
   };
   const locked = disabled || isRunning;

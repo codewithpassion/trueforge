@@ -59,6 +59,7 @@ export {
   TOOL_RESPONSE_THREAD_ID_CUSTOM_KEY,
   collectResponseInputs,
   messageHasPendingResponses,
+  type RespondToToolResponseSendOptions,
 } from './toolResponse.js';
 export { getToolResultImages, type ToolResultImagesArtifact } from './toolResultImages.js';
 export { getTrueForgeExtras, trueForgeExtras, tryGetTrueForgeExtras } from './trueforgeExtras.js';

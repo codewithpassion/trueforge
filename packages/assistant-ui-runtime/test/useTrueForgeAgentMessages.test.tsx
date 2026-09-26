@@ -1287,6 +1287,53 @@ describe('useTrueForgeAgentMessages', () => {
     expect(messageHasPendingResponses(assistant)).toBe(false);
   });
 
+  it('lets the answer handle a failed send before the runtime reports it', async () => {
+    vi.mocked(loadSessionSnapshot).mockResolvedValue(snapshotWithAskUserPendingInFold());
+    const conflict = Object.assign(new Error('already answered'), { statusCode: 409 });
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1', onError }),
+    );
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw conflict;
+      })(),
+    );
+    const handled = vi.fn(() => true);
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: handled });
+    });
+    await waitFor(() => expect(handled).toHaveBeenCalledWith(conflict));
+    await waitFor(() => expect(result.current.isRunning).toBe(false));
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('still reports a failed send the answer leaves unhandled', async () => {
+    vi.mocked(loadSessionSnapshot).mockResolvedValue(snapshotWithAskUserPendingInFold());
+    const failure = new Error('boom');
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1', onError }),
+    );
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw failure;
+      })(),
+    );
+    const unhandled = vi.fn(() => false);
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: unhandled });
+    });
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(failure));
+    expect(unhandled).toHaveBeenCalledWith(failure);
+  });
+
   describe('batched resume invariant', () => {
     it('issues exactly one createTurn input batch across root and sub-agent threads', async () => {
       vi.mocked(loadSessionSnapshot).mockResolvedValue(
