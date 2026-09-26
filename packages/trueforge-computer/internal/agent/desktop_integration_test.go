@@ -433,6 +433,36 @@ func TestDesktopEndToEnd(t *testing.T) {
 		}
 	})
 
+	// The Screen view pastes by setting CLIPBOARD and pressing Ctrl+V. Only CLIPBOARD is set and
+	// PRIMARY holds something else, so xterm's default PRIMARY paste would fail each check.
+	t.Run("ctrl+v, ctrl+shift+v and shift+Insert paste CLIPBOARD into xterm", func(t *testing.T) {
+		primary := h.exec(t, "primary-decoy", "printf decoy | xclip -selection primary -i >/dev/null 2>&1")
+		if primary.ExitCode != 0 {
+			t.Fatalf("xclip: %+v", primary)
+		}
+		// One focusing click: clicks in quick succession count as a multi-click, and xterm would
+		// select the line into CLIPBOARD over the text under test.
+		h.input(t, map[string]any{"type": "click", "x": 640, "y": 400, "button": "left", "count": 1})
+		for index, chord := range []string{"ctrl+v", "ctrl+shift+v", "shift+Insert"} {
+			text := fmt.Sprintf("paste-7-%d", index)
+			reply := h.dispatch(t, "paste-set-"+text, protocol.OpDesktopClipboardSet, map[string]any{"text": text, "selections": []string{"clipboard"}})
+			if reply.Error != nil {
+				t.Fatalf("clipboard_set: %+v", reply.Error)
+			}
+			proof := filepath.Join(h.workdir, "pasted-"+text)
+			h.input(t,
+				map[string]any{"type": "type", "text": "echo "},
+				map[string]any{"type": "key", "keys": chord},
+				map[string]any{"type": "type", "text": " > " + proof},
+				map[string]any{"type": "key", "keys": "Return"},
+			)
+			waitUntil(t, chord+" to paste into xterm", 5*time.Second, func() bool {
+				raw, err := os.ReadFile(proof)
+				return err == nil && strings.TrimSpace(string(raw)) == text
+			})
+		}
+	})
+
 	t.Run("a clipboard over 64 KiB is too_large, not cut", func(t *testing.T) {
 		set := h.exec(t, "big-clipboard", `head -c 70000 /dev/zero | tr '\0' a | xclip -selection clipboard -i >/dev/null 2>&1`)
 		if set.ExitCode != 0 {
@@ -448,8 +478,10 @@ func TestDesktopEndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("chromium started with exec keeps running", func(t *testing.T) {
-		result := h.exec(t, "chromium", "chromium about:blank &")
+	// Asked for --no-sandbox, as agents often do, the wrapper drops it and says so.
+	t.Run("chromium started with exec keeps running, sandboxed even when asked not to be", func(t *testing.T) {
+		stderr := filepath.Join(h.workdir, "chromium-stderr")
+		result := h.exec(t, "chromium", "chromium --no-sandbox --disable-setuid-sandbox about:blank 2>"+stderr+" &")
 		if result.ExitCode != 0 || result.DurationMS >= 3000 {
 			t.Fatalf("exec = exit %d after %d ms", result.ExitCode, result.DurationMS)
 		}
@@ -470,6 +502,13 @@ func TestDesktopEndToEnd(t *testing.T) {
 		sandboxed := h.exec(t, "sandboxed", `self=$(readlink /proc/self/ns/user); for pid in $(pgrep -f -- '--type=renderer'); do [ "$(readlink /proc/$pid/ns/user)" != "$self" ] && echo sandboxed; done`)
 		if !strings.Contains(sandboxed.Stdout, "sandboxed") {
 			t.Fatalf("no chromium renderer runs in its own user namespace: %+v", sandboxed)
+		}
+		if bypassed := h.exec(t, "no-sandbox", "pgrep -af -- '--(no|disable-setuid)-sandbox'"); bypassed.ExitCode == 0 {
+			t.Fatalf("a chromium process still carries a sandbox-disabling flag: %s", bypassed.Stdout)
+		}
+		raw, err := os.ReadFile(stderr)
+		if want := "chromium: ignored --no-sandbox --disable-setuid-sandbox; the sandbox stays on"; err != nil || !strings.Contains(string(raw), want) {
+			t.Fatalf("chromium's stderr = %q, %v; want the line %q", raw, err, want)
 		}
 	})
 

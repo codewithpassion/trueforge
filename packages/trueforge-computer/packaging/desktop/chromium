@@ -18,6 +18,22 @@ if ! pgrep -f -- "--user-data-dir=$profile( |\$)" >/dev/null 2>&1; then
   rm -f "$profile/SingletonLock" "$profile/SingletonCookie" "$profile/SingletonSocket"
 fi
 
+# Agents often add --no-sandbox out of habit; the sandbox this image promises stays on regardless.
+ignored=""
+for arg do
+  shift
+  case "$arg" in
+    -no-sandbox | -no-sandbox=* | --no-sandbox | --no-sandbox=* | \
+      -disable-setuid-sandbox | -disable-setuid-sandbox=* | --disable-setuid-sandbox | --disable-setuid-sandbox=*)
+      ignored="$ignored $arg"
+      ;;
+    *) set -- "$@" "$arg" ;;
+  esac
+done
+if [ -n "$ignored" ]; then
+  echo "chromium: ignored$ignored; the sandbox stays on" >&2
+fi
+
 exec /usr/bin/chromium \
   --user-data-dir="$profile" \
   --password-store=basic \
