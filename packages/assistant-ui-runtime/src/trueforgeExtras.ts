@@ -9,7 +9,7 @@ import type { PendingApproval, PendingToolResponse } from './collectPending.js';
 import type { AgentSpecUpdate } from './draft/agentSpec.js';
 import type { AgentSpec } from './server/types.js';
 import type { RespondToToolApprovalOptions } from './toolApproval.js';
-import type { RespondToToolResponseOptions } from './toolResponse.js';
+import type { RespondToToolResponseOptions, RespondToToolResponseSendOptions } from './toolResponse.js';
 
 export type { PendingApproval, PendingToolResponse };
 
@@ -31,7 +31,7 @@ export interface TrueForgeRuntimeExtras {
   resumeUnavailable: boolean;
   sandboxId: string | undefined;
   respondToToolApproval: (response: RespondToToolApprovalOptions) => void;
-  respondToToolResponse: (response: RespondToToolResponseOptions) => void;
+  respondToToolResponse: (response: RespondToToolResponseOptions, options?: RespondToToolResponseSendOptions) => void;
   resumeMcpAuth: () => Promise<void>;
   downloadSandboxFile: (req: { turnId: string; path: string }) => Promise<Blob>;
   /** Reads a file a tool result stored for this session, such as a screenshot. */

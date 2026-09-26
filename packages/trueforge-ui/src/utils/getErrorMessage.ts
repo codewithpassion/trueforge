@@ -1,9 +1,7 @@
+import { readApiError, readErrorShapedMessage } from './readApiError.js';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object';
-}
-
-function readNonEmptyString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 const LITERAL_ESCAPE_PATTERN = /\\(?:[nrtbfv0'"\\]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})/; // literal escape sequences like \n, \t, \b, \f, \v, \uXXXX, \xHH
@@ -99,20 +97,6 @@ export function decodeErrorMessageEscapes(text: string): string {
   return decodeLiteralEscapes(normalized).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-/**
- * Reads a display string from API-shaped errors: `message`, then nested
- * `error.message`. When neither exists, stringifies the value.
- */
-function messageFromErrorShaped(value: unknown): string | undefined {
-  if (!isRecord(value)) return undefined;
-  const direct = readNonEmptyString(value.message);
-  if (direct != null) return direct;
-  if (isRecord(value.error)) {
-    return readNonEmptyString(value.error.message);
-  }
-  return undefined;
-}
-
 function stringifyError(error: unknown): string {
   if (typeof error === 'string') return error;
   if (isRecord(error)) {
@@ -141,7 +125,7 @@ export function getErrorMessage(error: unknown, fallback?: string): string {
   }
 
   if (isRecord(error) && 'body' in error) {
-    const fromBody = messageFromErrorShaped(error.body);
+    const fromBody = readApiError(error).message;
     if (fromBody != null) return decodeErrorMessageEscapes(fromBody);
     if (error.body != null) {
       if (typeof error.body === 'string') {
@@ -153,7 +137,7 @@ export function getErrorMessage(error: unknown, fallback?: string): string {
     }
   }
 
-  const fromShape = messageFromErrorShaped(error);
+  const fromShape = readErrorShapedMessage(error);
   if (fromShape != null) return decodeErrorMessageEscapes(fromShape);
 
   if (fallback != null) return decodeErrorMessageEscapes(fallback);

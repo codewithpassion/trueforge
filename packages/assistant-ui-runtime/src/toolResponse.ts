@@ -24,6 +24,15 @@ export type StoredToolResponse = Pick<UserToolResponseEvent, 'content'>;
 
 export type RespondToToolResponseOptions = Pick<UserToolResponseEvent, 'toolCallId' | 'content'>;
 
+export interface RespondToToolResponseSendOptions {
+  /**
+   * Sees a failure of the send this answer starts, before the runtime's `onError`. Return true
+   * once handled, so it is not reported again; the runtime then drops the unsent answer and
+   * reloads the session.
+   */
+  onSendError?: (error: unknown) => boolean;
+}
+
 type ToolCallPart = Extract<ThreadMessage['content'][number], { type: 'tool-call' }>;
 
 type AssistantToolCallPart = Extract<ThreadAssistantMessagePart, { type: 'tool-call' }>;

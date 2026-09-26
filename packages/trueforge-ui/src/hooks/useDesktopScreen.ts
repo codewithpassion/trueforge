@@ -10,6 +10,8 @@ export const FRAME_INTERVAL_MS = 500;
 export const HIDDEN_FRAME_INTERVAL_MS = 2000;
 export const STATUS_INTERVAL_MS = 3000;
 const HIDDEN_STATUS_INTERVAL_MS = 10_000;
+/** While someone else holds control there is no frame to fetch, so status is watched closer instead. */
+export const OTHER_CONTROL_STATUS_INTERVAL_MS = 2000;
 export const INPUT_BATCH_MS = 100;
 /** Refresh the lease expiry after input once it is this close, so the warning clears promptly. */
 const EXPIRY_REFRESH_WINDOW_MS = 90_000;
@@ -18,11 +20,17 @@ function isHidden(): boolean {
   return typeof document !== 'undefined' && document.visibilityState === 'hidden';
 }
 
+function otherHumanControls(status: DesktopStatus | null): boolean {
+  return status?.controller.kind === 'human' && !status.controller.isMe;
+}
+
 export type DesktopScreenTarget = {
   server: ComputerDesktopServer;
   computerId: string;
   /** Omitted only by a tenant admin looking at the computer itself. */
   agentId?: string;
+  /** Stops frame and status requests while the view cannot be seen; control is kept, not handed back. */
+  paused?: boolean;
 };
 
 export type DesktopFrame = { url: string; receivedAt: number };
@@ -38,7 +46,7 @@ function sameProblem({ a, b }: { a: DesktopFrameProblem | null; b: DesktopFrameP
  * Frames live only as the one object URL on screen; each replaces and revokes the last.
  * Input goes out one request at a time; whatever queues meanwhile goes in the next one.
  */
-export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenTarget) {
+export function useDesktopScreen({ server, computerId, agentId, paused = false }: DesktopScreenTarget) {
   const [status, setStatus] = useState<DesktopStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [frame, setFrame] = useState<DesktopFrame | null>(null);
@@ -69,7 +77,10 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
   // Bumped by every status an action returns, so a poll that started earlier cannot undo it.
   const statusVersionRef = useRef(0);
   const setKnownStatus = useCallback((next: DesktopStatus) => {
+    const wasLocked = otherHumanControls(statusRef.current);
     statusRef.current = next;
+    // Frames were paused while someone else had control; fetch one as soon as they let go.
+    if (wasLocked && !otherHumanControls(next)) pollFrameSoonRef.current(0);
     setStatus(next);
     setStatusError(null);
   }, []);
@@ -109,6 +120,7 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
 
   // Status: one request at a time, slower while the tab is hidden.
   useEffect(() => {
+    if (paused) return;
     activeRef.current = true;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -136,7 +148,11 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
     const tick = () => {
       timer = null;
       void load().finally(() => {
-        if (!stopped) timer = setTimeout(tick, isHidden() ? HIDDEN_STATUS_INTERVAL_MS : STATUS_INTERVAL_MS);
+        if (stopped) return;
+        let delayMs = STATUS_INTERVAL_MS;
+        if (isHidden()) delayMs = HIDDEN_STATUS_INTERVAL_MS;
+        else if (otherHumanControls(statusRef.current)) delayMs = OTHER_CONTROL_STATUS_INTERVAL_MS;
+        timer = setTimeout(tick, delayMs);
       });
     };
     refreshStatusRef.current = load;
@@ -146,10 +162,11 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
       activeRef.current = false;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [computerId, agentId, setKnownStatus]);
+  }, [computerId, agentId, paused, setKnownStatus]);
 
   // Frames: one request at a time, every 500 ms while visible and every 2 s while hidden.
   useEffect(() => {
+    if (paused) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let inFlight = false;
@@ -171,6 +188,13 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
         schedule(interval());
         return;
       }
+      // Another person's screen is theirs alone: no requests (each would be refused) until status says they let go.
+      if (otherHumanControls(known)) {
+        reportProblem({ kind: 'human_in_control' });
+        dropFrame();
+        schedule(interval());
+        return;
+      }
       inFlight = true;
       controller = new AbortController();
       const seq = ++frameSeqRef.current;
@@ -184,8 +208,12 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
           if (stopped) return;
           const problem = toFrameProblem(error);
           reportProblem(problem);
-          // Another person's screen is theirs alone, so nothing of it stays on this one.
-          if (problem.kind === 'human_in_control') dropFrame();
+          // Another person's screen is theirs alone, so nothing of it stays on this one; status
+          // learns of them now, so polling pauses instead of waiting for the next status tick.
+          if (problem.kind === 'human_in_control') {
+            dropFrame();
+            void refreshStatusRef.current();
+          }
         })
         .finally(() => {
           inFlight = false;
@@ -206,7 +234,7 @@ export function useDesktopScreen({ server, computerId, agentId }: DesktopScreenT
       document.removeEventListener('visibilitychange', onVisibilityChange);
       pollFrameSoonRef.current = () => undefined;
     };
-  }, [computerId, agentId, showFrame, dropFrame, reportProblem]);
+  }, [computerId, agentId, paused, showFrame, dropFrame, reportProblem]);
 
   // Released frames and queued input belong to this desktop only, and so does control of it.
   useEffect(() => {

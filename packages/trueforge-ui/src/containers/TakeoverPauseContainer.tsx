@@ -6,7 +6,22 @@ import { useState } from 'react';
 
 import { auiInputClass } from '../atoms/lib/inputClasses.js';
 import { Button } from '../atoms/primitives/Button.js';
+import { readApiError } from '../utils/readApiError.js';
 import { REQUEST_HUMAN_TAKEOVER_TOOL_NAME } from '../utils/toolCallParsing.js';
+import { useToasterOptional } from './ToasterContainer.js';
+
+// `tip_running` also covers the pausing turn itself not having finished, so this must not claim who answered.
+const ANSWERED_ELSEWHERE_NOTICE =
+  'This request was already answered, or the agent is still busy. Refresh to see where it is.';
+
+/** Codes the turn route answers with when the pause cannot be answered right now. */
+const ANSWERED_ELSEWHERE_CODES = new Set(['tip_running', 'already_answered']);
+
+/** A 409 whose `{ error: { code } }` body says the paused turn is not waiting for this answer. */
+function isAnsweredElsewhere(error: unknown): boolean {
+  const { status, code } = readApiError(error);
+  return status === 409 && code !== undefined && ANSWERED_ELSEWHERE_CODES.has(code);
+}
 
 /**
  * The composer while the agent waits for a person on its screen. The session's owner can answer
@@ -15,16 +30,30 @@ import { REQUEST_HUMAN_TAKEOVER_TOOL_NAME } from '../utils/toolCallParsing.js';
 export function TakeoverPauseContainer({ disabled = false }: { disabled?: boolean }) {
   const { pending, respond } = useTrueForgeToolResponses();
   const isRunning = useThreadIsRunning();
+  const toaster = useToasterOptional();
   const [note, setNote] = useState('');
   const item = pending.find(candidate => candidate.toolName === REQUEST_HUMAN_TAKEOVER_TOOL_NAME);
   if (item == null) return null;
 
   const answer = (outcome: 'completed' | 'cancelled') => {
-    const trimmed = note.trim();
-    respond({
-      toolCallId: item.toolCallId,
-      content: JSON.stringify({ outcome, note: trimmed === '' ? null : trimmed }),
-    });
+    const sent = note;
+    const trimmed = sent.trim();
+    respond(
+      {
+        toolCallId: item.toolCallId,
+        content: JSON.stringify({ outcome, note: trimmed === '' ? null : trimmed }),
+      },
+      {
+        // Losing the race to someone on the Screen page is expected, not a failure.
+        onSendError: error => {
+          // A refused answer keeps what was typed, unless something new was typed since.
+          setNote(current => (current === '' ? sent : current));
+          if (toaster === null || !isAnsweredElsewhere(error)) return false;
+          toaster.showSuccess({ title: ANSWERED_ELSEWHERE_NOTICE });
+          return true;
+        },
+      },
+    );
     setNote('');
   };
   const locked = disabled || isRunning;

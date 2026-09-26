@@ -60,6 +60,8 @@ export type DesktopScreenProps = {
   sessionId?: string;
   /** Stacks the controls for a narrow panel. */
   compact?: boolean;
+  /** Stops polling while the view is hidden, keeping control of the desktop. */
+  paused?: boolean;
   className?: string;
 };
 
@@ -196,9 +198,10 @@ export function DesktopScreen({
   agentId,
   sessionId,
   compact = false,
+  paused = false,
   className,
 }: DesktopScreenProps) {
-  const screen = useDesktopScreen({ server, computerId, ...(agentId === undefined ? {} : { agentId }) });
+  const screen = useDesktopScreen({ server, computerId, paused, ...(agentId === undefined ? {} : { agentId }) });
   const { status, frame, frameProblem } = screen;
   const now = useNow(1000);
   const scope = { computerId, ...(agentId === undefined ? {} : { agentId }) };
@@ -599,6 +602,8 @@ export function DesktopScreen({
           ref={keyboardRef}
           data-desktop-keyboard=""
           aria-label="Desktop keyboard"
+          // Out of the Tab order, so after Ctrl+Alt+Shift Tab moves through the page, not back in.
+          tabIndex={-1}
           autoCapitalize="off"
           autoComplete="off"
           autoCorrect="off"
@@ -644,7 +649,8 @@ export function DesktopScreen({
       {inControl ? (
         <p className="text-xs text-text-secondary">
           Click the screen to type into it; press Ctrl+Alt+Shift to give the keyboard back to this page. Pasting sends
-          your clipboard to the desktop and presses Ctrl+V.
+          your clipboard to the desktop and presses Ctrl+V. Leaving this view hands back control, also in any other view
+          of this desktop you have open.
         </p>
       ) : (
         <p className="text-xs text-text-secondary">Take control to use the mouse and keyboard on this desktop.</p>

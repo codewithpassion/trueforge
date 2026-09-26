@@ -1287,6 +1287,156 @@ describe('useTrueForgeAgentMessages', () => {
     expect(messageHasPendingResponses(assistant)).toBe(false);
   });
 
+  it('lets the answer handle a failed send before the runtime reports it', async () => {
+    vi.mocked(loadSessionSnapshot).mockResolvedValue(snapshotWithAskUserPendingInFold());
+    const conflict = Object.assign(new Error('already answered'), { statusCode: 409 });
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1', onError }),
+    );
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw conflict;
+      })(),
+    );
+    const handled = vi.fn(() => true);
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: handled });
+    });
+    await waitFor(() => expect(handled).toHaveBeenCalledWith(conflict));
+    await waitFor(() => expect(result.current.isRunning).toBe(false));
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('lets the answer handle a failure that happens before the stream starts', async () => {
+    vi.mocked(loadSessionSnapshot).mockResolvedValue(snapshotWithAskUserPendingInFold());
+    const failure = new Error('headers unavailable');
+    const onError = vi.fn();
+    const getTurnHeaders = vi.fn(async (): Promise<Record<string, string> | undefined> => {
+      throw failure;
+    });
+    const { result } = renderHook(() =>
+      useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1', onError, getTurnHeaders }),
+    );
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    const handled = vi.fn(() => true);
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: handled });
+    });
+    await waitFor(() => expect(handled).toHaveBeenCalledWith(failure));
+    expect(streamTurnContent).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('reloads after a handled send failure so the other answer streams in', async () => {
+    const continuation: Turn = {
+      id: 'turn-continuation',
+      sessionId: 'session-1',
+      input: [{ type: 'user.tool_response', threadId: ROOT_THREAD_ID, toolCallId: 'question-1', content: 'B' }],
+      state: { status: 'running' },
+      createdAt: new Date().toISOString(),
+    };
+    vi.mocked(loadSessionSnapshot)
+      .mockResolvedValueOnce(snapshotWithAskUserPendingInFold())
+      .mockResolvedValueOnce(replaceSessionSnapshot(snapshotWithAskUserPendingInFold(), { runningTurn: continuation }));
+    const { result } = renderHook(() => useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1' }));
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw Object.assign(new Error('already answered'), { statusCode: 409 });
+      })(),
+    );
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: () => true });
+    });
+
+    await waitFor(() => expect(loadSessionSnapshot).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(resumeTurnStream).toHaveBeenCalledWith(
+        mockServer,
+        'session-1',
+        continuation.id,
+        expect.any(PeerThreadFoldState),
+        expect.any(AbortSignal),
+        undefined,
+        undefined,
+      ),
+    );
+  });
+
+  it('drops the unsent answer when the handled failure reloads the session', async () => {
+    vi.mocked(loadSessionSnapshot)
+      .mockResolvedValueOnce(snapshotWithAskUserPendingInFold())
+      .mockResolvedValueOnce(snapshotWithAskUserPendingInFold());
+    const { result } = renderHook(() => useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1' }));
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw Object.assign(new Error('already answered'), { statusCode: 409 });
+      })(),
+    );
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: () => true });
+    });
+
+    await waitFor(() => expect(loadSessionSnapshot).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    // The reloaded pause is open again, with no local answer overlaid on it.
+    expect(collectPendingToolResponses(result.current.messages)).toHaveLength(1);
+  });
+
+  it('does not reload after a failed send the answer leaves unhandled', async () => {
+    vi.mocked(loadSessionSnapshot).mockResolvedValue(snapshotWithAskUserPendingInFold());
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1', onError }),
+    );
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw new Error('boom');
+      })(),
+    );
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: () => false });
+    });
+    await waitFor(() => expect(result.current.isRunning).toBe(false));
+    expect(loadSessionSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('still reports a failed send the answer leaves unhandled', async () => {
+    vi.mocked(loadSessionSnapshot).mockResolvedValue(snapshotWithAskUserPendingInFold());
+    const failure = new Error('boom');
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useTrueForgeAgentMessages({ server: mockServer, sessionId: 'session-1', onError }),
+    );
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    vi.mocked(streamTurnContent).mockReturnValueOnce(
+      // eslint-disable-next-line require-yield -- the stream fails before its first update
+      (async function* () {
+        throw failure;
+      })(),
+    );
+    const unhandled = vi.fn(() => false);
+    await act(async () => {
+      result.current.respondToToolResponse({ toolCallId: 'question-1', content: 'A' }, { onSendError: unhandled });
+    });
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(failure));
+    expect(unhandled).toHaveBeenCalledWith(failure);
+  });
+
   describe('batched resume invariant', () => {
     it('issues exactly one createTurn input batch across root and sub-agent threads', async () => {
       vi.mocked(loadSessionSnapshot).mockResolvedValue(

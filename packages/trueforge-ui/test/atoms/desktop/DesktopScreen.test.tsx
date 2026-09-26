@@ -366,6 +366,7 @@ describe('DesktopScreen', () => {
     expect(keyboard).toHaveFocus();
     expect(view).toHaveClass('ring-2');
     expect(screen.getByText(/press Ctrl\+Alt\+Shift to give the keyboard back/)).toBeInTheDocument();
+    expect(screen.getByText(/Leaving this view hands back control, also in any other view/)).toBeInTheDocument();
 
     fireEvent.keyDown(keyboard, { key: 'Control', ctrlKey: true });
     fireEvent.keyDown(keyboard, { key: 'Alt', ctrlKey: true, altKey: true });
@@ -375,6 +376,20 @@ describe('DesktopScreen', () => {
     expect(keyboard).not.toHaveFocus();
     expect(view).not.toHaveClass('ring-2');
     expect(server.sendDesktopInput).not.toHaveBeenCalled();
+  });
+
+  it('keeps the keyboard out of the Tab order, reached only by clicking the screen or taking control', async () => {
+    const server = createServer();
+    await renderInControl(server);
+    const keyboard = screen.getByLabelText('Desktop keyboard');
+    expect(keyboard).toHaveAttribute('tabindex', '-1');
+
+    keyboard.blur();
+    screen.getByRole('button', { name: 'Hand back' }).focus();
+    expect(keyboard).not.toHaveFocus();
+
+    fireEvent.pointerDown(screen.getByTestId('desktop-frame'), { button: 0, clientX: 1, clientY: 1 });
+    expect(keyboard).toHaveFocus();
   });
 
   it('dims the last frame and says why once the computer goes offline', async () => {

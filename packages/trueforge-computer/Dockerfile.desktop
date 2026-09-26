@@ -35,8 +35,8 @@ RUN apt-get update \
     xvfb \
   && rm -rf /var/lib/apt/lists/*
 
-# An xterm selection lands in CLIPBOARD, which is the selection the clipboard ops read.
-RUN echo 'XTerm*selectToClipboard: true' >> /etc/X11/app-defaults/XTerm \
+COPY packaging/desktop/xterm-resources /tmp/xterm-resources
+RUN cat /tmp/xterm-resources >> /etc/X11/app-defaults/XTerm && rm /tmp/xterm-resources \
   && mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix \
   && mkdir -p /etc/chromium/policies/managed
 COPY packaging/desktop/chromium-policy.json /etc/chromium/policies/managed/trueforge.json

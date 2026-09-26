@@ -4,6 +4,8 @@ import { useAuiState } from '@assistant-ui/react';
 
 import { DesktopScreen } from '../atoms/desktop/DesktopScreen.js';
 import { auiButtonClass } from '../atoms/lib/buttonClasses.js';
+import { cn } from '../atoms/lib/cn.js';
+import { useIsMobile } from '../atoms/lib/useIsMobile.js';
 import { useDesktopAgent, type DesktopAgent } from '../hooks/useDesktopAgent.js';
 import { useActiveSessionCanManage } from '../hooks/useResourcePermissions.js';
 import { Icon } from '../icons/Icon.js';
@@ -51,11 +53,18 @@ export function SessionScreenToggle({ open, onToggle }: { open: boolean; onToggl
 /** Right-side panel beside the chat with the live desktop the agent is using. */
 export function SessionScreenPanel({ screen, onClose }: { screen: SessionScreen; onClose: () => void }) {
   const server = useOptionalComputerDesktopServer();
+  // Below md there is no room beside the chat. The view stays mounted and only pauses, because
+  // unmounting it would hand back control someone holds just because the window got narrower.
+  const narrow = useIsMobile();
   if (server === null) return null;
   return (
     <aside
       aria-label="Screen"
-      className="hidden min-h-0 w-[30rem] shrink-0 flex-col border-l border-border bg-primary-bg md:flex 2xl:w-[40rem]"
+      hidden={narrow}
+      className={cn(
+        'min-h-0 w-[30rem] shrink-0 flex-col border-l border-border bg-primary-bg 2xl:w-[40rem]',
+        narrow ? 'hidden' : 'flex',
+      )}
     >
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-3">
         <h2 className="text-sm font-semibold text-text-primary">Screen</h2>
@@ -76,6 +85,7 @@ export function SessionScreenPanel({ screen, onClose }: { screen: SessionScreen;
           agentId={screen.agentId}
           sessionId={screen.sessionId}
           compact
+          paused={narrow}
         />
       </div>
     </aside>
