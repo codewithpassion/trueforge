@@ -4,6 +4,7 @@
  */
 import type { TrueForge } from '@truefoundry/trueforge-sdk';
 import type { ComputerDesktopServer, DesktopRequestFailure } from '../../../server/types.js';
+import { readApiError } from '../../../utils/readApiError.js';
 
 /** Frames are polled; a retried frame is a stale one, so the UI's next poll is the retry. */
 const DESKTOP_REQUEST_OPTIONS: { maxRetries: number; timeoutInSeconds: number } = {
@@ -23,32 +24,15 @@ export class ComputerDesktopError extends Error implements DesktopRequestFailure
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** The `{ error: { code, message } }` envelope of a refused request, when the body has one. */
-function readErrorEnvelope(body: unknown): { code: string | null; message: string | undefined } {
-  const error = isRecord(body) ? body['error'] : undefined;
-  if (!isRecord(error)) return { code: null, message: undefined };
-  const code = error['code'];
-  const message = error['message'];
-  return {
-    code: typeof code === 'string' ? code : null,
-    message: typeof message === 'string' ? message : undefined,
-  };
-}
-
-/**
- * The SDK's status errors carry `statusCode` and the parsed `body`. Read structurally: the SDK's
- * error classes are re-exported through `export *`, which some ESM loaders cannot see by name.
- */
+/** SDK status errors become `ComputerDesktopError`; anything else is rethrown as is. */
 function toDesktopError(caught: unknown): unknown {
   if (!(caught instanceof Error)) return caught;
-  const statusCode: unknown = Reflect.get(caught, 'statusCode');
-  if (typeof statusCode !== 'number') return caught;
-  const { code, message } = readErrorEnvelope(Reflect.get(caught, 'body'));
-  return new ComputerDesktopError({ statusCode, code, message: message ?? caught.message }, { cause: caught });
+  const { status, code, message } = readApiError(caught);
+  if (status === undefined) return caught;
+  return new ComputerDesktopError(
+    { statusCode: status, code: code ?? null, message: message ?? caught.message },
+    { cause: caught },
+  );
 }
 
 async function refusalsAsDesktopErrors<T>(call: () => Promise<T>): Promise<T> {

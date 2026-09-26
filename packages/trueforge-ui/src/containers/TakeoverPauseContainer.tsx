@@ -6,6 +6,7 @@ import { useState } from 'react';
 
 import { auiInputClass } from '../atoms/lib/inputClasses.js';
 import { Button } from '../atoms/primitives/Button.js';
+import { readApiError } from '../utils/readApiError.js';
 import { REQUEST_HUMAN_TAKEOVER_TOOL_NAME } from '../utils/toolCallParsing.js';
 import { useToasterOptional } from './ToasterContainer.js';
 
@@ -14,17 +15,10 @@ const ANSWERED_ELSEWHERE_NOTICE = 'Someone else already answered this request; t
 /** Codes the turn route answers with when another answer to the same pause got in first. */
 const ANSWERED_ELSEWHERE_CODES = new Set(['tip_running', 'already_answered']);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 /** A 409 whose `{ error: { code } }` body says the paused turn was already continued. */
 function isAnsweredElsewhere(error: unknown): boolean {
-  if (!isRecord(error) || error['statusCode'] !== 409) return false;
-  const body = error['body'];
-  const envelope = isRecord(body) ? body['error'] : undefined;
-  const code = isRecord(envelope) ? envelope['code'] : undefined;
-  return typeof code === 'string' && ANSWERED_ELSEWHERE_CODES.has(code);
+  const { status, code } = readApiError(error);
+  return status === 409 && code !== undefined && ANSWERED_ELSEWHERE_CODES.has(code);
 }
 
 /**
